@@ -197,6 +197,10 @@ func (s *Store) write(idx *VMIndex) error {
 		_ = tmp.Close()
 		return fmt.Errorf("write VM index temp file: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync VM index temp file: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close VM index temp file: %w", err)
 	}
