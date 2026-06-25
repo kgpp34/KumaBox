@@ -1,12 +1,35 @@
 package vmstore
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
 
-func (idx *VMIndex) Resolve(ref string) (string, error) {
-	idx.Init()
+const backendCloudHypervisor = "cloud-hypervisor"
+
+var (
+	ErrNotFound     = errors.New("vm not found")
+	ErrNameConflict = errors.New("vm name already exists")
+	ErrAmbiguous    = errors.New("vm ref is ambiguous")
+)
+
+type vmIndex struct {
+	VMs   map[string]*VMRecord `json:"vms"`
+	Names map[string]string    `json:"names"`
+}
+
+func (idx *vmIndex) init() {
+	if idx.VMs == nil {
+		idx.VMs = make(map[string]*VMRecord)
+	}
+	if idx.Names == nil {
+		idx.Names = make(map[string]string)
+	}
+}
+
+func (idx *vmIndex) resolve(ref string) (string, error) {
+	idx.init()
 	if _, ok := idx.VMs[ref]; ok {
 		return ref, nil
 	}

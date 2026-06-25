@@ -19,11 +19,20 @@ type Store struct {
 }
 
 func New(rootDir string) *Store {
-	backendDir := filepath.Join(rootDir, "backends", BackendCloudHypervisor)
+	backendDir := filepath.Join(rootDir, "backends", backendCloudHypervisor)
 	return &Store{
 		indexPath: filepath.Join(backendDir, "index.json"),
 		lockPath:  filepath.Join(backendDir, "index.lock"),
 	}
+}
+
+type CreateRequest struct {
+	Name     string
+	RootDisk string
+	Kernel   string
+	Initrd   string
+	RunDir   string
+	LogDir   string
 }
 
 func (s *Store) Create(req CreateRequest) (*VMRecord, error) {
@@ -32,7 +41,7 @@ func (s *Store) Create(req CreateRequest) (*VMRecord, error) {
 	}
 
 	var created *VMRecord
-	err := s.update(func(idx *VMIndex) error {
+	err := s.update(func(idx *vmIndex) error {
 		if _, ok := idx.Names[req.Name]; ok {
 			return fmt.Errorf("%w: %s", ErrNameConflict, req.Name)
 		}
@@ -51,32 +60,10 @@ func (s *Store) Create(req CreateRequest) (*VMRecord, error) {
 			}
 		}
 
-		rootDisk, err := normalizePath(req.RootDisk)
-		if err != nil {
-			return fmt.Errorf("resolve root disk: %w", err)
-		}
-		kernel, err := normalizePath(req.Kernel)
-		if err != nil {
-			return fmt.Errorf("resolve kernel: %w", err)
-		}
-		initrd, err := normalizePath(req.Initrd)
-		if err != nil {
-			return fmt.Errorf("resolve initrd: %w", err)
-		}
-
 		now := time.Now().UTC()
-		rec := &VMRecord{
-			ID:        id,
-			Name:      req.Name,
-			Backend:   BackendCloudHypervisor,
-			State:     StateCreated,
-			RootDisk:  rootDisk,
-			Kernel:    kernel,
-			Initrd:    initrd,
-			RunDir:    filepath.Join(req.RunDir, "vms", id),
-			LogDir:    filepath.Join(req.LogDir, "vms", id),
-			CreatedAt: now,
-			UpdatedAt: now,
+		rec, err := newRecord(id, req, now)
+		if err != nil {
+			return fmt.Errorf("create VM record: %w", err)
 		}
 
 		idx.VMs[id] = rec
@@ -93,8 +80,8 @@ func (s *Store) Create(req CreateRequest) (*VMRecord, error) {
 
 func (s *Store) Inspect(ref string) (*VMRecord, error) {
 	var rec *VMRecord
-	err := s.withIndex(func(idx *VMIndex) error {
-		id, err := idx.Resolve(ref)
+	err := s.withIndex(func(idx *vmIndex) error {
+		id, err := idx.resolve(ref)
 		if err != nil {
 			return err
 		}
@@ -109,7 +96,7 @@ func (s *Store) Inspect(ref string) (*VMRecord, error) {
 
 func (s *Store) List() ([]*VMRecord, error) {
 	var records []*VMRecord
-	err := s.withIndex(func(idx *VMIndex) error {
+	err := s.withIndex(func(idx *vmIndex) error {
 		records = make([]*VMRecord, 0, len(idx.VMs))
 		for _, rec := range idx.VMs {
 			records = append(records, cloneRecord(rec))
@@ -125,7 +112,7 @@ func (s *Store) List() ([]*VMRecord, error) {
 	return records, nil
 }
 
-func (s *Store) withIndex(fn func(*VMIndex) error) error {
+func (s *Store) withIndex(fn func(*vmIndex) error) error {
 	unlock, err := s.lock()
 	if err != nil {
 		return err
@@ -139,7 +126,7 @@ func (s *Store) withIndex(fn func(*VMIndex) error) error {
 	return fn(idx)
 }
 
-func (s *Store) update(fn func(*VMIndex) error) error {
+func (s *Store) update(fn func(*vmIndex) error) error {
 	unlock, err := s.lock()
 	if err != nil {
 		return err
@@ -156,26 +143,26 @@ func (s *Store) update(fn func(*VMIndex) error) error {
 	return s.write(idx)
 }
 
-func (s *Store) load() (*VMIndex, error) {
+func (s *Store) load() (*vmIndex, error) {
 	raw, err := os.ReadFile(s.indexPath) //nolint:gosec
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			idx := &VMIndex{}
-			idx.Init()
+			idx := &vmIndex{}
+			idx.init()
 			return idx, nil
 		}
 		return nil, fmt.Errorf("read VM index: %w", err)
 	}
 
-	var idx VMIndex
+	var idx vmIndex
 	if err := json.Unmarshal(raw, &idx); err != nil {
 		return nil, fmt.Errorf("parse VM index: %w", err)
 	}
-	idx.Init()
+	idx.init()
 	return &idx, nil
 }
 
-func (s *Store) write(idx *VMIndex) error {
+func (s *Store) write(idx *vmIndex) error {
 	if err := os.MkdirAll(filepath.Dir(s.indexPath), 0o755); err != nil {
 		return fmt.Errorf("create VM index dir: %w", err)
 	}
@@ -258,12 +245,4 @@ func newID() (string, error) {
 		return "", fmt.Errorf("generate VM ID: %w", err)
 	}
 	return "kb_" + hex.EncodeToString(raw[:]), nil
-}
-
-func cloneRecord(rec *VMRecord) *VMRecord {
-	if rec == nil {
-		return nil
-	}
-	copied := *rec
-	return &copied
 }

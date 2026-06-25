@@ -48,7 +48,7 @@ func TestCreateInspectList(t *testing.T) {
 		t.Fatalf("list len = %d", len(list))
 	}
 
-	indexPath := filepath.Join(dir, "data", "backends", BackendCloudHypervisor, "index.json")
+	indexPath := filepath.Join(dir, "data", "backends", backendCloudHypervisor, "index.json")
 	if _, err := os.Stat(indexPath); err != nil {
 		t.Fatal(err)
 	}
@@ -75,14 +75,14 @@ func TestCreateRejectsDuplicateName(t *testing.T) {
 }
 
 func TestResolveByIDPrefix(t *testing.T) {
-	idx := &VMIndex{
+	idx := &vmIndex{
 		VMs: map[string]*VMRecord{
 			"kb_abcdef": {ID: "kb_abcdef"},
 		},
 		Names: map[string]string{},
 	}
 
-	id, err := idx.Resolve("kb_abc")
+	id, err := idx.resolve("kb_abc")
 	if err != nil {
 		t.Fatal(err)
 	}
