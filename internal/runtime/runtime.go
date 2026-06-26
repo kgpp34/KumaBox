@@ -8,20 +8,18 @@ import (
 )
 
 type Runtime struct {
-	store    *vmstore.Store
-	renderer backend.Renderer
-	starter  backend.Starter
+	store   *vmstore.Store
+	backend backend.Lifecycle
 }
 
 func New(cfg config.Config) *Runtime {
-	return NewWithBackend(vmstore.New(cfg.Runtime.RootDir), cloudhypervisor.NewRenderer(cfg), cloudhypervisor.NewStarter())
+	return NewWithBackend(vmstore.New(cfg.Runtime.RootDir), cloudhypervisor.NewBackend(cfg))
 }
 
-func NewWithBackend(store *vmstore.Store, renderer backend.Renderer, starter backend.Starter) *Runtime {
+func NewWithBackend(store *vmstore.Store, vmBackend backend.Lifecycle) *Runtime {
 	return &Runtime{
-		store:    store,
-		renderer: renderer,
-		starter:  starter,
+		store:   store,
+		backend: vmBackend,
 	}
 }
 
@@ -30,7 +28,7 @@ func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error)
 	if err != nil {
 		return nil, err
 	}
-	if err := r.renderer.RenderConfig(rec); err != nil {
+	if err := r.backend.RenderConfig(rec); err != nil {
 		_ = r.store.Delete(rec.ID)
 		return nil, err
 	}
@@ -43,7 +41,7 @@ func (r *Runtime) StartVM(ref string) (*vmstore.VMRecord, error) {
 		return nil, err
 	}
 
-	result, err := r.starter.StartConfig(rec.Config)
+	result, err := r.backend.StartVM(rec)
 	if err != nil {
 		if _, markErr := r.store.MarkError(rec.ID, err.Error()); markErr != nil {
 			return nil, markErr

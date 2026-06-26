@@ -1,0 +1,29 @@
+package cloudhypervisor
+
+import (
+	"github.com/kumabox/kumabox/internal/backend"
+	"github.com/kumabox/kumabox/internal/config"
+	"github.com/kumabox/kumabox/internal/vmstore"
+)
+
+var _ backend.Lifecycle = Backend{}
+
+type Backend struct {
+	renderer Renderer
+	starter  Starter
+}
+
+func NewBackend(cfg config.Config) Backend {
+	return Backend{
+		renderer: NewRenderer(cfg),
+		starter:  NewStarter(),
+	}
+}
+
+func (b Backend) RenderConfig(rec *vmstore.VMRecord) error {
+	return b.renderer.RenderConfig(rec)
+}
+
+func (b Backend) StartVM(rec *vmstore.VMRecord) (*backend.StartResult, error) {
+	return b.starter.StartConfig(rec.Config)
+}

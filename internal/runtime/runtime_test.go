@@ -9,25 +9,26 @@ import (
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
-type rendererFunc func(*vmstore.VMRecord) error
-
-func (fn rendererFunc) RenderConfig(rec *vmstore.VMRecord) error {
-	return fn(rec)
+type backendFake struct {
+	render func(*vmstore.VMRecord) error
+	start  func(*vmstore.VMRecord) (*backend.StartResult, error)
 }
 
-type starterFunc func(string) (*backend.StartResult, error)
+func (b backendFake) RenderConfig(rec *vmstore.VMRecord) error {
+	return b.render(rec)
+}
 
-func (fn starterFunc) StartConfig(path string) (*backend.StartResult, error) {
-	return fn(path)
+func (b backendFake) StartVM(rec *vmstore.VMRecord) (*backend.StartResult, error) {
+	return b.start(rec)
 }
 
 func TestCreateVMRollsBackRecordOnRenderFailure(t *testing.T) {
 	dir := t.TempDir()
 	store := vmstore.New(filepath.Join(dir, "data"))
 	renderErr := errors.New("render failed")
-	rt := NewWithBackend(store, rendererFunc(func(*vmstore.VMRecord) error {
-		return renderErr
-	}), starterFunc(nil))
+	rt := NewWithBackend(store, backendFake{
+		render: func(*vmstore.VMRecord) error { return renderErr },
+	})
 
 	_, err := rt.CreateVM(vmstore.CreateRequest{
 		Name:     "rollback",
@@ -51,10 +52,12 @@ func TestStartVMMarksRunning(t *testing.T) {
 	store := vmstore.New(filepath.Join(dir, "data"))
 	rt := NewWithBackend(
 		store,
-		rendererFunc(func(*vmstore.VMRecord) error { return nil }),
-		starterFunc(func(string) (*backend.StartResult, error) {
-			return &backend.StartResult{PID: 1234, APISocket: "/tmp/ch.sock"}, nil
-		}),
+		backendFake{
+			render: func(*vmstore.VMRecord) error { return nil },
+			start: func(*vmstore.VMRecord) (*backend.StartResult, error) {
+				return &backend.StartResult{PID: 1234, APISocket: "/tmp/ch.sock"}, nil
+			},
+		},
 	)
 
 	rec, err := rt.CreateVM(vmstore.CreateRequest{
@@ -87,8 +90,10 @@ func TestStartVMMarksErrorOnStartFailure(t *testing.T) {
 	startErr := errors.New("start failed")
 	rt := NewWithBackend(
 		store,
-		rendererFunc(func(*vmstore.VMRecord) error { return nil }),
-		starterFunc(func(string) (*backend.StartResult, error) { return nil, startErr }),
+		backendFake{
+			render: func(*vmstore.VMRecord) error { return nil },
+			start:  func(*vmstore.VMRecord) (*backend.StartResult, error) { return nil, startErr },
+		},
 	)
 
 	rec, err := rt.CreateVM(vmstore.CreateRequest{
