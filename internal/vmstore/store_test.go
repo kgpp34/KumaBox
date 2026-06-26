@@ -100,6 +100,45 @@ func TestCreateRejectsDuplicateName(t *testing.T) {
 	}
 }
 
+func TestCreateSupportsFirmwareBoot(t *testing.T) {
+	dir := t.TempDir()
+	store := New(filepath.Join(dir, "data"))
+
+	rec, err := store.Create(CreateRequest{
+		Name:     "uefi",
+		RootDisk: "ubuntu.img",
+		Firmware: "CLOUDHV.fd",
+		RunDir:   filepath.Join(dir, "run"),
+		LogDir:   filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Firmware == "" {
+		t.Fatal("expected firmware path")
+	}
+	if rec.Kernel != "" || rec.Initrd != "" {
+		t.Fatalf("unexpected direct boot fields: kernel=%q initrd=%q", rec.Kernel, rec.Initrd)
+	}
+}
+
+func TestCreateRejectsMixedFirmwareAndDirectBoot(t *testing.T) {
+	dir := t.TempDir()
+	store := New(filepath.Join(dir, "data"))
+
+	_, err := store.Create(CreateRequest{
+		Name:     "mixed",
+		RootDisk: "ubuntu.img",
+		Kernel:   "vmlinuz",
+		Firmware: "CLOUDHV.fd",
+		RunDir:   filepath.Join(dir, "run"),
+		LogDir:   filepath.Join(dir, "log"),
+	})
+	if err == nil {
+		t.Fatal("expected mixed boot error")
+	}
+}
+
 func TestResolveByIDPrefix(t *testing.T) {
 	idx := &vmIndex{
 		VMs: map[string]*VMRecord{

@@ -22,8 +22,9 @@ type VMRecord struct {
 	APISocket string     `json:"apiSocket,omitempty"`
 	Error     string     `json:"error,omitempty"`
 	RootDisk  string     `json:"rootDisk"`
-	Kernel    string     `json:"kernel"`
-	Initrd    string     `json:"initrd"`
+	Kernel    string     `json:"kernel,omitempty"`
+	Initrd    string     `json:"initrd,omitempty"`
+	Firmware  string     `json:"firmware,omitempty"`
 	RunDir    string     `json:"runDir"`
 	LogDir    string     `json:"logDir"`
 	Config    string     `json:"config"`
@@ -45,6 +46,10 @@ func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
 	if err != nil {
 		return nil, err
 	}
+	firmware, err := normalizePath(req.Firmware)
+	if err != nil {
+		return nil, err
+	}
 	runDir, err := normalizePath(filepath.Join(req.RunDir, "vms", id))
 	if err != nil {
 		return nil, err
@@ -62,6 +67,7 @@ func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
 		RootDisk:  rootDisk,
 		Kernel:    kernel,
 		Initrd:    initrd,
+		Firmware:  firmware,
 		RunDir:    runDir,
 		LogDir:    logDir,
 		Config:    filepath.Join(runDir, "cloud-hypervisor.json"),

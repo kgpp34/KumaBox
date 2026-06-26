@@ -33,6 +33,7 @@ type CreateRequest struct {
 	RootDisk string
 	Kernel   string
 	Initrd   string
+	Firmware string
 	RunDir   string
 	LogDir   string
 }
@@ -258,11 +259,14 @@ func validateCreateRequest(req CreateRequest) error {
 	if req.RootDisk == "" {
 		return errors.New("root disk must not be empty")
 	}
-	if req.Kernel == "" {
-		return errors.New("kernel must not be empty")
+	if req.Firmware == "" && req.Kernel == "" {
+		return errors.New("kernel must not be empty for direct boot")
 	}
-	if req.Initrd == "" {
-		return errors.New("initrd must not be empty")
+	if req.Firmware == "" && req.Initrd == "" {
+		return errors.New("initrd must not be empty for direct boot")
+	}
+	if req.Firmware != "" && (req.Kernel != "" || req.Initrd != "") {
+		return errors.New("firmware boot cannot be combined with kernel or initrd")
 	}
 	if req.RunDir == "" {
 		return errors.New("run dir must not be empty")

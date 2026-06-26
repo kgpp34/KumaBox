@@ -195,3 +195,57 @@ func TestCreateRejectsDuplicateName(t *testing.T) {
 		t.Fatal("expected duplicate name error")
 	}
 }
+
+func TestCreateFirmwareBootCommand(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	runDir := filepath.Join(dir, "run")
+	logDir := filepath.Join(dir, "log")
+
+	create := NewRootCommand()
+	create.SetArgs([]string{
+		"--root-dir", rootDir,
+		"--run-dir", runDir,
+		"--log-dir", logDir,
+		"create",
+		"--name", "uefi",
+		"--root-disk", "fixtures/ubuntu.img",
+		"--firmware", "fixtures/CLOUDHV.fd",
+	})
+	var out bytes.Buffer
+	create.SetOut(&out)
+	if err := create.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	var created struct {
+		Config   string `json:"config"`
+		Firmware string `json:"firmware"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Firmware == "" {
+		t.Fatal("expected firmware in create output")
+	}
+
+	rawConfig, err := os.ReadFile(created.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rendered struct {
+		Firmware *struct {
+			Path string `json:"path"`
+		} `json:"firmware"`
+		Kernel any `json:"kernel"`
+	}
+	if err := json.Unmarshal(rawConfig, &rendered); err != nil {
+		t.Fatal(err)
+	}
+	if rendered.Firmware == nil || rendered.Firmware.Path == "" {
+		t.Fatalf("rendered firmware = %+v", rendered.Firmware)
+	}
+	if rendered.Kernel != nil {
+		t.Fatalf("expected no direct kernel payload: %+v", rendered.Kernel)
+	}
+}

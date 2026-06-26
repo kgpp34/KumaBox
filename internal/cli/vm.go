@@ -117,6 +117,7 @@ type createVMFlags struct {
 	rootDisk string
 	kernel   string
 	initrd   string
+	firmware string
 }
 
 func addCreateVMFlags(cmd *cobra.Command, flags *createVMFlags) {
@@ -124,10 +125,9 @@ func addCreateVMFlags(cmd *cobra.Command, flags *createVMFlags) {
 	cmd.Flags().StringVar(&flags.rootDisk, "root-disk", "", "root disk path")
 	cmd.Flags().StringVar(&flags.kernel, "kernel", "", "kernel image path")
 	cmd.Flags().StringVar(&flags.initrd, "initrd", "", "initrd image path")
+	cmd.Flags().StringVar(&flags.firmware, "firmware", "", "UEFI firmware path")
 	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("root-disk")
-	_ = cmd.MarkFlagRequired("kernel")
-	_ = cmd.MarkFlagRequired("initrd")
 }
 
 func newCreateRequest(flags createVMFlags, cfg config.Config) vmstore.CreateRequest {
@@ -136,6 +136,7 @@ func newCreateRequest(flags createVMFlags, cfg config.Config) vmstore.CreateRequ
 		RootDisk: flags.rootDisk,
 		Kernel:   flags.kernel,
 		Initrd:   flags.initrd,
+		Firmware: flags.firmware,
 		RunDir:   cfg.Runtime.RunDir,
 		LogDir:   cfg.Runtime.LogDir,
 	}

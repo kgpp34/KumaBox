@@ -19,8 +19,9 @@ type Config struct {
 	PIDFile      string      `json:"pidFile"`
 	StdoutLog    string      `json:"stdoutLog"`
 	StderrLog    string      `json:"stderrLog"`
-	Kernel       Kernel      `json:"kernel"`
-	Initramfs    Initramfs   `json:"initramfs"`
+	Kernel       *Kernel     `json:"kernel,omitempty"`
+	Initramfs    *Initramfs  `json:"initramfs,omitempty"`
+	Firmware     *Firmware   `json:"firmware,omitempty"`
 	Disks        []Disk      `json:"disks"`
 	Serial       Serial      `json:"serial"`
 	Console      Console     `json:"console"`
@@ -37,9 +38,14 @@ type Initramfs struct {
 	Path string `json:"path"`
 }
 
+type Firmware struct {
+	Path string `json:"path"`
+}
+
 type Disk struct {
-	Path     string `json:"path"`
-	Readonly bool   `json:"readonly"`
+	Path      string `json:"path"`
+	Readonly  bool   `json:"readonly"`
+	ImageType string `json:"imageType,omitempty"`
 }
 
 type Serial struct {
@@ -89,35 +95,68 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 
 	args := []string{
 		"--api-socket", apiSocket,
-		"--kernel", rec.Kernel,
-		"--initramfs", rec.Initrd,
-		"--cmdline", defaultKernelCmdline,
-		"--disk", "path=" + rec.RootDisk,
-		"--serial", "file=" + serialLog,
-		"--console", "off",
 	}
+	if rec.Firmware != "" {
+		args = append(args, "--firmware", rec.Firmware)
+	} else {
+		args = append(args,
+			"--kernel", rec.Kernel,
+			"--initramfs", rec.Initrd,
+			"--cmdline", defaultKernelCmdline,
+		)
+	}
+	diskArg := "path=" + rec.RootDisk
+	if imageType := rootDiskImageType(rec); imageType != "" {
+		diskArg += ",image_type=" + imageType
+	}
+	args = append(args,
+		"--disk", diskArg,
+		"--serial", "file="+serialLog,
+		"--console", "off",
+	)
 
-	return Config{
+	rendered := Config{
 		Binary:       cfg.Backend.CloudHypervisor.Binary,
 		APISocket:    apiSocket,
 		APITimeoutMs: cfg.Backend.CloudHypervisor.APISocketTimeoutMS,
 		PIDFile:      filepath.Join(rec.RunDir, "ch.pid"),
 		StdoutLog:    stdoutLog,
 		StderrLog:    stderrLog,
-		Kernel: Kernel{
-			Path:    rec.Kernel,
-			Cmdline: defaultKernelCmdline,
-		},
-		Initramfs: Initramfs{Path: rec.Initrd},
-		Disks: []Disk{
-			{Path: rec.RootDisk, Readonly: false},
-		},
-		Serial:  Serial{Path: serialLog},
-		Console: Console{Mode: "off"},
-		Args:    args,
+		Disks:        []Disk{newRootDisk(rec)},
+		Serial:       Serial{Path: serialLog},
+		Console:      Console{Mode: "off"},
+		Args:         args,
 		Annotations: Annotations{
 			VMID:   rec.ID,
 			VMName: rec.Name,
 		},
 	}
+	if rec.Firmware != "" {
+		rendered.Firmware = &Firmware{Path: rec.Firmware}
+	} else {
+		rendered.Kernel = &Kernel{
+			Path:    rec.Kernel,
+			Cmdline: defaultKernelCmdline,
+		}
+		rendered.Initramfs = &Initramfs{Path: rec.Initrd}
+	}
+	return rendered
+}
+
+func newRootDisk(rec *vmstore.VMRecord) Disk {
+	disk := Disk{Path: rec.RootDisk, Readonly: false}
+	if imageType := rootDiskImageType(rec); imageType != "" {
+		disk.ImageType = imageType
+	}
+	return disk
+}
+
+func rootDiskImageType(rec *vmstore.VMRecord) string {
+	if rec.Firmware != "" {
+		return "qcow2"
+	}
+	if filepath.Ext(rec.RootDisk) == ".qcow2" {
+		return "qcow2"
+	}
+	return ""
 }

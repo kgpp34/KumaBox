@@ -10,10 +10,13 @@ name="p0-start"
 root_disk=""
 kernel=""
 initrd=""
+firmware=""
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/linux/verify-start.sh --root-disk PATH --kernel PATH --initrd PATH [options]
+Usage:
+  scripts/linux/verify-start.sh --root-disk PATH --firmware PATH [options]
+  scripts/linux/verify-start.sh --root-disk PATH --kernel PATH --initrd PATH [options]
 
 Options:
   --kumabox PATH             kumabox binary path, defaults to ./bin/kumabox
@@ -22,6 +25,7 @@ Options:
   --run-dir PATH             runtime directory, defaults to /tmp/kumabox-p0/run
   --log-dir PATH             log directory, defaults to /tmp/kumabox-p0/logs
   --name NAME                VM name, defaults to p0-start
+  --firmware PATH            UEFI firmware path for cloud-image boot
 
 Runs the P0-05 create -> start -> inspect path inside a Linux VM with KVM.
 USAGE
@@ -83,6 +87,11 @@ while [[ $# -gt 0 ]]; do
       initrd="$2"
       shift 2
       ;;
+    --firmware)
+      require_value "$1" "${2:-}"
+      firmware="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -95,7 +104,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$root_disk" || -z "$kernel" || -z "$initrd" ]]; then
+if [[ -z "$root_disk" ]]; then
+  usage >&2
+  exit 2
+fi
+
+if [[ -n "$firmware" && ( -n "$kernel" || -n "$initrd" ) ]]; then
+  echo "--firmware cannot be combined with --kernel or --initrd" >&2
+  exit 2
+fi
+
+if [[ -z "$firmware" && ( -z "$kernel" || -z "$initrd" ) ]]; then
   usage >&2
   exit 2
 fi
@@ -105,7 +124,14 @@ if [[ "$(uname -s)" != "Linux" ]]; then
   exit 1
 fi
 
-for path in "$kumabox_path" "$root_disk" "$kernel" "$initrd"; do
+required_paths=("$kumabox_path" "$root_disk")
+if [[ -n "$firmware" ]]; then
+  required_paths+=("$firmware")
+else
+  required_paths+=("$kernel" "$initrd")
+fi
+
+for path in "${required_paths[@]}"; do
   if [[ ! -e "$path" ]]; then
     echo "required path does not exist: $path" >&2
     exit 1
@@ -122,16 +148,23 @@ scripts/linux/env-check.sh \
   --cloud-hypervisor "$cloud_hypervisor_path" \
   --strict
 
-"$kumabox_path" \
-  --root-dir "$root_dir" \
-  --run-dir "$run_dir" \
-  --log-dir "$log_dir" \
-  --cloud-hypervisor-bin "$cloud_hypervisor_path" \
-  create \
-  --name "$name" \
-  --root-disk "$root_disk" \
-  --kernel "$kernel" \
-  --initrd "$initrd" >/dev/null
+create_args=(
+  "$kumabox_path"
+  --root-dir "$root_dir"
+  --run-dir "$run_dir"
+  --log-dir "$log_dir"
+  --cloud-hypervisor-bin "$cloud_hypervisor_path"
+  create
+  --name "$name"
+  --root-disk "$root_disk"
+)
+if [[ -n "$firmware" ]]; then
+  create_args+=(--firmware "$firmware")
+else
+  create_args+=(--kernel "$kernel" --initrd "$initrd")
+fi
+
+"${create_args[@]}" >/dev/null
 
 "$kumabox_path" \
   --root-dir "$root_dir" \
