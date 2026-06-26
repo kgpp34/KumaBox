@@ -31,6 +31,9 @@ func TestCreateInspectList(t *testing.T) {
 	if !filepath.IsAbs(rec.RootDisk) {
 		t.Fatalf("root disk is not absolute: %s", rec.RootDisk)
 	}
+	if rec.Config != filepath.Join(rec.RunDir, "cloud-hypervisor.json") {
+		t.Fatalf("config path = %s", rec.Config)
+	}
 
 	got, err := store.Inspect("p0-store")
 	if err != nil {
@@ -51,6 +54,29 @@ func TestCreateInspectList(t *testing.T) {
 	indexPath := filepath.Join(dir, "data", "backends", backendCloudHypervisor, "index.json")
 	if _, err := os.Stat(indexPath); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDeleteRemovesRecordAndName(t *testing.T) {
+	dir := t.TempDir()
+	store := New(filepath.Join(dir, "data"))
+	rec, err := store.Create(CreateRequest{
+		Name:     "delete-me",
+		RootDisk: "base.qcow2",
+		Kernel:   "vmlinuz",
+		Initrd:   "initrd.img",
+		RunDir:   filepath.Join(dir, "run"),
+		LogDir:   filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Delete(rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Inspect("delete-me"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("inspect after delete error = %v", err)
 	}
 }
 

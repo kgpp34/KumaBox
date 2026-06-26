@@ -94,6 +94,21 @@ func (s *Store) Inspect(ref string) (*VMRecord, error) {
 	return rec, nil
 }
 
+func (s *Store) Delete(ref string) error {
+	return s.update(func(idx *vmIndex) error {
+		id, err := idx.resolve(ref)
+		if err != nil {
+			return err
+		}
+		rec := idx.VMs[id]
+		if rec != nil {
+			delete(idx.Names, rec.Name)
+		}
+		delete(idx.VMs, id)
+		return nil
+	})
+}
+
 func (s *Store) List() ([]*VMRecord, error) {
 	var records []*VMRecord
 	err := s.withIndex(func(idx *vmIndex) error {

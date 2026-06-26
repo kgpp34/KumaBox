@@ -98,15 +98,22 @@ func TestCreateInspectAndPSCommands(t *testing.T) {
 	}
 
 	var created struct {
-		ID    string `json:"id"`
-		Name  string `json:"name"`
-		State string `json:"state"`
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		State  string `json:"state"`
+		Config string `json:"config"`
 	}
 	if err := json.Unmarshal(createOut.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
 	if created.ID == "" || created.Name != "p0-store" || created.State != "created" {
 		t.Fatalf("unexpected create output: %+v", created)
+	}
+	if created.Config == "" {
+		t.Fatal("expected rendered backend config path")
+	}
+	if _, err := os.Stat(created.Config); err != nil {
+		t.Fatal(err)
 	}
 
 	inspect := NewRootCommand()

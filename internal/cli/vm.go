@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kumabox/kumabox/internal/config"
+	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -25,8 +26,8 @@ func newCreateCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 
-			store := vmstore.New(cfg.Runtime.RootDir)
-			rec, err := store.Create(vmstore.CreateRequest{
+			rt := kbruntime.New(cfg)
+			rec, err := rt.CreateVM(vmstore.CreateRequest{
 				Name:     name,
 				RootDisk: rootDisk,
 				Kernel:   kernel,

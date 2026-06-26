@@ -19,6 +19,7 @@ type VMRecord struct {
 	Initrd    string    `json:"initrd"`
 	RunDir    string    `json:"runDir"`
 	LogDir    string    `json:"logDir"`
+	Config    string    `json:"config"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
@@ -36,6 +37,14 @@ func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
 	if err != nil {
 		return nil, err
 	}
+	runDir, err := normalizePath(filepath.Join(req.RunDir, "vms", id))
+	if err != nil {
+		return nil, err
+	}
+	logDir, err := normalizePath(filepath.Join(req.LogDir, "vms", id))
+	if err != nil {
+		return nil, err
+	}
 
 	return &VMRecord{
 		ID:        id,
@@ -45,8 +54,9 @@ func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
 		RootDisk:  rootDisk,
 		Kernel:    kernel,
 		Initrd:    initrd,
-		RunDir:    filepath.Join(req.RunDir, "vms", id),
-		LogDir:    filepath.Join(req.LogDir, "vms", id),
+		RunDir:    runDir,
+		LogDir:    logDir,
+		Config:    filepath.Join(runDir, "cloud-hypervisor.json"),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}, nil
