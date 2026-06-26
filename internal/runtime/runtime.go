@@ -1,20 +1,25 @@
 package runtime
 
 import (
+	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/backend/cloudhypervisor"
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
 type Runtime struct {
-	cfg   config.Config
-	store *vmstore.Store
+	store    *vmstore.Store
+	renderer backend.Renderer
 }
 
 func New(cfg config.Config) *Runtime {
+	return NewWithRenderer(vmstore.New(cfg.Runtime.RootDir), cloudhypervisor.NewRenderer(cfg))
+}
+
+func NewWithRenderer(store *vmstore.Store, renderer backend.Renderer) *Runtime {
 	return &Runtime{
-		cfg:   cfg,
-		store: vmstore.New(cfg.Runtime.RootDir),
+		store:    store,
+		renderer: renderer,
 	}
 }
 
@@ -23,7 +28,7 @@ func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error)
 	if err != nil {
 		return nil, err
 	}
-	if err := cloudhypervisor.RenderConfig(r.cfg, rec); err != nil {
+	if err := r.renderer.RenderConfig(rec); err != nil {
 		_ = r.store.Delete(rec.ID)
 		return nil, err
 	}

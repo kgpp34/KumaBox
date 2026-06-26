@@ -11,6 +11,8 @@ import (
 	"sort"
 	"syscall"
 	"time"
+
+	"github.com/kumabox/kumabox/internal/fileutil"
 )
 
 type Store struct {
@@ -178,36 +180,8 @@ func (s *Store) load() (*vmIndex, error) {
 }
 
 func (s *Store) write(idx *vmIndex) error {
-	if err := os.MkdirAll(filepath.Dir(s.indexPath), 0o755); err != nil {
-		return fmt.Errorf("create VM index dir: %w", err)
-	}
-
-	raw, err := json.MarshalIndent(idx, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal VM index: %w", err)
-	}
-	raw = append(raw, '\n')
-
-	tmp, err := os.CreateTemp(filepath.Dir(s.indexPath), ".index-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create VM index temp file: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath) //nolint:errcheck
-
-	if _, err := tmp.Write(raw); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write VM index temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("sync VM index temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close VM index temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, s.indexPath); err != nil {
-		return fmt.Errorf("commit VM index: %w", err)
+	if err := fileutil.WriteJSONAtomic(s.indexPath, idx, ".index-*.tmp"); err != nil {
+		return fmt.Errorf("write VM index: %w", err)
 	}
 	return nil
 }

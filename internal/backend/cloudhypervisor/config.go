@@ -1,12 +1,12 @@
 package cloudhypervisor
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/kumabox/kumabox/internal/config"
+	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -54,7 +54,15 @@ type Annotations struct {
 	VMName string `json:"vmName"`
 }
 
-func RenderConfig(cfg config.Config, rec *vmstore.VMRecord) error {
+type Renderer struct {
+	cfg config.Config
+}
+
+func NewRenderer(cfg config.Config) Renderer {
+	return Renderer{cfg: cfg}
+}
+
+func (r Renderer) RenderConfig(rec *vmstore.VMRecord) error {
 	if rec == nil {
 		return fmt.Errorf("VM record is nil")
 	}
@@ -65,33 +73,9 @@ func RenderConfig(cfg config.Config, rec *vmstore.VMRecord) error {
 		return fmt.Errorf("create VM log dir: %w", err)
 	}
 
-	rendered := NewConfig(cfg, rec)
-	raw, err := json.MarshalIndent(rendered, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal Cloud Hypervisor config: %w", err)
-	}
-	raw = append(raw, '\n')
-
-	tmp, err := os.CreateTemp(filepath.Dir(rec.Config), ".cloud-hypervisor-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create Cloud Hypervisor config temp file: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath) //nolint:errcheck
-
-	if _, err := tmp.Write(raw); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write Cloud Hypervisor config temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("sync Cloud Hypervisor config temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close Cloud Hypervisor config temp file: %w", err)
-	}
-	if err := os.Rename(tmpPath, rec.Config); err != nil {
-		return fmt.Errorf("commit Cloud Hypervisor config: %w", err)
+	rendered := NewConfig(r.cfg, rec)
+	if err := fileutil.WriteJSONAtomic(rec.Config, rendered, ".cloud-hypervisor-*.tmp"); err != nil {
+		return fmt.Errorf("write Cloud Hypervisor config: %w", err)
 	}
 	return nil
 }

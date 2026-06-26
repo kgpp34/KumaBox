@@ -26,7 +26,7 @@ func TestRenderConfigWritesResolvedPaths(t *testing.T) {
 	cfg := config.Default()
 	cfg.Backend.CloudHypervisor.Binary = "/usr/local/bin/cloud-hypervisor"
 
-	if err := RenderConfig(cfg, rec); err != nil {
+	if err := NewRenderer(cfg).RenderConfig(rec); err != nil {
 		t.Fatal(err)
 	}
 
