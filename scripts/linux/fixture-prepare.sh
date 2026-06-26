@@ -7,6 +7,9 @@ root_disk=""
 kernel=""
 initrd=""
 firmware=""
+source_root_disk=""
+target_root_disk=""
+link_root_disk=0
 
 ubuntu_series="jammy"
 fw_version="0.5.0"
@@ -18,11 +21,17 @@ Usage: scripts/linux/fixture-prepare.sh --mode MODE [options]
 Modes:
   verify-direct    Verify direct-boot fixtures for current P0-05 start path.
   download-uefi    Download UEFI/cloud-image fixtures for future cloud-image boot.
+  import-uefi      Copy or link an existing cloud image into the fixture directory.
   verify-uefi      Verify downloaded UEFI/cloud-image fixtures.
 
 Options:
   --fixture-dir PATH    Fixture directory, defaults to /tmp/kumabox-p0/fixtures
   --root-disk PATH      Root disk path for verify-direct
+  --source-root-disk PATH
+                        Existing cloud image path for import-uefi
+  --target-root-disk PATH
+                        Destination cloud image path for import-uefi
+  --link                Symlink source root disk instead of copying it
   --kernel PATH         Kernel path for verify-direct
   --initrd PATH         Initrd path for verify-direct
   --firmware PATH       Firmware path for verify-uefi
@@ -63,6 +72,20 @@ while [[ $# -gt 0 ]]; do
       require_value "$1" "${2:-}"
       root_disk="$2"
       shift 2
+      ;;
+    --source-root-disk)
+      require_value "$1" "${2:-}"
+      source_root_disk="$2"
+      shift 2
+      ;;
+    --target-root-disk)
+      require_value "$1" "${2:-}"
+      target_root_disk="$2"
+      shift 2
+      ;;
+    --link)
+      link_root_disk=1
+      shift
       ;;
     --kernel)
       require_value "$1" "${2:-}"
@@ -149,6 +172,19 @@ download() {
   mv "$tmp" "$dest"
 }
 
+place_root_disk() {
+  local src="$1"
+  local dest="$2"
+
+  need_file "source root disk" "$src"
+  mkdir -p "$(dirname "$dest")"
+  if [[ "$link_root_disk" -eq 1 ]]; then
+    ln -sfn "$src" "$dest"
+    return
+  fi
+  cp -f "$src" "$dest"
+}
+
 write_manifest() {
   local path="$1"
   local root="$2"
@@ -187,6 +223,28 @@ case "$mode" in
     write_manifest "$fixture_dir/uefi-fixtures.json" "$root_disk" "$firmware"
 
     echo "UEFI/cloud-image fixtures downloaded"
+    echo "root disk: $root_disk"
+    echo "firmware:  $firmware"
+    echo "manifest:  $fixture_dir/uefi-fixtures.json"
+    ;;
+
+  import-uefi)
+    detect_download_arch
+    mkdir -p "$fixture_dir"
+    if [[ -n "$target_root_disk" ]]; then
+      root_disk="$target_root_disk"
+    else
+      root_disk="$fixture_dir/${ubuntu_series}-server-cloudimg-${ubuntu_arch}.img"
+    fi
+    if [[ -z "$firmware" ]]; then
+      firmware="$fixture_dir/CLOUDHV.fd"
+    fi
+
+    place_root_disk "$source_root_disk" "$root_disk"
+    need_file "firmware" "$firmware"
+    write_manifest "$fixture_dir/uefi-fixtures.json" "$root_disk" "$firmware"
+
+    echo "UEFI/cloud-image fixtures imported"
     echo "root disk: $root_disk"
     echo "firmware:  $firmware"
     echo "manifest:  $fixture_dir/uefi-fixtures.json"
