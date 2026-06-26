@@ -36,9 +36,10 @@ type CloudHypervisorConfig struct {
 }
 
 type Overrides struct {
-	RootDir string
-	RunDir  string
-	LogDir  string
+	RootDir            string
+	RunDir             string
+	LogDir             string
+	CloudHypervisorBin string
 }
 
 func Load(path string, overrides Overrides) (Config, error) {
@@ -95,6 +96,9 @@ func applyOverrides(cfg *Config, overrides Overrides) {
 	}
 	if overrides.LogDir != "" {
 		cfg.Runtime.LogDir = overrides.LogDir
+	}
+	if overrides.CloudHypervisorBin != "" {
+		cfg.Backend.CloudHypervisor.Binary = overrides.CloudHypervisorBin
 	}
 }
 

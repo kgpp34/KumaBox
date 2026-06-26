@@ -13,18 +13,19 @@ import (
 const defaultKernelCmdline = "console=ttyS0 reboot=k panic=1 root=/dev/vda rw"
 
 type Config struct {
-	Binary      string      `json:"binary"`
-	APISocket   string      `json:"apiSocket"`
-	PIDFile     string      `json:"pidFile"`
-	StdoutLog   string      `json:"stdoutLog"`
-	StderrLog   string      `json:"stderrLog"`
-	Kernel      Kernel      `json:"kernel"`
-	Initramfs   Initramfs   `json:"initramfs"`
-	Disks       []Disk      `json:"disks"`
-	Serial      Serial      `json:"serial"`
-	Console     Console     `json:"console"`
-	Args        []string    `json:"args"`
-	Annotations Annotations `json:"annotations"`
+	Binary       string      `json:"binary"`
+	APISocket    string      `json:"apiSocket"`
+	APITimeoutMs int         `json:"apiTimeoutMs"`
+	PIDFile      string      `json:"pidFile"`
+	StdoutLog    string      `json:"stdoutLog"`
+	StderrLog    string      `json:"stderrLog"`
+	Kernel       Kernel      `json:"kernel"`
+	Initramfs    Initramfs   `json:"initramfs"`
+	Disks        []Disk      `json:"disks"`
+	Serial       Serial      `json:"serial"`
+	Console      Console     `json:"console"`
+	Args         []string    `json:"args"`
+	Annotations  Annotations `json:"annotations"`
 }
 
 type Kernel struct {
@@ -97,11 +98,12 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 	}
 
 	return Config{
-		Binary:    cfg.Backend.CloudHypervisor.Binary,
-		APISocket: apiSocket,
-		PIDFile:   filepath.Join(rec.RunDir, "ch.pid"),
-		StdoutLog: stdoutLog,
-		StderrLog: stderrLog,
+		Binary:       cfg.Backend.CloudHypervisor.Binary,
+		APISocket:    apiSocket,
+		APITimeoutMs: cfg.Backend.CloudHypervisor.APISocketTimeoutMS,
+		PIDFile:      filepath.Join(rec.RunDir, "ch.pid"),
+		StdoutLog:    stdoutLog,
+		StderrLog:    stderrLog,
 		Kernel: Kernel{
 			Path:    rec.Kernel,
 			Cmdline: defaultKernelCmdline,

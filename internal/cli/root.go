@@ -7,10 +7,11 @@ import (
 )
 
 type rootOptions struct {
-	configPath string
-	rootDir    string
-	runDir     string
-	logDir     string
+	configPath         string
+	rootDir            string
+	runDir             string
+	logDir             string
+	cloudHypervisorBin string
 }
 
 func NewRootCommand() *cobra.Command {
@@ -27,10 +28,13 @@ func NewRootCommand() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&opts.rootDir, "root-dir", "", "persistent state directory")
 	cmd.PersistentFlags().StringVar(&opts.runDir, "run-dir", "", "runtime directory for pid and sockets")
 	cmd.PersistentFlags().StringVar(&opts.logDir, "log-dir", "", "log directory")
+	cmd.PersistentFlags().StringVar(&opts.cloudHypervisorBin, "cloud-hypervisor-bin", "", "cloud-hypervisor binary path")
 
 	cmd.AddCommand(newVersionCommand())
 	cmd.AddCommand(newDoctorCommand(opts))
 	cmd.AddCommand(newCreateCommand(opts))
+	cmd.AddCommand(newRunCommand(opts))
+	cmd.AddCommand(newStartCommand(opts))
 	cmd.AddCommand(newInspectCommand(opts))
 	cmd.AddCommand(newPSCommand(opts))
 	return cmd
@@ -38,9 +42,10 @@ func NewRootCommand() *cobra.Command {
 
 func loadConfig(opts *rootOptions) (config.Config, error) {
 	overrides := config.Overrides{
-		RootDir: opts.rootDir,
-		RunDir:  opts.runDir,
-		LogDir:  opts.logDir,
+		RootDir:            opts.rootDir,
+		RunDir:             opts.runDir,
+		LogDir:             opts.logDir,
+		CloudHypervisorBin: opts.cloudHypervisorBin,
 	}
 	return config.Load(opts.configPath, overrides)
 }

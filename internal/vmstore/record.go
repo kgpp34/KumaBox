@@ -7,21 +7,29 @@ import (
 
 type VMState string
 
-const StateCreated VMState = "created"
+const (
+	StateCreated VMState = "created"
+	StateRunning VMState = "running"
+	StateError   VMState = "error"
+)
 
 type VMRecord struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Backend   string    `json:"backend"`
-	State     VMState   `json:"state"`
-	RootDisk  string    `json:"rootDisk"`
-	Kernel    string    `json:"kernel"`
-	Initrd    string    `json:"initrd"`
-	RunDir    string    `json:"runDir"`
-	LogDir    string    `json:"logDir"`
-	Config    string    `json:"config"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Backend   string     `json:"backend"`
+	State     VMState    `json:"state"`
+	PID       int        `json:"pid,omitempty"`
+	APISocket string     `json:"apiSocket,omitempty"`
+	Error     string     `json:"error,omitempty"`
+	RootDisk  string     `json:"rootDisk"`
+	Kernel    string     `json:"kernel"`
+	Initrd    string     `json:"initrd"`
+	RunDir    string     `json:"runDir"`
+	LogDir    string     `json:"logDir"`
+	Config    string     `json:"config"`
+	CreatedAt time.Time  `json:"createdAt"`
+	UpdatedAt time.Time  `json:"updatedAt"`
+	StartedAt *time.Time `json:"startedAt,omitempty"`
 }
 
 func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {

@@ -24,7 +24,10 @@ stop_timeout_ms = 5678
 		t.Fatal(err)
 	}
 
-	cfg, err := Load(path, Overrides{RootDir: "/from-flag/root"})
+	cfg, err := Load(path, Overrides{
+		RootDir:            "/from-flag/root",
+		CloudHypervisorBin: "/from-flag/cloud-hypervisor",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +38,7 @@ stop_timeout_ms = 5678
 	if cfg.Runtime.RunDir != "/from-file/run" {
 		t.Fatalf("run dir = %q", cfg.Runtime.RunDir)
 	}
-	if cfg.Backend.CloudHypervisor.Binary != "/usr/local/bin/cloud-hypervisor" {
+	if cfg.Backend.CloudHypervisor.Binary != "/from-flag/cloud-hypervisor" {
 		t.Fatalf("cloud-hypervisor binary = %q", cfg.Backend.CloudHypervisor.Binary)
 	}
 }

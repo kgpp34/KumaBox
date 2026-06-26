@@ -111,6 +111,51 @@ func (s *Store) Delete(ref string) error {
 	})
 }
 
+func (s *Store) MarkRunning(ref string, pid int, apiSocket string) (*VMRecord, error) {
+	var updated *VMRecord
+	err := s.update(func(idx *vmIndex) error {
+		id, err := idx.resolve(ref)
+		if err != nil {
+			return err
+		}
+		rec := idx.VMs[id]
+		now := time.Now().UTC()
+		rec.State = StateRunning
+		rec.PID = pid
+		rec.APISocket = apiSocket
+		rec.Error = ""
+		rec.StartedAt = &now
+		rec.UpdatedAt = now
+		updated = cloneRecord(rec)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+func (s *Store) MarkError(ref string, message string) (*VMRecord, error) {
+	var updated *VMRecord
+	err := s.update(func(idx *vmIndex) error {
+		id, err := idx.resolve(ref)
+		if err != nil {
+			return err
+		}
+		rec := idx.VMs[id]
+		now := time.Now().UTC()
+		rec.State = StateError
+		rec.Error = message
+		rec.UpdatedAt = now
+		updated = cloneRecord(rec)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
 func (s *Store) List() ([]*VMRecord, error) {
 	var records []*VMRecord
 	err := s.withIndex(func(idx *vmIndex) error {

@@ -85,6 +85,7 @@ func TestCreateInspectAndPSCommands(t *testing.T) {
 		"--root-dir", rootDir,
 		"--run-dir", runDir,
 		"--log-dir", logDir,
+		"--cloud-hypervisor-bin", "/custom/bin/cloud-hypervisor",
 		"create",
 		"--name", "p0-store",
 		"--root-disk", "fixtures/base.qcow2",
@@ -114,6 +115,19 @@ func TestCreateInspectAndPSCommands(t *testing.T) {
 	}
 	if _, err := os.Stat(created.Config); err != nil {
 		t.Fatal(err)
+	}
+	rawConfig, err := os.ReadFile(created.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var renderedConfig struct {
+		Binary string `json:"binary"`
+	}
+	if err := json.Unmarshal(rawConfig, &renderedConfig); err != nil {
+		t.Fatal(err)
+	}
+	if renderedConfig.Binary != "/custom/bin/cloud-hypervisor" {
+		t.Fatalf("rendered binary = %s", renderedConfig.Binary)
 	}
 
 	inspect := NewRootCommand()

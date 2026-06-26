@@ -9,10 +9,7 @@ import (
 )
 
 func newCreateCommand(opts *rootOptions) *cobra.Command {
-	var name string
-	var rootDisk string
-	var kernel string
-	var initrd string
+	flags := createVMFlags{}
 
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -27,14 +24,7 @@ func newCreateCommand(opts *rootOptions) *cobra.Command {
 			}
 
 			rt := kbruntime.New(cfg)
-			rec, err := rt.CreateVM(vmstore.CreateRequest{
-				Name:     name,
-				RootDisk: rootDisk,
-				Kernel:   kernel,
-				Initrd:   initrd,
-				RunDir:   cfg.Runtime.RunDir,
-				LogDir:   cfg.Runtime.LogDir,
-			})
+			rec, err := rt.CreateVM(newCreateRequest(flags, cfg))
 			if err != nil {
 				return err
 			}
@@ -42,14 +32,56 @@ func newCreateCommand(opts *rootOptions) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&name, "name", "", "VM name")
-	cmd.Flags().StringVar(&rootDisk, "root-disk", "", "root disk path")
-	cmd.Flags().StringVar(&kernel, "kernel", "", "kernel image path")
-	cmd.Flags().StringVar(&initrd, "initrd", "", "initrd image path")
-	_ = cmd.MarkFlagRequired("name")
-	_ = cmd.MarkFlagRequired("root-disk")
-	_ = cmd.MarkFlagRequired("kernel")
-	_ = cmd.MarkFlagRequired("initrd")
+	addCreateVMFlags(cmd, &flags)
+	return cmd
+}
+
+func newRunCommand(opts *rootOptions) *cobra.Command {
+	flags := createVMFlags{}
+
+	cmd := &cobra.Command{
+		Use:   "run",
+		Short: "Create and start a VM",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			if err := config.EnsureRuntimeDirs(cfg); err != nil {
+				return err
+			}
+
+			rt := kbruntime.New(cfg)
+			rec, err := rt.RunVM(newCreateRequest(flags, cfg))
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), rec)
+		},
+	}
+
+	addCreateVMFlags(cmd, &flags)
+	return cmd
+}
+
+func newStartCommand(opts *rootOptions) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "start VM",
+		Short: "Start a VM",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			rt := kbruntime.New(cfg)
+			rec, err := rt.StartVM(args[0])
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), rec)
+		},
+	}
 	return cmd
 }
 
@@ -78,6 +110,35 @@ func newInspectCommand(opts *rootOptions) *cobra.Command {
 
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
 	return cmd
+}
+
+type createVMFlags struct {
+	name     string
+	rootDisk string
+	kernel   string
+	initrd   string
+}
+
+func addCreateVMFlags(cmd *cobra.Command, flags *createVMFlags) {
+	cmd.Flags().StringVar(&flags.name, "name", "", "VM name")
+	cmd.Flags().StringVar(&flags.rootDisk, "root-disk", "", "root disk path")
+	cmd.Flags().StringVar(&flags.kernel, "kernel", "", "kernel image path")
+	cmd.Flags().StringVar(&flags.initrd, "initrd", "", "initrd image path")
+	_ = cmd.MarkFlagRequired("name")
+	_ = cmd.MarkFlagRequired("root-disk")
+	_ = cmd.MarkFlagRequired("kernel")
+	_ = cmd.MarkFlagRequired("initrd")
+}
+
+func newCreateRequest(flags createVMFlags, cfg config.Config) vmstore.CreateRequest {
+	return vmstore.CreateRequest{
+		Name:     flags.name,
+		RootDisk: flags.rootDisk,
+		Kernel:   flags.kernel,
+		Initrd:   flags.initrd,
+		RunDir:   cfg.Runtime.RunDir,
+		LogDir:   cfg.Runtime.LogDir,
+	}
 }
 
 func newPSCommand(opts *rootOptions) *cobra.Command {
