@@ -97,7 +97,8 @@ func newInspectCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rec, err := vmstore.New(cfg.Runtime.RootDir).Inspect(args[0])
+			rt := kbruntime.New(cfg)
+			rec, err := rt.InspectVM(args[0])
 			if err != nil {
 				return err
 			}
@@ -153,7 +154,8 @@ func newPSCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			records, err := vmstore.New(cfg.Runtime.RootDir).List()
+			rt := kbruntime.New(cfg)
+			records, err := rt.ListVMs()
 			if err != nil {
 				return err
 			}

@@ -13,24 +13,43 @@ const (
 	StateError   VMState = "error"
 )
 
+type ObservedState string
+
+const (
+	ObservedStateCreated ObservedState = "CREATED"
+	ObservedStateRunning ObservedState = "RUNNING"
+	ObservedStateStopped ObservedState = "STOPPED"
+	ObservedStateFailed  ObservedState = "FAILED"
+	ObservedStateUnknown ObservedState = "UNKNOWN"
+)
+
+type Observation struct {
+	State     ObservedState `json:"state"`
+	Reason    string        `json:"reason,omitempty"`
+	CheckedAt time.Time     `json:"checkedAt"`
+}
+
 type VMRecord struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	Backend   string     `json:"backend"`
-	State     VMState    `json:"state"`
-	PID       int        `json:"pid,omitempty"`
-	APISocket string     `json:"apiSocket,omitempty"`
-	Error     string     `json:"error,omitempty"`
-	RootDisk  string     `json:"rootDisk"`
-	Kernel    string     `json:"kernel,omitempty"`
-	Initrd    string     `json:"initrd,omitempty"`
-	Firmware  string     `json:"firmware,omitempty"`
-	RunDir    string     `json:"runDir"`
-	LogDir    string     `json:"logDir"`
-	Config    string     `json:"config"`
-	CreatedAt time.Time  `json:"createdAt"`
-	UpdatedAt time.Time  `json:"updatedAt"`
-	StartedAt *time.Time `json:"startedAt,omitempty"`
+	ID             string        `json:"id"`
+	Name           string        `json:"name"`
+	Backend        string        `json:"backend"`
+	State          VMState       `json:"state"`
+	ObservedState  ObservedState `json:"observedState,omitempty"`
+	ObservedReason string        `json:"observedReason,omitempty"`
+	ObservedAt     *time.Time    `json:"observedAt,omitempty"`
+	PID            int           `json:"pid,omitempty"`
+	APISocket      string        `json:"apiSocket,omitempty"`
+	Error          string        `json:"error,omitempty"`
+	RootDisk       string        `json:"rootDisk"`
+	Kernel         string        `json:"kernel,omitempty"`
+	Initrd         string        `json:"initrd,omitempty"`
+	Firmware       string        `json:"firmware,omitempty"`
+	RunDir         string        `json:"runDir"`
+	LogDir         string        `json:"logDir"`
+	Config         string        `json:"config"`
+	CreatedAt      time.Time     `json:"createdAt"`
+	UpdatedAt      time.Time     `json:"updatedAt"`
+	StartedAt      *time.Time    `json:"startedAt,omitempty"`
 }
 
 func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
@@ -81,6 +100,14 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 		return nil
 	}
 	copied := *rec
+	if rec.ObservedAt != nil {
+		observedAt := *rec.ObservedAt
+		copied.ObservedAt = &observedAt
+	}
+	if rec.StartedAt != nil {
+		startedAt := *rec.StartedAt
+		copied.StartedAt = &startedAt
+	}
 	return &copied
 }
 

@@ -29,11 +29,15 @@ func writeDoctorText(w io.Writer, report doctor.Report) {
 
 func writeVMTable(w io.Writer, records []*vmstore.VMRecord) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "ID\tNAME\tSTATE\tBACKEND"); err != nil {
+	if _, err := fmt.Fprintln(tw, "ID\tNAME\tSTATE\tOBSERVED\tBACKEND"); err != nil {
 		return err
 	}
 	for _, rec := range records {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", rec.ID, rec.Name, rec.State, rec.Backend); err != nil {
+		observed := string(rec.ObservedState)
+		if observed == "" {
+			observed = "-"
+		}
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", rec.ID, rec.Name, rec.State, observed, rec.Backend); err != nil {
 			return err
 		}
 	}

@@ -130,10 +130,3 @@ func waitForUnixSocket(path string, pid int, timeout time.Duration) error {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
-
-func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	return syscall.Kill(pid, 0) == nil
-}

@@ -27,3 +27,7 @@ func (b Backend) RenderConfig(rec *vmstore.VMRecord) error {
 func (b Backend) StartVM(rec *vmstore.VMRecord) (*backend.StartResult, error) {
 	return b.starter.StartConfig(rec.Config)
 }
+
+func (b Backend) ObserveVM(rec *vmstore.VMRecord) vmstore.Observation {
+	return ObserveVM(rec)
+}

@@ -1,6 +1,12 @@
 package runtime
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/backend/cloudhypervisor"
 	"github.com/kumabox/kumabox/internal/config"
@@ -32,7 +38,7 @@ func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error)
 		_ = r.store.Delete(rec.ID)
 		return nil, err
 	}
-	return rec, nil
+	return r.applyObservation(rec), nil
 }
 
 func (r *Runtime) StartVM(ref string) (*vmstore.VMRecord, error) {
@@ -48,7 +54,11 @@ func (r *Runtime) StartVM(ref string) (*vmstore.VMRecord, error) {
 		}
 		return nil, err
 	}
-	return r.store.MarkRunning(rec.ID, result.PID, result.APISocket)
+	started, err := r.store.MarkRunning(rec.ID, result.PID, result.APISocket)
+	if err != nil {
+		return nil, err
+	}
+	return r.applyObservation(started), nil
 }
 
 func (r *Runtime) RunVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
@@ -61,4 +71,81 @@ func (r *Runtime) RunVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
 		return nil, err
 	}
 	return started, nil
+}
+
+func (r *Runtime) InspectVM(ref string) (*vmstore.VMRecord, error) {
+	rec, err := r.store.Inspect(ref)
+	if err != nil {
+		return nil, err
+	}
+	return r.applyObservation(rec), nil
+}
+
+func (r *Runtime) ListVMs() ([]*vmstore.VMRecord, error) {
+	records, err := r.store.List()
+	if err != nil {
+		return nil, err
+	}
+	for _, rec := range records {
+		r.applyObservation(rec)
+	}
+	return records, nil
+}
+
+func (r *Runtime) applyObservation(rec *vmstore.VMRecord) *vmstore.VMRecord {
+	if rec == nil {
+		return nil
+	}
+	obs := r.backend.ObserveVM(rec)
+	rec.ObservedState = obs.State
+	rec.ObservedReason = obs.Reason
+	rec.ObservedAt = &obs.CheckedAt
+	if rec.State == vmstore.StateRunning && obs.State != vmstore.ObservedStateRunning {
+		_ = writeBackendExitEvent(rec, obs)
+	}
+	return rec
+}
+
+type eventRecord struct {
+	Time          time.Time             `json:"time"`
+	Type          string                `json:"type"`
+	VMID          string                `json:"vmId"`
+	VMName        string                `json:"vmName"`
+	State         vmstore.VMState       `json:"state"`
+	ObservedState vmstore.ObservedState `json:"observedState"`
+	Reason        string                `json:"reason,omitempty"`
+	PID           int                   `json:"pid,omitempty"`
+	APISocket     string                `json:"apiSocket,omitempty"`
+}
+
+func writeBackendExitEvent(rec *vmstore.VMRecord, obs vmstore.Observation) error {
+	if rec.LogDir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(rec.LogDir, 0o755); err != nil {
+		return fmt.Errorf("create VM log dir: %w", err)
+	}
+
+	path := filepath.Join(rec.LogDir, "events.log")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("open events log: %w", err)
+	}
+	defer file.Close() //nolint:errcheck
+
+	event := eventRecord{
+		Time:          obs.CheckedAt,
+		Type:          "backend.exit.detected",
+		VMID:          rec.ID,
+		VMName:        rec.Name,
+		State:         rec.State,
+		ObservedState: obs.State,
+		Reason:        obs.Reason,
+		PID:           rec.PID,
+		APISocket:     rec.APISocket,
+	}
+	if err := json.NewEncoder(file).Encode(event); err != nil {
+		return fmt.Errorf("write events log: %w", err)
+	}
+	return nil
 }
