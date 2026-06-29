@@ -328,3 +328,70 @@ func TestLogsCommandTailsVMLogs(t *testing.T) {
 		t.Fatalf("logs output did not tail stderr: %s", vmmGot)
 	}
 }
+
+func TestDeleteCommandRemovesVMRecord(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	runDir := filepath.Join(dir, "run")
+	logDir := filepath.Join(dir, "log")
+	rootDisk := filepath.Join(dir, "fixtures", "base.qcow2")
+	if err := os.MkdirAll(filepath.Dir(rootDisk), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rootDisk, []byte("root disk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	create := NewRootCommand()
+	create.SetArgs([]string{
+		"--root-dir", rootDir,
+		"--run-dir", runDir,
+		"--log-dir", logDir,
+		"create",
+		"--name", "delete-cli",
+		"--root-disk", rootDisk,
+		"--kernel", "fixtures/vmlinuz",
+		"--initrd", "fixtures/initrd.img",
+	})
+	if err := create.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	del := NewRootCommand()
+	del.SetArgs([]string{"--root-dir", rootDir, "delete", "delete-cli"})
+	var delOut bytes.Buffer
+	del.SetOut(&delOut)
+	if err := del.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var deleted struct {
+		Name     string `json:"name"`
+		RootDisk string `json:"rootDisk"`
+	}
+	if err := json.Unmarshal(delOut.Bytes(), &deleted); err != nil {
+		t.Fatal(err)
+	}
+	if deleted.Name != "delete-cli" || deleted.RootDisk != rootDisk {
+		t.Fatalf("deleted payload = %+v", deleted)
+	}
+	if _, err := os.Stat(rootDisk); err != nil {
+		t.Fatalf("root disk should remain: %v", err)
+	}
+
+	ps := NewRootCommand()
+	ps.SetArgs([]string{"--root-dir", rootDir, "ps", "--json"})
+	var psOut bytes.Buffer
+	ps.SetOut(&psOut)
+	if err := ps.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var records []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(psOut.Bytes(), &records); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("expected no records after delete, got %+v", records)
+	}
+}

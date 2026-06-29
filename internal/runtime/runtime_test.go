@@ -363,3 +363,128 @@ func TestLogsVMTailsKnownLogFiles(t *testing.T) {
 		t.Fatalf("stderr tail = %+v", vmmLogs.Files[1])
 	}
 }
+
+func TestDeleteVMRemovesRecordAndManagedDirsOnly(t *testing.T) {
+	dir := t.TempDir()
+	rootDisk := filepath.Join(dir, "fixtures", "base.qcow2")
+	if err := os.MkdirAll(filepath.Dir(rootDisk), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rootDisk, []byte("root disk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := vmstore.New(filepath.Join(dir, "data"))
+	rt := NewWithBackend(
+		store,
+		backendFake{
+			render: func(*vmstore.VMRecord) error { return nil },
+		},
+	)
+
+	rec, err := rt.CreateVM(vmstore.CreateRequest{
+		Name:     "delete-me",
+		RootDisk: rootDisk,
+		Kernel:   "vmlinuz",
+		Initrd:   "initrd.img",
+		RunDir:   filepath.Join(dir, "run"),
+		LogDir:   filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(rec.RunDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(rec.LogDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := rt.DeleteVM("delete-me", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted.ID != rec.ID {
+		t.Fatalf("deleted ID = %s, want %s", deleted.ID, rec.ID)
+	}
+	if _, err := store.Inspect(rec.ID); !errors.Is(err, vmstore.ErrNotFound) {
+		t.Fatalf("inspect after delete error = %v", err)
+	}
+	if _, err := os.Stat(rootDisk); err != nil {
+		t.Fatalf("root disk should remain: %v", err)
+	}
+	if _, err := os.Stat(rec.RunDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("run dir still exists or unexpected error: %v", err)
+	}
+	if _, err := os.Stat(rec.LogDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("log dir still exists or unexpected error: %v", err)
+	}
+}
+
+func TestDeleteVMRequiresForceForRunningVM(t *testing.T) {
+	dir := t.TempDir()
+	store := vmstore.New(filepath.Join(dir, "data"))
+	stopCalled := false
+	rt := NewWithBackend(
+		store,
+		backendFake{
+			render: func(*vmstore.VMRecord) error { return nil },
+			start: func(*vmstore.VMRecord) (*backend.StartResult, error) {
+				return &backend.StartResult{PID: 12345, APISocket: filepath.Join(dir, "run", "ch.sock")}, nil
+			},
+			stop: func(*vmstore.VMRecord, backend.StopOptions) (*backend.StopResult, error) {
+				stopCalled = true
+				return &backend.StopResult{}, nil
+			},
+			observe: func(rec *vmstore.VMRecord) vmstore.Observation {
+				state := vmstore.ObservedStateCreated
+				if rec.State == vmstore.StateRunning {
+					state = vmstore.ObservedStateRunning
+				}
+				if rec.State == vmstore.StateStopped {
+					state = vmstore.ObservedStateStopped
+				}
+				return vmstore.Observation{
+					State:     state,
+					Reason:    string(state),
+					CheckedAt: time.Now().UTC(),
+				}
+			},
+		},
+	)
+
+	rec, err := rt.CreateVM(vmstore.CreateRequest{
+		Name:     "running-delete",
+		RootDisk: "base.qcow2",
+		Kernel:   "vmlinuz",
+		Initrd:   "initrd.img",
+		RunDir:   filepath.Join(dir, "run"),
+		LogDir:   filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.StartVM(rec.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := rt.DeleteVM(rec.ID, false); err == nil {
+		t.Fatal("expected delete running VM without force to fail")
+	}
+	if stopCalled {
+		t.Fatal("stop should not be called without force")
+	}
+	if _, err := store.Inspect(rec.ID); err != nil {
+		t.Fatalf("record should remain after failed delete: %v", err)
+	}
+
+	if _, err := rt.DeleteVM(rec.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if !stopCalled {
+		t.Fatal("force delete did not stop VM")
+	}
+	if _, err := store.Inspect(rec.ID); !errors.Is(err, vmstore.ErrNotFound) {
+		t.Fatalf("inspect after force delete error = %v", err)
+	}
+}

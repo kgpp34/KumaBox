@@ -114,6 +114,36 @@ func (r *Runtime) StopVM(ref string, opts backend.StopOptions) (*vmstore.VMRecor
 	return r.applyObservation(stopped), nil
 }
 
+func (r *Runtime) DeleteVM(ref string, force bool) (*vmstore.VMRecord, error) {
+	rec, err := r.store.Inspect(ref)
+	if err != nil {
+		return nil, err
+	}
+	observed := r.applyObservation(rec)
+	if observed.ObservedState == vmstore.ObservedStateRunning {
+		if !force {
+			return nil, fmt.Errorf("VM %s is running; use --force to stop and delete", ref)
+		}
+		observed, err = r.StopVM(ref, backend.StopOptions{Force: true})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	_ = writeVMEvent(observed, "backend.delete.completed", vmstore.Observation{
+		State:     observed.ObservedState,
+		Reason:    "VM deleted",
+		CheckedAt: time.Now().UTC(),
+	})
+	if err := removeManagedDirs(observed); err != nil {
+		return nil, err
+	}
+	if err := r.store.Delete(observed.ID); err != nil {
+		return nil, err
+	}
+	return observed, nil
+}
+
 func (r *Runtime) InspectVM(ref string) (*vmstore.VMRecord, error) {
 	rec, err := r.store.Inspect(ref)
 	if err != nil {
@@ -187,6 +217,18 @@ func writeVMEvent(rec *vmstore.VMRecord, eventType string, obs vmstore.Observati
 	}
 	if err := json.NewEncoder(file).Encode(event); err != nil {
 		return fmt.Errorf("write events log: %w", err)
+	}
+	return nil
+}
+
+func removeManagedDirs(rec *vmstore.VMRecord) error {
+	for _, dir := range []string{rec.RunDir, rec.LogDir} {
+		if dir == "" {
+			continue
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("remove managed directory %s: %w", dir, err)
+		}
 	}
 	return nil
 }

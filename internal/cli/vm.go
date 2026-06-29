@@ -192,6 +192,31 @@ func newLogsCommand(opts *rootOptions) *cobra.Command {
 	return cmd
 }
 
+func newDeleteCommand(opts *rootOptions) *cobra.Command {
+	var force bool
+
+	cmd := &cobra.Command{
+		Use:   "delete VM",
+		Short: "Delete a VM",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			rt := kbruntime.New(cfg)
+			rec, err := rt.DeleteVM(args[0], force)
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), rec)
+		},
+	}
+
+	cmd.Flags().BoolVar(&force, "force", false, "stop running VM before deleting it")
+	return cmd
+}
+
 type createVMFlags struct {
 	name     string
 	rootDisk string
