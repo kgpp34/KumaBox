@@ -4,12 +4,13 @@ set -euo pipefail
 kumabox_path="./bin/kumabox"
 cloud_hypervisor_path="cloud-hypervisor"
 qemu_img_path="qemu-img"
+fixture_dir=""
 strict=0
 json_output=0
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/linux/env-check.sh [--kumabox PATH] [--cloud-hypervisor PATH] [--qemu-img PATH] [--strict] [--json]
+Usage: scripts/linux/env-check.sh [--kumabox PATH] [--cloud-hypervisor PATH] [--qemu-img PATH] [--fixture-dir PATH] [--strict] [--json]
 
 Checks the minimum P0-01 environment and verifies kumabox version output.
 USAGE
@@ -21,6 +22,14 @@ while [[ $# -gt 0 ]]; do
       kumabox_path="${2:-}"
       if [[ -z "$kumabox_path" ]]; then
         echo "--kumabox requires a path" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    --fixture-dir)
+      fixture_dir="${2:-}"
+      if [[ -z "$fixture_dir" ]]; then
+        echo "--fixture-dir requires a path" >&2
         exit 2
       fi
       shift 2
@@ -136,6 +145,31 @@ elif [[ "$strict" -eq 1 ]]; then
   add_check "qemuImg" "fail" "QEMU_IMG_MISSING" "qemu-img is missing"
 else
   add_check "qemuImg" "warn" "QEMU_IMG_MISSING" "qemu-img is missing"
+fi
+
+if [[ -n "$fixture_dir" ]]; then
+  if [[ ! -d "$fixture_dir" ]]; then
+    if [[ "$strict" -eq 1 ]]; then
+      add_check "fixtures" "fail" "FIXTURE_MISSING" "fixture directory does not exist: $fixture_dir"
+    else
+      add_check "fixtures" "warn" "FIXTURE_MISSING" "fixture directory does not exist: $fixture_dir"
+    fi
+  else
+    shopt -s nullglob
+    root_disks=("$fixture_dir"/*.img "$fixture_dir"/*.qcow2 "$fixture_dir"/*.raw)
+    firmwares=("$fixture_dir"/CLOUDHV.fd "$fixture_dir"/*.fd)
+    kernels=("$fixture_dir"/vmlinuz* "$fixture_dir"/kernel*)
+    initrds=("$fixture_dir"/initrd* "$fixture_dir"/*.initrd)
+    shopt -u nullglob
+
+    if [[ "${#root_disks[@]}" -gt 0 && ( "${#firmwares[@]}" -gt 0 || ( "${#kernels[@]}" -gt 0 && "${#initrds[@]}" -gt 0 ) ) ]]; then
+      add_check "fixtures" "pass" "" "fixture directory contains bootable P0 assets"
+    elif [[ "$strict" -eq 1 ]]; then
+      add_check "fixtures" "fail" "FIXTURE_MISSING" "fixture directory is missing root disk plus firmware or kernel/initrd"
+    else
+      add_check "fixtures" "warn" "FIXTURE_MISSING" "fixture directory is missing root disk plus firmware or kernel/initrd"
+    fi
+  fi
 fi
 
 if [[ "$json_output" -eq 1 ]]; then

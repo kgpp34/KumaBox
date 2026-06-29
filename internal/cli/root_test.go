@@ -395,3 +395,49 @@ func TestDeleteCommandRemovesVMRecord(t *testing.T) {
 		t.Fatalf("expected no records after delete, got %+v", records)
 	}
 }
+
+func TestGCDryRunCommandReportsCandidates(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	runDir := filepath.Join(dir, "run")
+	logDir := filepath.Join(dir, "log")
+	orphan := filepath.Join(runDir, "vms", "orphan")
+	if err := os.MkdirAll(orphan, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{
+		"--root-dir", rootDir,
+		"--run-dir", runDir,
+		"--log-dir", logDir,
+		"gc",
+		"--dry-run",
+		"--json",
+	})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	var payload struct {
+		DryRun     bool `json:"dryRun"`
+		Candidates []struct {
+			Path string `json:"path"`
+			Type string `json:"type"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.DryRun {
+		t.Fatal("expected dryRun true")
+	}
+	if len(payload.Candidates) != 1 {
+		t.Fatalf("candidates = %+v", payload.Candidates)
+	}
+	if payload.Candidates[0].Path != orphan || payload.Candidates[0].Type != "orphan_run_dir" {
+		t.Fatalf("candidate = %+v", payload.Candidates[0])
+	}
+}
