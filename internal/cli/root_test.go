@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kumabox/kumabox/internal/imagestore"
 )
 
 func TestVersionJSONCommand(t *testing.T) {
@@ -439,5 +441,60 @@ func TestGCDryRunCommandReportsCandidates(t *testing.T) {
 	}
 	if payload.Candidates[0].Path != orphan || payload.Candidates[0].Type != "orphan_run_dir" {
 		t.Fatalf("candidate = %+v", payload.Candidates[0])
+	}
+}
+
+func TestImageListAndInspectCommands(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+
+	listEmpty := NewRootCommand()
+	listEmpty.SetArgs([]string{"--root-dir", rootDir, "image", "ls", "--json"})
+	var emptyOut bytes.Buffer
+	listEmpty.SetOut(&emptyOut)
+	if err := listEmpty.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var empty []any
+	if err := json.Unmarshal(emptyOut.Bytes(), &empty); err != nil {
+		t.Fatal(err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("expected empty image list, got %+v", empty)
+	}
+
+	created, err := imagestore.New(rootDir).Create(imagestore.CreateRequest{
+		Name:   "ubuntu",
+		Source: imagestore.Source{Type: "test", URI: "fixtures/ubuntu.img"},
+		RootDisk: imagestore.RootDisk{
+			Path:   "base.qcow2",
+			Format: "qcow2",
+		},
+		Boot: imagestore.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
+		OS:   imagestore.OS{Family: "ubuntu", Profile: "ubuntu-cloudimg"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inspect := NewRootCommand()
+	inspect.SetArgs([]string{"--root-dir", rootDir, "image", "inspect", "ubuntu", "--json"})
+	var inspectOut bytes.Buffer
+	inspect.SetOut(&inspectOut)
+	if err := inspect.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var inspected struct {
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		RootDisk struct {
+			Format string `json:"format"`
+		} `json:"rootDisk"`
+	}
+	if err := json.Unmarshal(inspectOut.Bytes(), &inspected); err != nil {
+		t.Fatal(err)
+	}
+	if inspected.ID != created.ID || inspected.Name != "ubuntu" || inspected.RootDisk.Format != "qcow2" {
+		t.Fatalf("inspect image = %+v", inspected)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/kumabox/kumabox/internal/doctor"
+	"github.com/kumabox/kumabox/internal/imagestore"
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -39,6 +40,25 @@ func writeVMTable(w io.Writer, records []*vmstore.VMRecord) error {
 			observed = "-"
 		}
 		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", rec.ID, rec.Name, rec.State, observed, rec.Backend); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
+}
+
+func writeImageTable(w io.Writer, records []*imagestore.ImageRecord) error {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "ID\tNAME\tSOURCE\tFORMAT\tPROFILE"); err != nil {
+		return err
+	}
+	for _, rec := range records {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			rec.ID,
+			rec.Name,
+			rec.Source.Type,
+			rec.RootDisk.Format,
+			rec.OS.Profile,
+		); err != nil {
 			return err
 		}
 	}
