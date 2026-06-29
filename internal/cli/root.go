@@ -35,6 +35,7 @@ func NewRootCommand() *cobra.Command {
 	cmd.AddCommand(newCreateCommand(opts))
 	cmd.AddCommand(newRunCommand(opts))
 	cmd.AddCommand(newStartCommand(opts))
+	cmd.AddCommand(newStopCommand(opts))
 	cmd.AddCommand(newInspectCommand(opts))
 	cmd.AddCommand(newPSCommand(opts))
 	return cmd

@@ -10,6 +10,7 @@ type VMState string
 const (
 	StateCreated VMState = "created"
 	StateRunning VMState = "running"
+	StateStopped VMState = "stopped"
 	StateError   VMState = "error"
 )
 
@@ -50,6 +51,7 @@ type VMRecord struct {
 	CreatedAt      time.Time     `json:"createdAt"`
 	UpdatedAt      time.Time     `json:"updatedAt"`
 	StartedAt      *time.Time    `json:"startedAt,omitempty"`
+	StoppedAt      *time.Time    `json:"stoppedAt,omitempty"`
 }
 
 func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
@@ -107,6 +109,10 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 	if rec.StartedAt != nil {
 		startedAt := *rec.StartedAt
 		copied.StartedAt = &startedAt
+	}
+	if rec.StoppedAt != nil {
+		stoppedAt := *rec.StoppedAt
+		copied.StoppedAt = &stoppedAt
 	}
 	return &copied
 }

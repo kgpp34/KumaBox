@@ -157,6 +157,30 @@ func (s *Store) MarkError(ref string, message string) (*VMRecord, error) {
 	return updated, nil
 }
 
+func (s *Store) MarkStopped(ref string) (*VMRecord, error) {
+	var updated *VMRecord
+	err := s.update(func(idx *vmIndex) error {
+		id, err := idx.resolve(ref)
+		if err != nil {
+			return err
+		}
+		rec := idx.VMs[id]
+		now := time.Now().UTC()
+		rec.State = StateStopped
+		rec.PID = 0
+		rec.APISocket = ""
+		rec.Error = ""
+		rec.StoppedAt = &now
+		rec.UpdatedAt = now
+		updated = cloneRecord(rec)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
 func (s *Store) List() ([]*VMRecord, error) {
 	var records []*VMRecord
 	err := s.withIndex(func(idx *vmIndex) error {

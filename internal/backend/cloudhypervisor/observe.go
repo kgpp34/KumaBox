@@ -23,6 +23,8 @@ func ObserveVM(rec *vmstore.VMRecord) vmstore.Observation {
 	switch rec.State {
 	case vmstore.StateCreated:
 		return observation(vmstore.ObservedStateCreated, "VM has not been started", now)
+	case vmstore.StateStopped:
+		return observation(vmstore.ObservedStateStopped, "VM is stopped", now)
 	case vmstore.StateError:
 		if rec.Error != "" {
 			return observation(vmstore.ObservedStateFailed, rec.Error, now)

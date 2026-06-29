@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"time"
+
 	"github.com/spf13/cobra"
 
+	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/config"
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -82,6 +85,39 @@ func newStartCommand(opts *rootOptions) *cobra.Command {
 			return writeJSON(cmd.OutOrStdout(), rec)
 		},
 	}
+	return cmd
+}
+
+func newStopCommand(opts *rootOptions) *cobra.Command {
+	var timeout time.Duration
+	var force bool
+
+	cmd := &cobra.Command{
+		Use:   "stop VM",
+		Short: "Stop a VM",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			if timeout <= 0 && cfg.Backend.CloudHypervisor.StopTimeoutMS > 0 {
+				timeout = time.Duration(cfg.Backend.CloudHypervisor.StopTimeoutMS) * time.Millisecond
+			}
+			rt := kbruntime.New(cfg)
+			rec, err := rt.StopVM(args[0], backend.StopOptions{
+				Timeout: timeout,
+				Force:   force,
+			})
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), rec)
+		},
+	}
+
+	cmd.Flags().DurationVar(&timeout, "timeout", 0, "graceful shutdown timeout")
+	cmd.Flags().BoolVar(&force, "force", false, "skip API shutdown and terminate the VMM")
 	return cmd
 }
 

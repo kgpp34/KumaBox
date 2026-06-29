@@ -15,6 +15,7 @@ import (
 type backendFake struct {
 	render  func(*vmstore.VMRecord) error
 	start   func(*vmstore.VMRecord) (*backend.StartResult, error)
+	stop    func(*vmstore.VMRecord, backend.StopOptions) (*backend.StopResult, error)
 	observe func(*vmstore.VMRecord) vmstore.Observation
 }
 
@@ -24,6 +25,13 @@ func (b backendFake) RenderConfig(rec *vmstore.VMRecord) error {
 
 func (b backendFake) StartVM(rec *vmstore.VMRecord) (*backend.StartResult, error) {
 	return b.start(rec)
+}
+
+func (b backendFake) StopVM(rec *vmstore.VMRecord, opts backend.StopOptions) (*backend.StopResult, error) {
+	if b.stop != nil {
+		return b.stop(rec, opts)
+	}
+	return &backend.StopResult{}, nil
 }
 
 func (b backendFake) ObserveVM(rec *vmstore.VMRecord) vmstore.Observation {
@@ -208,5 +216,87 @@ func TestInspectVMReconcilesStaleRunningRecord(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "backend.exit.detected") {
 		t.Fatalf("events log missing backend.exit.detected: %s", raw)
+	}
+}
+
+func TestStopVMMarksStopped(t *testing.T) {
+	dir := t.TempDir()
+	store := vmstore.New(filepath.Join(dir, "data"))
+	stopCalled := false
+	rt := NewWithBackend(
+		store,
+		backendFake{
+			render: func(*vmstore.VMRecord) error { return nil },
+			start: func(*vmstore.VMRecord) (*backend.StartResult, error) {
+				return &backend.StartResult{PID: 12345, APISocket: filepath.Join(dir, "run", "ch.sock")}, nil
+			},
+			stop: func(rec *vmstore.VMRecord, opts backend.StopOptions) (*backend.StopResult, error) {
+				stopCalled = true
+				if rec.PID != 12345 {
+					t.Fatalf("stop pid = %d", rec.PID)
+				}
+				if opts.Timeout <= 0 {
+					t.Fatal("expected timeout")
+				}
+				return &backend.StopResult{}, nil
+			},
+			observe: func(rec *vmstore.VMRecord) vmstore.Observation {
+				state := vmstore.ObservedStateCreated
+				reason := "created"
+				if rec.State == vmstore.StateRunning {
+					state = vmstore.ObservedStateRunning
+					reason = "running"
+				}
+				if rec.State == vmstore.StateStopped {
+					state = vmstore.ObservedStateStopped
+					reason = "stopped"
+				}
+				return vmstore.Observation{
+					State:     state,
+					Reason:    reason,
+					CheckedAt: time.Now().UTC(),
+				}
+			},
+		},
+	)
+
+	rec, err := rt.CreateVM(vmstore.CreateRequest{
+		Name:     "stop-me",
+		RootDisk: "base.qcow2",
+		Kernel:   "vmlinuz",
+		Initrd:   "initrd.img",
+		RunDir:   filepath.Join(dir, "run"),
+		LogDir:   filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.StartVM(rec.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	stopped, err := rt.StopVM(rec.ID, backend.StopOptions{Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stopCalled {
+		t.Fatal("backend stop was not called")
+	}
+	if stopped.State != vmstore.StateStopped {
+		t.Fatalf("state = %s", stopped.State)
+	}
+	if stopped.PID != 0 || stopped.APISocket != "" {
+		t.Fatalf("runtime fields not cleared: %+v", stopped)
+	}
+	if stopped.ObservedState != vmstore.ObservedStateStopped {
+		t.Fatalf("observed state = %s", stopped.ObservedState)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(stopped.LogDir, "events.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "backend.stop.completed") {
+		t.Fatalf("events log missing backend.stop.completed: %s", raw)
 	}
 }

@@ -73,6 +73,47 @@ func (r *Runtime) RunVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
 	return started, nil
 }
 
+func (r *Runtime) StopVM(ref string, opts backend.StopOptions) (*vmstore.VMRecord, error) {
+	rec, err := r.store.Inspect(ref)
+	if err != nil {
+		return nil, err
+	}
+
+	observed := r.applyObservation(rec)
+	if observed.State == vmstore.StateRunning && observed.ObservedState != vmstore.ObservedStateRunning {
+		stopped, markErr := r.store.MarkStopped(observed.ID)
+		if markErr != nil {
+			return nil, markErr
+		}
+		_ = writeVMEvent(stopped, "backend.stop.completed", vmstore.Observation{
+			State:     vmstore.ObservedStateStopped,
+			Reason:    "VM was already not running",
+			CheckedAt: time.Now().UTC(),
+		})
+		return r.applyObservation(stopped), nil
+	}
+	if observed.ObservedState != vmstore.ObservedStateRunning {
+		return observed, nil
+	}
+
+	if _, err := r.backend.StopVM(observed, opts); err != nil {
+		if _, markErr := r.store.MarkError(observed.ID, err.Error()); markErr != nil {
+			return nil, markErr
+		}
+		return nil, err
+	}
+	stopped, err := r.store.MarkStopped(observed.ID)
+	if err != nil {
+		return nil, err
+	}
+	_ = writeVMEvent(stopped, "backend.stop.completed", vmstore.Observation{
+		State:     vmstore.ObservedStateStopped,
+		Reason:    "VM stopped",
+		CheckedAt: time.Now().UTC(),
+	})
+	return r.applyObservation(stopped), nil
+}
+
 func (r *Runtime) InspectVM(ref string) (*vmstore.VMRecord, error) {
 	rec, err := r.store.Inspect(ref)
 	if err != nil {
@@ -101,7 +142,7 @@ func (r *Runtime) applyObservation(rec *vmstore.VMRecord) *vmstore.VMRecord {
 	rec.ObservedReason = obs.Reason
 	rec.ObservedAt = &obs.CheckedAt
 	if rec.State == vmstore.StateRunning && obs.State != vmstore.ObservedStateRunning {
-		_ = writeBackendExitEvent(rec, obs)
+		_ = writeVMEvent(rec, "backend.exit.detected", obs)
 	}
 	return rec
 }
@@ -118,7 +159,7 @@ type eventRecord struct {
 	APISocket     string                `json:"apiSocket,omitempty"`
 }
 
-func writeBackendExitEvent(rec *vmstore.VMRecord, obs vmstore.Observation) error {
+func writeVMEvent(rec *vmstore.VMRecord, eventType string, obs vmstore.Observation) error {
 	if rec.LogDir == "" {
 		return nil
 	}
@@ -135,7 +176,7 @@ func writeBackendExitEvent(rec *vmstore.VMRecord, obs vmstore.Observation) error
 
 	event := eventRecord{
 		Time:          obs.CheckedAt,
-		Type:          "backend.exit.detected",
+		Type:          eventType,
 		VMID:          rec.ID,
 		VMName:        rec.Name,
 		State:         rec.State,

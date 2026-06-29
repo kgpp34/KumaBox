@@ -11,12 +11,14 @@ var _ backend.Lifecycle = Backend{}
 type Backend struct {
 	renderer Renderer
 	starter  Starter
+	stopper  Stopper
 }
 
 func NewBackend(cfg config.Config) Backend {
 	return Backend{
 		renderer: NewRenderer(cfg),
 		starter:  NewStarter(),
+		stopper:  NewStopper(),
 	}
 }
 
