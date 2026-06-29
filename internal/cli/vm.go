@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -10,6 +11,10 @@ import (
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
+
+func errInvalidLogSource(source string) error {
+	return fmt.Errorf("invalid log source %q: expected console, stdout, stderr, vmm, or all", source)
+}
 
 func newCreateCommand(opts *rootOptions) *cobra.Command {
 	flags := createVMFlags{}
@@ -151,6 +156,7 @@ func newInspectCommand(opts *rootOptions) *cobra.Command {
 
 func newLogsCommand(opts *rootOptions) *cobra.Command {
 	var tail int
+	var source string
 	var jsonOutput bool
 
 	cmd := &cobra.Command{
@@ -162,8 +168,14 @@ func newLogsCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if !kbruntime.ValidLogSource(source) {
+				return errInvalidLogSource(source)
+			}
 			rt := kbruntime.New(cfg)
-			logs, err := rt.LogsVM(args[0], kbruntime.LogOptions{Tail: tail})
+			logs, err := rt.LogsVM(args[0], kbruntime.LogOptions{
+				Tail:   tail,
+				Source: source,
+			})
 			if err != nil {
 				return err
 			}
@@ -175,6 +187,7 @@ func newLogsCommand(opts *rootOptions) *cobra.Command {
 	}
 
 	cmd.Flags().IntVar(&tail, "tail", 100, "number of recent lines to show, 0 for all")
+	cmd.Flags().StringVar(&source, "source", kbruntime.LogSourceConsole, "log source: console, stdout, stderr, vmm, all")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
 	return cmd
 }

@@ -8,8 +8,17 @@ import (
 	"strings"
 )
 
+const (
+	LogSourceConsole = "console"
+	LogSourceStdout  = "stdout"
+	LogSourceStderr  = "stderr"
+	LogSourceVMM     = "vmm"
+	LogSourceAll     = "all"
+)
+
 type LogOptions struct {
-	Tail int
+	Tail   int
+	Source string
 }
 
 type VMLogFile struct {
@@ -34,11 +43,7 @@ func (r *Runtime) LogsVM(ref string, opts LogOptions) (*VMLogs, error) {
 		VMID: rec.ID,
 		Name: rec.Name,
 	}
-	for _, name := range []string{
-		"cloud-hypervisor.stdout.log",
-		"cloud-hypervisor.stderr.log",
-		"console.log",
-	} {
+	for _, name := range logFileNames(opts.Source) {
 		path := filepath.Join(rec.LogDir, name)
 		content, err := readLogTail(path, opts.Tail)
 		if err != nil {
@@ -54,6 +59,30 @@ func (r *Runtime) LogsVM(ref string, opts LogOptions) (*VMLogs, error) {
 		})
 	}
 	return logs, nil
+}
+
+func logFileNames(source string) []string {
+	if source == "" {
+		source = LogSourceConsole
+	}
+	switch source {
+	case LogSourceConsole:
+		return []string{"console.log"}
+	case LogSourceStdout:
+		return []string{"cloud-hypervisor.stdout.log"}
+	case LogSourceStderr:
+		return []string{"cloud-hypervisor.stderr.log"}
+	case LogSourceVMM:
+		return []string{"cloud-hypervisor.stdout.log", "cloud-hypervisor.stderr.log"}
+	case LogSourceAll:
+		return []string{"console.log", "cloud-hypervisor.stdout.log", "cloud-hypervisor.stderr.log"}
+	default:
+		return nil
+	}
+}
+
+func ValidLogSource(source string) bool {
+	return source == "" || len(logFileNames(source)) > 0
 }
 
 func readLogTail(path string, tail int) (string, error) {

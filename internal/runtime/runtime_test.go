@@ -331,21 +331,35 @@ func TestLogsVMTailsKnownLogFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(rec.LogDir, "cloud-hypervisor.stderr.log"), []byte("err-one\nerr-two\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(rec.LogDir, "console.log"), []byte("console-one\nconsole-two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-	logs, err := rt.LogsVM("logs", LogOptions{Tail: 2})
+	logs, err := rt.LogsVM("logs", LogOptions{Tail: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if logs.VMID != rec.ID || logs.Name != rec.Name {
 		t.Fatalf("logs identity = %+v", logs)
 	}
-	if len(logs.Files) != 2 {
+	if len(logs.Files) != 1 {
 		t.Fatalf("log file count = %d", len(logs.Files))
 	}
-	if logs.Files[0].Name != "cloud-hypervisor.stdout.log" || logs.Files[0].Content != "two\nthree\n" {
-		t.Fatalf("stdout tail = %+v", logs.Files[0])
+	if logs.Files[0].Name != "console.log" || logs.Files[0].Content != "console-two\n" {
+		t.Fatalf("console tail = %+v", logs.Files[0])
 	}
-	if logs.Files[1].Name != "cloud-hypervisor.stderr.log" || logs.Files[1].Content != "err-one\nerr-two\n" {
-		t.Fatalf("stderr tail = %+v", logs.Files[1])
+
+	vmmLogs, err := rt.LogsVM("logs", LogOptions{Tail: 2, Source: LogSourceVMM})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vmmLogs.Files) != 2 {
+		t.Fatalf("vmm log file count = %d", len(vmmLogs.Files))
+	}
+	if vmmLogs.Files[0].Name != "cloud-hypervisor.stdout.log" || vmmLogs.Files[0].Content != "two\nthree\n" {
+		t.Fatalf("stdout tail = %+v", vmmLogs.Files[0])
+	}
+	if vmmLogs.Files[1].Name != "cloud-hypervisor.stderr.log" || vmmLogs.Files[1].Content != "err-one\nerr-two\n" {
+		t.Fatalf("stderr tail = %+v", vmmLogs.Files[1])
 	}
 }

@@ -46,6 +46,10 @@ func writeVMTable(w io.Writer, records []*vmstore.VMRecord) error {
 }
 
 func writeVMLogs(w io.Writer, logs *kbruntime.VMLogs) error {
+	if len(logs.Files) == 1 {
+		_, err := io.WriteString(w, logs.Files[0].Content)
+		return err
+	}
 	for i, file := range logs.Files {
 		if i > 0 {
 			if _, err := fmt.Fprintln(w); err != nil {

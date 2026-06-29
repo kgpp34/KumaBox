@@ -289,6 +289,9 @@ func TestLogsCommandTailsVMLogs(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(created.LogDir, "cloud-hypervisor.stderr.log"), []byte("err-1\nerr-2\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(created.LogDir, "console.log"), []byte("console-1\nconsole-2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	logs := NewRootCommand()
 	logs.SetArgs([]string{"--root-dir", rootDir, "logs", "loggy", "--tail", "1"})
@@ -299,13 +302,29 @@ func TestLogsCommandTailsVMLogs(t *testing.T) {
 	}
 
 	got := logsOut.String()
-	if !strings.Contains(got, "==> cloud-hypervisor.stdout.log <==") {
-		t.Fatalf("logs output missing stdout header: %s", got)
+	if strings.Contains(got, "==>") {
+		t.Fatalf("single-source logs should not include section headers: %s", got)
 	}
-	if strings.Contains(got, "line-1") || !strings.Contains(got, "line-2") {
-		t.Fatalf("logs output did not tail stdout: %s", got)
+	if strings.Contains(got, "console-1") || !strings.Contains(got, "console-2") {
+		t.Fatalf("logs output did not tail console: %s", got)
 	}
-	if strings.Contains(got, "err-1") || !strings.Contains(got, "err-2") {
-		t.Fatalf("logs output did not tail stderr: %s", got)
+
+	vmmLogs := NewRootCommand()
+	vmmLogs.SetArgs([]string{"--root-dir", rootDir, "logs", "loggy", "--source", "vmm", "--tail", "1"})
+	var vmmLogsOut bytes.Buffer
+	vmmLogs.SetOut(&vmmLogsOut)
+	if err := vmmLogs.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	vmmGot := vmmLogsOut.String()
+	if !strings.Contains(vmmGot, "==> cloud-hypervisor.stdout.log <==") {
+		t.Fatalf("logs output missing stdout header: %s", vmmGot)
+	}
+	if strings.Contains(vmmGot, "line-1") || !strings.Contains(vmmGot, "line-2") {
+		t.Fatalf("logs output did not tail stdout: %s", vmmGot)
+	}
+	if strings.Contains(vmmGot, "err-1") || !strings.Contains(vmmGot, "err-2") {
+		t.Fatalf("logs output did not tail stderr: %s", vmmGot)
 	}
 }

@@ -30,7 +30,7 @@ Options:
   --firmware PATH            UEFI firmware path for cloud-image boot
 
 Runs the P0-08 logs path inside a Linux VM with KVM:
-run VM -> logs VM --tail N -> output must include VMM stdout/stderr log sections.
+run VM -> logs VM --source stdout/stderr --tail N -> output must include VMM logs.
 USAGE
 }
 
@@ -196,21 +196,28 @@ if ! printf '%s' "$inspect_json" | grep -q '"state": "running"'; then
   exit 1
 fi
 
-logs_output="$("$kumabox_path" \
+stdout_logs="$("$kumabox_path" \
   --root-dir "$root_dir" \
   --run-dir "$run_dir" \
   --log-dir "$log_dir" \
-  logs "$name" --tail "$tail_lines")"
+  logs "$name" --source stdout --tail "$tail_lines")"
 
-printf '%s\n' "$logs_output"
+stderr_logs="$("$kumabox_path" \
+  --root-dir "$root_dir" \
+  --run-dir "$run_dir" \
+  --log-dir "$log_dir" \
+  logs "$name" --source stderr --tail "$tail_lines")"
 
-if ! printf '%s' "$logs_output" | grep -q '==> cloud-hypervisor.stdout.log <=='; then
-  echo "logs output is missing Cloud Hypervisor stdout section" >&2
+printf '%s\n' "$stdout_logs"
+printf '%s\n' "$stderr_logs"
+
+if [[ -z "$stdout_logs" ]]; then
+  echo "stdout logs output is empty" >&2
   exit 1
 fi
 
-if ! printf '%s' "$logs_output" | grep -q '==> cloud-hypervisor.stderr.log <=='; then
-  echo "logs output is missing Cloud Hypervisor stderr section" >&2
+if [[ -z "$stderr_logs" ]]; then
+  echo "stderr logs output is empty" >&2
   exit 1
 fi
 
