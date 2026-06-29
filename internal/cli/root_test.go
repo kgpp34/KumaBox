@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -247,5 +248,64 @@ func TestCreateFirmwareBootCommand(t *testing.T) {
 	}
 	if rendered.Kernel != nil {
 		t.Fatalf("expected no direct kernel payload: %+v", rendered.Kernel)
+	}
+}
+
+func TestLogsCommandTailsVMLogs(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	runDir := filepath.Join(dir, "run")
+	logDir := filepath.Join(dir, "log")
+
+	create := NewRootCommand()
+	create.SetArgs([]string{
+		"--root-dir", rootDir,
+		"--run-dir", runDir,
+		"--log-dir", logDir,
+		"create",
+		"--name", "loggy",
+		"--root-disk", "fixtures/base.qcow2",
+		"--kernel", "fixtures/vmlinuz",
+		"--initrd", "fixtures/initrd.img",
+	})
+	var createOut bytes.Buffer
+	create.SetOut(&createOut)
+	if err := create.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	var created struct {
+		LogDir string `json:"logDir"`
+	}
+	if err := json.Unmarshal(createOut.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(created.LogDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(created.LogDir, "cloud-hypervisor.stdout.log"), []byte("line-1\nline-2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(created.LogDir, "cloud-hypervisor.stderr.log"), []byte("err-1\nerr-2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	logs := NewRootCommand()
+	logs.SetArgs([]string{"--root-dir", rootDir, "logs", "loggy", "--tail", "1"})
+	var logsOut bytes.Buffer
+	logs.SetOut(&logsOut)
+	if err := logs.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := logsOut.String()
+	if !strings.Contains(got, "==> cloud-hypervisor.stdout.log <==") {
+		t.Fatalf("logs output missing stdout header: %s", got)
+	}
+	if strings.Contains(got, "line-1") || !strings.Contains(got, "line-2") {
+		t.Fatalf("logs output did not tail stdout: %s", got)
+	}
+	if strings.Contains(got, "err-1") || !strings.Contains(got, "err-2") {
+		t.Fatalf("logs output did not tail stderr: %s", got)
 	}
 }

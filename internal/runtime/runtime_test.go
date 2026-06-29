@@ -300,3 +300,52 @@ func TestStopVMMarksStopped(t *testing.T) {
 		t.Fatalf("events log missing backend.stop.completed: %s", raw)
 	}
 }
+
+func TestLogsVMTailsKnownLogFiles(t *testing.T) {
+	dir := t.TempDir()
+	store := vmstore.New(filepath.Join(dir, "data"))
+	rt := NewWithBackend(
+		store,
+		backendFake{
+			render: func(*vmstore.VMRecord) error { return nil },
+		},
+	)
+
+	rec, err := rt.CreateVM(vmstore.CreateRequest{
+		Name:     "logs",
+		RootDisk: "base.qcow2",
+		Kernel:   "vmlinuz",
+		Initrd:   "initrd.img",
+		RunDir:   filepath.Join(dir, "run"),
+		LogDir:   filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(rec.LogDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rec.LogDir, "cloud-hypervisor.stdout.log"), []byte("one\ntwo\nthree\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rec.LogDir, "cloud-hypervisor.stderr.log"), []byte("err-one\nerr-two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	logs, err := rt.LogsVM("logs", LogOptions{Tail: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if logs.VMID != rec.ID || logs.Name != rec.Name {
+		t.Fatalf("logs identity = %+v", logs)
+	}
+	if len(logs.Files) != 2 {
+		t.Fatalf("log file count = %d", len(logs.Files))
+	}
+	if logs.Files[0].Name != "cloud-hypervisor.stdout.log" || logs.Files[0].Content != "two\nthree\n" {
+		t.Fatalf("stdout tail = %+v", logs.Files[0])
+	}
+	if logs.Files[1].Name != "cloud-hypervisor.stderr.log" || logs.Files[1].Content != "err-one\nerr-two\n" {
+		t.Fatalf("stderr tail = %+v", logs.Files[1])
+	}
+}

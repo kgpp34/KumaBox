@@ -149,6 +149,36 @@ func newInspectCommand(opts *rootOptions) *cobra.Command {
 	return cmd
 }
 
+func newLogsCommand(opts *rootOptions) *cobra.Command {
+	var tail int
+	var jsonOutput bool
+
+	cmd := &cobra.Command{
+		Use:   "logs VM",
+		Short: "Show VM logs",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			rt := kbruntime.New(cfg)
+			logs, err := rt.LogsVM(args[0], kbruntime.LogOptions{Tail: tail})
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return writeJSON(cmd.OutOrStdout(), logs)
+			}
+			return writeVMLogs(cmd.OutOrStdout(), logs)
+		},
+	}
+
+	cmd.Flags().IntVar(&tail, "tail", 100, "number of recent lines to show, 0 for all")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
+	return cmd
+}
+
 type createVMFlags struct {
 	name     string
 	rootDisk string

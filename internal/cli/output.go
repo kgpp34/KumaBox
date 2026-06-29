@@ -7,6 +7,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/kumabox/kumabox/internal/doctor"
+	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -42,4 +43,26 @@ func writeVMTable(w io.Writer, records []*vmstore.VMRecord) error {
 		}
 	}
 	return tw.Flush()
+}
+
+func writeVMLogs(w io.Writer, logs *kbruntime.VMLogs) error {
+	for i, file := range logs.Files {
+		if i > 0 {
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintf(w, "==> %s <==\n", file.Name); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, file.Content); err != nil {
+			return err
+		}
+		if file.Content != "" && file.Content[len(file.Content)-1] != '\n' {
+			if _, err := fmt.Fprintln(w); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
