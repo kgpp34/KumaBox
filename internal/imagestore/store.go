@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package imagestore
 
 import (
@@ -20,12 +22,14 @@ import (
 	"github.com/kumabox/kumabox/internal/fileutil"
 )
 
+// Store persists image metadata in the KumaBox image index.
 type Store struct {
 	imageDir  string
 	indexPath string
 	lockPath  string
 }
 
+// New returns a Store rooted under rootDir.
 func New(rootDir string) *Store {
 	imageDir := filepath.Join(rootDir, "images")
 	return &Store{
@@ -35,6 +39,7 @@ func New(rootDir string) *Store {
 	}
 }
 
+// CreateRequest contains metadata for creating an image record directly.
 type CreateRequest struct {
 	Name     string
 	Source   Source
@@ -43,6 +48,7 @@ type CreateRequest struct {
 	OS       OS
 }
 
+// ImportRequest describes a local cloud image import operation.
 type ImportRequest struct {
 	Name        string
 	File        string
@@ -50,6 +56,7 @@ type ImportRequest struct {
 	QemuImgPath string
 }
 
+// Create inserts an image record into the image index.
 func (s *Store) Create(req CreateRequest) (*ImageRecord, error) {
 	if err := validateCreateRequest(req); err != nil {
 		return nil, err
@@ -99,6 +106,7 @@ func (s *Store) Create(req CreateRequest) (*ImageRecord, error) {
 	return created, nil
 }
 
+// ImportLocal imports a local cloud image into the managed image store.
 func (s *Store) ImportLocal(req ImportRequest) (*ImageRecord, error) {
 	if err := validateImportRequest(req); err != nil {
 		return nil, err
@@ -161,6 +169,7 @@ func (s *Store) ImportLocal(req ImportRequest) (*ImageRecord, error) {
 	}, stagedDisk)
 }
 
+// Inspect returns an image record by exact ID, name, or unique ID prefix.
 func (s *Store) Inspect(ref string) (*ImageRecord, error) {
 	var rec *ImageRecord
 	err := s.withIndex(func(idx *imageIndex) error {
@@ -177,6 +186,7 @@ func (s *Store) Inspect(ref string) (*ImageRecord, error) {
 	return rec, nil
 }
 
+// List returns all image records sorted by creation time.
 func (s *Store) List() ([]*ImageRecord, error) {
 	var records []*ImageRecord
 	err := s.withIndex(func(idx *imageIndex) error {

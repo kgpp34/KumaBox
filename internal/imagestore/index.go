@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package imagestore
 
 import (
@@ -7,9 +9,12 @@ import (
 )
 
 var (
-	ErrNotFound     = errors.New("image not found")
+	// ErrNotFound is returned when an image reference does not resolve.
+	ErrNotFound = errors.New("image not found")
+	// ErrNameConflict is returned when an image name already exists.
 	ErrNameConflict = errors.New("image name already exists")
-	ErrAmbiguous    = errors.New("image ref is ambiguous")
+	// ErrAmbiguous is returned when an image reference matches multiple images.
+	ErrAmbiguous = errors.New("image ref is ambiguous")
 )
 
 type imageIndex struct {

@@ -1,12 +1,16 @@
+// SPDX-License-Identifier: MIT
+
 package imagestore
 
 import "time"
 
+// Source describes where a managed image was imported from.
 type Source struct {
 	Type string `json:"type"`
 	URI  string `json:"uri,omitempty"`
 }
 
+// RootDisk describes the managed root disk stored with an image.
 type RootDisk struct {
 	Path             string `json:"path,omitempty"`
 	Format           string `json:"format,omitempty"`
@@ -15,6 +19,7 @@ type RootDisk struct {
 	SHA256           string `json:"sha256,omitempty"`
 }
 
+// Boot describes how VMs should boot from an image.
 type Boot struct {
 	Mode     string `json:"mode,omitempty"`
 	Firmware string `json:"firmware,omitempty"`
@@ -23,12 +28,14 @@ type Boot struct {
 	Cmdline  string `json:"cmdline,omitempty"`
 }
 
+// OS describes the guest operating system profile for an image.
 type OS struct {
 	Family  string `json:"family,omitempty"`
 	Version string `json:"version,omitempty"`
 	Profile string `json:"profile,omitempty"`
 }
 
+// ImageRecord is the persisted metadata for one managed image.
 type ImageRecord struct {
 	SchemaVersion string    `json:"schemaVersion"`
 	ID            string    `json:"id"`
