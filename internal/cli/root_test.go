@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -497,4 +498,86 @@ func TestImageListAndInspectCommands(t *testing.T) {
 	if inspected.ID != created.ID || inspected.Name != "ubuntu" || inspected.RootDisk.Format != "qcow2" {
 		t.Fatalf("inspect image = %+v", inspected)
 	}
+}
+
+func TestImageImportCommand(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	source := filepath.Join(dir, "fixtures", "jammy-server-cloudimg-amd64.img")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("cloud image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	firmware := filepath.Join(dir, "fixtures", "CLOUDHV.fd")
+	if err := os.WriteFile(firmware, []byte("firmware"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	qemuImg := fakeQemuImgForCLI(t, dir, "qcow2", 4096, 11)
+
+	importCmd := NewRootCommand()
+	importCmd.SetArgs([]string{
+		"--root-dir", rootDir,
+		"image", "import", source,
+		"--name", "ubuntu",
+		"--firmware", firmware,
+		"--qemu-img", qemuImg,
+	})
+	var importOut bytes.Buffer
+	importCmd.SetOut(&importOut)
+	if err := importCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	var imported struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Source struct {
+			Type string `json:"type"`
+			URI  string `json:"uri"`
+		} `json:"source"`
+		RootDisk struct {
+			Path   string `json:"path"`
+			Format string `json:"format"`
+		} `json:"rootDisk"`
+		Boot struct {
+			Mode     string `json:"mode"`
+			Firmware string `json:"firmware"`
+		} `json:"boot"`
+	}
+	if err := json.Unmarshal(importOut.Bytes(), &imported); err != nil {
+		t.Fatal(err)
+	}
+	if imported.ID == "" || imported.Name != "ubuntu" || imported.Source.Type != "local-file" {
+		t.Fatalf("imported = %+v", imported)
+	}
+	if imported.RootDisk.Format != "qcow2" || imported.RootDisk.Path == source {
+		t.Fatalf("root disk = %+v", imported.RootDisk)
+	}
+	if imported.Boot.Mode != "uefi" || imported.Boot.Firmware != firmware {
+		t.Fatalf("boot = %+v", imported.Boot)
+	}
+
+	inspect := NewRootCommand()
+	inspect.SetArgs([]string{"--root-dir", rootDir, "image", "inspect", "ubuntu", "--json"})
+	var inspectOut bytes.Buffer
+	inspect.SetOut(&inspectOut)
+	if err := inspect.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(inspectOut.String(), imported.ID) {
+		t.Fatalf("inspect output missing imported id: %s", inspectOut.String())
+	}
+}
+
+func fakeQemuImgForCLI(t *testing.T, dir, format string, virtualSize, actualSize int64) string {
+	t.Helper()
+	path := filepath.Join(dir, "qemu-img")
+	script := "#!/bin/sh\n" +
+		"printf '{\"format\":\"" + format + "\",\"virtual-size\":" + strconv.FormatInt(virtualSize, 10) + ",\"actual-size\":" + strconv.FormatInt(actualSize, 10) + "}'\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

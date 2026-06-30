@@ -2,13 +2,18 @@ package imagestore
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +21,7 @@ import (
 )
 
 type Store struct {
+	imageDir  string
 	indexPath string
 	lockPath  string
 }
@@ -23,6 +29,7 @@ type Store struct {
 func New(rootDir string) *Store {
 	imageDir := filepath.Join(rootDir, "images")
 	return &Store{
+		imageDir:  imageDir,
 		indexPath: filepath.Join(imageDir, "index.json"),
 		lockPath:  filepath.Join(imageDir, "index.lock"),
 	}
@@ -34,6 +41,13 @@ type CreateRequest struct {
 	RootDisk RootDisk
 	Boot     Boot
 	OS       OS
+}
+
+type ImportRequest struct {
+	Name        string
+	File        string
+	Firmware    string
+	QemuImgPath string
 }
 
 func (s *Store) Create(req CreateRequest) (*ImageRecord, error) {
@@ -85,6 +99,68 @@ func (s *Store) Create(req CreateRequest) (*ImageRecord, error) {
 	return created, nil
 }
 
+func (s *Store) ImportLocal(req ImportRequest) (*ImageRecord, error) {
+	if err := validateImportRequest(req); err != nil {
+		return nil, err
+	}
+	sourcePath, err := filepath.Abs(req.File)
+	if err != nil {
+		return nil, fmt.Errorf("resolve source image path: %w", err)
+	}
+	firmwarePath, err := filepath.Abs(req.Firmware)
+	if err != nil {
+		return nil, fmt.Errorf("resolve firmware path: %w", err)
+	}
+
+	info, err := inspectImage(req.QemuImgPath, sourcePath)
+	if err != nil {
+		return nil, err
+	}
+
+	stageID, err := newOperationID()
+	if err != nil {
+		return nil, err
+	}
+	stagingDir := filepath.Join(s.imageDir, "staging", stageID)
+	defer os.RemoveAll(stagingDir) //nolint:errcheck
+	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create import staging dir: %w", err)
+	}
+
+	diskName := "base." + diskExtension(info.Format)
+	stagedDisk := filepath.Join(stagingDir, diskName)
+	sum, actualSize, err := copyWithSHA256(sourcePath, stagedDisk)
+	if err != nil {
+		return nil, err
+	}
+	if info.ActualSizeBytes > 0 {
+		actualSize = info.ActualSizeBytes
+	}
+
+	return s.commitImportedImage(CreateRequest{
+		Name: req.Name,
+		Source: Source{
+			Type: "local-file",
+			URI:  sourcePath,
+		},
+		RootDisk: RootDisk{
+			Path:             diskName,
+			Format:           info.Format,
+			VirtualSizeBytes: info.VirtualSizeBytes,
+			ActualSizeBytes:  actualSize,
+			SHA256:           sum,
+		},
+		Boot: Boot{
+			Mode:     "uefi",
+			Firmware: firmwarePath,
+		},
+		OS: OS{
+			Family:  detectOSFamily(sourcePath),
+			Profile: "ubuntu-cloudimg",
+		},
+	}, stagedDisk)
+}
+
 func (s *Store) Inspect(ref string) (*ImageRecord, error) {
 	var rec *ImageRecord
 	err := s.withIndex(func(idx *imageIndex) error {
@@ -117,6 +193,78 @@ func (s *Store) List() ([]*ImageRecord, error) {
 		return nil, err
 	}
 	return records, nil
+}
+
+func (s *Store) commitImportedImage(req CreateRequest, stagedDisk string) (*ImageRecord, error) {
+	if err := validateCreateRequest(req); err != nil {
+		return nil, err
+	}
+
+	var created *ImageRecord
+	err := s.update(func(idx *imageIndex) error {
+		if _, ok := idx.Names[req.Name]; ok {
+			return fmt.Errorf("%w: %s", ErrNameConflict, req.Name)
+		}
+
+		id, err := newID()
+		if err != nil {
+			return err
+		}
+		for {
+			if _, exists := idx.Images[id]; !exists {
+				break
+			}
+			id, err = newID()
+			if err != nil {
+				return err
+			}
+		}
+
+		imageDir := filepath.Join(s.imageDir, id)
+		if err := os.MkdirAll(imageDir, 0o755); err != nil {
+			return fmt.Errorf("create image dir: %w", err)
+		}
+		committedDisk := filepath.Join(imageDir, filepath.Base(req.RootDisk.Path))
+		if err := os.Rename(stagedDisk, committedDisk); err != nil {
+			return fmt.Errorf("commit root disk: %w", err)
+		}
+
+		now := time.Now().UTC()
+		rec := &ImageRecord{
+			SchemaVersion: "kumabox.image.v1",
+			ID:            id,
+			Name:          req.Name,
+			Source:        req.Source,
+			RootDisk: RootDisk{
+				Path:             committedDisk,
+				Format:           req.RootDisk.Format,
+				VirtualSizeBytes: req.RootDisk.VirtualSizeBytes,
+				ActualSizeBytes:  req.RootDisk.ActualSizeBytes,
+				SHA256:           req.RootDisk.SHA256,
+			},
+			Boot:      req.Boot,
+			OS:        req.OS,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := fileutil.WriteJSONAtomic(filepath.Join(imageDir, "image.json"), rec, ".image-*.tmp"); err != nil {
+			_ = os.RemoveAll(imageDir)
+			return fmt.Errorf("write image manifest: %w", err)
+		}
+		if err := fileutil.WriteJSONAtomic(filepath.Join(imageDir, "source.json"), rec.Source, ".source-*.tmp"); err != nil {
+			_ = os.RemoveAll(imageDir)
+			return fmt.Errorf("write image source manifest: %w", err)
+		}
+
+		idx.Images[id] = rec
+		idx.Names[req.Name] = id
+		created = cloneRecord(rec)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return created, nil
 }
 
 func (s *Store) withIndex(fn func(*imageIndex) error) error {
@@ -203,10 +351,110 @@ func validateCreateRequest(req CreateRequest) error {
 	return nil
 }
 
+func validateImportRequest(req ImportRequest) error {
+	if req.Name == "" {
+		return errors.New("image name must not be empty")
+	}
+	if req.File == "" {
+		return errors.New("image file must not be empty")
+	}
+	if req.Firmware == "" {
+		return errors.New("firmware must not be empty")
+	}
+	if req.QemuImgPath == "" {
+		return errors.New("qemu-img path must not be empty")
+	}
+	return nil
+}
+
 func newID() (string, error) {
 	var raw [8]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", fmt.Errorf("generate image ID: %w", err)
 	}
 	return "img_" + hex.EncodeToString(raw[:]), nil
+}
+
+func newOperationID() (string, error) {
+	var raw [8]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("generate operation ID: %w", err)
+	}
+	return "import-" + hex.EncodeToString(raw[:]), nil
+}
+
+type qemuImageInfo struct {
+	Filename         string `json:"filename"`
+	Format           string `json:"format"`
+	VirtualSizeBytes int64  `json:"virtual-size"`
+	ActualSizeBytes  int64  `json:"actual-size"`
+}
+
+func inspectImage(qemuImgPath, sourcePath string) (*qemuImageInfo, error) {
+	out, err := exec.Command(qemuImgPath, "info", "--output=json", sourcePath).Output() //nolint:gosec
+	if err != nil {
+		return nil, fmt.Errorf("qemu-img info %s: %w", sourcePath, err)
+	}
+	var info qemuImageInfo
+	if err := json.Unmarshal(out, &info); err != nil {
+		return nil, fmt.Errorf("parse qemu-img info: %w", err)
+	}
+	if info.Format == "" {
+		return nil, errors.New("qemu-img info did not report image format")
+	}
+	if info.VirtualSizeBytes < 0 || info.ActualSizeBytes < 0 {
+		return nil, errors.New("qemu-img info reported negative image size")
+	}
+	return &info, nil
+}
+
+func copyWithSHA256(src, dst string) (string, int64, error) {
+	in, err := os.Open(src) //nolint:gosec
+	if err != nil {
+		return "", 0, fmt.Errorf("open source image: %w", err)
+	}
+	defer in.Close() //nolint:errcheck
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec
+	if err != nil {
+		return "", 0, fmt.Errorf("create staged image: %w", err)
+	}
+
+	hasher := sha256.New()
+	size, copyErr := copyAndHash(out, in, hasher)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return "", 0, copyErr
+	}
+	if closeErr != nil {
+		return "", 0, fmt.Errorf("close staged image: %w", closeErr)
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), size, nil
+}
+
+func copyAndHash(dst io.Writer, src io.Reader, hasher hash.Hash) (int64, error) {
+	size, err := io.Copy(io.MultiWriter(dst, hasher), src)
+	if err != nil {
+		return 0, fmt.Errorf("copy image to staging: %w", err)
+	}
+	return size, nil
+}
+
+func diskExtension(format string) string {
+	switch strings.ToLower(format) {
+	case "raw":
+		return "raw"
+	case "qcow2":
+		return "qcow2"
+	default:
+		return "img"
+	}
+}
+
+func detectOSFamily(path string) string {
+	lower := strings.ToLower(filepath.Base(path))
+	if strings.Contains(lower, "ubuntu") || strings.Contains(lower, "jammy") || strings.Contains(lower, "noble") {
+		return "ubuntu"
+	}
+	return ""
 }

@@ -11,8 +11,43 @@ func newImageCommand(opts *rootOptions) *cobra.Command {
 		Use:   "image",
 		Short: "Manage KumaBox images",
 	}
+	cmd.AddCommand(newImageImportCommand(opts))
 	cmd.AddCommand(newImageLSCommand(opts))
 	cmd.AddCommand(newImageInspectCommand(opts))
+	return cmd
+}
+
+func newImageImportCommand(opts *rootOptions) *cobra.Command {
+	var name string
+	var firmware string
+	var qemuImg string
+
+	cmd := &cobra.Command{
+		Use:   "import FILE",
+		Short: "Import a local cloud image",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			rec, err := imagestore.New(cfg.Runtime.RootDir).ImportLocal(imagestore.ImportRequest{
+				Name:        name,
+				File:        args[0],
+				Firmware:    firmware,
+				QemuImgPath: qemuImg,
+			})
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), rec)
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "", "image name")
+	cmd.Flags().StringVar(&firmware, "firmware", "", "UEFI firmware path")
+	cmd.Flags().StringVar(&qemuImg, "qemu-img", "qemu-img", "qemu-img binary path")
+	_ = cmd.MarkFlagRequired("name")
+	_ = cmd.MarkFlagRequired("firmware")
 	return cmd
 }
 

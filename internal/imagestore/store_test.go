@@ -1,8 +1,12 @@
 package imagestore
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -74,4 +78,112 @@ func TestResolveAmbiguousImagePrefix(t *testing.T) {
 	if _, err := idx.resolve("img_abcdef"); !errors.Is(err, ErrAmbiguous) {
 		t.Fatalf("expected ambiguous ref, got %v", err)
 	}
+}
+
+func TestImportLocalCommitsImageAndManifests(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "fixtures", "jammy-server-cloudimg-amd64.img")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sourceContent := []byte("cloud image")
+	if err := os.WriteFile(source, sourceContent, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	firmware := filepath.Join(dir, "fixtures", "CLOUDHV.fd")
+	if err := os.WriteFile(firmware, []byte("firmware"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := New(filepath.Join(dir, "data"))
+	rec, err := store.ImportLocal(ImportRequest{
+		Name:        "ubuntu",
+		File:        source,
+		Firmware:    firmware,
+		QemuImgPath: fakeQemuImg(t, dir, "qcow2", 4096, int64(len(sourceContent))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if rec.Name != "ubuntu" || rec.Source.Type != "local-file" || rec.Source.URI != source {
+		t.Fatalf("record source = %+v", rec)
+	}
+	if rec.RootDisk.Format != "qcow2" || rec.RootDisk.VirtualSizeBytes != 4096 {
+		t.Fatalf("root disk = %+v", rec.RootDisk)
+	}
+	expectedSum := sha256.Sum256(sourceContent)
+	if rec.RootDisk.SHA256 != hex.EncodeToString(expectedSum[:]) {
+		t.Fatalf("sha256 = %s", rec.RootDisk.SHA256)
+	}
+	if _, err := os.Stat(rec.RootDisk.Path); err != nil {
+		t.Fatalf("committed root disk missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(rec.RootDisk.Path), "image.json")); err != nil {
+		t.Fatalf("image manifest missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(rec.RootDisk.Path), "source.json")); err != nil {
+		t.Fatalf("source manifest missing: %v", err)
+	}
+	if _, err := os.Stat(source); err != nil {
+		t.Fatalf("source image should remain: %v", err)
+	}
+
+	inspected, err := store.Inspect("ubuntu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspected.ID != rec.ID {
+		t.Fatalf("inspect id = %s, want %s", inspected.ID, rec.ID)
+	}
+}
+
+func TestImportLocalDoesNotIndexFailedInspect(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "ubuntu.img")
+	if err := os.WriteFile(source, []byte("cloud image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	firmware := filepath.Join(dir, "CLOUDHV.fd")
+	if err := os.WriteFile(firmware, []byte("firmware"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := New(filepath.Join(dir, "data"))
+	_, err := store.ImportLocal(ImportRequest{
+		Name:        "bad",
+		File:        source,
+		Firmware:    firmware,
+		QemuImgPath: fakeFailingQemuImg(t, dir),
+	})
+	if err == nil {
+		t.Fatal("expected import failure")
+	}
+	records, listErr := store.List()
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(records) != 0 {
+		t.Fatalf("failed import should not update index: %+v", records)
+	}
+}
+
+func fakeQemuImg(t *testing.T, dir, format string, virtualSize, actualSize int64) string {
+	t.Helper()
+	path := filepath.Join(dir, "qemu-img")
+	script := "#!/bin/sh\n" +
+		"printf '{\"format\":\"" + format + "\",\"virtual-size\":" + strconv.FormatInt(virtualSize, 10) + ",\"actual-size\":" + strconv.FormatInt(actualSize, 10) + "}'\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func fakeFailingQemuImg(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "qemu-img-fail")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
