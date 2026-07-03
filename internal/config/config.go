@@ -19,22 +19,26 @@ type Config struct {
 	Backend BackendConfig `toml:"backend" json:"backend"`
 }
 
+// RuntimeConfig contains host paths used for persistent state and runtime files.
 type RuntimeConfig struct {
 	RootDir string `toml:"root_dir" json:"rootDir"`
 	RunDir  string `toml:"run_dir" json:"runDir"`
 	LogDir  string `toml:"log_dir" json:"logDir"`
 }
 
+// BackendConfig contains backend-specific runtime configuration.
 type BackendConfig struct {
 	CloudHypervisor CloudHypervisorConfig `toml:"cloud_hypervisor" json:"cloudHypervisor"`
 }
 
+// CloudHypervisorConfig controls the Cloud Hypervisor binary and timeouts.
 type CloudHypervisorConfig struct {
 	Binary             string `toml:"binary" json:"binary"`
 	APISocketTimeoutMS int    `toml:"api_socket_timeout_ms" json:"apiSocketTimeoutMs"`
 	StopTimeoutMS      int    `toml:"stop_timeout_ms" json:"stopTimeoutMs"`
 }
 
+// Overrides contains command-line values that replace file or default config.
 type Overrides struct {
 	RootDir            string
 	RunDir             string
@@ -42,6 +46,7 @@ type Overrides struct {
 	CloudHypervisorBin string
 }
 
+// Load reads config from path, applies overrides, and validates the result.
 func Load(path string, overrides Overrides) (Config, error) {
 	cfg := Default()
 	if path != "" {
@@ -61,6 +66,7 @@ func Load(path string, overrides Overrides) (Config, error) {
 	return cfg, nil
 }
 
+// Default returns the built-in KumaBox configuration.
 func Default() Config {
 	return Config{
 		Runtime: RuntimeConfig{
@@ -78,6 +84,7 @@ func Default() Config {
 	}
 }
 
+// EnsureRuntimeDirs creates the configured runtime directories.
 func EnsureRuntimeDirs(cfg Config) error {
 	for _, dir := range []string{cfg.Runtime.RootDir, cfg.Runtime.RunDir, cfg.Runtime.LogDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {

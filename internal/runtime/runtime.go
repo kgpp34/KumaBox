@@ -18,10 +18,12 @@ type Runtime struct {
 	backend backend.Lifecycle
 }
 
+// New creates a Runtime backed by the configured Cloud Hypervisor backend.
 func New(cfg config.Config) *Runtime {
 	return NewWithBackend(vmstore.New(cfg.Runtime.RootDir), cloudhypervisor.NewBackend(cfg))
 }
 
+// NewWithBackend creates a Runtime with an injected VM store and backend.
 func NewWithBackend(store *vmstore.Store, vmBackend backend.Lifecycle) *Runtime {
 	return &Runtime{
 		store:   store,
@@ -29,6 +31,7 @@ func NewWithBackend(store *vmstore.Store, vmBackend backend.Lifecycle) *Runtime 
 	}
 }
 
+// CreateVM creates a VM record and renders its backend configuration.
 func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
 	rec, err := r.store.Create(req)
 	if err != nil {
@@ -41,6 +44,7 @@ func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error)
 	return r.applyObservation(rec), nil
 }
 
+// StartVM starts an existing VM and records backend runtime details.
 func (r *Runtime) StartVM(ref string) (*vmstore.VMRecord, error) {
 	rec, err := r.store.Inspect(ref)
 	if err != nil {
@@ -61,6 +65,7 @@ func (r *Runtime) StartVM(ref string) (*vmstore.VMRecord, error) {
 	return r.applyObservation(started), nil
 }
 
+// RunVM creates and starts a VM.
 func (r *Runtime) RunVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
 	rec, err := r.CreateVM(req)
 	if err != nil {
@@ -73,6 +78,7 @@ func (r *Runtime) RunVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
 	return started, nil
 }
 
+// StopVM stops a running VM and updates its persisted state.
 func (r *Runtime) StopVM(ref string, opts backend.StopOptions) (*vmstore.VMRecord, error) {
 	rec, err := r.store.Inspect(ref)
 	if err != nil {
@@ -114,6 +120,7 @@ func (r *Runtime) StopVM(ref string, opts backend.StopOptions) (*vmstore.VMRecor
 	return r.applyObservation(stopped), nil
 }
 
+// DeleteVM removes a VM record and KumaBox-managed runtime directories.
 func (r *Runtime) DeleteVM(ref string, force bool) (*vmstore.VMRecord, error) {
 	rec, err := r.store.Inspect(ref)
 	if err != nil {
@@ -144,6 +151,7 @@ func (r *Runtime) DeleteVM(ref string, force bool) (*vmstore.VMRecord, error) {
 	return observed, nil
 }
 
+// InspectVM returns a VM record with a fresh backend observation.
 func (r *Runtime) InspectVM(ref string) (*vmstore.VMRecord, error) {
 	rec, err := r.store.Inspect(ref)
 	if err != nil {
@@ -152,6 +160,7 @@ func (r *Runtime) InspectVM(ref string) (*vmstore.VMRecord, error) {
 	return r.applyObservation(rec), nil
 }
 
+// ListVMs returns all VM records with fresh backend observations.
 func (r *Runtime) ListVMs() ([]*vmstore.VMRecord, error) {
 	records, err := r.store.List()
 	if err != nil {
