@@ -12,6 +12,7 @@ create_name="p1-image-create"
 run_name="p1-image-run"
 root_disk=""
 firmware=""
+running_timeout_seconds=20
 
 usage() {
   cat <<'USAGE'
@@ -29,6 +30,7 @@ Options:
   --run-name NAME            run VM name, defaults to p1-image-run
   --root-disk PATH           cloud image root disk path
   --firmware PATH            UEFI firmware path for cloud-image boot
+  --running-timeout SECONDS  wait time for stable VMM running observation, defaults to 20
 
 Verifies P1-05 image references:
 clean data/run/logs -> image import -> create IMAGE -> delete VM -> run IMAGE
@@ -103,6 +105,11 @@ while [[ $# -gt 0 ]]; do
       firmware="$2"
       shift 2
       ;;
+    --running-timeout)
+      require_value "$1" "${2:-}"
+      running_timeout_seconds="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -141,6 +148,43 @@ if [[ ! -x "$kumabox_path" ]]; then
   echo "kumabox is not executable: $kumabox_path" >&2
   exit 1
 fi
+
+wait_for_running_vm() {
+  local vm_name="$1"
+  local deadline=$((SECONDS + running_timeout_seconds))
+  local inspected=""
+  local state=""
+  local observed=""
+  local pid=""
+  local api_socket=""
+
+  while (( SECONDS <= deadline )); do
+    inspected="$("$kumabox_path" \
+      --root-dir "$root_dir" \
+      --run-dir "$run_dir" \
+      --log-dir "$log_dir" \
+      --cloud-hypervisor-bin "$cloud_hypervisor_path" \
+      inspect "$vm_name" --json)"
+    state="$(printf '%s' "$inspected" | jq -r '.state')"
+    observed="$(printf '%s' "$inspected" | jq -r '.observedState // ""')"
+    pid="$(printf '%s' "$inspected" | jq -r '.pid // 0')"
+    api_socket="$(printf '%s' "$inspected" | jq -r '.apiSocket // ""')"
+
+    if [[ "$state" == "running" && "$observed" == "RUNNING" && "$pid" =~ ^[0-9]+$ && "$pid" -gt 0 ]]; then
+      if kill -0 "$pid" 2>/dev/null && [[ -S "$api_socket" ]]; then
+        printf '%s\n' "$inspected"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+
+  echo "VM did not become stably running within ${running_timeout_seconds}s: $vm_name" >&2
+  if [[ -n "$inspected" ]]; then
+    printf '%s\n' "$inspected" >&2
+  fi
+  return 1
+}
 
 created_vm_exists=0
 run_vm_exists=0
@@ -246,7 +290,9 @@ if [[ "$(printf '%s' "$run_json" | jq -r '.rootDisk')" != "$image_root_disk" ]];
   echo "run VM root disk is not the managed image root disk" >&2
   exit 1
 fi
-echo "pass: run IMAGE starts VM with managed image root disk"
+running_json="$(wait_for_running_vm "$run_name")"
+printf '%s\n' "$running_json"
+echo "pass: run IMAGE starts VM with managed image root disk and stable VMM observation"
 
 "$kumabox_path" \
   --root-dir "$root_dir" \
