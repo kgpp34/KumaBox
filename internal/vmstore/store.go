@@ -34,6 +34,7 @@ type CreateRequest struct {
 	Kernel   string
 	Initrd   string
 	Firmware string
+	Image    *ImageRef
 	RunDir   string
 	LogDir   string
 }

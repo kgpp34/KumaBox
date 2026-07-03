@@ -134,6 +134,44 @@ func TestCreateSupportsFirmwareBoot(t *testing.T) {
 	}
 }
 
+func TestCreatePersistsImageRef(t *testing.T) {
+	dir := t.TempDir()
+	store := New(filepath.Join(dir, "data"))
+	image := &ImageRef{
+		ID:       "img_123",
+		Name:     "ubuntu",
+		RootDisk: filepath.Join(dir, "images", "base.qcow2"),
+		BootMode: "uefi",
+	}
+
+	rec, err := store.Create(CreateRequest{
+		Name:     "from-image",
+		RootDisk: image.RootDisk,
+		Firmware: "CLOUDHV.fd",
+		Image:    image,
+		RunDir:   filepath.Join(dir, "run"),
+		LogDir:   filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Image == nil {
+		t.Fatal("expected image ref")
+	}
+	if rec.Image.ID != image.ID || rec.Image.Name != image.Name || rec.Image.RootDisk != image.RootDisk || rec.Image.BootMode != image.BootMode {
+		t.Fatalf("image ref = %+v", rec.Image)
+	}
+
+	image.Name = "mutated"
+	inspected, err := store.Inspect(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspected.Image.Name != "ubuntu" {
+		t.Fatalf("image ref was not defensively copied: %+v", inspected.Image)
+	}
+}
+
 func TestMarkRunningMarksFirmwareVMFirstBooted(t *testing.T) {
 	dir := t.TempDir()
 	store := New(filepath.Join(dir, "data"))

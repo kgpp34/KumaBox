@@ -45,6 +45,7 @@ type VMRecord struct {
 	Kernel         string        `json:"kernel,omitempty"`
 	Initrd         string        `json:"initrd,omitempty"`
 	Firmware       string        `json:"firmware,omitempty"`
+	Image          *ImageRef     `json:"image,omitempty"`
 	Metadata       *Metadata     `json:"metadata,omitempty"`
 	RunDir         string        `json:"runDir"`
 	LogDir         string        `json:"logDir"`
@@ -60,6 +61,13 @@ type Metadata struct {
 	Type       string `json:"type"`
 	CidataDir  string `json:"cidataDir"`
 	CidataDisk string `json:"cidataDisk"`
+}
+
+type ImageRef struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	RootDisk string `json:"rootDisk"`
+	BootMode string `json:"bootMode,omitempty"`
 }
 
 func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
@@ -97,6 +105,7 @@ func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
 		Kernel:    kernel,
 		Initrd:    initrd,
 		Firmware:  firmware,
+		Image:     cloneImageRef(req.Image),
 		RunDir:    runDir,
 		LogDir:    logDir,
 		Config:    filepath.Join(runDir, "cloud-hypervisor.json"),
@@ -126,6 +135,7 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 		metadata := *rec.Metadata
 		copied.Metadata = &metadata
 	}
+	copied.Image = cloneImageRef(rec.Image)
 	if rec.StartedAt != nil {
 		startedAt := *rec.StartedAt
 		copied.StartedAt = &startedAt
@@ -134,6 +144,14 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 		stoppedAt := *rec.StoppedAt
 		copied.StoppedAt = &stoppedAt
 	}
+	return &copied
+}
+
+func cloneImageRef(ref *ImageRef) *ImageRef {
+	if ref == nil {
+		return nil
+	}
+	copied := *ref
 	return &copied
 }
 

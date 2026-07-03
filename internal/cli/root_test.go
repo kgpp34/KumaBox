@@ -282,6 +282,94 @@ func TestCreateFirmwareBootCommand(t *testing.T) {
 	}
 }
 
+func TestCreateImageRefCommand(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	runDir := filepath.Join(dir, "run")
+	logDir := filepath.Join(dir, "log")
+	rootDisk := filepath.Join(rootDir, "cloudimg", "img_test", "base.qcow2")
+	firmware := filepath.Join(dir, "fixtures", "CLOUDHV.fd")
+	if err := os.MkdirAll(filepath.Dir(rootDisk), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rootDisk, []byte("managed image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(firmware), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(firmware, []byte("firmware"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	image, err := imagestore.New(rootDir).Create(imagestore.CreateRequest{
+		Name:   "ubuntu",
+		Source: imagestore.Source{Type: "test", URI: rootDisk},
+		RootDisk: imagestore.RootDisk{
+			Path:   rootDisk,
+			Format: "qcow2",
+		},
+		Boot: imagestore.Boot{Mode: "uefi", Firmware: firmware},
+		OS:   imagestore.OS{Family: "ubuntu", Profile: "ubuntu-cloudimg"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	create := NewRootCommand()
+	create.SetArgs([]string{
+		"--root-dir", rootDir,
+		"--run-dir", runDir,
+		"--log-dir", logDir,
+		"create", "ubuntu",
+		"--name", "from-image",
+	})
+	var out bytes.Buffer
+	create.SetOut(&out)
+	if err := create.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	var created struct {
+		RootDisk string `json:"rootDisk"`
+		Firmware string `json:"firmware"`
+		Config   string `json:"config"`
+		Image    struct {
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			RootDisk string `json:"rootDisk"`
+			BootMode string `json:"bootMode"`
+		} `json:"image"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.RootDisk != rootDisk || created.Firmware != firmware {
+		t.Fatalf("boot fields = root %s firmware %s", created.RootDisk, created.Firmware)
+	}
+	if created.Image.ID != image.ID || created.Image.Name != "ubuntu" || created.Image.RootDisk != rootDisk {
+		t.Fatalf("image ref = %+v", created.Image)
+	}
+	if created.Image.BootMode != "uefi" {
+		t.Fatalf("image boot mode = %s", created.Image.BootMode)
+	}
+
+	rawConfig, err := os.ReadFile(created.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rendered struct {
+		Disks []struct {
+			Path string `json:"path"`
+		} `json:"disks"`
+	}
+	if err := json.Unmarshal(rawConfig, &rendered); err != nil {
+		t.Fatal(err)
+	}
+	if len(rendered.Disks) == 0 || rendered.Disks[0].Path != rootDisk {
+		t.Fatalf("rendered disks = %+v", rendered.Disks)
+	}
+}
+
 func TestLogsCommandTailsVMLogs(t *testing.T) {
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")

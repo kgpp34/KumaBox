@@ -8,6 +8,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/config"
+	"github.com/kumabox/kumabox/internal/imagestore"
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -20,8 +21,9 @@ func newCreateCommand(opts *rootOptions) *cobra.Command {
 	flags := createVMFlags{}
 
 	cmd := &cobra.Command{
-		Use:   "create",
+		Use:   "create [IMAGE]",
 		Short: "Create a VM record",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig(opts)
 			if err != nil {
@@ -32,7 +34,11 @@ func newCreateCommand(opts *rootOptions) *cobra.Command {
 			}
 
 			rt := kbruntime.New(cfg)
-			rec, err := rt.CreateVM(newCreateRequest(flags, cfg))
+			req, err := newCreateRequest(flags, args, cfg)
+			if err != nil {
+				return err
+			}
+			rec, err := rt.CreateVM(req)
 			if err != nil {
 				return err
 			}
@@ -48,8 +54,9 @@ func newRunCommand(opts *rootOptions) *cobra.Command {
 	flags := createVMFlags{}
 
 	cmd := &cobra.Command{
-		Use:   "run",
+		Use:   "run [IMAGE]",
 		Short: "Create and start a VM",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig(opts)
 			if err != nil {
@@ -60,7 +67,11 @@ func newRunCommand(opts *rootOptions) *cobra.Command {
 			}
 
 			rt := kbruntime.New(cfg)
-			rec, err := rt.RunVM(newCreateRequest(flags, cfg))
+			req, err := newCreateRequest(flags, args, cfg)
+			if err != nil {
+				return err
+			}
+			rec, err := rt.RunVM(req)
 			if err != nil {
 				return err
 			}
@@ -232,19 +243,53 @@ func addCreateVMFlags(cmd *cobra.Command, flags *createVMFlags) {
 	cmd.Flags().StringVar(&flags.initrd, "initrd", "", "initrd image path")
 	cmd.Flags().StringVar(&flags.firmware, "firmware", "", "UEFI firmware path")
 	_ = cmd.MarkFlagRequired("name")
-	_ = cmd.MarkFlagRequired("root-disk")
 }
 
-func newCreateRequest(flags createVMFlags, cfg config.Config) vmstore.CreateRequest {
-	return vmstore.CreateRequest{
-		Name:     flags.name,
-		RootDisk: flags.rootDisk,
-		Kernel:   flags.kernel,
-		Initrd:   flags.initrd,
-		Firmware: flags.firmware,
-		RunDir:   cfg.Runtime.RunDir,
-		LogDir:   cfg.Runtime.LogDir,
+func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vmstore.CreateRequest, error) {
+	if len(args) == 0 {
+		if flags.rootDisk == "" {
+			return vmstore.CreateRequest{}, fmt.Errorf("either IMAGE or --root-disk is required")
+		}
+		return vmstore.CreateRequest{
+			Name:     flags.name,
+			RootDisk: flags.rootDisk,
+			Kernel:   flags.kernel,
+			Initrd:   flags.initrd,
+			Firmware: flags.firmware,
+			RunDir:   cfg.Runtime.RunDir,
+			LogDir:   cfg.Runtime.LogDir,
+		}, nil
 	}
+
+	if flags.rootDisk != "" || flags.kernel != "" || flags.initrd != "" || flags.firmware != "" {
+		return vmstore.CreateRequest{}, fmt.Errorf("IMAGE cannot be combined with --root-disk, --kernel, --initrd, or --firmware")
+	}
+	image, err := imagestore.New(cfg.Runtime.RootDir).Inspect(args[0])
+	if err != nil {
+		return vmstore.CreateRequest{}, fmt.Errorf("resolve image %q: %w", args[0], err)
+	}
+	if image.RootDisk.Path == "" {
+		return vmstore.CreateRequest{}, fmt.Errorf("image %q has no root disk", args[0])
+	}
+	req := vmstore.CreateRequest{
+		Name:     flags.name,
+		RootDisk: image.RootDisk.Path,
+		Kernel:   image.Boot.Kernel,
+		Initrd:   image.Boot.Initrd,
+		Firmware: image.Boot.Firmware,
+		Image: &vmstore.ImageRef{
+			ID:       image.ID,
+			Name:     image.Name,
+			RootDisk: image.RootDisk.Path,
+			BootMode: image.Boot.Mode,
+		},
+		RunDir: cfg.Runtime.RunDir,
+		LogDir: cfg.Runtime.LogDir,
+	}
+	if req.Firmware == "" && (req.Kernel == "" || req.Initrd == "") {
+		return vmstore.CreateRequest{}, fmt.Errorf("image %q has no usable boot configuration", args[0])
+	}
+	return req, nil
 }
 
 func newPSCommand(opts *rootOptions) *cobra.Command {
