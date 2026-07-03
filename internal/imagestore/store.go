@@ -3,6 +3,7 @@
 package imagestore
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -21,6 +22,8 @@ import (
 
 	"github.com/kumabox/kumabox/internal/fileutil"
 )
+
+const qemuImgInfoTimeout = 30 * time.Second
 
 // Store persists image metadata in the KumaBox image index.
 type Store struct {
@@ -401,7 +404,13 @@ type qemuImageInfo struct {
 }
 
 func inspectImage(qemuImgPath, sourcePath string) (*qemuImageInfo, error) {
-	out, err := exec.Command(qemuImgPath, "info", "--output=json", sourcePath).Output() //nolint:gosec
+	ctx, cancel := context.WithTimeout(context.Background(), qemuImgInfoTimeout)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, qemuImgPath, "info", "--output=json", sourcePath).Output() //nolint:gosec
+	if ctx.Err() == context.DeadlineExceeded {
+		return nil, fmt.Errorf("qemu-img info %s timed out after %s", sourcePath, qemuImgInfoTimeout)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("qemu-img info %s: %w", sourcePath, err)
 	}
