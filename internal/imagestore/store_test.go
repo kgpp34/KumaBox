@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -167,6 +169,123 @@ func TestImportLocalDoesNotIndexFailedInspect(t *testing.T) {
 	}
 	if len(records) != 0 {
 		t.Fatalf("failed import should not update index: %+v", records)
+	}
+}
+
+func TestPullDownloadsHTTPURLAndCommitsImage(t *testing.T) {
+	dir := t.TempDir()
+	content := []byte("cloud image from http")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/jammy-server-cloudimg-amd64.img" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(content)
+	}))
+	defer server.Close()
+
+	firmware := filepath.Join(dir, "fixtures", "CLOUDHV.fd")
+	if err := os.MkdirAll(filepath.Dir(firmware), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(firmware, []byte("firmware"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	expectedSum := sha256.Sum256(content)
+	store := New(filepath.Join(dir, "data"))
+	rec, err := store.Pull(PullRequest{
+		Name:        "ubuntu-http",
+		URL:         server.URL + "/jammy-server-cloudimg-amd64.img",
+		Firmware:    firmware,
+		QemuImgPath: fakeQemuImg(t, dir, "qcow2", 8192, int64(len(content))),
+		SHA256:      hex.EncodeToString(expectedSum[:]),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if rec.Name != "ubuntu-http" || rec.Source.Type != "url" {
+		t.Fatalf("record source = %+v", rec)
+	}
+	if rec.RootDisk.Format != "qcow2" || rec.RootDisk.VirtualSizeBytes != 8192 {
+		t.Fatalf("root disk = %+v", rec.RootDisk)
+	}
+	if rec.RootDisk.SHA256 != hex.EncodeToString(expectedSum[:]) {
+		t.Fatalf("sha256 = %s", rec.RootDisk.SHA256)
+	}
+	committed, err := os.ReadFile(rec.RootDisk.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(committed) != string(content) {
+		t.Fatalf("committed disk content = %q", committed)
+	}
+}
+
+func TestPullCopiesFileURLAndCommitsImage(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "fixtures", "noble-server-cloudimg-amd64.img")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("file url image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	firmware := filepath.Join(dir, "fixtures", "CLOUDHV.fd")
+	if err := os.WriteFile(firmware, []byte("firmware"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := New(filepath.Join(dir, "data"))
+	rec, err := store.Pull(PullRequest{
+		Name:        "ubuntu-file",
+		URL:         "file://" + source,
+		Firmware:    firmware,
+		QemuImgPath: fakeQemuImg(t, dir, "raw", 4096, 14),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if rec.RootDisk.Format != "raw" || filepath.Base(rec.RootDisk.Path) != "base.raw" {
+		t.Fatalf("root disk = %+v", rec.RootDisk)
+	}
+	if rec.OS.Family != "ubuntu" {
+		t.Fatalf("os = %+v", rec.OS)
+	}
+}
+
+func TestPullRejectsChecksumMismatchWithoutIndexUpdate(t *testing.T) {
+	dir := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("unexpected content"))
+	}))
+	defer server.Close()
+
+	firmware := filepath.Join(dir, "CLOUDHV.fd")
+	if err := os.WriteFile(firmware, []byte("firmware"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := New(filepath.Join(dir, "data"))
+	_, err := store.Pull(PullRequest{
+		Name:        "bad-checksum",
+		URL:         server.URL + "/image.img",
+		Firmware:    firmware,
+		QemuImgPath: fakeQemuImg(t, dir, "qcow2", 4096, 18),
+		SHA256:      strings.Repeat("0", sha256.Size*2),
+	})
+	if !errors.Is(err, ErrChecksumMismatch) {
+		t.Fatalf("expected ErrChecksumMismatch, got %v", err)
+	}
+
+	records, listErr := store.List()
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(records) != 0 {
+		t.Fatalf("failed pull should not update index: %+v", records)
 	}
 }
 

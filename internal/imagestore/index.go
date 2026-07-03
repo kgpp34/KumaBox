@@ -15,6 +15,8 @@ var (
 	ErrNameConflict = errors.New("image name already exists")
 	// ErrAmbiguous is returned when an image reference matches multiple images.
 	ErrAmbiguous = errors.New("image ref is ambiguous")
+	// ErrChecksumMismatch is returned when a pulled image does not match the expected digest.
+	ErrChecksumMismatch = errors.New("image checksum mismatch")
 )
 
 type imageIndex struct {

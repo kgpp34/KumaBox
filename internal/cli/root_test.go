@@ -2,7 +2,11 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -568,6 +572,78 @@ func TestImageImportCommand(t *testing.T) {
 	}
 	if !strings.Contains(inspectOut.String(), imported.ID) {
 		t.Fatalf("inspect output missing imported id: %s", inspectOut.String())
+	}
+}
+
+func TestImagePullCommand(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	content := []byte("pulled cloud image")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(content)
+	}))
+	defer server.Close()
+
+	firmware := filepath.Join(dir, "fixtures", "CLOUDHV.fd")
+	if err := os.MkdirAll(filepath.Dir(firmware), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(firmware, []byte("firmware"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(content)
+	qemuImg := fakeQemuImgForCLI(t, dir, "qcow2", 4096, int64(len(content)))
+
+	pullCmd := NewRootCommand()
+	pullCmd.SetArgs([]string{
+		"--root-dir", rootDir,
+		"image", "pull", server.URL + "/jammy-server-cloudimg-amd64.img",
+		"--name", "ubuntu-pull",
+		"--firmware", firmware,
+		"--qemu-img", qemuImg,
+		"--sha256", hex.EncodeToString(sum[:]),
+	})
+	var pullOut bytes.Buffer
+	pullCmd.SetOut(&pullOut)
+	if err := pullCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	var pulled struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Source struct {
+			Type string `json:"type"`
+			URI  string `json:"uri"`
+		} `json:"source"`
+		RootDisk struct {
+			Path   string `json:"path"`
+			Format string `json:"format"`
+			SHA256 string `json:"sha256"`
+		} `json:"rootDisk"`
+	}
+	if err := json.Unmarshal(pullOut.Bytes(), &pulled); err != nil {
+		t.Fatal(err)
+	}
+	if pulled.ID == "" || pulled.Name != "ubuntu-pull" || pulled.Source.Type != "url" {
+		t.Fatalf("pulled = %+v", pulled)
+	}
+	if pulled.RootDisk.Format != "qcow2" || pulled.RootDisk.SHA256 != hex.EncodeToString(sum[:]) {
+		t.Fatalf("root disk = %+v", pulled.RootDisk)
+	}
+	if _, err := os.Stat(pulled.RootDisk.Path); err != nil {
+		t.Fatalf("pulled root disk missing: %v", err)
+	}
+
+	inspect := NewRootCommand()
+	inspect.SetArgs([]string{"--root-dir", rootDir, "image", "inspect", "ubuntu-pull", "--json"})
+	var inspectOut bytes.Buffer
+	inspect.SetOut(&inspectOut)
+	if err := inspect.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(inspectOut.String(), pulled.ID) {
+		t.Fatalf("inspect output missing pulled id: %s", inspectOut.String())
 	}
 }
 

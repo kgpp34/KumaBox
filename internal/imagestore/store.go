@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,6 +59,15 @@ type ImportRequest struct {
 	File        string
 	Firmware    string
 	QemuImgPath string
+}
+
+// PullRequest describes a URL cloud image pull operation.
+type PullRequest struct {
+	Name        string
+	URL         string
+	Firmware    string
+	QemuImgPath string
+	SHA256      string
 }
 
 // Create inserts an image record into the image index.
@@ -122,21 +133,20 @@ func (s *Store) ImportLocal(req ImportRequest) (*ImageRecord, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve firmware path: %w", err)
 	}
+	if err := validateReadableFile(firmwarePath, "firmware"); err != nil {
+		return nil, err
+	}
 
 	info, err := inspectImage(req.QemuImgPath, sourcePath)
 	if err != nil {
 		return nil, err
 	}
 
-	stageID, err := newOperationID()
+	stagingDir, cleanup, err := s.createStagingDir("import")
 	if err != nil {
 		return nil, err
 	}
-	stagingDir := filepath.Join(s.imageDir, "staging", stageID)
-	defer os.RemoveAll(stagingDir) //nolint:errcheck
-	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create import staging dir: %w", err)
-	}
+	defer cleanup()
 
 	diskName := "base." + diskExtension(info.Format)
 	stagedDisk := filepath.Join(stagingDir, diskName)
@@ -167,6 +177,72 @@ func (s *Store) ImportLocal(req ImportRequest) (*ImageRecord, error) {
 		},
 		OS: OS{
 			Family:  detectOSFamily(sourcePath),
+			Profile: "ubuntu-cloudimg",
+		},
+	}, stagedDisk)
+}
+
+// Pull downloads a cloud image URL into staging and commits it to the image store.
+func (s *Store) Pull(req PullRequest) (*ImageRecord, error) {
+	if err := validatePullRequest(req); err != nil {
+		return nil, err
+	}
+	firmwarePath, err := filepath.Abs(req.Firmware)
+	if err != nil {
+		return nil, fmt.Errorf("resolve firmware path: %w", err)
+	}
+	if err := validateReadableFile(firmwarePath, "firmware"); err != nil {
+		return nil, err
+	}
+
+	stagingDir, cleanup, err := s.createStagingDir("pull")
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	downloadedDisk := filepath.Join(stagingDir, "download.img")
+	sum, actualSize, sourceHint, err := downloadToStaging(req.URL, downloadedDisk)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifySHA256(req.SHA256, sum); err != nil {
+		return nil, err
+	}
+
+	info, err := inspectImage(req.QemuImgPath, downloadedDisk)
+	if err != nil {
+		return nil, err
+	}
+	if info.ActualSizeBytes > 0 {
+		actualSize = info.ActualSizeBytes
+	}
+
+	diskName := "base." + diskExtension(info.Format)
+	stagedDisk := filepath.Join(stagingDir, diskName)
+	if err := os.Rename(downloadedDisk, stagedDisk); err != nil {
+		return nil, fmt.Errorf("prepare pulled image: %w", err)
+	}
+
+	return s.commitImportedImage(CreateRequest{
+		Name: req.Name,
+		Source: Source{
+			Type: "url",
+			URI:  req.URL,
+		},
+		RootDisk: RootDisk{
+			Path:             diskName,
+			Format:           info.Format,
+			VirtualSizeBytes: info.VirtualSizeBytes,
+			ActualSizeBytes:  actualSize,
+			SHA256:           sum,
+		},
+		Boot: Boot{
+			Mode:     "uefi",
+			Firmware: firmwarePath,
+		},
+		OS: OS{
+			Family:  detectOSFamily(sourceHint),
 			Profile: "ubuntu-cloudimg",
 		},
 	}, stagedDisk)
@@ -280,6 +356,20 @@ func (s *Store) commitImportedImage(req CreateRequest, stagedDisk string) (*Imag
 	return created, nil
 }
 
+func (s *Store) createStagingDir(prefix string) (string, func(), error) {
+	stageID, err := newOperationID(prefix)
+	if err != nil {
+		return "", nil, err
+	}
+	stagingDir := filepath.Join(s.imageDir, "staging", stageID)
+	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
+		return "", nil, fmt.Errorf("create %s staging dir: %w", prefix, err)
+	}
+	return stagingDir, func() {
+		_ = os.RemoveAll(stagingDir)
+	}, nil
+}
+
 func (s *Store) withIndex(fn func(*imageIndex) error) error {
 	unlock, err := s.lock()
 	if err != nil {
@@ -380,6 +470,46 @@ func validateImportRequest(req ImportRequest) error {
 	return nil
 }
 
+func validatePullRequest(req PullRequest) error {
+	if req.Name == "" {
+		return errors.New("image name must not be empty")
+	}
+	if req.URL == "" {
+		return errors.New("image URL must not be empty")
+	}
+	if req.Firmware == "" {
+		return errors.New("firmware must not be empty")
+	}
+	if req.QemuImgPath == "" {
+		return errors.New("qemu-img path must not be empty")
+	}
+	if req.SHA256 != "" {
+		expected := strings.ToLower(strings.TrimSpace(req.SHA256))
+		if len(expected) != sha256.Size*2 {
+			return errors.New("sha256 must be a 64 character hex digest")
+		}
+		if _, err := hex.DecodeString(expected); err != nil {
+			return fmt.Errorf("sha256 must be hex: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateReadableFile(path, label string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", label, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%s must be a file: %s", label, path)
+	}
+	file, err := os.Open(path) //nolint:gosec
+	if err != nil {
+		return fmt.Errorf("open %s: %w", label, err)
+	}
+	return file.Close()
+}
+
 func newID() (string, error) {
 	var raw [8]byte
 	if _, err := rand.Read(raw[:]); err != nil {
@@ -388,12 +518,12 @@ func newID() (string, error) {
 	return "img_" + hex.EncodeToString(raw[:]), nil
 }
 
-func newOperationID() (string, error) {
+func newOperationID(prefix string) (string, error) {
 	var raw [8]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", fmt.Errorf("generate operation ID: %w", err)
 	}
-	return "import-" + hex.EncodeToString(raw[:]), nil
+	return prefix + "-" + hex.EncodeToString(raw[:]), nil
 }
 
 type qemuImageInfo struct {
@@ -449,6 +579,87 @@ func copyWithSHA256(src, dst string) (string, int64, error) {
 		return "", 0, fmt.Errorf("close staged image: %w", closeErr)
 	}
 	return hex.EncodeToString(hasher.Sum(nil)), size, nil
+}
+
+func downloadToStaging(rawURL, dst string) (string, int64, string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", 0, "", fmt.Errorf("parse image URL: %w", err)
+	}
+	switch parsed.Scheme {
+	case "file":
+		sourcePath, err := fileURLPath(parsed)
+		if err != nil {
+			return "", 0, "", err
+		}
+		sum, size, err := copyWithSHA256(sourcePath, dst)
+		return sum, size, sourcePath, err
+	case "http", "https":
+		sum, size, err := downloadHTTPToFile(rawURL, dst)
+		return sum, size, parsed.Path, err
+	default:
+		return "", 0, "", fmt.Errorf("unsupported image URL scheme: %s", parsed.Scheme)
+	}
+}
+
+func fileURLPath(parsed *url.URL) (string, error) {
+	if parsed.Host != "" && parsed.Host != "localhost" {
+		return "", fmt.Errorf("unsupported file URL host: %s", parsed.Host)
+	}
+	if parsed.Path == "" {
+		return "", errors.New("file URL path must not be empty")
+	}
+	path, err := url.PathUnescape(parsed.Path)
+	if err != nil {
+		return "", fmt.Errorf("decode file URL path: %w", err)
+	}
+	return path, nil
+}
+
+func downloadHTTPToFile(rawURL, dst string) (string, int64, error) {
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", 0, fmt.Errorf("create image download request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", 0, fmt.Errorf("download image: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", 0, fmt.Errorf("download image: unexpected HTTP status %s", resp.Status)
+	}
+	return writeStreamWithSHA256(resp.Body, dst)
+}
+
+func writeStreamWithSHA256(src io.Reader, dst string) (string, int64, error) {
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec
+	if err != nil {
+		return "", 0, fmt.Errorf("create staged image: %w", err)
+	}
+
+	hasher := sha256.New()
+	size, copyErr := copyAndHash(out, src, hasher)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return "", 0, copyErr
+	}
+	if closeErr != nil {
+		return "", 0, fmt.Errorf("close staged image: %w", closeErr)
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), size, nil
+}
+
+func verifySHA256(expected, actual string) error {
+	if expected == "" {
+		return nil
+	}
+	normalized := strings.ToLower(strings.TrimSpace(expected))
+	if normalized != actual {
+		return fmt.Errorf("%w: got %s, want %s", ErrChecksumMismatch, actual, normalized)
+	}
+	return nil
 }
 
 func copyAndHash(dst io.Writer, src io.Reader, hasher hash.Hash) (int64, error) {
