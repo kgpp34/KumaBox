@@ -93,6 +93,23 @@ command_exists() {
   fi
 }
 
+kvm_module_loaded() {
+  lsmod 2>/dev/null | grep -Eq '^(kvm|kvm_intel|kvm_amd) '
+}
+
+wait_for_kvm_module() {
+  local attempts=5
+  local delay_seconds=1
+  local i
+  for ((i = 1; i <= attempts; i++)); do
+    if kvm_module_loaded; then
+      return 0
+    fi
+    sleep "$delay_seconds"
+  done
+  return 1
+}
+
 if [[ "$(uname -s)" != "Linux" ]]; then
   add_check "host" "fail" "NOT_LINUX" "env-check must run inside the Linux VM"
 else
@@ -116,8 +133,10 @@ else
     add_check "cpuVirtualization" "fail" "CPU_VIRT_FLAG_MISSING" "vmx/svm cpu flag is missing"
   fi
 
-  if lsmod 2>/dev/null | grep -Eq '^(kvm|kvm_intel|kvm_amd) '; then
+  if wait_for_kvm_module; then
     add_check "kvmModule" "pass" "" "kvm module is loaded"
+  elif [[ -r /dev/kvm && -w /dev/kvm ]]; then
+    add_check "kvmModule" "warn" "KVM_MODULE_NOT_LISTED" "kvm module is not listed by lsmod, but /dev/kvm is usable"
   else
     add_check "kvmModule" "fail" "KVM_MODULE_MISSING" "kvm kernel module is not loaded"
   fi
