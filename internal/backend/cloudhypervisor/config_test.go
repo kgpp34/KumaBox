@@ -63,6 +63,11 @@ func TestRenderConfigSupportsFirmwareBoot(t *testing.T) {
 		RunDir:   filepath.Join(dir, "run", "vms", "kb_uefi"),
 		LogDir:   filepath.Join(dir, "logs", "vms", "kb_uefi"),
 		Config:   filepath.Join(dir, "run", "vms", "kb_uefi", "cloud-hypervisor.json"),
+		Metadata: &vmstore.Metadata{
+			Type:       "nocloud",
+			CidataDir:  filepath.Join(dir, "run", "vms", "kb_uefi", "cidata"),
+			CidataDisk: filepath.Join(dir, "run", "vms", "kb_uefi", "cidata.img"),
+		},
 	}
 
 	cfg := config.Default()
@@ -84,10 +89,33 @@ func TestRenderConfigSupportsFirmwareBoot(t *testing.T) {
 	if rendered.Kernel != nil || rendered.Initramfs != nil {
 		t.Fatalf("direct boot payload must be omitted: kernel=%+v initramfs=%+v", rendered.Kernel, rendered.Initramfs)
 	}
-	for i, arg := range rendered.Args {
-		if arg == "--firmware" && i+1 < len(rendered.Args) && rendered.Args[i+1] == rec.Firmware {
-			return
+	if len(rendered.Disks) != 2 {
+		t.Fatalf("disks = %+v", rendered.Disks)
+	}
+	if rendered.Disks[1].Path != rec.Metadata.CidataDisk || !rendered.Disks[1].Readonly || rendered.Disks[1].ImageType != "raw" {
+		t.Fatalf("cidata disk = %+v", rendered.Disks[1])
+	}
+	for _, name := range []string{"meta-data", "user-data", "network-config"} {
+		if _, err := os.Stat(filepath.Join(rec.Metadata.CidataDir, name)); err != nil {
+			t.Fatalf("%s missing: %v", name, err)
 		}
 	}
-	t.Fatalf("firmware arg missing: %v", rendered.Args)
+	if _, err := os.Stat(rec.Metadata.CidataDisk); err != nil {
+		t.Fatal(err)
+	}
+	if !argsContainPair(rendered.Args, "--firmware", rec.Firmware) {
+		t.Fatalf("firmware arg missing: %v", rendered.Args)
+	}
+	if !argsContainPair(rendered.Args, "--disk", "path="+rec.Metadata.CidataDisk+",readonly=on,image_type=raw") {
+		t.Fatalf("cidata disk arg missing: %v", rendered.Args)
+	}
+}
+
+func argsContainPair(args []string, key, value string) bool {
+	for i, arg := range args {
+		if arg == key && i+1 < len(args) && args[i+1] == value {
+			return true
+		}
+	}
+	return false
 }

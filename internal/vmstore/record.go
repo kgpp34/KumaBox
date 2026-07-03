@@ -45,6 +45,7 @@ type VMRecord struct {
 	Kernel         string        `json:"kernel,omitempty"`
 	Initrd         string        `json:"initrd,omitempty"`
 	Firmware       string        `json:"firmware,omitempty"`
+	Metadata       *Metadata     `json:"metadata,omitempty"`
 	RunDir         string        `json:"runDir"`
 	LogDir         string        `json:"logDir"`
 	Config         string        `json:"config"`
@@ -52,6 +53,12 @@ type VMRecord struct {
 	UpdatedAt      time.Time     `json:"updatedAt"`
 	StartedAt      *time.Time    `json:"startedAt,omitempty"`
 	StoppedAt      *time.Time    `json:"stoppedAt,omitempty"`
+}
+
+type Metadata struct {
+	Type       string `json:"type"`
+	CidataDir  string `json:"cidataDir"`
+	CidataDisk string `json:"cidataDisk"`
 }
 
 func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
@@ -80,7 +87,7 @@ func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
 		return nil, err
 	}
 
-	return &VMRecord{
+	rec := &VMRecord{
 		ID:        id,
 		Name:      req.Name,
 		Backend:   backendCloudHypervisor,
@@ -94,7 +101,15 @@ func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
 		Config:    filepath.Join(runDir, "cloud-hypervisor.json"),
 		CreatedAt: now,
 		UpdatedAt: now,
-	}, nil
+	}
+	if firmware != "" {
+		rec.Metadata = &Metadata{
+			Type:       "nocloud",
+			CidataDir:  filepath.Join(runDir, "cidata"),
+			CidataDisk: filepath.Join(runDir, "cidata.img"),
+		}
+	}
+	return rec, nil
 }
 
 func cloneRecord(rec *VMRecord) *VMRecord {
@@ -105,6 +120,10 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 	if rec.ObservedAt != nil {
 		observedAt := *rec.ObservedAt
 		copied.ObservedAt = &observedAt
+	}
+	if rec.Metadata != nil {
+		metadata := *rec.Metadata
+		copied.Metadata = &metadata
 	}
 	if rec.StartedAt != nil {
 		startedAt := *rec.StartedAt

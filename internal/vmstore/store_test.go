@@ -120,6 +120,18 @@ func TestCreateSupportsFirmwareBoot(t *testing.T) {
 	if rec.Kernel != "" || rec.Initrd != "" {
 		t.Fatalf("unexpected direct boot fields: kernel=%q initrd=%q", rec.Kernel, rec.Initrd)
 	}
+	if rec.Metadata == nil {
+		t.Fatal("expected NoCloud metadata")
+	}
+	if rec.Metadata.Type != "nocloud" {
+		t.Fatalf("metadata type = %s", rec.Metadata.Type)
+	}
+	if rec.Metadata.CidataDir != filepath.Join(rec.RunDir, "cidata") {
+		t.Fatalf("cidata dir = %s", rec.Metadata.CidataDir)
+	}
+	if rec.Metadata.CidataDisk != filepath.Join(rec.RunDir, "cidata.img") {
+		t.Fatalf("cidata disk = %s", rec.Metadata.CidataDisk)
+	}
 }
 
 func TestCreateRejectsMixedFirmwareAndDirectBoot(t *testing.T) {

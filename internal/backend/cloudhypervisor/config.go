@@ -7,6 +7,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/fileutil"
+	"github.com/kumabox/kumabox/internal/metadata"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -79,6 +80,15 @@ func (r Renderer) RenderConfig(rec *vmstore.VMRecord) error {
 	if err := os.MkdirAll(rec.LogDir, 0o755); err != nil {
 		return fmt.Errorf("create VM log dir: %w", err)
 	}
+	if rec.Metadata != nil && rec.Metadata.Type == "nocloud" {
+		if err := metadata.WriteNoCloud(rec.Metadata.CidataDir, rec.Metadata.CidataDisk, metadata.Config{
+			InstanceID: rec.ID,
+			Hostname:   rec.Name,
+			Username:   "kumabox",
+		}); err != nil {
+			return fmt.Errorf("render NoCloud metadata: %w", err)
+		}
+	}
 
 	rendered := NewConfig(r.cfg, rec)
 	if err := fileutil.WriteJSONAtomic(rec.Config, rendered, ".cloud-hypervisor-*.tmp"); err != nil {
@@ -114,6 +124,9 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		"--serial", "file="+serialLog,
 		"--console", "off",
 	)
+	if rec.Metadata != nil && rec.Metadata.CidataDisk != "" {
+		args = append(args, "--disk", "path="+rec.Metadata.CidataDisk+",readonly=on,image_type=raw")
+	}
 
 	rendered := Config{
 		Binary:       cfg.Backend.CloudHypervisor.Binary,
@@ -122,7 +135,7 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		PIDFile:      filepath.Join(rec.RunDir, "ch.pid"),
 		StdoutLog:    stdoutLog,
 		StderrLog:    stderrLog,
-		Disks:        []Disk{newRootDisk(rec)},
+		Disks:        newDisks(rec),
 		Serial:       Serial{Path: serialLog},
 		Console:      Console{Mode: "off"},
 		Args:         args,
@@ -141,6 +154,18 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		rendered.Initramfs = &Initramfs{Path: rec.Initrd}
 	}
 	return rendered
+}
+
+func newDisks(rec *vmstore.VMRecord) []Disk {
+	disks := []Disk{newRootDisk(rec)}
+	if rec.Metadata != nil && rec.Metadata.CidataDisk != "" {
+		disks = append(disks, Disk{
+			Path:      rec.Metadata.CidataDisk,
+			Readonly:  true,
+			ImageType: "raw",
+		})
+	}
+	return disks
 }
 
 func newRootDisk(rec *vmstore.VMRecord) Disk {

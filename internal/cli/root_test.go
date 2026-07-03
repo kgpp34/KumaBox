@@ -229,12 +229,20 @@ func TestCreateFirmwareBootCommand(t *testing.T) {
 	var created struct {
 		Config   string `json:"config"`
 		Firmware string `json:"firmware"`
+		Metadata struct {
+			Type       string `json:"type"`
+			CidataDir  string `json:"cidataDir"`
+			CidataDisk string `json:"cidataDisk"`
+		} `json:"metadata"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
 	if created.Firmware == "" {
 		t.Fatal("expected firmware in create output")
+	}
+	if created.Metadata.Type != "nocloud" || created.Metadata.CidataDisk == "" {
+		t.Fatalf("metadata = %+v", created.Metadata)
 	}
 
 	rawConfig, err := os.ReadFile(created.Config)
@@ -246,6 +254,11 @@ func TestCreateFirmwareBootCommand(t *testing.T) {
 			Path string `json:"path"`
 		} `json:"firmware"`
 		Kernel any `json:"kernel"`
+		Disks  []struct {
+			Path      string `json:"path"`
+			Readonly  bool   `json:"readonly"`
+			ImageType string `json:"imageType"`
+		} `json:"disks"`
 	}
 	if err := json.Unmarshal(rawConfig, &rendered); err != nil {
 		t.Fatal(err)
@@ -255,6 +268,17 @@ func TestCreateFirmwareBootCommand(t *testing.T) {
 	}
 	if rendered.Kernel != nil {
 		t.Fatalf("expected no direct kernel payload: %+v", rendered.Kernel)
+	}
+	if len(rendered.Disks) != 2 {
+		t.Fatalf("disks = %+v", rendered.Disks)
+	}
+	if rendered.Disks[1].Path != created.Metadata.CidataDisk || !rendered.Disks[1].Readonly || rendered.Disks[1].ImageType != "raw" {
+		t.Fatalf("metadata disk = %+v", rendered.Disks[1])
+	}
+	for _, name := range []string{"meta-data", "user-data", "network-config"} {
+		if _, err := os.Stat(filepath.Join(created.Metadata.CidataDir, name)); err != nil {
+			t.Fatalf("%s missing: %v", name, err)
+		}
 	}
 }
 
