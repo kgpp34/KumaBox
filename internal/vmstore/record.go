@@ -53,6 +53,7 @@ type VMRecord struct {
 	UpdatedAt      time.Time     `json:"updatedAt"`
 	StartedAt      *time.Time    `json:"startedAt,omitempty"`
 	StoppedAt      *time.Time    `json:"stoppedAt,omitempty"`
+	FirstBooted    bool          `json:"firstBooted,omitempty"`
 }
 
 type Metadata struct {

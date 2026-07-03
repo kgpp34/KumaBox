@@ -117,6 +117,68 @@ func TestStartVMMarksRunning(t *testing.T) {
 	}
 }
 
+func TestStartVMRerendersAfterFirstBoot(t *testing.T) {
+	dir := t.TempDir()
+	store := vmstore.New(filepath.Join(dir, "data"))
+	var renderFirstBooted []bool
+	rt := NewWithBackend(
+		store,
+		backendFake{
+			render: func(rec *vmstore.VMRecord) error {
+				renderFirstBooted = append(renderFirstBooted, rec.FirstBooted)
+				return nil
+			},
+			start: func(*vmstore.VMRecord) (*backend.StartResult, error) {
+				return &backend.StartResult{PID: 1234, APISocket: filepath.Join(dir, "run", "ch.sock")}, nil
+			},
+			observe: func(rec *vmstore.VMRecord) vmstore.Observation {
+				state := vmstore.ObservedStateCreated
+				if rec.State == vmstore.StateRunning {
+					state = vmstore.ObservedStateRunning
+				}
+				if rec.State == vmstore.StateStopped {
+					state = vmstore.ObservedStateStopped
+				}
+				return vmstore.Observation{
+					State:     state,
+					Reason:    string(state),
+					CheckedAt: time.Now().UTC(),
+				}
+			},
+		},
+	)
+
+	rec, err := rt.CreateVM(vmstore.CreateRequest{
+		Name:     "cloudimg",
+		RootDisk: "ubuntu.img",
+		Firmware: "CLOUDHV.fd",
+		RunDir:   filepath.Join(dir, "run"),
+		LogDir:   filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.StartVM(rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.StopVM(rec.ID, backend.StopOptions{Timeout: time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.StartVM(rec.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(renderFirstBooted) != 3 {
+		t.Fatalf("render calls = %v", renderFirstBooted)
+	}
+	if renderFirstBooted[0] || renderFirstBooted[1] {
+		t.Fatalf("first boot renders should include cidata: %v", renderFirstBooted)
+	}
+	if !renderFirstBooted[2] {
+		t.Fatalf("second start should render with firstBooted=true: %v", renderFirstBooted)
+	}
+}
+
 func TestStartVMMarksErrorOnStartFailure(t *testing.T) {
 	dir := t.TempDir()
 	store := vmstore.New(filepath.Join(dir, "data"))

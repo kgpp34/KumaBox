@@ -126,6 +126,9 @@ func (s *Store) MarkRunning(ref string, pid int, apiSocket string) (*VMRecord, e
 		rec.APISocket = apiSocket
 		rec.Error = ""
 		rec.StartedAt = &now
+		if rec.Metadata != nil {
+			rec.FirstBooted = true
+		}
 		rec.UpdatedAt = now
 		updated = cloneRecord(rec)
 		return nil

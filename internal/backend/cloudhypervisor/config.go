@@ -80,8 +80,8 @@ func (r Renderer) RenderConfig(rec *vmstore.VMRecord) error {
 	if err := os.MkdirAll(rec.LogDir, 0o755); err != nil {
 		return fmt.Errorf("create VM log dir: %w", err)
 	}
-	if rec.Metadata != nil && rec.Metadata.Type == "nocloud" {
-		if err := metadata.WriteNoCloud(rec.Metadata.CidataDir, rec.Metadata.CidataDisk, metadata.Config{
+	if meta := activeMetadata(rec); meta != nil && meta.Type == "nocloud" {
+		if err := metadata.WriteNoCloud(meta.CidataDir, meta.CidataDisk, metadata.Config{
 			InstanceID: rec.ID,
 			Hostname:   rec.Name,
 			Username:   "kumabox",
@@ -124,8 +124,8 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		"--serial", "file="+serialLog,
 		"--console", "off",
 	)
-	if rec.Metadata != nil && rec.Metadata.CidataDisk != "" {
-		args = append(args, "--disk", "path="+rec.Metadata.CidataDisk+",readonly=on,image_type=raw")
+	if meta := activeMetadata(rec); meta != nil && meta.CidataDisk != "" {
+		args = append(args, "--disk", "path="+meta.CidataDisk+",readonly=on,image_type=raw")
 	}
 
 	rendered := Config{
@@ -158,14 +158,21 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 
 func newDisks(rec *vmstore.VMRecord) []Disk {
 	disks := []Disk{newRootDisk(rec)}
-	if rec.Metadata != nil && rec.Metadata.CidataDisk != "" {
+	if meta := activeMetadata(rec); meta != nil && meta.CidataDisk != "" {
 		disks = append(disks, Disk{
-			Path:      rec.Metadata.CidataDisk,
+			Path:      meta.CidataDisk,
 			Readonly:  true,
 			ImageType: "raw",
 		})
 	}
 	return disks
+}
+
+func activeMetadata(rec *vmstore.VMRecord) *vmstore.Metadata {
+	if rec == nil || rec.FirstBooted {
+		return nil
+	}
+	return rec.Metadata
 }
 
 func newRootDisk(rec *vmstore.VMRecord) Disk {

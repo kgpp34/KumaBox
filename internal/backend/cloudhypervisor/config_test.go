@@ -111,6 +111,47 @@ func TestRenderConfigSupportsFirmwareBoot(t *testing.T) {
 	}
 }
 
+func TestRenderConfigSkipsCidataAfterFirstBoot(t *testing.T) {
+	dir := t.TempDir()
+	rec := &vmstore.VMRecord{
+		ID:          "kb_uefi",
+		Name:        "uefi",
+		RootDisk:    "/fixtures/ubuntu.img",
+		Firmware:    "/fixtures/CLOUDHV.fd",
+		RunDir:      filepath.Join(dir, "run", "vms", "kb_uefi"),
+		LogDir:      filepath.Join(dir, "logs", "vms", "kb_uefi"),
+		Config:      filepath.Join(dir, "run", "vms", "kb_uefi", "cloud-hypervisor.json"),
+		FirstBooted: true,
+		Metadata: &vmstore.Metadata{
+			Type:       "nocloud",
+			CidataDir:  filepath.Join(dir, "run", "vms", "kb_uefi", "cidata"),
+			CidataDisk: filepath.Join(dir, "run", "vms", "kb_uefi", "cidata.img"),
+		},
+	}
+
+	if err := NewRenderer(config.Default()).RenderConfig(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(rec.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rendered Config
+	if err := json.Unmarshal(raw, &rendered); err != nil {
+		t.Fatal(err)
+	}
+	if len(rendered.Disks) != 1 {
+		t.Fatalf("disks = %+v", rendered.Disks)
+	}
+	if argsContainPair(rendered.Args, "--disk", "path="+rec.Metadata.CidataDisk+",readonly=on,image_type=raw") {
+		t.Fatalf("cidata disk arg should be skipped after first boot: %v", rendered.Args)
+	}
+	if _, err := os.Stat(rec.Metadata.CidataDisk); !os.IsNotExist(err) {
+		t.Fatalf("cidata disk should not be regenerated after first boot: %v", err)
+	}
+}
+
 func argsContainPair(args []string, key, value string) bool {
 	for i, arg := range args {
 		if arg == key && i+1 < len(args) && args[i+1] == value {

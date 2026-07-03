@@ -134,6 +134,33 @@ func TestCreateSupportsFirmwareBoot(t *testing.T) {
 	}
 }
 
+func TestMarkRunningMarksFirmwareVMFirstBooted(t *testing.T) {
+	dir := t.TempDir()
+	store := New(filepath.Join(dir, "data"))
+
+	rec, err := store.Create(CreateRequest{
+		Name:     "uefi",
+		RootDisk: "ubuntu.img",
+		Firmware: "CLOUDHV.fd",
+		RunDir:   filepath.Join(dir, "run"),
+		LogDir:   filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.FirstBooted {
+		t.Fatal("new VM should not be marked first-booted")
+	}
+
+	running, err := store.MarkRunning(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !running.FirstBooted {
+		t.Fatal("firmware VM should be marked first-booted after successful start")
+	}
+}
+
 func TestCreateRejectsMixedFirmwareAndDirectBoot(t *testing.T) {
 	dir := t.TempDir()
 	store := New(filepath.Join(dir, "data"))

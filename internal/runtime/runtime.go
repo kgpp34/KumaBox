@@ -51,6 +51,13 @@ func (r *Runtime) StartVM(ref string) (*vmstore.VMRecord, error) {
 		return nil, err
 	}
 
+	if err := r.backend.RenderConfig(rec); err != nil {
+		if _, markErr := r.store.MarkError(rec.ID, err.Error()); markErr != nil {
+			return nil, markErr
+		}
+		return nil, err
+	}
+
 	result, err := r.backend.StartVM(rec)
 	if err != nil {
 		if _, markErr := r.store.MarkError(rec.ID, err.Error()); markErr != nil {
