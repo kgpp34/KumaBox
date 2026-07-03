@@ -123,6 +123,9 @@ func TestImportLocalCommitsImageAndManifests(t *testing.T) {
 	if _, err := os.Stat(rec.RootDisk.Path); err != nil {
 		t.Fatalf("committed root disk missing: %v", err)
 	}
+	if !strings.Contains(rec.RootDisk.Path, string(filepath.Separator)+"cloudimg"+string(filepath.Separator)) {
+		t.Fatalf("root disk path = %s, want cloudimg store", rec.RootDisk.Path)
+	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(rec.RootDisk.Path), "image.json")); err != nil {
 		t.Fatalf("image manifest missing: %v", err)
 	}

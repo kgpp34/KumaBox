@@ -29,18 +29,18 @@ const qemuImgInfoTimeout = 30 * time.Second
 
 // Store persists image metadata in the KumaBox image index.
 type Store struct {
-	imageDir  string
-	indexPath string
-	lockPath  string
+	cloudimgDir string
+	indexPath   string
+	lockPath    string
 }
 
 // New returns a Store rooted under rootDir.
 func New(rootDir string) *Store {
-	imageDir := filepath.Join(rootDir, "images")
+	cloudimgDir := filepath.Join(rootDir, "cloudimg")
 	return &Store{
-		imageDir:  imageDir,
-		indexPath: filepath.Join(imageDir, "index.json"),
-		lockPath:  filepath.Join(imageDir, "index.lock"),
+		cloudimgDir: cloudimgDir,
+		indexPath:   filepath.Join(cloudimgDir, "index.json"),
+		lockPath:    filepath.Join(cloudimgDir, "index.lock"),
 	}
 }
 
@@ -309,7 +309,7 @@ func (s *Store) commitImportedImage(req CreateRequest, stagedDisk string) (*Imag
 			}
 		}
 
-		imageDir := filepath.Join(s.imageDir, id)
+		imageDir := filepath.Join(s.cloudimgDir, id)
 		if err := os.MkdirAll(imageDir, 0o755); err != nil {
 			return fmt.Errorf("create image dir: %w", err)
 		}
@@ -361,7 +361,7 @@ func (s *Store) createStagingDir(prefix string) (string, func(), error) {
 	if err != nil {
 		return "", nil, err
 	}
-	stagingDir := filepath.Join(s.imageDir, "staging", stageID)
+	stagingDir := filepath.Join(s.cloudimgDir, "staging", stageID)
 	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
 		return "", nil, fmt.Errorf("create %s staging dir: %w", prefix, err)
 	}
