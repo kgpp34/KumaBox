@@ -6,6 +6,7 @@ import (
 	"runtime"
 
 	"github.com/kumabox/kumabox/internal/config"
+	kbnetwork "github.com/kumabox/kumabox/internal/network"
 )
 
 const (
@@ -32,11 +33,143 @@ func Run(cfg config.Config) Report {
 		checkPaths(cfg),
 		checkKVM(),
 		checkCloudHypervisor(cfg),
+		checkNetworkProvider(cfg),
+		checkNetworkTun(cfg),
+		checkNetworkIPCommand(cfg),
+		checkNetworkNAT(cfg),
+		checkNetworkPermission(cfg),
 	}
 	return Report{
 		Status: overallStatus(checks),
 		Checks: checks,
 	}
+}
+
+func checkNetworkProvider(cfg config.Config) Check {
+	provider, err := kbnetwork.ResolveProvider(cfg.Network)
+	if err != nil {
+		return Check{
+			Name:            "networkProvider",
+			Status:          StatusFail,
+			Code:            "NETWORK_PROVIDER_NOT_CONFIGURED",
+			Message:         err.Error(),
+			SuggestedAction: "set network.mode to host-tap, cni, or none",
+		}
+	}
+	return Check{Name: "networkProvider", Status: StatusPass, Message: "network provider mode is " + provider}
+}
+
+func checkNetworkTun(cfg config.Config) Check {
+	if cfg.Network.Mode == kbnetwork.ProviderNone {
+		return Check{Name: "networkTun", Status: StatusPass, Message: "network disabled"}
+	}
+	if runtime.GOOS != "linux" {
+		return Check{
+			Name:            "networkTun",
+			Status:          StatusFail,
+			Code:            "NETWORK_TUN_UNAVAILABLE",
+			Message:         "tuntap networking is only available on Linux",
+			SuggestedAction: "run network-enabled KumaBox commands inside the Linux VM",
+		}
+	}
+	if _, err := os.Stat("/dev/net/tun"); err != nil {
+		return Check{
+			Name:            "networkTun",
+			Status:          StatusFail,
+			Code:            "TUNTAP_MISSING",
+			Message:         err.Error(),
+			SuggestedAction: "load the tun module and ensure /dev/net/tun exists",
+		}
+	}
+	return Check{Name: "networkTun", Status: StatusPass, Message: "/dev/net/tun exists"}
+}
+
+func checkNetworkIPCommand(cfg config.Config) Check {
+	if cfg.Network.Mode == kbnetwork.ProviderNone {
+		return Check{Name: "networkIPCommand", Status: StatusPass, Message: "network disabled"}
+	}
+	path, err := exec.LookPath("ip")
+	if err != nil {
+		return Check{
+			Name:            "networkIPCommand",
+			Status:          StatusFail,
+			Code:            "IPROUTE2_MISSING",
+			Message:         "ip command not found",
+			SuggestedAction: "install iproute2",
+		}
+	}
+	return Check{Name: "networkIPCommand", Status: StatusPass, Message: "found " + path}
+}
+
+func checkNetworkNAT(cfg config.Config) Check {
+	if cfg.Network.Mode == kbnetwork.ProviderNone || cfg.Network.NATBackend == "none" {
+		return Check{Name: "networkNAT", Status: StatusPass, Message: "NAT disabled"}
+	}
+	iptablesPath, iptablesErr := exec.LookPath("iptables")
+	nftPath, nftErr := exec.LookPath("nft")
+	switch cfg.Network.NATBackend {
+	case "iptables":
+		if iptablesErr != nil {
+			return Check{
+				Name:            "networkNAT",
+				Status:          StatusFail,
+				Code:            "IPTABLES_MISSING",
+				Message:         "iptables command not found",
+				SuggestedAction: "install iptables or set network.nat_backend to nft",
+			}
+		}
+		return Check{Name: "networkNAT", Status: StatusPass, Message: "found " + iptablesPath}
+	case "nft":
+		if nftErr != nil {
+			return Check{
+				Name:            "networkNAT",
+				Status:          StatusFail,
+				Code:            "NFT_MISSING",
+				Message:         "nft command not found",
+				SuggestedAction: "install nftables or set network.nat_backend to iptables",
+			}
+		}
+		return Check{Name: "networkNAT", Status: StatusPass, Message: "found " + nftPath}
+	default:
+		if iptablesErr == nil {
+			return Check{Name: "networkNAT", Status: StatusPass, Message: "found " + iptablesPath}
+		}
+		if nftErr == nil {
+			return Check{Name: "networkNAT", Status: StatusPass, Message: "found " + nftPath}
+		}
+		return Check{
+			Name:            "networkNAT",
+			Status:          StatusFail,
+			Code:            "NAT_BACKEND_MISSING",
+			Message:         "neither iptables nor nft is available",
+			SuggestedAction: "install iptables or nftables",
+		}
+	}
+}
+
+func checkNetworkPermission(cfg config.Config) Check {
+	if cfg.Network.Mode == kbnetwork.ProviderNone {
+		return Check{Name: "networkPermission", Status: StatusPass, Message: "network disabled"}
+	}
+	if runtime.GOOS != "linux" {
+		return Check{
+			Name:            "networkPermission",
+			Status:          StatusFail,
+			Code:            "NETWORK_PERMISSION_DENIED",
+			Message:         "network setup requires Linux root privileges",
+			SuggestedAction: "run network-enabled KumaBox commands as root or through sudo inside the Linux VM",
+		}
+	}
+	if os.Geteuid() != 0 {
+		return Check{
+			Name:            "networkPermission",
+			Status:          StatusFail,
+			Code:            "NETWORK_PERMISSION_DENIED",
+			Message:         "current user is not root",
+			SuggestedAction: "run network-enabled KumaBox commands as root or through sudo",
+		}
+	}
+	return Check{Name: "networkPermission", Status: StatusPass, Message: "current user can configure host networking"}
 }
 
 func checkPaths(cfg config.Config) Check {

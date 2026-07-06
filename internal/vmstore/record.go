@@ -3,6 +3,8 @@ package vmstore
 import (
 	"path/filepath"
 	"time"
+
+	kbnetwork "github.com/kumabox/kumabox/internal/network"
 )
 
 type VMState string
@@ -31,30 +33,31 @@ type Observation struct {
 }
 
 type VMRecord struct {
-	ID             string        `json:"id"`
-	Name           string        `json:"name"`
-	Backend        string        `json:"backend"`
-	State          VMState       `json:"state"`
-	ObservedState  ObservedState `json:"observedState,omitempty"`
-	ObservedReason string        `json:"observedReason,omitempty"`
-	ObservedAt     *time.Time    `json:"observedAt,omitempty"`
-	PID            int           `json:"pid,omitempty"`
-	APISocket      string        `json:"apiSocket,omitempty"`
-	Error          string        `json:"error,omitempty"`
-	RootDisk       string        `json:"rootDisk"`
-	Kernel         string        `json:"kernel,omitempty"`
-	Initrd         string        `json:"initrd,omitempty"`
-	Firmware       string        `json:"firmware,omitempty"`
-	Image          *ImageRef     `json:"image,omitempty"`
-	Metadata       *Metadata     `json:"metadata,omitempty"`
-	RunDir         string        `json:"runDir"`
-	LogDir         string        `json:"logDir"`
-	Config         string        `json:"config"`
-	CreatedAt      time.Time     `json:"createdAt"`
-	UpdatedAt      time.Time     `json:"updatedAt"`
-	StartedAt      *time.Time    `json:"startedAt,omitempty"`
-	StoppedAt      *time.Time    `json:"stoppedAt,omitempty"`
-	FirstBooted    bool          `json:"firstBooted,omitempty"`
+	ID             string             `json:"id"`
+	Name           string             `json:"name"`
+	Backend        string             `json:"backend"`
+	State          VMState            `json:"state"`
+	ObservedState  ObservedState      `json:"observedState,omitempty"`
+	ObservedReason string             `json:"observedReason,omitempty"`
+	ObservedAt     *time.Time         `json:"observedAt,omitempty"`
+	PID            int                `json:"pid,omitempty"`
+	APISocket      string             `json:"apiSocket,omitempty"`
+	Error          string             `json:"error,omitempty"`
+	RootDisk       string             `json:"rootDisk"`
+	Kernel         string             `json:"kernel,omitempty"`
+	Initrd         string             `json:"initrd,omitempty"`
+	Firmware       string             `json:"firmware,omitempty"`
+	Image          *ImageRef          `json:"image,omitempty"`
+	Metadata       *Metadata          `json:"metadata,omitempty"`
+	NetworkConfigs []kbnetwork.Config `json:"networkConfigs,omitempty"`
+	RunDir         string             `json:"runDir"`
+	LogDir         string             `json:"logDir"`
+	Config         string             `json:"config"`
+	CreatedAt      time.Time          `json:"createdAt"`
+	UpdatedAt      time.Time          `json:"updatedAt"`
+	StartedAt      *time.Time         `json:"startedAt,omitempty"`
+	StoppedAt      *time.Time         `json:"stoppedAt,omitempty"`
+	FirstBooted    bool               `json:"firstBooted,omitempty"`
 }
 
 type Metadata struct {
@@ -136,6 +139,7 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 		copied.Metadata = &metadata
 	}
 	copied.Image = cloneImageRef(rec.Image)
+	copied.NetworkConfigs = cloneNetworkConfigs(rec.NetworkConfigs)
 	if rec.StartedAt != nil {
 		startedAt := *rec.StartedAt
 		copied.StartedAt = &startedAt
@@ -145,6 +149,22 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 		copied.StoppedAt = &stoppedAt
 	}
 	return &copied
+}
+
+func cloneNetworkConfigs(configs []kbnetwork.Config) []kbnetwork.Config {
+	if len(configs) == 0 {
+		return nil
+	}
+	copied := make([]kbnetwork.Config, len(configs))
+	copy(copied, configs)
+	for i := range copied {
+		if configs[i].Network != nil {
+			network := *configs[i].Network
+			network.DNS = append([]string(nil), configs[i].Network.DNS...)
+			copied[i].Network = &network
+		}
+	}
+	return copied
 }
 
 func cloneImageRef(ref *ImageRef) *ImageRef {

@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/kumabox/kumabox/internal/doctor"
 	"github.com/kumabox/kumabox/internal/imagestore"
+	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -58,6 +60,32 @@ func writeImageTable(w io.Writer, records []*imagestore.ImageRecord) error {
 			rec.Source.Type,
 			rec.RootDisk.Format,
 			rec.OS.Profile,
+		); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
+}
+
+func writeNetworkTable(w io.Writer, records []kbnetwork.Record) error {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "ID\tVM\tPROVIDER\tIFACE\tTAP\tMAC\tIPS\tCLEANUP"); err != nil {
+		return err
+	}
+	for _, rec := range records {
+		cleanup := "ok"
+		if rec.Cleanup.Pending {
+			cleanup = "pending"
+		}
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			rec.ID,
+			rec.VMID,
+			rec.Provider,
+			rec.IfName,
+			rec.TAP,
+			rec.MAC,
+			strings.Join(rec.IPs, ","),
+			cleanup,
 		); err != nil {
 			return err
 		}

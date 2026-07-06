@@ -17,6 +17,7 @@ const (
 type Config struct {
 	Runtime RuntimeConfig `toml:"runtime" json:"runtime"`
 	Backend BackendConfig `toml:"backend" json:"backend"`
+	Network NetworkConfig `toml:"network" json:"network"`
 }
 
 // RuntimeConfig contains host paths used for persistent state and runtime files.
@@ -36,6 +37,20 @@ type CloudHypervisorConfig struct {
 	Binary             string `toml:"binary" json:"binary"`
 	APISocketTimeoutMS int    `toml:"api_socket_timeout_ms" json:"apiSocketTimeoutMs"`
 	StopTimeoutMS      int    `toml:"stop_timeout_ms" json:"stopTimeoutMs"`
+}
+
+// NetworkConfig contains host networking defaults used by network providers.
+type NetworkConfig struct {
+	Mode         string   `toml:"mode" json:"mode"`
+	Default      string   `toml:"default" json:"default"`
+	Bridge       string   `toml:"bridge" json:"bridge"`
+	CIDR         string   `toml:"cidr" json:"cidr"`
+	Gateway      string   `toml:"gateway" json:"gateway"`
+	DNS          []string `toml:"dns" json:"dns"`
+	TapPrefix    string   `toml:"tap_prefix" json:"tapPrefix"`
+	NATBackend   string   `toml:"nat_backend" json:"natBackend"`
+	CNIConfigDir string   `toml:"cni_config_dir" json:"cniConfigDir"`
+	CNIBinDir    string   `toml:"cni_bin_dir" json:"cniBinDir"`
 }
 
 // Overrides contains command-line values that replace file or default config.
@@ -81,6 +96,18 @@ func Default() Config {
 				StopTimeoutMS:      10000,
 			},
 		},
+		Network: NetworkConfig{
+			Mode:         "host-tap",
+			Default:      "default",
+			Bridge:       "kumabox0",
+			CIDR:         "10.88.0.0/16",
+			Gateway:      "10.88.0.1",
+			DNS:          []string{"1.1.1.1", "8.8.8.8"},
+			TapPrefix:    "kbtap",
+			NATBackend:   "auto",
+			CNIConfigDir: "/etc/cni/net.d",
+			CNIBinDir:    "/opt/cni/bin",
+		},
 	}
 }
 
@@ -121,6 +148,35 @@ func validate(cfg Config) error {
 	}
 	if cfg.Backend.CloudHypervisor.Binary == "" {
 		return errors.New("backend.cloud_hypervisor.binary must not be empty")
+	}
+	if cfg.Network.Mode == "" {
+		return errors.New("network.mode must not be empty")
+	}
+	if cfg.Network.Default == "" {
+		return errors.New("network.default must not be empty")
+	}
+	if cfg.Network.Mode != "host-tap" && cfg.Network.Mode != "none" && cfg.Network.Mode != "cni" {
+		return fmt.Errorf("network.mode must be one of host-tap, cni, or none")
+	}
+	if cfg.Network.Mode == "host-tap" {
+		if cfg.Network.Bridge == "" {
+			return errors.New("network.bridge must not be empty when network.mode is host-tap")
+		}
+		if cfg.Network.CIDR == "" {
+			return errors.New("network.cidr must not be empty when network.mode is host-tap")
+		}
+		if cfg.Network.Gateway == "" {
+			return errors.New("network.gateway must not be empty when network.mode is host-tap")
+		}
+		if cfg.Network.TapPrefix == "" {
+			return errors.New("network.tap_prefix must not be empty when network.mode is host-tap")
+		}
+	}
+	if cfg.Network.NATBackend == "" {
+		return errors.New("network.nat_backend must not be empty")
+	}
+	if cfg.Network.NATBackend != "auto" && cfg.Network.NATBackend != "iptables" && cfg.Network.NATBackend != "nft" && cfg.Network.NATBackend != "none" {
+		return fmt.Errorf("network.nat_backend must be one of auto, iptables, nft, or none")
 	}
 	return nil
 }

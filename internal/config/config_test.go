@@ -19,6 +19,18 @@ log_dir = "/from-file/log"
 binary = "/usr/local/bin/cloud-hypervisor"
 api_socket_timeout_ms = 1234
 stop_timeout_ms = 5678
+
+[network]
+mode = "host-tap"
+default = "default"
+bridge = "kb-test0"
+cidr = "10.99.0.0/16"
+gateway = "10.99.0.1"
+dns = ["9.9.9.9"]
+tap_prefix = "kbtest"
+nat_backend = "nft"
+cni_config_dir = "/tmp/cni/net.d"
+cni_bin_dir = "/tmp/cni/bin"
 `)
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		t.Fatal(err)
@@ -40,6 +52,28 @@ stop_timeout_ms = 5678
 	}
 	if cfg.Backend.CloudHypervisor.Binary != "/from-flag/cloud-hypervisor" {
 		t.Fatalf("cloud-hypervisor binary = %q", cfg.Backend.CloudHypervisor.Binary)
+	}
+	if cfg.Network.Bridge != "kb-test0" {
+		t.Fatalf("network bridge = %q", cfg.Network.Bridge)
+	}
+	if cfg.Network.NATBackend != "nft" {
+		t.Fatalf("network nat backend = %q", cfg.Network.NATBackend)
+	}
+	if len(cfg.Network.DNS) != 1 || cfg.Network.DNS[0] != "9.9.9.9" {
+		t.Fatalf("network dns = %#v", cfg.Network.DNS)
+	}
+}
+
+func TestDefaultNetworkConfig(t *testing.T) {
+	cfg := Default()
+	if cfg.Network.Mode != "host-tap" {
+		t.Fatalf("network mode = %q", cfg.Network.Mode)
+	}
+	if cfg.Network.Bridge != "kumabox0" {
+		t.Fatalf("network bridge = %q", cfg.Network.Bridge)
+	}
+	if cfg.Network.CIDR == "" || cfg.Network.Gateway == "" || cfg.Network.TapPrefix == "" {
+		t.Fatalf("incomplete default network config: %+v", cfg.Network)
 	}
 }
 

@@ -7,10 +7,11 @@ qemu_img_path="qemu-img"
 fixture_dir=""
 strict=0
 json_output=0
+network_checks=0
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/linux/env-check.sh [--kumabox PATH] [--cloud-hypervisor PATH] [--qemu-img PATH] [--fixture-dir PATH] [--strict] [--json]
+Usage: scripts/linux/env-check.sh [--kumabox PATH] [--cloud-hypervisor PATH] [--qemu-img PATH] [--fixture-dir PATH] [--strict] [--network] [--json]
 
 Checks the minimum P0-01 environment and verifies kumabox version output.
 USAGE
@@ -52,6 +53,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --strict)
       strict=1
+      shift
+      ;;
+    --network)
+      network_checks=1
       shift
       ;;
     --json)
@@ -164,6 +169,42 @@ elif [[ "$strict" -eq 1 ]]; then
   add_check "qemuImg" "fail" "QEMU_IMG_MISSING" "qemu-img is missing"
 else
   add_check "qemuImg" "warn" "QEMU_IMG_MISSING" "qemu-img is missing"
+fi
+
+if [[ "$network_checks" -eq 1 ]]; then
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    add_check "networkHost" "fail" "NETWORK_LINUX_REQUIRED" "network checks must run on Linux"
+  else
+    add_check "networkHost" "pass" "" "network checks running on Linux"
+
+    if [[ -e /dev/net/tun ]]; then
+      add_check "networkTun" "pass" "" "/dev/net/tun exists"
+    else
+      add_check "networkTun" "fail" "TUNTAP_MISSING" "/dev/net/tun is missing"
+    fi
+
+    if command_exists "ip"; then
+      add_check "networkIPCommand" "pass" "" "ip command is executable"
+    else
+      add_check "networkIPCommand" "fail" "IPROUTE2_MISSING" "ip command is missing"
+    fi
+
+    if command_exists "iptables"; then
+      add_check "networkNAT" "pass" "" "iptables is executable"
+    elif command_exists "nft"; then
+      add_check "networkNAT" "pass" "" "nft is executable"
+    else
+      add_check "networkNAT" "fail" "NAT_BACKEND_MISSING" "neither iptables nor nft is available"
+    fi
+
+    if [[ "$(id -u)" -eq 0 ]]; then
+      add_check "networkPermission" "pass" "" "current user is root"
+    elif command_exists "sudo"; then
+      add_check "networkPermission" "warn" "NETWORK_PERMISSION_REQUIRES_SUDO" "current user is not root; sudo is available"
+    else
+      add_check "networkPermission" "fail" "NETWORK_PERMISSION_DENIED" "current user is not root and sudo is missing"
+    fi
+  fi
 fi
 
 if [[ -n "$fixture_dir" ]]; then

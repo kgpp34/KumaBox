@@ -41,6 +41,7 @@ func NewRootCommand() *cobra.Command {
 	cmd.AddCommand(newDeleteCommand(opts))
 	cmd.AddCommand(newGCCommand(opts))
 	cmd.AddCommand(newImageCommand(opts))
+	cmd.AddCommand(newNetworkCommand(opts))
 	cmd.AddCommand(newPSCommand(opts))
 	return cmd
 }

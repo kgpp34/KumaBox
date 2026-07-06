@@ -83,6 +83,29 @@ func TestDoctorInitializesConfiguredDirectories(t *testing.T) {
 	t.Fatal("doctor output did not include passing paths check")
 }
 
+func TestNetworkLSJSONReturnsEmptyListWithoutIndex(t *testing.T) {
+	dir := t.TempDir()
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{
+		"--root-dir", filepath.Join(dir, "data"),
+		"network", "ls", "--json",
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	var records []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &records); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("records = %d, want 0", len(records))
+	}
+}
+
 func TestCreateInspectAndPSCommands(t *testing.T) {
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")
