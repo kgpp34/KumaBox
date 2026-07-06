@@ -75,6 +75,22 @@ func TestAllocatorSkipsUsedLeaseAndGateway(t *testing.T) {
 	}
 }
 
+func TestAllocatorUsesCloudHypervisorMinimumNetworkQueues(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testNetworkConfig()
+	allocation, err := NewAllocator(dir, cfg).Allocate(AllocateRequest{
+		VMID:  "kb_one_cpu",
+		Index: 0,
+		CPU:   1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allocation.Config.NumQueues != 2 {
+		t.Fatalf("num queues = %d, want 2", allocation.Config.NumQueues)
+	}
+}
+
 func TestAllocatorRecoverExistingNetworkConfig(t *testing.T) {
 	dir := t.TempDir()
 	cfg := testNetworkConfig()

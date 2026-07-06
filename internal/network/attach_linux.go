@@ -64,8 +64,8 @@ func ensureTap(rec Record) (netlink.Link, bool, error) {
 		Mode:      netlink.TUNTAP_MODE_TAP,
 		Flags:     netlink.TUNTAP_NO_PI | netlink.TUNTAP_VNET_HDR,
 	}
-	if rec.NumQueues > 1 {
-		tap.Queues = rec.NumQueues
+	if queuePairs := tapQueuePairs(rec.NumQueues); queuePairs > 1 {
+		tap.Queues = queuePairs
 		tap.Flags |= netlink.TUNTAP_MULTI_QUEUE_DEFAULTS
 	}
 	if err := netlink.LinkAdd(tap); err != nil {
@@ -80,4 +80,11 @@ func ensureTap(rec Record) (netlink.Link, bool, error) {
 		return nil, false, fmt.Errorf("find created tap %s: %w", rec.TAP, err)
 	}
 	return link, true, nil
+}
+
+func tapQueuePairs(numQueues int) int {
+	if numQueues <= 2 {
+		return 1
+	}
+	return numQueues / 2
 }

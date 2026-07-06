@@ -275,7 +275,7 @@ func validateAllocateRequest(req AllocateRequest) error {
 
 func netNumQueues(cpu int) int {
 	if cpu <= 1 {
-		return 1
+		return 2
 	}
 	return cpu * 2
 }
