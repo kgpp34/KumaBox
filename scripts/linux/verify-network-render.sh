@@ -49,6 +49,18 @@ section() {
   printf '\n==> %s\n' "$1"
 }
 
+jq_file() {
+  local filter="$1"
+  local path="$2"
+  "${cat_cmd[@]}" "$path" | jq "$filter"
+}
+
+jq_file_raw() {
+  local filter="$1"
+  local path="$2"
+  "${cat_cmd[@]}" "$path" | jq -r "$filter"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --kumabox)
@@ -225,15 +237,15 @@ section "bridge state"
 "${ip_cmd[@]}" -4 addr show dev kumabox0
 
 section "cloud-hypervisor net config"
-jq '.nets' "$config_path"
-if [[ "$(jq -r '.nets[0].tap' "$config_path")" != "$tap" ]]; then
+jq_file '.nets' "$config_path"
+if [[ "$(jq_file_raw '.nets[0].tap' "$config_path")" != "$tap" ]]; then
   echo "Cloud Hypervisor config missing tap $tap" >&2
-  jq '.nets' "$config_path" >&2
+  jq_file '.nets' "$config_path" >&2
   exit 1
 fi
-if [[ "$(jq -r '.nets[0].mac' "$config_path")" != "$mac" ]]; then
+if [[ "$(jq_file_raw '.nets[0].mac' "$config_path")" != "$mac" ]]; then
   echo "Cloud Hypervisor config missing mac $mac" >&2
-  jq '.nets' "$config_path" >&2
+  jq_file '.nets' "$config_path" >&2
   exit 1
 fi
 
@@ -245,17 +257,17 @@ printf '%s\n' "$network_config" | grep -q "$ip_addr/16"
 printf '%s\n' "$network_config" | grep -q "gateway4: 10.88.0.1"
 
 section "network provider index"
-jq '.' "$root_dir/network/index.json"
-provider_tap="$(jq -r '.networks[] | .tap' "$root_dir/network/index.json")"
+jq_file '.' "$root_dir/network/index.json"
+provider_tap="$(jq_file_raw '.networks[] | .tap' "$root_dir/network/index.json")"
 if [[ "$provider_tap" != "$tap" ]]; then
   echo "provider index tap = $provider_tap, want $tap" >&2
   exit 1
 fi
 
 section "host-tap owner state"
-jq '.' "$root_dir/network/host-tap.json"
+jq_file '.' "$root_dir/network/host-tap.json"
 
 section "lease state"
-jq '.' "$root_dir/network/leases.json"
+jq_file '.' "$root_dir/network/leases.json"
 
 echo "P2-04 network render verification passed"
