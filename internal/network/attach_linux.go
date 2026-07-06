@@ -4,7 +4,6 @@ package network
 
 import (
 	"fmt"
-	"net"
 
 	"github.com/vishvananda/netlink"
 )
@@ -23,21 +22,6 @@ func AttachHostTap(rec Record) error {
 	tap, created, err := ensureTap(rec)
 	if err != nil {
 		return err
-	}
-	if rec.MAC != "" {
-		mac, err := net.ParseMAC(rec.MAC)
-		if err != nil {
-			if created {
-				_ = netlink.LinkDel(tap)
-			}
-			return fmt.Errorf("parse tap MAC: %w", err)
-		}
-		if err := netlink.LinkSetHardwareAddr(tap, mac); err != nil {
-			if created {
-				_ = netlink.LinkDel(tap)
-			}
-			return fmt.Errorf("set tap %s MAC: %w", rec.TAP, err)
-		}
 	}
 	if err := netlink.LinkSetMaster(tap, bridge); err != nil {
 		if created {
