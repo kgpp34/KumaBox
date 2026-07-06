@@ -11,9 +11,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kumabox/kumabox/internal/config"
+	"github.com/vishvananda/netlink"
 )
 
 var ErrNetworkConflict = errors.New("NETWORK_CONFLICT")
@@ -61,7 +63,7 @@ func ensureHostTap(ctx context.Context, rootDir string, cfg config.NetworkConfig
 	if err != nil {
 		return nil, err
 	}
-	if err := validateHostTapOwnership(ctx, runner, rootDir, cfg, state); err != nil {
+	if err := validateHostTapOwnership(rootDir, cfg, state); err != nil {
 		return nil, err
 	}
 
@@ -71,7 +73,7 @@ func ensureHostTap(ctx context.Context, rootDir string, cfg config.NetworkConfig
 		Gateway:    cfg.Gateway,
 		NATBackend: cfg.NATBackend,
 	}
-	created, err := ensureBridge(ctx, runner, cfg)
+	created, err := ensureBridge(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -79,12 +81,12 @@ func ensureHostTap(ctx context.Context, rootDir string, cfg config.NetworkConfig
 		report.Created = true
 		report.Changed = append(report.Changed, "bridge")
 	}
-	if changed, err := ensureGateway(ctx, runner, cfg); err != nil {
+	if changed, err := ensureGateway(cfg); err != nil {
 		return nil, err
 	} else if changed {
 		report.Changed = append(report.Changed, "gateway")
 	}
-	if err := setBridgeUp(ctx, runner, cfg.Bridge); err != nil {
+	if err := setBridgeUp(cfg.Bridge); err != nil {
 		return nil, err
 	}
 	if err := ensureIPForward(ctx, runner); err != nil {
@@ -157,10 +159,10 @@ func teardownHostTap(ctx context.Context, rootDir string, cfg config.NetworkConf
 		return nil, err
 	}
 	report.Changed = append(report.Changed, "nat")
-	if exists, err := bridgeExists(ctx, runner, state.Bridge); err != nil {
+	if exists, err := bridgeExists(state.Bridge); err != nil {
 		return nil, err
 	} else if exists {
-		if _, err := runner.Run(ctx, "ip", "link", "delete", state.Bridge); err != nil {
+		if err := deleteBridge(state.Bridge); err != nil {
 			return nil, err
 		}
 		report.Changed = append(report.Changed, "bridge")
@@ -171,8 +173,8 @@ func teardownHostTap(ctx context.Context, rootDir string, cfg config.NetworkConf
 	return report, nil
 }
 
-func validateHostTapOwnership(ctx context.Context, runner commandRunner, rootDir string, cfg config.NetworkConfig, state *HostTapState) error {
-	exists, err := bridgeExists(ctx, runner, cfg.Bridge)
+func validateHostTapOwnership(rootDir string, cfg config.NetworkConfig, state *HostTapState) error {
+	exists, err := bridgeExists(cfg.Bridge)
 	if err != nil {
 		return err
 	}
@@ -215,53 +217,90 @@ func validateHostTapConfig(cfg config.NetworkConfig) error {
 	return nil
 }
 
-func ensureBridge(ctx context.Context, runner commandRunner, cfg config.NetworkConfig) (bool, error) {
-	exists, err := bridgeExists(ctx, runner, cfg.Bridge)
+func ensureBridge(cfg config.NetworkConfig) (bool, error) {
+	exists, err := bridgeExists(cfg.Bridge)
 	if err != nil {
 		return false, err
 	}
 	if exists {
 		return false, nil
 	}
-	if _, err := runner.Run(ctx, "ip", "link", "add", cfg.Bridge, "type", "bridge"); err != nil {
+	bridge := &netlink.Bridge{
+		LinkAttrs: netlink.LinkAttrs{
+			Name: cfg.Bridge,
+		},
+	}
+	if err := netlink.LinkAdd(bridge); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-func bridgeExists(ctx context.Context, runner commandRunner, bridge string) (bool, error) {
-	_, err := runner.Run(ctx, "ip", "link", "show", "dev", bridge)
-	if err == nil {
+func bridgeExists(bridge string) (bool, error) {
+	if _, err := netlink.LinkByName(bridge); err == nil {
 		return true, nil
-	}
-	if strings.Contains(err.Error(), "does not exist") || strings.Contains(err.Error(), "Cannot find device") {
+	} else if isLinkNotFound(err) {
 		return false, nil
+	} else {
+		return false, err
 	}
-	return false, err
 }
 
-func ensureGateway(ctx context.Context, runner commandRunner, cfg config.NetworkConfig) (bool, error) {
+func ensureGateway(cfg config.NetworkConfig) (bool, error) {
+	link, err := netlink.LinkByName(cfg.Bridge)
+	if err != nil {
+		return false, err
+	}
 	prefix, err := cidrPrefix(cfg.CIDR)
 	if err != nil {
 		return false, err
 	}
-	want := fmt.Sprintf("%s/%d", cfg.Gateway, prefix)
-	out, err := runner.Run(ctx, "ip", "-4", "addr", "show", "dev", cfg.Bridge)
+	addr := &netlink.Addr{
+		IPNet: &net.IPNet{
+			IP:   net.ParseIP(cfg.Gateway).To4(),
+			Mask: net.CIDRMask(prefix, 32),
+		},
+	}
+	addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
 	if err != nil {
 		return false, err
 	}
-	if bytes.Contains(out, []byte(want)) {
-		return false, nil
+	for _, existing := range addrs {
+		if existing.IP.Equal(addr.IP) && bytes.Equal(existing.Mask, addr.Mask) {
+			return false, nil
+		}
 	}
-	if _, err := runner.Run(ctx, "ip", "addr", "add", want, "dev", cfg.Bridge); err != nil {
+	if err := netlink.AddrAdd(link, addr); err != nil {
+		if errors.Is(err, syscall.EEXIST) {
+			return false, nil
+		}
 		return false, err
 	}
 	return true, nil
 }
 
-func setBridgeUp(ctx context.Context, runner commandRunner, bridge string) error {
-	_, err := runner.Run(ctx, "ip", "link", "set", bridge, "up")
-	return err
+func setBridgeUp(bridge string) error {
+	link, err := netlink.LinkByName(bridge)
+	if err != nil {
+		return err
+	}
+	return netlink.LinkSetUp(link)
+}
+
+func deleteBridge(bridge string) error {
+	link, err := netlink.LinkByName(bridge)
+	if err != nil {
+		if isLinkNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	return netlink.LinkDel(link)
+}
+
+func isLinkNotFound(err error) bool {
+	var notFound netlink.LinkNotFoundError
+	return errors.As(err, &notFound)
 }
 
 func ensureIPForward(ctx context.Context, runner commandRunner) error {
