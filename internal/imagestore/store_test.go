@@ -71,6 +71,83 @@ func TestStoreRejectsDuplicateImageName(t *testing.T) {
 	}
 }
 
+func TestRemoveDeletesUnreferencedImage(t *testing.T) {
+	dir := t.TempDir()
+	store := New(filepath.Join(dir, "data"))
+	rec, err := store.Create(CreateRequest{
+		Name:   "ubuntu",
+		Source: Source{Type: "test", URI: "fixtures/ubuntu.img"},
+		RootDisk: RootDisk{
+			Path:   "base.qcow2",
+			Format: "qcow2",
+		},
+		Boot: Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageDir := filepath.Join(dir, "data", "cloudimg", rec.ID)
+	if err := os.MkdirAll(imageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(imageDir, "base.qcow2"), []byte("disk"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := store.Remove(RemoveRequest{Ref: "ubuntu"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed.ID != rec.ID {
+		t.Fatalf("removed id = %s, want %s", removed.ID, rec.ID)
+	}
+	if _, err := store.Inspect("ubuntu"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("inspect removed image error = %v", err)
+	}
+	if _, err := os.Stat(imageDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("image dir should be removed, stat error = %v", err)
+	}
+}
+
+func TestRemoveRejectsReferencedImage(t *testing.T) {
+	store := New(filepath.Join(t.TempDir(), "data"))
+	rec, err := store.Create(CreateRequest{
+		Name:   "ubuntu",
+		Source: Source{Type: "test", URI: "fixtures/ubuntu.img"},
+		RootDisk: RootDisk{
+			Path:   "base.qcow2",
+			Format: "qcow2",
+		},
+		Boot: Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = store.Remove(RemoveRequest{
+		Ref: rec.ID,
+		References: []Reference{{
+			VMID:    "kb_123",
+			VMName:  "ref",
+			VMState: "created",
+			ImageID: rec.ID,
+		}},
+	})
+	if !errors.Is(err, ErrImageInUse) {
+		t.Fatalf("expected ErrImageInUse, got %v", err)
+	}
+	var inUse *ImageInUseError
+	if !errors.As(err, &inUse) {
+		t.Fatalf("expected ImageInUseError, got %T", err)
+	}
+	if len(inUse.References) != 1 || inUse.References[0].VMName != "ref" {
+		t.Fatalf("references = %+v", inUse.References)
+	}
+	if _, err := store.Inspect(rec.ID); err != nil {
+		t.Fatalf("referenced image should remain: %v", err)
+	}
+}
+
 func TestResolveAmbiguousImagePrefix(t *testing.T) {
 	idx := &imageIndex{
 		Images: map[string]*ImageRecord{

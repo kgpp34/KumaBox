@@ -43,11 +43,11 @@ func newGCCommand(opts *rootOptions) *cobra.Command {
 
 func writeGCReport(w io.Writer, report *kbgc.Report) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "TYPE\tPATH\tREASON"); err != nil {
+	if _, err := fmt.Fprintln(tw, "COMPONENT\tTYPE\tPATH\tREASON"); err != nil {
 		return err
 	}
 	for _, candidate := range report.Candidates {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\n", candidate.Type, candidate.Path, candidate.Reason); err != nil {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", candidate.Component, candidate.Type, candidate.Path, candidate.Reason); err != nil {
 			return err
 		}
 	}

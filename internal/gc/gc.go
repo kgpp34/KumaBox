@@ -8,13 +8,15 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/config"
+	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
 type Candidate struct {
-	Path   string `json:"path"`
-	Type   string `json:"type"`
-	Reason string `json:"reason"`
+	Component string `json:"component"`
+	Path      string `json:"path"`
+	Type      string `json:"type"`
+	Reason    string `json:"reason"`
 }
 
 type Report struct {
@@ -28,6 +30,10 @@ func DryRun(cfg config.Config) (*Report, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read VM store: %w", err)
 	}
+	images, err := imagestore.New(cfg.Runtime.RootDir).List()
+	if err != nil {
+		return nil, fmt.Errorf("read image store: %w", err)
+	}
 
 	report := &Report{
 		DryRun:     true,
@@ -36,15 +42,20 @@ func DryRun(cfg config.Config) (*Report, error) {
 	}
 	liveRunDirs := map[string]struct{}{}
 	liveLogDirs := map[string]struct{}{}
+	liveImageIDs := map[string]struct{}{}
 
 	for _, rec := range records {
 		liveRunDirs[rec.RunDir] = struct{}{}
 		liveLogDirs[rec.LogDir] = struct{}{}
+		if rec.Image != nil && rec.Image.ID != "" {
+			liveImageIDs[rec.Image.ID] = struct{}{}
+		}
 		report.Candidates = append(report.Candidates, staleRuntimeFiles(rec)...)
 	}
 
-	report.Candidates = append(report.Candidates, orphanDirs(filepath.Join(cfg.Runtime.RunDir, "vms"), liveRunDirs, "orphan_run_dir")...)
-	report.Candidates = append(report.Candidates, orphanDirs(filepath.Join(cfg.Runtime.LogDir, "vms"), liveLogDirs, "orphan_log_dir")...)
+	report.Candidates = append(report.Candidates, orphanDirs(filepath.Join(cfg.Runtime.RunDir, "vms"), liveRunDirs, "runtime", "orphan_run_dir")...)
+	report.Candidates = append(report.Candidates, orphanDirs(filepath.Join(cfg.Runtime.LogDir, "vms"), liveLogDirs, "runtime", "orphan_log_dir")...)
+	report.Candidates = append(report.Candidates, imageCandidates(cfg.Runtime.RootDir, images, liveImageIDs)...)
 
 	sort.Slice(report.Candidates, func(i, j int) bool {
 		if report.Candidates[i].Path == report.Candidates[j].Path {
@@ -64,16 +75,17 @@ func staleRuntimeFiles(rec *vmstore.VMRecord) []Candidate {
 		path := filepath.Join(rec.RunDir, name)
 		if _, err := os.Stat(path); err == nil {
 			candidates = append(candidates, Candidate{
-				Path:   path,
-				Type:   "stale_runtime_file",
-				Reason: fmt.Sprintf("VM %s is %s but runtime file remains", rec.ID, rec.State),
+				Component: "runtime",
+				Path:      path,
+				Type:      "stale_runtime_file",
+				Reason:    fmt.Sprintf("VM %s is %s but runtime file remains", rec.ID, rec.State),
 			})
 		}
 	}
 	return candidates
 }
 
-func orphanDirs(parent string, live map[string]struct{}, typ string) []Candidate {
+func orphanDirs(parent string, live map[string]struct{}, component string, typ string) []Candidate {
 	entries, err := os.ReadDir(parent)
 	if err != nil {
 		return nil
@@ -88,9 +100,71 @@ func orphanDirs(parent string, live map[string]struct{}, typ string) []Candidate
 			continue
 		}
 		candidates = append(candidates, Candidate{
-			Path:   path,
-			Type:   typ,
-			Reason: "directory is not referenced by VM store",
+			Component: component,
+			Path:      path,
+			Type:      typ,
+			Reason:    "directory is not referenced by VM store",
+		})
+	}
+	return candidates
+}
+
+func imageCandidates(rootDir string, images []*imagestore.ImageRecord, liveImageIDs map[string]struct{}) []Candidate {
+	cloudimgDir := filepath.Join(rootDir, "cloudimg")
+	indexedIDs := make(map[string]struct{}, len(images))
+	for _, image := range images {
+		if image == nil {
+			continue
+		}
+		indexedIDs[image.ID] = struct{}{}
+	}
+
+	var candidates []Candidate
+	candidates = append(candidates, imageStagingCandidates(filepath.Join(cloudimgDir, "staging"))...)
+
+	entries, err := os.ReadDir(cloudimgDir)
+	if err != nil {
+		return candidates
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if name == "staging" {
+			continue
+		}
+		if _, ok := indexedIDs[name]; ok {
+			continue
+		}
+		if _, ok := liveImageIDs[name]; ok {
+			continue
+		}
+		candidates = append(candidates, Candidate{
+			Component: "image",
+			Path:      filepath.Join(cloudimgDir, name),
+			Type:      "orphan_image_dir",
+			Reason:    "image directory is not referenced by image index or VM store",
+		})
+	}
+	return candidates
+}
+
+func imageStagingCandidates(stagingDir string) []Candidate {
+	entries, err := os.ReadDir(stagingDir)
+	if err != nil {
+		return nil
+	}
+	var candidates []Candidate
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		candidates = append(candidates, Candidate{
+			Component: "image",
+			Path:      filepath.Join(stagingDir, entry.Name()),
+			Type:      "image_staging_dir",
+			Reason:    "image staging directory is not referenced by image index",
 		})
 	}
 	return candidates

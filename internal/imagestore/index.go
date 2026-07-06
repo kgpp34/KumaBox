@@ -17,6 +17,8 @@ var (
 	ErrAmbiguous = errors.New("image ref is ambiguous")
 	// ErrChecksumMismatch is returned when a pulled image does not match the expected digest.
 	ErrChecksumMismatch = errors.New("image checksum mismatch")
+	// ErrImageInUse is returned when an image is still referenced by one or more VMs.
+	ErrImageInUse = errors.New("image in use")
 )
 
 type imageIndex struct {

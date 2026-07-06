@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -613,6 +614,70 @@ func TestImageListAndInspectCommands(t *testing.T) {
 	}
 	if inspected.ID != created.ID || inspected.Name != "ubuntu" || inspected.RootDisk.Format != "qcow2" {
 		t.Fatalf("inspect image = %+v", inspected)
+	}
+}
+
+func TestImageRemoveRejectsReferencedImage(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	runDir := filepath.Join(dir, "run")
+	logDir := filepath.Join(dir, "log")
+	image, err := imagestore.New(rootDir).Create(imagestore.CreateRequest{
+		Name:   "ubuntu",
+		Source: imagestore.Source{Type: "test", URI: "fixtures/ubuntu.img"},
+		RootDisk: imagestore.RootDisk{
+			Path:   filepath.Join(rootDir, "cloudimg", "img_test", "base.qcow2"),
+			Format: "qcow2",
+		},
+		Boot: imagestore.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
+		OS:   imagestore.OS{Family: "ubuntu", Profile: "ubuntu-cloudimg"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	create := NewRootCommand()
+	create.SetArgs([]string{
+		"--root-dir", rootDir,
+		"--run-dir", runDir,
+		"--log-dir", logDir,
+		"create", "ubuntu",
+		"--name", "ref",
+	})
+	if err := create.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	rm := NewRootCommand()
+	rm.SetArgs([]string{"--root-dir", rootDir, "image", "rm", "ubuntu"})
+	if err := rm.Execute(); !errors.Is(err, imagestore.ErrImageInUse) {
+		t.Fatalf("expected ErrImageInUse, got %v", err)
+	}
+	if _, err := imagestore.New(rootDir).Inspect(image.ID); err != nil {
+		t.Fatalf("referenced image should remain: %v", err)
+	}
+
+	del := NewRootCommand()
+	del.SetArgs([]string{"--root-dir", rootDir, "--run-dir", runDir, "--log-dir", logDir, "delete", "ref"})
+	if err := del.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	rm = NewRootCommand()
+	rm.SetArgs([]string{"--root-dir", rootDir, "image", "rm", "ubuntu"})
+	var rmOut bytes.Buffer
+	rm.SetOut(&rmOut)
+	if err := rm.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var removed struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(rmOut.Bytes(), &removed); err != nil {
+		t.Fatal(err)
+	}
+	if removed.ID != image.ID {
+		t.Fatalf("removed id = %s, want %s", removed.ID, image.ID)
 	}
 }
 

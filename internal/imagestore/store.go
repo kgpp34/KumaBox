@@ -70,6 +70,36 @@ type PullRequest struct {
 	SHA256      string
 }
 
+// RemoveRequest describes a protected image deletion.
+type RemoveRequest struct {
+	Ref        string
+	Force      bool
+	References []Reference
+}
+
+// Reference describes a VM that currently references an image.
+type Reference struct {
+	VMID    string `json:"vmId"`
+	VMName  string `json:"vmName"`
+	VMState string `json:"vmState,omitempty"`
+	ImageID string `json:"imageId"`
+}
+
+// ImageInUseError reports VM references that blocked image deletion.
+type ImageInUseError struct {
+	ImageID    string      `json:"imageId"`
+	ImageName  string      `json:"imageName"`
+	References []Reference `json:"references"`
+}
+
+func (e *ImageInUseError) Error() string {
+	return fmt.Sprintf("IMAGE_IN_USE: image %s is referenced by %d VM(s)", e.ImageName, len(e.References))
+}
+
+func (e *ImageInUseError) Unwrap() error {
+	return ErrImageInUse
+}
+
 // Create inserts an image record into the image index.
 func (s *Store) Create(req CreateRequest) (*ImageRecord, error) {
 	if err := validateCreateRequest(req); err != nil {
@@ -284,6 +314,43 @@ func (s *Store) List() ([]*ImageRecord, error) {
 	return records, nil
 }
 
+// Remove deletes an image manifest and managed disk when no VM references it.
+func (s *Store) Remove(req RemoveRequest) (*ImageRecord, error) {
+	if req.Ref == "" {
+		return nil, errors.New("image ref must not be empty")
+	}
+
+	var removed *ImageRecord
+	err := s.update(func(idx *imageIndex) error {
+		id, err := idx.resolve(req.Ref)
+		if err != nil {
+			return err
+		}
+		rec := idx.Images[id]
+		refs := referencesForImage(req.References, id)
+		if len(refs) > 0 {
+			return &ImageInUseError{
+				ImageID:    rec.ID,
+				ImageName:  rec.Name,
+				References: refs,
+			}
+		}
+
+		imageDir := filepath.Join(s.cloudimgDir, id)
+		if err := os.RemoveAll(imageDir); err != nil {
+			return fmt.Errorf("remove image dir: %w", err)
+		}
+		delete(idx.Names, rec.Name)
+		delete(idx.Images, id)
+		removed = cloneRecord(rec)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return removed, nil
+}
+
 func (s *Store) commitImportedImage(req CreateRequest, stagedDisk string) (*ImageRecord, error) {
 	if err := validateCreateRequest(req); err != nil {
 		return nil, err
@@ -354,6 +421,16 @@ func (s *Store) commitImportedImage(req CreateRequest, stagedDisk string) (*Imag
 		return nil, err
 	}
 	return created, nil
+}
+
+func referencesForImage(refs []Reference, imageID string) []Reference {
+	matched := make([]Reference, 0)
+	for _, ref := range refs {
+		if ref.ImageID == imageID {
+			matched = append(matched, ref)
+		}
+	}
+	return matched
 }
 
 func (s *Store) createStagingDir(prefix string) (string, func(), error) {

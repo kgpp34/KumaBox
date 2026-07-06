@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
 func newImageCommand(opts *rootOptions) *cobra.Command {
@@ -17,6 +18,7 @@ func newImageCommand(opts *rootOptions) *cobra.Command {
 	cmd.AddCommand(newImagePullCommand(opts))
 	cmd.AddCommand(newImageLSCommand(opts))
 	cmd.AddCommand(newImageInspectCommand(opts))
+	cmd.AddCommand(newImageRMCommand(opts))
 	return cmd
 }
 
@@ -141,4 +143,56 @@ func newImageInspectCommand(opts *rootOptions) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
 	return cmd
+}
+
+func newImageRMCommand(opts *rootOptions) *cobra.Command {
+	var force bool
+
+	cmd := &cobra.Command{
+		Use:     "rm IMAGE",
+		Aliases: []string{"remove"},
+		Short:   "Remove an unused image",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			refs, err := imageReferencesFromVMs(cfg.Runtime.RootDir)
+			if err != nil {
+				return err
+			}
+			rec, err := imagestore.New(cfg.Runtime.RootDir).Remove(imagestore.RemoveRequest{
+				Ref:        args[0],
+				Force:      force,
+				References: refs,
+			})
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), rec)
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "allow removal of damaged unreferenced image directories")
+	return cmd
+}
+
+func imageReferencesFromVMs(rootDir string) ([]imagestore.Reference, error) {
+	records, err := vmstore.New(rootDir).List()
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]imagestore.Reference, 0)
+	for _, rec := range records {
+		if rec == nil || rec.Image == nil {
+			continue
+		}
+		refs = append(refs, imagestore.Reference{
+			VMID:    rec.ID,
+			VMName:  rec.Name,
+			VMState: string(rec.State),
+			ImageID: rec.Image.ID,
+		})
+	}
+	return refs, nil
 }
