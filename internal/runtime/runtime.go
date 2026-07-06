@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,17 +11,21 @@ import (
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/backend/cloudhypervisor"
 	"github.com/kumabox/kumabox/internal/config"
+	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
 type Runtime struct {
 	store   *vmstore.Store
 	backend backend.Lifecycle
+	cfg     config.Config
 }
 
 // New creates a Runtime backed by the configured Cloud Hypervisor backend.
 func New(cfg config.Config) *Runtime {
-	return NewWithBackend(vmstore.New(cfg.Runtime.RootDir), cloudhypervisor.NewBackend(cfg))
+	rt := NewWithBackend(vmstore.New(cfg.Runtime.RootDir), cloudhypervisor.NewBackend(cfg))
+	rt.cfg = cfg
+	return rt
 }
 
 // NewWithBackend creates a Runtime with an injected VM store and backend.
@@ -37,7 +42,15 @@ func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error)
 	if err != nil {
 		return nil, err
 	}
+	if err := r.attachNetwork(rec); err != nil {
+		_ = r.store.Delete(rec.ID)
+		return nil, err
+	}
+	if updated, err := r.store.Inspect(rec.ID); err == nil {
+		rec = updated
+	}
 	if err := r.backend.RenderConfig(rec); err != nil {
+		r.rollbackNetwork(rec)
 		_ = r.store.Delete(rec.ID)
 		return nil, err
 	}
@@ -247,4 +260,59 @@ func removeManagedDirs(rec *vmstore.VMRecord) error {
 		}
 	}
 	return nil
+}
+
+func (r *Runtime) attachNetwork(rec *vmstore.VMRecord) error {
+	if rec == nil || rec.Network == "" || rec.Network == kbnetwork.ProviderNone {
+		return nil
+	}
+	if rec.Network != "default" && rec.Network != kbnetwork.ProviderHostTap {
+		return fmt.Errorf("unsupported network %q", rec.Network)
+	}
+	if err := config.EnsureRuntimeDirs(r.cfg); err != nil {
+		return err
+	}
+	if _, err := kbnetwork.EnsureHostTap(context.Background(), r.cfg.Runtime.RootDir, r.cfg.Network); err != nil {
+		return err
+	}
+	allocation, err := kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network).Allocate(kbnetwork.AllocateRequest{
+		VMID:    rec.ID,
+		Network: rec.Network,
+		Index:   0,
+		CPU:     1,
+	})
+	if err != nil {
+		return err
+	}
+	if err := kbnetwork.AttachHostTap(allocation.Record); err != nil {
+		_ = kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network).ReleaseIP(allocation.Config.Network.IP)
+		return err
+	}
+	if err := kbnetwork.NewStore(r.cfg.Runtime.RootDir).UpsertRecord(allocation.Record); err != nil {
+		_ = kbnetwork.DeleteHostTap(allocation.Record.TAP)
+		_ = kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network).ReleaseIP(allocation.Config.Network.IP)
+		return err
+	}
+	if _, err := r.store.SetNetworkConfigs(rec.ID, []kbnetwork.Config{allocation.Config}); err != nil {
+		_ = kbnetwork.NewStore(r.cfg.Runtime.RootDir).DeleteRecord(allocation.Record.ID)
+		_ = kbnetwork.DeleteHostTap(allocation.Record.TAP)
+		_ = kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network).ReleaseIP(allocation.Config.Network.IP)
+		return err
+	}
+	return nil
+}
+
+func (r *Runtime) rollbackNetwork(rec *vmstore.VMRecord) {
+	if rec == nil {
+		return
+	}
+	store := kbnetwork.NewStore(r.cfg.Runtime.RootDir)
+	allocator := kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network)
+	for _, nc := range rec.NetworkConfigs {
+		_ = store.DeleteRecord(nc.ID)
+		_ = kbnetwork.DeleteHostTap(nc.TAP)
+		if nc.Network != nil {
+			_ = allocator.ReleaseIP(nc.Network.IP)
+		}
+	}
 }

@@ -1,12 +1,14 @@
 package cloudhypervisor
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/kumabox/kumabox/internal/config"
+	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -108,6 +110,70 @@ func TestRenderConfigSupportsFirmwareBoot(t *testing.T) {
 	}
 	if !argsContainPair(rendered.Args, "--disk", "path="+rec.Metadata.CidataDisk+",readonly=on,image_type=raw") {
 		t.Fatalf("cidata disk arg missing: %v", rendered.Args)
+	}
+}
+
+func TestRenderConfigIncludesNetworkDevice(t *testing.T) {
+	dir := t.TempDir()
+	rec := &vmstore.VMRecord{
+		ID:       "kb_net",
+		Name:     "net",
+		RootDisk: "/fixtures/ubuntu.img",
+		Firmware: "/fixtures/CLOUDHV.fd",
+		RunDir:   filepath.Join(dir, "run", "vms", "kb_net"),
+		LogDir:   filepath.Join(dir, "logs", "vms", "kb_net"),
+		Config:   filepath.Join(dir, "run", "vms", "kb_net", "cloud-hypervisor.json"),
+		Metadata: &vmstore.Metadata{
+			Type:       "nocloud",
+			CidataDir:  filepath.Join(dir, "run", "vms", "kb_net", "cidata"),
+			CidataDisk: filepath.Join(dir, "run", "vms", "kb_net", "cidata.img"),
+		},
+		NetworkConfigs: []kbnetwork.Config{{
+			ID:        "net_test",
+			TAP:       "kbtaptest",
+			MAC:       "02:00:00:00:00:11",
+			NumQueues: 1,
+			QueueSize: 256,
+			Backend:   kbnetwork.ProviderHostTap,
+			BridgeDev: "kumabox0",
+			Network: &kbnetwork.GuestInfo{
+				IP:      "10.88.0.2",
+				Gateway: "10.88.0.1",
+				Prefix:  16,
+				DNS:     []string{"1.1.1.1"},
+			},
+		}},
+	}
+
+	if err := NewRenderer(config.Default()).RenderConfig(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(rec.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rendered Config
+	if err := json.Unmarshal(raw, &rendered); err != nil {
+		t.Fatal(err)
+	}
+	if len(rendered.Nets) != 1 {
+		t.Fatalf("nets = %+v", rendered.Nets)
+	}
+	if rendered.Nets[0].TAP != "kbtaptest" || rendered.Nets[0].MAC != "02:00:00:00:00:11" {
+		t.Fatalf("net = %+v", rendered.Nets[0])
+	}
+	if !argsContainPair(rendered.Args, "--net", "tap=kbtaptest,mac=02:00:00:00:00:11,num_queues=1,queue_size=256") {
+		t.Fatalf("net arg missing: %v", rendered.Args)
+	}
+	networkConfig, err := os.ReadFile(filepath.Join(rec.Metadata.CidataDir, "network-config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(networkConfig, []byte(`macaddress: "02:00:00:00:00:11"`)) ||
+		!bytes.Contains(networkConfig, []byte("10.88.0.2/16")) ||
+		!bytes.Contains(networkConfig, []byte("gateway4: 10.88.0.1")) {
+		t.Fatalf("network-config = %s", networkConfig)
 	}
 }
 

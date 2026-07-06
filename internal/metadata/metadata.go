@@ -16,6 +16,15 @@ type Config struct {
 	InstanceID string
 	Hostname   string
 	Username   string
+	Networks   []Network
+}
+
+type Network struct {
+	MAC     string
+	IP      string
+	Prefix  int
+	Gateway string
+	DNS     []string
 }
 
 type Rendered struct {
@@ -42,11 +51,33 @@ ssh_pwauth: false
 
 	networkConfigTemplate = template.Must(template.New("network-config").Parse(`version: 2
 ethernets:
+{{- if .Networks }}
+{{- range $i, $net := .Networks }}
+  eth{{$i}}:
+    match:
+      macaddress: "{{$net.MAC}}"
+    set-name: eth{{$i}}
+    addresses:
+      - {{$net.IP}}/{{$net.Prefix}}
+{{- if $net.Gateway }}
+    gateway4: {{$net.Gateway}}
+{{- end }}
+{{- if $net.DNS }}
+    nameservers:
+      addresses:
+{{- range $dns := $net.DNS }}
+        - {{$dns}}
+{{- end }}
+{{- end }}
+    optional: true
+{{- end }}
+{{- else }}
   fallback:
     match:
       name: "e*"
     dhcp4: true
     optional: true
+{{- end }}
 `))
 )
 

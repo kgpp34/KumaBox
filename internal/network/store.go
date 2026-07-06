@@ -19,6 +19,7 @@ const hostTapSchemaVersion = "kumabox.network.hostTap.v1"
 
 type Store struct {
 	indexPath   string
+	indexLock   string
 	leasePath   string
 	leaseLock   string
 	hostTapPath string
@@ -47,6 +48,7 @@ func NewStore(rootDir string) *Store {
 	networkDir := filepath.Join(rootDir, "network")
 	return &Store{
 		indexPath:   filepath.Join(networkDir, "index.json"),
+		indexLock:   filepath.Join(networkDir, "index.lock"),
 		leasePath:   filepath.Join(networkDir, "leases.json"),
 		leaseLock:   filepath.Join(networkDir, "leases.lock"),
 		hostTapPath: filepath.Join(networkDir, "host-tap.json"),
@@ -72,6 +74,40 @@ func (s *Store) List() ([]Record, error) {
 		return records[i].CreatedAt.Before(records[j].CreatedAt)
 	})
 	return records, nil
+}
+
+func (s *Store) UpsertRecord(rec Record) error {
+	if rec.ID == "" {
+		return fmt.Errorf("network record id must not be empty")
+	}
+	unlock, err := s.lockIndex()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	idx, err := s.readIndex()
+	if err != nil {
+		return err
+	}
+	idx.Networks[rec.ID] = &rec
+	return s.writeIndex(idx)
+}
+
+func (s *Store) DeleteRecord(id string) error {
+	if id == "" {
+		return nil
+	}
+	unlock, err := s.lockIndex()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	idx, err := s.readIndex()
+	if err != nil {
+		return err
+	}
+	delete(idx.Networks, id)
+	return s.writeIndex(idx)
 }
 
 func (s *Store) Inspect(vmID string) (*InspectResult, error) {
@@ -131,6 +167,19 @@ func (s *Store) readIndex() (*index, error) {
 	return &idx, nil
 }
 
+func (s *Store) writeIndex(idx *index) error {
+	if idx.SchemaVersion == "" {
+		idx.SchemaVersion = indexSchemaVersion
+	}
+	if idx.Networks == nil {
+		idx.Networks = map[string]*Record{}
+	}
+	if err := fileutil.WriteJSONAtomic(s.indexPath, idx, ".index-*.tmp"); err != nil {
+		return fmt.Errorf("write network index: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) readLeases() (*leaseIndex, error) {
 	raw, err := os.ReadFile(s.leasePath) //nolint:gosec
 	if err != nil {
@@ -184,6 +233,26 @@ func (s *Store) lockLeases() (func(), error) {
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
 		_ = file.Close()
 		return nil, fmt.Errorf("lock network leases: %w", err)
+	}
+
+	return func() {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		_ = file.Close()
+	}, nil
+}
+
+func (s *Store) lockIndex() (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(s.indexLock), 0o755); err != nil {
+		return nil, fmt.Errorf("create network index lock dir: %w", err)
+	}
+
+	file, err := os.OpenFile(s.indexLock, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open network index lock: %w", err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("lock network index: %w", err)
 	}
 
 	return func() {

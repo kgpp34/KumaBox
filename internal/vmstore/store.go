@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/fileutil"
+	kbnetwork "github.com/kumabox/kumabox/internal/network"
 )
 
 type Store struct {
@@ -35,6 +36,7 @@ type CreateRequest struct {
 	Initrd   string
 	Firmware string
 	Image    *ImageRef
+	Network  string
 	RunDir   string
 	LogDir   string
 }
@@ -175,6 +177,26 @@ func (s *Store) MarkStopped(ref string) (*VMRecord, error) {
 		rec.APISocket = ""
 		rec.Error = ""
 		rec.StoppedAt = &now
+		rec.UpdatedAt = now
+		updated = cloneRecord(rec)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+func (s *Store) SetNetworkConfigs(ref string, configs []kbnetwork.Config) (*VMRecord, error) {
+	var updated *VMRecord
+	err := s.update(func(idx *vmIndex) error {
+		id, err := idx.resolve(ref)
+		if err != nil {
+			return err
+		}
+		rec := idx.VMs[id]
+		now := time.Now().UTC()
+		rec.NetworkConfigs = cloneNetworkConfigs(configs)
 		rec.UpdatedAt = now
 		updated = cloneRecord(rec)
 		return nil

@@ -24,6 +24,7 @@ type Config struct {
 	Initramfs    *Initramfs  `json:"initramfs,omitempty"`
 	Firmware     *Firmware   `json:"firmware,omitempty"`
 	Disks        []Disk      `json:"disks"`
+	Nets         []Net       `json:"nets,omitempty"`
 	Serial       Serial      `json:"serial"`
 	Console      Console     `json:"console"`
 	Args         []string    `json:"args"`
@@ -47,6 +48,13 @@ type Disk struct {
 	Path      string `json:"path"`
 	Readonly  bool   `json:"readonly"`
 	ImageType string `json:"imageType,omitempty"`
+}
+
+type Net struct {
+	TAP       string `json:"tap"`
+	MAC       string `json:"mac"`
+	NumQueues int    `json:"numQueues"`
+	QueueSize int    `json:"queueSize"`
 }
 
 type Serial struct {
@@ -85,6 +93,7 @@ func (r Renderer) RenderConfig(rec *vmstore.VMRecord) error {
 			InstanceID: rec.ID,
 			Hostname:   rec.Name,
 			Username:   "kumabox",
+			Networks:   metadataNetworks(rec),
 		}); err != nil {
 			return fmt.Errorf("render NoCloud metadata: %w", err)
 		}
@@ -95,6 +104,23 @@ func (r Renderer) RenderConfig(rec *vmstore.VMRecord) error {
 		return fmt.Errorf("write Cloud Hypervisor config: %w", err)
 	}
 	return nil
+}
+
+func metadataNetworks(rec *vmstore.VMRecord) []metadata.Network {
+	networks := make([]metadata.Network, 0, len(rec.NetworkConfigs))
+	for _, nc := range rec.NetworkConfigs {
+		if nc.MAC == "" || nc.Network == nil || nc.Network.IP == "" {
+			continue
+		}
+		networks = append(networks, metadata.Network{
+			MAC:     nc.MAC,
+			IP:      nc.Network.IP,
+			Prefix:  nc.Network.Prefix,
+			Gateway: nc.Network.Gateway,
+			DNS:     append([]string(nil), nc.Network.DNS...),
+		})
+	}
+	return networks
 }
 
 func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
@@ -127,6 +153,16 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 	if meta := activeMetadata(rec); meta != nil && meta.CidataDisk != "" {
 		args = append(args, "--disk", "path="+meta.CidataDisk+",readonly=on,image_type=raw")
 	}
+	for _, net := range newNets(rec) {
+		netArg := fmt.Sprintf("tap=%s,mac=%s", net.TAP, net.MAC)
+		if net.NumQueues > 0 {
+			netArg += fmt.Sprintf(",num_queues=%d", net.NumQueues)
+		}
+		if net.QueueSize > 0 {
+			netArg += fmt.Sprintf(",queue_size=%d", net.QueueSize)
+		}
+		args = append(args, "--net", netArg)
+	}
 
 	rendered := Config{
 		Binary:       cfg.Backend.CloudHypervisor.Binary,
@@ -136,6 +172,7 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		StdoutLog:    stdoutLog,
 		StderrLog:    stderrLog,
 		Disks:        newDisks(rec),
+		Nets:         newNets(rec),
 		Serial:       Serial{Path: serialLog},
 		Console:      Console{Mode: "off"},
 		Args:         args,
@@ -154,6 +191,22 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		rendered.Initramfs = &Initramfs{Path: rec.Initrd}
 	}
 	return rendered
+}
+
+func newNets(rec *vmstore.VMRecord) []Net {
+	nets := make([]Net, 0, len(rec.NetworkConfigs))
+	for _, nc := range rec.NetworkConfigs {
+		if nc.TAP == "" {
+			continue
+		}
+		nets = append(nets, Net{
+			TAP:       nc.TAP,
+			MAC:       nc.MAC,
+			NumQueues: nc.NumQueues,
+			QueueSize: nc.QueueSize,
+		})
+	}
+	return nets
 }
 
 func newDisks(rec *vmstore.VMRecord) []Disk {

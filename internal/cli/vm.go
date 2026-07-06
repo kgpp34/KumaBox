@@ -234,6 +234,7 @@ type createVMFlags struct {
 	kernel   string
 	initrd   string
 	firmware string
+	network  string
 }
 
 func addCreateVMFlags(cmd *cobra.Command, flags *createVMFlags) {
@@ -242,6 +243,7 @@ func addCreateVMFlags(cmd *cobra.Command, flags *createVMFlags) {
 	cmd.Flags().StringVar(&flags.kernel, "kernel", "", "kernel image path")
 	cmd.Flags().StringVar(&flags.initrd, "initrd", "", "initrd image path")
 	cmd.Flags().StringVar(&flags.firmware, "firmware", "", "UEFI firmware path")
+	cmd.Flags().StringVar(&flags.network, "network", "none", "network mode: none or default")
 	_ = cmd.MarkFlagRequired("name")
 }
 
@@ -256,6 +258,7 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 			Kernel:   flags.kernel,
 			Initrd:   flags.initrd,
 			Firmware: flags.firmware,
+			Network:  flags.network,
 			RunDir:   cfg.Runtime.RunDir,
 			LogDir:   cfg.Runtime.LogDir,
 		}, nil
@@ -277,6 +280,7 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 		Kernel:   image.Boot.Kernel,
 		Initrd:   image.Boot.Initrd,
 		Firmware: image.Boot.Firmware,
+		Network:  flags.network,
 		Image: &vmstore.ImageRef{
 			ID:       image.ID,
 			Name:     image.Name,

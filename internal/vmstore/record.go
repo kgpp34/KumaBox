@@ -50,6 +50,7 @@ type VMRecord struct {
 	Image          *ImageRef          `json:"image,omitempty"`
 	Metadata       *Metadata          `json:"metadata,omitempty"`
 	NetworkConfigs []kbnetwork.Config `json:"networkConfigs,omitempty"`
+	Network        string             `json:"network,omitempty"`
 	RunDir         string             `json:"runDir"`
 	LogDir         string             `json:"logDir"`
 	Config         string             `json:"config"`
@@ -109,6 +110,7 @@ func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
 		Initrd:    initrd,
 		Firmware:  firmware,
 		Image:     cloneImageRef(req.Image),
+		Network:   req.Network,
 		RunDir:    runDir,
 		LogDir:    logDir,
 		Config:    filepath.Join(runDir, "cloud-hypervisor.json"),

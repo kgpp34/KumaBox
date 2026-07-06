@@ -39,6 +39,38 @@ func TestRenderNoCloudFiles(t *testing.T) {
 	}
 }
 
+func TestRenderStaticNetworkConfig(t *testing.T) {
+	rendered, err := Render(Config{
+		InstanceID: "kb_test",
+		Hostname:   "p2-net",
+		Networks: []Network{{
+			MAC:     "02:00:00:00:00:11",
+			IP:      "10.88.0.2",
+			Prefix:  16,
+			Gateway: "10.88.0.1",
+			DNS:     []string{"1.1.1.1"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	networkConfig := string(rendered.NetworkConfig)
+	for _, want := range []string{
+		`macaddress: "02:00:00:00:00:11"`,
+		"set-name: eth0",
+		"10.88.0.2/16",
+		"gateway4: 10.88.0.1",
+		"1.1.1.1",
+	} {
+		if !strings.Contains(networkConfig, want) {
+			t.Fatalf("network-config missing %q:\n%s", want, networkConfig)
+		}
+	}
+	if strings.Contains(networkConfig, "dhcp4: true") {
+		t.Fatalf("static network-config should not include DHCP fallback:\n%s", networkConfig)
+	}
+}
+
 func TestWriteNoCloudImage(t *testing.T) {
 	var buf bytes.Buffer
 	if err := WriteNoCloudImage(&buf, Config{
