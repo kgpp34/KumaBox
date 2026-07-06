@@ -15,6 +15,7 @@ timeout=240
 ping_interval=5
 tap=""
 vm_exists=0
+script_status=1
 
 usage() {
   cat <<'USAGE'
@@ -86,6 +87,21 @@ print_failure_context() {
   if [[ -n "${console_log:-}" && "$console_log" != "null" ]]; then
     section "failure context: console tail"
     "${cat_cmd[@]}" "$console_log" 2>/dev/null | tail -n 120 || true
+  fi
+
+  vm_run_dir=""
+  if [[ -d "$run_dir/vms" ]]; then
+    vm_run_dir="$("${find_cmd[@]}" "$run_dir/vms" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -n 1)"
+  fi
+  if [[ -n "$vm_run_dir" ]]; then
+    section "failure context: rendered config"
+    "${cat_cmd[@]}" "$vm_run_dir/cloud-hypervisor.json" 2>/dev/null | jq '.' || true
+
+    section "failure context: cloud-hypervisor stdout"
+    "${cat_cmd[@]}" "$log_dir/vms/$(basename "$vm_run_dir")/cloud-hypervisor.stdout.log" 2>/dev/null | tail -n 120 || true
+
+    section "failure context: cloud-hypervisor stderr"
+    "${cat_cmd[@]}" "$log_dir/vms/$(basename "$vm_run_dir")/cloud-hypervisor.stderr.log" 2>/dev/null | tail -n 120 || true
   fi
 }
 
@@ -222,15 +238,23 @@ if [[ "$use_sudo" -eq 1 ]]; then
   remove_cmd=(sudo rm -rf)
   ip_cmd=(sudo ip)
   cat_cmd=(sudo cat)
+  find_cmd=(sudo find)
 else
   kumabox_cmd=("$kumabox_path")
   remove_cmd=(rm -rf)
   ip_cmd=(ip)
   cat_cmd=(cat)
+  find_cmd=(find)
 fi
 
 cleanup() {
   set +e
+  if [[ "$script_status" -ne 0 ]]; then
+    printf '\n==> preserving failed P2 network e2e state\n' >&2
+    printf 'state: preserved root_dir=%s run_dir=%s log_dir=%s\n' "$root_dir" "$run_dir" "$log_dir" >&2
+    printf 'state: rerun this script to clean preserved state before the next attempt\n' >&2
+    return
+  fi
   if [[ "$vm_exists" -eq 1 ]]; then
     "${kumabox_cmd[@]}" \
       --root-dir "$root_dir" \
@@ -263,7 +287,8 @@ scripts/linux/env-check.sh \
   --network
 
 section "run VM with --network default"
-run_json="$("${kumabox_cmd[@]}" \
+set +e
+run_output="$("${kumabox_cmd[@]}" \
   --root-dir "$root_dir" \
   --run-dir "$run_dir" \
   --log-dir "$log_dir" \
@@ -272,7 +297,17 @@ run_json="$("${kumabox_cmd[@]}" \
   --name "$name" \
   --root-disk "$root_disk" \
   --firmware "$firmware" \
-  --network default)"
+  --network default 2>&1)"
+run_status=$?
+set -e
+if [[ "$run_status" -ne 0 ]]; then
+  printf '%s\n' "$run_output" >&2
+  vm_exists=1
+  echo "kumabox run failed before VM reached running state" >&2
+  print_failure_context
+  exit "$run_status"
+fi
+run_json="$run_output"
 vm_exists=1
 printf '%s\n' "$run_json"
 
@@ -362,3 +397,4 @@ if "${ip_cmd[@]}" link show dev "$tap" >/dev/null 2>&1; then
 fi
 
 echo "P2 network e2e verification passed"
+script_status=0
