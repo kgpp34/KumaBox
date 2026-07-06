@@ -15,6 +15,8 @@ import (
 	"testing"
 
 	"github.com/kumabox/kumabox/internal/imagestore"
+	kbnetwork "github.com/kumabox/kumabox/internal/network"
+	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
 func TestVersionJSONCommand(t *testing.T) {
@@ -103,6 +105,85 @@ func TestNetworkLSJSONReturnsEmptyListWithoutIndex(t *testing.T) {
 	}
 	if len(records) != 0 {
 		t.Fatalf("records = %d, want 0", len(records))
+	}
+}
+
+func TestNetworkInspectResolvesVMName(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	runDir := filepath.Join(dir, "run")
+	logDir := filepath.Join(dir, "log")
+	store := vmstore.New(rootDir)
+	rec, err := store.Create(vmstore.CreateRequest{
+		Name:     "p2-inspect",
+		RootDisk: "fixtures/base.qcow2",
+		Kernel:   "fixtures/vmlinuz",
+		Initrd:   "fixtures/initrd.img",
+		RunDir:   runDir,
+		LogDir:   logDir,
+		Network:  "default",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := kbnetwork.Config{
+		ID:        kbnetwork.NetworkID(rec.ID, 0),
+		TAP:       "kbtaptest",
+		MAC:       "5a:00:00:00:00:01",
+		Backend:   kbnetwork.ProviderHostTap,
+		BridgeDev: "kumabox0",
+		Network: &kbnetwork.GuestInfo{
+			IP:      "10.88.0.2",
+			Gateway: "10.88.0.1",
+			Prefix:  16,
+			DNS:     []string{"1.1.1.1"},
+		},
+	}
+	if _, err := store.SetNetworkConfigs(rec.ID, []kbnetwork.Config{cfg}); err != nil {
+		t.Fatal(err)
+	}
+	if err := kbnetwork.NewStore(rootDir).UpsertRecord(kbnetwork.Record{
+		ID:        cfg.ID,
+		VMID:      rec.ID,
+		Network:   "default",
+		Provider:  kbnetwork.ProviderHostTap,
+		IfName:    "eth0",
+		TAP:       cfg.TAP,
+		MAC:       cfg.MAC,
+		BridgeDev: cfg.BridgeDev,
+		IPs:       []string{"10.88.0.2/16"},
+		Gateway:   "10.88.0.1",
+		DNS:       []string{"1.1.1.1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{
+		"--root-dir", rootDir,
+		"network", "inspect", "p2-inspect", "--json",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	var result struct {
+		VMID       string             `json:"vmId"`
+		VMName     string             `json:"vmName"`
+		Interfaces []kbnetwork.Record `json:"interfaces"`
+		VMConfigs  []kbnetwork.Config `json:"vmConfigs"`
+		Drift      []string           `json:"drift"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.VMID != rec.ID || result.VMName != "p2-inspect" {
+		t.Fatalf("unexpected inspect identity: %+v", result)
+	}
+	if len(result.Interfaces) != 1 || len(result.VMConfigs) != 1 || len(result.Drift) != 0 {
+		t.Fatalf("unexpected inspect result: %+v", result)
 	}
 }
 

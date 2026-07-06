@@ -33,32 +33,33 @@ type Observation struct {
 }
 
 type VMRecord struct {
-	ID             string             `json:"id"`
-	Name           string             `json:"name"`
-	Backend        string             `json:"backend"`
-	State          VMState            `json:"state"`
-	ObservedState  ObservedState      `json:"observedState,omitempty"`
-	ObservedReason string             `json:"observedReason,omitempty"`
-	ObservedAt     *time.Time         `json:"observedAt,omitempty"`
-	PID            int                `json:"pid,omitempty"`
-	APISocket      string             `json:"apiSocket,omitempty"`
-	Error          string             `json:"error,omitempty"`
-	RootDisk       string             `json:"rootDisk"`
-	Kernel         string             `json:"kernel,omitempty"`
-	Initrd         string             `json:"initrd,omitempty"`
-	Firmware       string             `json:"firmware,omitempty"`
-	Image          *ImageRef          `json:"image,omitempty"`
-	Metadata       *Metadata          `json:"metadata,omitempty"`
-	NetworkConfigs []kbnetwork.Config `json:"networkConfigs,omitempty"`
-	Network        string             `json:"network,omitempty"`
-	RunDir         string             `json:"runDir"`
-	LogDir         string             `json:"logDir"`
-	Config         string             `json:"config"`
-	CreatedAt      time.Time          `json:"createdAt"`
-	UpdatedAt      time.Time          `json:"updatedAt"`
-	StartedAt      *time.Time         `json:"startedAt,omitempty"`
-	StoppedAt      *time.Time         `json:"stoppedAt,omitempty"`
-	FirstBooted    bool               `json:"firstBooted,omitempty"`
+	ID             string                   `json:"id"`
+	Name           string                   `json:"name"`
+	Backend        string                   `json:"backend"`
+	State          VMState                  `json:"state"`
+	ObservedState  ObservedState            `json:"observedState,omitempty"`
+	ObservedReason string                   `json:"observedReason,omitempty"`
+	ObservedAt     *time.Time               `json:"observedAt,omitempty"`
+	PID            int                      `json:"pid,omitempty"`
+	APISocket      string                   `json:"apiSocket,omitempty"`
+	Error          string                   `json:"error,omitempty"`
+	RootDisk       string                   `json:"rootDisk"`
+	Kernel         string                   `json:"kernel,omitempty"`
+	Initrd         string                   `json:"initrd,omitempty"`
+	Firmware       string                   `json:"firmware,omitempty"`
+	Image          *ImageRef                `json:"image,omitempty"`
+	Metadata       *Metadata                `json:"metadata,omitempty"`
+	NetworkConfigs []kbnetwork.Config       `json:"networkConfigs,omitempty"`
+	Network        string                   `json:"network,omitempty"`
+	NetworkStatus  *kbnetwork.InspectResult `json:"networkStatus,omitempty"`
+	RunDir         string                   `json:"runDir"`
+	LogDir         string                   `json:"logDir"`
+	Config         string                   `json:"config"`
+	CreatedAt      time.Time                `json:"createdAt"`
+	UpdatedAt      time.Time                `json:"updatedAt"`
+	StartedAt      *time.Time               `json:"startedAt,omitempty"`
+	StoppedAt      *time.Time               `json:"stoppedAt,omitempty"`
+	FirstBooted    bool                     `json:"firstBooted,omitempty"`
 }
 
 type Metadata struct {
@@ -142,6 +143,7 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 	}
 	copied.Image = cloneImageRef(rec.Image)
 	copied.NetworkConfigs = cloneNetworkConfigs(rec.NetworkConfigs)
+	copied.NetworkStatus = cloneNetworkStatus(rec.NetworkStatus)
 	if rec.StartedAt != nil {
 		startedAt := *rec.StartedAt
 		copied.StartedAt = &startedAt
@@ -150,6 +152,17 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 		stoppedAt := *rec.StoppedAt
 		copied.StoppedAt = &stoppedAt
 	}
+	return &copied
+}
+
+func cloneNetworkStatus(status *kbnetwork.InspectResult) *kbnetwork.InspectResult {
+	if status == nil {
+		return nil
+	}
+	copied := *status
+	copied.Interfaces = append([]kbnetwork.Record(nil), status.Interfaces...)
+	copied.VMConfigs = cloneNetworkConfigs(status.VMConfigs)
+	copied.Drift = append([]string(nil), status.Drift...)
 	return &copied
 }
 

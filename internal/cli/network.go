@@ -2,11 +2,13 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
+	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
 func newNetworkCommand(opts *rootOptions) *cobra.Command {
@@ -115,7 +117,21 @@ func newNetworkInspectCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := kbnetwork.NewStore(cfg.Runtime.RootDir).Inspect(args[0])
+			var vmID, vmName, networkName string
+			var networkConfigs []kbnetwork.Config
+			rec, err := vmstore.New(cfg.Runtime.RootDir).Inspect(args[0])
+			if err != nil && !errors.Is(err, vmstore.ErrNotFound) {
+				return err
+			}
+			if rec != nil {
+				vmID = rec.ID
+				vmName = rec.Name
+				networkName = rec.Network
+				networkConfigs = rec.NetworkConfigs
+			} else {
+				vmID = args[0]
+			}
+			result, err := kbnetwork.NewStore(cfg.Runtime.RootDir).InspectVM(vmID, vmName, networkName, networkConfigs)
 			if err != nil {
 				return err
 			}

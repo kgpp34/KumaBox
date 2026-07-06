@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"syscall"
 	"time"
@@ -111,17 +112,121 @@ func (s *Store) DeleteRecord(id string) error {
 }
 
 func (s *Store) Inspect(vmID string) (*InspectResult, error) {
+	return s.InspectVM(vmID, "", "", nil)
+}
+
+func (s *Store) InspectVM(vmID, vmName, network string, configs []Config) (*InspectResult, error) {
 	records, err := s.List()
 	if err != nil {
 		return nil, err
 	}
-	result := &InspectResult{VMID: vmID, Interfaces: []Record{}}
+	result := &InspectResult{
+		VMID:       vmID,
+		VMName:     vmName,
+		Network:    network,
+		Interfaces: []Record{},
+		VMConfigs:  cloneConfigs(configs),
+	}
 	for _, rec := range records {
 		if rec.VMID == vmID {
 			result.Interfaces = append(result.Interfaces, rec)
 		}
 	}
+	result.Drift = inspectDrift(result.Interfaces, configs)
 	return result, nil
+}
+
+func inspectDrift(records []Record, configs []Config) []string {
+	drift := []string{}
+	recordsByID := make(map[string]Record, len(records))
+	for _, rec := range records {
+		if rec.ID != "" {
+			recordsByID[rec.ID] = rec
+		}
+	}
+	configsByID := make(map[string]Config, len(configs))
+	for _, cfg := range configs {
+		if cfg.ID != "" {
+			configsByID[cfg.ID] = cfg
+		}
+	}
+	for _, cfg := range configs {
+		if cfg.ID == "" {
+			drift = append(drift, "VM network config is missing id")
+			continue
+		}
+		rec, ok := recordsByID[cfg.ID]
+		if !ok {
+			drift = append(drift, fmt.Sprintf("VM network config %s is missing provider record", cfg.ID))
+			continue
+		}
+		drift = appendDriftMismatch(drift, cfg.ID, "tap", cfg.TAP, rec.TAP)
+		drift = appendDriftMismatch(drift, cfg.ID, "mac", cfg.MAC, rec.MAC)
+		drift = appendDriftMismatch(drift, cfg.ID, "backend", cfg.Backend, rec.Provider)
+		drift = appendDriftMismatch(drift, cfg.ID, "bridgeDev", cfg.BridgeDev, rec.BridgeDev)
+		if cfg.Network == nil {
+			if len(rec.IPs) > 0 || rec.Gateway != "" || len(rec.DNS) > 0 {
+				drift = append(drift, fmt.Sprintf("VM network config %s is missing guest network details", cfg.ID))
+			}
+			continue
+		}
+		drift = appendDriftMismatch(drift, cfg.ID, "ip", configIPCIDR(cfg), firstString(rec.IPs))
+		drift = appendDriftMismatch(drift, cfg.ID, "gateway", cfg.Network.Gateway, rec.Gateway)
+		if !reflect.DeepEqual(cfg.Network.DNS, rec.DNS) {
+			drift = append(drift, fmt.Sprintf("network %s dns mismatch: vm=%v provider=%v", cfg.ID, cfg.Network.DNS, rec.DNS))
+		}
+	}
+	for _, rec := range records {
+		if rec.ID == "" {
+			drift = append(drift, fmt.Sprintf("provider record for tap %s is missing id", rec.TAP))
+			continue
+		}
+		if _, ok := configsByID[rec.ID]; !ok {
+			drift = append(drift, fmt.Sprintf("provider record %s is missing from VM record", rec.ID))
+		}
+	}
+	return drift
+}
+
+func appendDriftMismatch(drift []string, id, field, vmValue, providerValue string) []string {
+	if vmValue == providerValue {
+		return drift
+	}
+	return append(drift, fmt.Sprintf("network %s %s mismatch: vm=%q provider=%q", id, field, vmValue, providerValue))
+}
+
+func configIPCIDR(cfg Config) string {
+	if cfg.Network == nil || cfg.Network.IP == "" {
+		return ""
+	}
+	if cfg.Network.Prefix <= 0 {
+		return cfg.Network.IP
+	}
+	return fmt.Sprintf("%s/%d", cfg.Network.IP, cfg.Network.Prefix)
+}
+
+func firstString(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func cloneConfigs(configs []Config) []Config {
+	if len(configs) == 0 {
+		return nil
+	}
+	copied := make([]Config, len(configs))
+	copy(copied, configs)
+	for i := range copied {
+		if configs[i].Network == nil {
+			continue
+		}
+		network := *configs[i].Network
+		network.DNS = append([]string(nil), configs[i].Network.DNS...)
+		copied[i].Network = &network
+	}
+	return copied
 }
 
 func (s *Store) ListLeases() (map[string]Lease, error) {

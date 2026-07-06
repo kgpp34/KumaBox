@@ -177,7 +177,9 @@ func (r *Runtime) InspectVM(ref string) (*vmstore.VMRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	return r.applyObservation(rec), nil
+	observed := r.applyObservation(rec)
+	observed.NetworkStatus = r.inspectNetwork(observed)
+	return observed, nil
 }
 
 // ListVMs returns all VM records with fresh backend observations.
@@ -204,6 +206,24 @@ func (r *Runtime) applyObservation(rec *vmstore.VMRecord) *vmstore.VMRecord {
 		_ = writeVMEvent(rec, "backend.exit.detected", obs)
 	}
 	return rec
+}
+
+func (r *Runtime) inspectNetwork(rec *vmstore.VMRecord) *kbnetwork.InspectResult {
+	if rec == nil {
+		return nil
+	}
+	result, err := kbnetwork.NewStore(r.cfg.Runtime.RootDir).InspectVM(rec.ID, rec.Name, rec.Network, rec.NetworkConfigs)
+	if err != nil {
+		return &kbnetwork.InspectResult{
+			VMID:       rec.ID,
+			VMName:     rec.Name,
+			Network:    rec.Network,
+			Interfaces: []kbnetwork.Record{},
+			VMConfigs:  rec.NetworkConfigs,
+			Drift:      []string{err.Error()},
+		}
+	}
+	return result
 }
 
 type eventRecord struct {

@@ -68,7 +68,10 @@ type Record struct {
 
 type InspectResult struct {
 	VMID       string   `json:"vmId"`
+	VMName     string   `json:"vmName,omitempty"`
+	Network    string   `json:"network,omitempty"`
 	Interfaces []Record `json:"interfaces"`
+	VMConfigs  []Config `json:"vmConfigs,omitempty"`
 	Drift      []string `json:"drift,omitempty"`
 }
 
