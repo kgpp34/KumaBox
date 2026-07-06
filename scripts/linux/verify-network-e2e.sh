@@ -275,7 +275,13 @@ fi
 
 section "host tap link"
 "${ip_cmd[@]}" link show dev "$tap" >/dev/null
-"${ip_cmd[@]}" -d link show dev "$tap"
+tap_detail="$("${ip_cmd[@]}" -d link show dev "$tap")"
+printf '%s\n' "$tap_detail"
+if [[ "$tap_detail" != *"pi off"* || "$tap_detail" != *"vnet_hdr on"* ]]; then
+  echo "tap $tap must be no-pi with vnet_hdr on" >&2
+  print_failure_context
+  exit 1
+fi
 master="$(basename "$(readlink "/sys/class/net/$tap/master")")"
 if [[ "$master" != "kumabox0" ]]; then
   echo "tap $tap master = $master, want kumabox0" >&2

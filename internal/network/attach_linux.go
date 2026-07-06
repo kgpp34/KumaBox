@@ -62,14 +62,17 @@ func ensureTap(rec Record) (netlink.Link, bool, error) {
 	tap := &netlink.Tuntap{
 		LinkAttrs: attrs,
 		Mode:      netlink.TUNTAP_MODE_TAP,
-		Flags:     netlink.TUNTAP_NO_PI,
+		Flags:     netlink.TUNTAP_NO_PI | netlink.TUNTAP_VNET_HDR,
 	}
 	if rec.NumQueues > 1 {
 		tap.Queues = rec.NumQueues
-		tap.Flags = netlink.TUNTAP_MULTI_QUEUE_DEFAULTS
+		tap.Flags |= netlink.TUNTAP_MULTI_QUEUE_DEFAULTS
 	}
 	if err := netlink.LinkAdd(tap); err != nil {
 		return nil, false, fmt.Errorf("create tap %s: %w", rec.TAP, err)
+	}
+	for _, fd := range tap.Fds {
+		_ = fd.Close()
 	}
 	link, err := netlink.LinkByName(rec.TAP)
 	if err != nil {

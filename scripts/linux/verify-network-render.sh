@@ -224,7 +224,12 @@ printf 'state: vm network tap=%s mac=%s ip=%s config=%s cidata=%s\n' "$tap" "$ma
 
 section "host tap link"
 "${ip_cmd[@]}" link show dev "$tap" >/dev/null
-"${ip_cmd[@]}" -d link show dev "$tap"
+tap_detail="$("${ip_cmd[@]}" -d link show dev "$tap")"
+printf '%s\n' "$tap_detail"
+if [[ "$tap_detail" != *"pi off"* || "$tap_detail" != *"vnet_hdr on"* ]]; then
+  echo "tap $tap must be no-pi with vnet_hdr on" >&2
+  exit 1
+fi
 printf 'note: host tap link/ether may differ from VM MAC; guest MAC is rendered in Cloud Hypervisor config below.\n'
 master="$(basename "$(readlink "/sys/class/net/$tap/master")")"
 if [[ "$master" != "kumabox0" ]]; then
