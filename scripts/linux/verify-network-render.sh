@@ -45,6 +45,10 @@ require_value() {
   fi
 }
 
+section() {
+  printf '\n==> %s\n' "$1"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --kumabox)
@@ -164,9 +168,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+section "clean previous P2-04 state"
 "${remove_cmd[@]}" "$root_dir" "$run_dir" "$log_dir"
 mkdir -p "$root_dir" "$run_dir" "$log_dir"
 
+section "environment checks"
 scripts/linux/env-check.sh \
   --kumabox "$kumabox_path" \
   --cloud-hypervisor "$cloud_hypervisor_path" \
@@ -174,6 +180,7 @@ scripts/linux/env-check.sh \
   --strict \
   --network
 
+section "create VM with --network default"
 created_json="$("${kumabox_cmd[@]}" \
   --root-dir "$root_dir" \
   --run-dir "$run_dir" \
@@ -201,14 +208,24 @@ if [[ "$ip_addr" != 10.88.* ]]; then
   echo "unexpected network IP: $ip_addr" >&2
   exit 1
 fi
+printf 'state: vm network tap=%s mac=%s ip=%s config=%s cidata=%s\n' "$tap" "$mac" "$ip_addr" "$config_path" "$cidata_dir"
 
+section "host tap link"
 "${ip_cmd[@]}" link show dev "$tap" >/dev/null
+"${ip_cmd[@]}" -d link show dev "$tap"
 master="$(basename "$(readlink "/sys/class/net/$tap/master")")"
 if [[ "$master" != "kumabox0" ]]; then
   echo "tap $tap master = $master, want kumabox0" >&2
   exit 1
 fi
+printf 'state: tap %s master=%s\n' "$tap" "$master"
 
+section "bridge state"
+"${ip_cmd[@]}" -d link show dev kumabox0
+"${ip_cmd[@]}" -4 addr show dev kumabox0
+
+section "cloud-hypervisor net config"
+jq '.nets' "$config_path"
 if [[ "$(jq -r '.nets[0].tap' "$config_path")" != "$tap" ]]; then
   echo "Cloud Hypervisor config missing tap $tap" >&2
   jq '.nets' "$config_path" >&2
@@ -220,15 +237,25 @@ if [[ "$(jq -r '.nets[0].mac' "$config_path")" != "$mac" ]]; then
   exit 1
 fi
 
+section "cidata network-config"
 network_config="$("${cat_cmd[@]}" "$cidata_dir/network-config")"
+printf '%s\n' "$network_config"
 printf '%s\n' "$network_config" | grep -q "macaddress: \"$mac\""
 printf '%s\n' "$network_config" | grep -q "$ip_addr/16"
 printf '%s\n' "$network_config" | grep -q "gateway4: 10.88.0.1"
 
+section "network provider index"
+jq '.' "$root_dir/network/index.json"
 provider_tap="$(jq -r '.networks[] | .tap' "$root_dir/network/index.json")"
 if [[ "$provider_tap" != "$tap" ]]; then
   echo "provider index tap = $provider_tap, want $tap" >&2
   exit 1
 fi
+
+section "host-tap owner state"
+jq '.' "$root_dir/network/host-tap.json"
+
+section "lease state"
+jq '.' "$root_dir/network/leases.json"
 
 echo "P2-04 network render verification passed"
