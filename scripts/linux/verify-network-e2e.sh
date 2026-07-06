@@ -89,6 +89,40 @@ print_failure_context() {
   fi
 }
 
+clean_previous_state() {
+  section "clean previous P2 network e2e state"
+  set +e
+
+  old_taps=()
+  if [[ -f "$root_dir/network/index.json" ]]; then
+    mapfile -t old_taps < <("${cat_cmd[@]}" "$root_dir/network/index.json" 2>/dev/null | jq -r '.networks[]?.tap // empty' 2>/dev/null)
+  fi
+
+  "${kumabox_cmd[@]}" \
+    --root-dir "$root_dir" \
+    --run-dir "$run_dir" \
+    --log-dir "$log_dir" \
+    --cloud-hypervisor-bin "$cloud_hypervisor_path" \
+    delete "$name" --force >/dev/null 2>&1
+
+  "${kumabox_cmd[@]}" \
+    --root-dir "$root_dir" \
+    --run-dir "$run_dir" \
+    --log-dir "$log_dir" \
+    --cloud-hypervisor-bin "$cloud_hypervisor_path" \
+    network teardown --json >/dev/null 2>&1
+
+  for old_tap in "${old_taps[@]}"; do
+    if [[ -n "$old_tap" && "$old_tap" != "null" ]]; then
+      "${ip_cmd[@]}" link delete "$old_tap" >/dev/null 2>&1
+    fi
+  done
+
+  "${remove_cmd[@]}" "$root_dir" "$run_dir" "$log_dir"
+  mkdir -p "$root_dir" "$run_dir" "$log_dir"
+  set -e
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --kumabox)
@@ -218,9 +252,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-section "clean previous P2 network e2e state"
-"${remove_cmd[@]}" "$root_dir" "$run_dir" "$log_dir"
-mkdir -p "$root_dir" "$run_dir" "$log_dir"
+clean_previous_state
 
 section "environment checks"
 scripts/linux/env-check.sh \
