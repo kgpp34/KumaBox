@@ -15,11 +15,14 @@ import (
 
 const indexSchemaVersion = "kumabox.network.index.v1"
 const leaseSchemaVersion = "kumabox.network.leases.v1"
+const hostTapSchemaVersion = "kumabox.network.hostTap.v1"
 
 type Store struct {
-	indexPath string
-	leasePath string
-	leaseLock string
+	indexPath   string
+	leasePath   string
+	leaseLock   string
+	hostTapPath string
+	hostTapLock string
 }
 
 type index struct {
@@ -43,9 +46,11 @@ type leaseIndex struct {
 func NewStore(rootDir string) *Store {
 	networkDir := filepath.Join(rootDir, "network")
 	return &Store{
-		indexPath: filepath.Join(networkDir, "index.json"),
-		leasePath: filepath.Join(networkDir, "leases.json"),
-		leaseLock: filepath.Join(networkDir, "leases.lock"),
+		indexPath:   filepath.Join(networkDir, "index.json"),
+		leasePath:   filepath.Join(networkDir, "leases.json"),
+		leaseLock:   filepath.Join(networkDir, "leases.lock"),
+		hostTapPath: filepath.Join(networkDir, "host-tap.json"),
+		hostTapLock: filepath.Join(networkDir, "host-tap.lock"),
 	}
 }
 
@@ -95,6 +100,10 @@ func (s *Store) ListLeases() (map[string]Lease, error) {
 		}
 	}
 	return out, nil
+}
+
+func (s *Store) ReadHostTapState() (*HostTapState, error) {
+	return s.readHostTapState()
 }
 
 func (s *Store) readIndex() (*index, error) {
@@ -175,6 +184,65 @@ func (s *Store) lockLeases() (func(), error) {
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
 		_ = file.Close()
 		return nil, fmt.Errorf("lock network leases: %w", err)
+	}
+
+	return func() {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		_ = file.Close()
+	}, nil
+}
+
+func (s *Store) readHostTapState() (*HostTapState, error) {
+	raw, err := os.ReadFile(s.hostTapPath) //nolint:gosec
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read host-tap state: %w", err)
+	}
+
+	var state HostTapState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return nil, fmt.Errorf("parse host-tap state: %w", err)
+	}
+	if state.SchemaVersion != "" && state.SchemaVersion != hostTapSchemaVersion {
+		return nil, fmt.Errorf("unsupported host-tap schema %q", state.SchemaVersion)
+	}
+	if state.SchemaVersion == "" {
+		state.SchemaVersion = hostTapSchemaVersion
+	}
+	return &state, nil
+}
+
+func (s *Store) writeHostTapState(state *HostTapState) error {
+	if state.SchemaVersion == "" {
+		state.SchemaVersion = hostTapSchemaVersion
+	}
+	if err := fileutil.WriteJSONAtomic(s.hostTapPath, state, ".host-tap-*.tmp"); err != nil {
+		return fmt.Errorf("write host-tap state: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) removeHostTapState() error {
+	if err := os.Remove(s.hostTapPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove host-tap state: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) lockHostTap() (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(s.hostTapLock), 0o755); err != nil {
+		return nil, fmt.Errorf("create host-tap lock dir: %w", err)
+	}
+
+	file, err := os.OpenFile(s.hostTapLock, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open host-tap lock: %w", err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("lock host-tap: %w", err)
 	}
 
 	return func() {

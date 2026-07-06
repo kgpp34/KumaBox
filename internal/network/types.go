@@ -71,3 +71,30 @@ type InspectResult struct {
 	Interfaces []Record `json:"interfaces"`
 	Drift      []string `json:"drift,omitempty"`
 }
+
+type HostTapState struct {
+	SchemaVersion string    `json:"schemaVersion"`
+	Bridge        string    `json:"bridge"`
+	CIDR          string    `json:"cidr"`
+	Gateway       string    `json:"gateway"`
+	NATBackend    string    `json:"natBackend"`
+	Owner         Owner     `json:"owner"`
+	RefCount      int       `json:"refCount"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
+type Owner struct {
+	Kind    string `json:"kind"`
+	RootDir string `json:"rootDir"`
+}
+
+type HostTapReport struct {
+	Bridge     string        `json:"bridge"`
+	CIDR       string        `json:"cidr"`
+	Gateway    string        `json:"gateway"`
+	NATBackend string        `json:"natBackend"`
+	Created    bool          `json:"created"`
+	Changed    []string      `json:"changed,omitempty"`
+	State      *HostTapState `json:"state,omitempty"`
+}
