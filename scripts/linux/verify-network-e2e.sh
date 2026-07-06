@@ -366,7 +366,9 @@ jq_file '.nets' "$config_path"
 
 section "wait for host-to-guest ping"
 deadline=$((SECONDS + timeout))
+wait_start=$SECONDS
 attempt=0
+printf 'state: waiting up to %ss for guest boot and cloud-init network config\n' "$timeout"
 until ping -c 1 -W 2 "$guest_ip" >/dev/null 2>&1; do
   attempt=$((attempt + 1))
   if (( SECONDS >= deadline )); then
@@ -374,7 +376,13 @@ until ping -c 1 -W 2 "$guest_ip" >/dev/null 2>&1; do
     print_failure_context
     exit 1
   fi
-  printf 'state: ping attempt %d failed; waiting %ss for guest network\n' "$attempt" "$ping_interval"
+  elapsed=$((SECONDS - wait_start))
+  printf 'state: ping attempt %d failed after %ss/%ss; waiting %ss for guest network\n' "$attempt" "$elapsed" "$timeout" "$ping_interval"
+  if (( attempt % 6 == 0 )); then
+    section "guest console tail while waiting"
+    "${cat_cmd[@]}" "$console_log" 2>/dev/null | tail -n 40 || true
+    section "wait for host-to-guest ping"
+  fi
   sleep "$ping_interval"
 done
 printf 'pass: host can ping guest %s\n' "$guest_ip"
