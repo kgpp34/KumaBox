@@ -8,6 +8,8 @@ const (
 	ProviderNone    = "none"
 )
 
+const maxInterfaceNameLength = 15
+
 type AddSpec struct {
 	Index    int
 	Existing *Config
