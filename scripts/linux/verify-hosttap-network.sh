@@ -80,8 +80,10 @@ if [[ "$use_sudo" -eq 1 ]]; then
     exit 1
   fi
   kumabox_cmd=(sudo "$kumabox_path")
+  remove_cmd=(sudo rm -rf)
 else
   kumabox_cmd=("$kumabox_path")
+  remove_cmd=(rm -rf)
 fi
 
 mkdir -p "$root_dir" "$run_dir" "$log_dir"
@@ -100,7 +102,7 @@ scripts/linux/env-check.sh \
   --cloud-hypervisor-bin "$cloud_hypervisor_path" \
   network teardown --json >/dev/null || true
 
-rm -rf "$root_dir/network"
+"${remove_cmd[@]}" "$root_dir/network"
 
 setup_json="$("${kumabox_cmd[@]}" \
   --root-dir "$root_dir" \
@@ -143,5 +145,6 @@ if [[ -f "$root_dir/network/host-tap.json" ]]; then
   echo "host-tap owner state still exists after teardown" >&2
   exit 1
 fi
+"${remove_cmd[@]}" "$root_dir/network"
 
 echo "P2-03 host-tap network verification passed"
