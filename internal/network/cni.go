@@ -15,6 +15,13 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 )
 
+var (
+	prepareCNINetns   = prepareCNINetnsLinux
+	setupCNIDatapath  = setupCNIDatapathLinux
+	deleteCNIDatapath = deleteCNIDatapathLinux
+	deleteCNINetns    = deleteCNINetnsLinux
+)
+
 type CNIAddRequest struct {
 	VMID      string
 	Network   string
@@ -28,6 +35,7 @@ type CNIDeleteRequest struct {
 	VMID      string
 	Network   string
 	IfName    string
+	TAP       string
 	NetNSPath string
 }
 
@@ -37,27 +45,51 @@ type cniNetworkConfig struct {
 	name string
 }
 
+type CNIProvider struct {
+	rootDir string
+	cfg     config.NetworkConfig
+}
+
+func NewCNIProvider(rootDir string, cfg config.NetworkConfig) *CNIProvider {
+	return &CNIProvider{rootDir: rootDir, cfg: cfg}
+}
+
 func AddCNI(ctx context.Context, rootDir string, cfg config.NetworkConfig, req CNIAddRequest) (*Allocation, error) {
+	return NewCNIProvider(rootDir, cfg).Add(ctx, req)
+}
+
+func DeleteCNI(ctx context.Context, rootDir string, cfg config.NetworkConfig, req CNIDeleteRequest) error {
+	return NewCNIProvider(rootDir, cfg).Delete(ctx, req)
+}
+
+func (p *CNIProvider) Add(ctx context.Context, req CNIAddRequest) (_ *Allocation, retErr error) {
 	if req.VMID == "" {
 		return nil, fmt.Errorf("vm id must not be empty")
 	}
-	networkName := CNIName(req.Network, cfg.Default)
-	cniConfig, err := loadCNIConfig(cfg.CNIConfigDir, networkName)
+	networkName := CNIName(req.Network, p.cfg.Default)
+	cniConfig, err := loadCNIConfig(p.cfg.CNIConfigDir, networkName)
 	if err != nil {
 		return nil, err
 	}
-	netnsPath := req.NetNSPath
-	if netnsPath == "" {
-		netnsPath = "/proc/self/ns/net"
+	netnsPath, createdNetns, err := prepareCNINetns(req.VMID, req.NetNSPath)
+	if err != nil {
+		return nil, err
 	}
-	ifName := TapName(cfg.TapPrefix, req.VMID, req.Index)
+	defer func() {
+		if retErr != nil && createdNetns {
+			_ = deleteCNINetns(req.VMID, netnsPath)
+		}
+	}()
+
+	ifName := guestIfName(req.Index)
+	tapName := TapName(p.cfg.TapPrefix, req.VMID, req.Index)
 	mac, err := GenerateMAC()
 	if err != nil {
 		return nil, err
 	}
 	if req.Existing != nil {
 		if req.Existing.TAP != "" {
-			ifName = req.Existing.TAP
+			tapName = req.Existing.TAP
 		}
 		if req.Existing.MAC != "" {
 			mac = strings.ToLower(req.Existing.MAC)
@@ -77,8 +109,8 @@ func AddCNI(ctx context.Context, rootDir string, cfg config.NetworkConfig, req C
 		},
 	}
 	cni := libcni.NewCNIConfigWithCacheDir(
-		[]string{cfg.CNIBinDir},
-		filepath.Join(rootDir, "network", "cni-cache"),
+		[]string{p.cfg.CNIBinDir},
+		filepath.Join(p.rootDir, "network", "cni-cache"),
 		nil,
 	)
 	result, err := addCNIConfig(ctx, cni, cniConfig, runtimeConf)
@@ -89,10 +121,19 @@ func AddCNI(ctx context.Context, rootDir string, cfg config.NetworkConfig, req C
 	if err != nil {
 		return nil, fmt.Errorf("parse cni result: %w", err)
 	}
+	defer func() {
+		if retErr != nil {
+			_ = delCNIConfig(ctx, cni, cniConfig, runtimeConf)
+		}
+	}()
 
 	guest := guestInfoFromCNIResult(current)
 	if resultMAC := macFromCNIResult(current, ifName); resultMAC != "" {
 		mac = resultMAC
+	}
+	mac, err = setupCNIDatapath(netnsPath, ifName, tapName, netNumQueues(req.CPU), mac)
+	if err != nil {
+		return nil, fmt.Errorf("setup cni datapath for VM %s: %w", req.VMID, err)
 	}
 	now := time.Now().UTC()
 	record := Record{
@@ -101,7 +142,7 @@ func AddCNI(ctx context.Context, rootDir string, cfg config.NetworkConfig, req C
 		Network:   req.Network,
 		Provider:  ProviderCNI,
 		IfName:    ifName,
-		TAP:       ifName,
+		TAP:       tapName,
 		MAC:       mac,
 		NumQueues: netNumQueues(req.CPU),
 		QueueSize: defaultQueueSize,
@@ -122,18 +163,19 @@ func AddCNI(ctx context.Context, rootDir string, cfg config.NetworkConfig, req C
 		NumQueues: record.NumQueues,
 		QueueSize: record.QueueSize,
 		Backend:   record.Provider,
+		IfName:    record.IfName,
 		NetnsPath: record.NetnsPath,
 		Network:   guest,
 	}
 	return &Allocation{Record: record, Config: vmConfig}, nil
 }
 
-func DeleteCNI(ctx context.Context, rootDir string, cfg config.NetworkConfig, req CNIDeleteRequest) error {
+func (p *CNIProvider) Delete(ctx context.Context, req CNIDeleteRequest) error {
 	if req.VMID == "" {
 		return fmt.Errorf("vm id must not be empty")
 	}
-	networkName := CNIName(req.Network, cfg.Default)
-	cniConfig, err := loadCNIConfig(cfg.CNIConfigDir, networkName)
+	networkName := CNIName(req.Network, p.cfg.Default)
+	cniConfig, err := loadCNIConfig(p.cfg.CNIConfigDir, networkName)
 	if err != nil {
 		return err
 	}
@@ -142,7 +184,7 @@ func DeleteCNI(ctx context.Context, rootDir string, cfg config.NetworkConfig, re
 	}
 	netnsPath := req.NetNSPath
 	if netnsPath == "" {
-		netnsPath = "/proc/self/ns/net"
+		netnsPath = NetNSPath(req.VMID)
 	}
 	runtimeConf := &libcni.RuntimeConf{
 		ContainerID: req.VMID,
@@ -154,12 +196,22 @@ func DeleteCNI(ctx context.Context, rootDir string, cfg config.NetworkConfig, re
 		},
 	}
 	cni := libcni.NewCNIConfigWithCacheDir(
-		[]string{cfg.CNIBinDir},
-		filepath.Join(rootDir, "network", "cni-cache"),
+		[]string{p.cfg.CNIBinDir},
+		filepath.Join(p.rootDir, "network", "cni-cache"),
 		nil,
 	)
 	if err := delCNIConfig(ctx, cni, cniConfig, runtimeConf); err != nil {
 		return fmt.Errorf("cni del %s for VM %s: %w", networkName, req.VMID, err)
+	}
+	tapName := req.TAP
+	if tapName == "" && strings.HasPrefix(req.IfName, p.cfg.TapPrefix) {
+		tapName = req.IfName
+	}
+	if err := deleteCNIDatapath(netnsPath, tapName); err != nil {
+		return fmt.Errorf("delete cni datapath for VM %s: %w", req.VMID, err)
+	}
+	if err := deleteCNINetns(req.VMID, netnsPath); err != nil {
+		return fmt.Errorf("delete cni netns for VM %s: %w", req.VMID, err)
 	}
 	return nil
 }
@@ -185,6 +237,13 @@ func CNIName(network, fallback string) string {
 
 func IsCNISelection(network string) bool {
 	return network == ProviderCNI || strings.HasPrefix(network, "cni:")
+}
+
+func guestIfName(index int) string {
+	if index <= 0 {
+		return "eth0"
+	}
+	return fmt.Sprintf("eth%d", index)
 }
 
 func loadCNIConfig(configDir, name string) (*cniNetworkConfig, error) {

@@ -13,6 +13,7 @@ import (
 func TestAddCNICallsPluginAndParsesResult(t *testing.T) {
 	dir := t.TempDir()
 	cfg, logPath := writeTestCNIConfig(t, dir, false)
+	withCNIDatapath(t)
 
 	allocation, err := AddCNI(context.Background(), dir, cfg, CNIAddRequest{
 		VMID:    "kb_cni",
@@ -32,7 +33,10 @@ func TestAddCNICallsPluginAndParsesResult(t *testing.T) {
 	if allocation.Record.TAP == "" || allocation.Record.TAP != allocation.Config.TAP {
 		t.Fatalf("tap mismatch: record=%s config=%s", allocation.Record.TAP, allocation.Config.TAP)
 	}
-	if allocation.Record.NetnsPath != "/proc/self/ns/net" || allocation.Config.NetnsPath != "/proc/self/ns/net" {
+	if allocation.Record.IfName != "eth0" || allocation.Config.IfName != "eth0" {
+		t.Fatalf("ifname mismatch: record=%s config=%s", allocation.Record.IfName, allocation.Config.IfName)
+	}
+	if allocation.Record.NetnsPath != NetNSPath("kb_cni") || allocation.Config.NetnsPath != NetNSPath("kb_cni") {
 		t.Fatalf("netns mismatch: record=%s config=%s", allocation.Record.NetnsPath, allocation.Config.NetnsPath)
 	}
 	if allocation.Config.Backend != ProviderCNI {
@@ -48,7 +52,7 @@ func TestAddCNICallsPluginAndParsesResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "ADD kb_cni "+allocation.Record.TAP+" /proc/self/ns/net") {
+	if !strings.Contains(string(raw), "ADD kb_cni eth0 "+NetNSPath("kb_cni")) {
 		t.Fatalf("plugin log = %s", raw)
 	}
 }
@@ -56,12 +60,14 @@ func TestAddCNICallsPluginAndParsesResult(t *testing.T) {
 func TestDeleteCNICallsPlugin(t *testing.T) {
 	dir := t.TempDir()
 	cfg, logPath := writeTestCNIConfig(t, dir, false)
+	withCNIDatapath(t)
 
 	if err := DeleteCNI(context.Background(), dir, cfg, CNIDeleteRequest{
 		VMID:      "kb_cni",
 		Network:   "cni:default",
-		IfName:    "kbtapcni0",
-		NetNSPath: "/proc/self/ns/net",
+		IfName:    "eth0",
+		TAP:       "kbtapcni0",
+		NetNSPath: NetNSPath("kb_cni"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +75,7 @@ func TestDeleteCNICallsPlugin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "DEL kb_cni kbtapcni0 /proc/self/ns/net") {
+	if !strings.Contains(string(raw), "DEL kb_cni eth0 "+NetNSPath("kb_cni")) {
 		t.Fatalf("plugin log = %s", raw)
 	}
 }
@@ -77,16 +83,47 @@ func TestDeleteCNICallsPlugin(t *testing.T) {
 func TestDeleteCNIReportsPluginFailure(t *testing.T) {
 	dir := t.TempDir()
 	cfg, _ := writeTestCNIConfig(t, dir, true)
+	withCNIDatapath(t)
 
 	err := DeleteCNI(context.Background(), dir, cfg, CNIDeleteRequest{
 		VMID:      "kb_cni",
 		Network:   "cni:default",
-		IfName:    "kbtapcni0",
-		NetNSPath: "/proc/self/ns/net",
+		IfName:    "eth0",
+		TAP:       "kbtapcni0",
+		NetNSPath: NetNSPath("kb_cni"),
 	})
 	if err == nil || !strings.Contains(err.Error(), "forced del failure") {
 		t.Fatalf("delete error = %v", err)
 	}
+}
+
+func withCNIDatapath(t *testing.T) {
+	t.Helper()
+	oldPrepare := prepareCNINetns
+	oldSetup := setupCNIDatapath
+	oldDeleteDatapath := deleteCNIDatapath
+	oldDeleteNetns := deleteCNINetns
+	prepareCNINetns = func(vmID, requestedPath string) (string, bool, error) {
+		if requestedPath != "" {
+			return requestedPath, false, nil
+		}
+		return NetNSPath(vmID), true, nil
+	}
+	setupCNIDatapath = func(_ string, _ string, _ string, _ int, mac string) (string, error) {
+		return mac, nil
+	}
+	deleteCNIDatapath = func(_, _ string) error {
+		return nil
+	}
+	deleteCNINetns = func(_, _ string) error {
+		return nil
+	}
+	t.Cleanup(func() {
+		prepareCNINetns = oldPrepare
+		setupCNIDatapath = oldSetup
+		deleteCNIDatapath = oldDeleteDatapath
+		deleteCNINetns = oldDeleteNetns
+	})
 }
 
 func TestAddCNIFailsWhenConfigMissing(t *testing.T) {

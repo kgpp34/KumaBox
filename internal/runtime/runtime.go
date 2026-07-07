@@ -385,7 +385,8 @@ func (r *Runtime) attachCNI(rec *vmstore.VMRecord) error {
 		_ = deleteCNI(context.Background(), r.cfg.Runtime.RootDir, r.cfg.Network, kbnetwork.CNIDeleteRequest{
 			VMID:      rec.ID,
 			Network:   rec.Network,
-			IfName:    allocation.Record.TAP,
+			IfName:    allocation.Record.IfName,
+			TAP:       allocation.Record.TAP,
 			NetNSPath: allocation.Record.NetnsPath,
 		})
 		return err
@@ -395,7 +396,8 @@ func (r *Runtime) attachCNI(rec *vmstore.VMRecord) error {
 		_ = deleteCNI(context.Background(), r.cfg.Runtime.RootDir, r.cfg.Network, kbnetwork.CNIDeleteRequest{
 			VMID:      rec.ID,
 			Network:   rec.Network,
-			IfName:    allocation.Record.TAP,
+			IfName:    allocation.Record.IfName,
+			TAP:       allocation.Record.TAP,
 			NetNSPath: allocation.Record.NetnsPath,
 		})
 		return err
@@ -415,7 +417,8 @@ func (r *Runtime) rollbackNetwork(rec *vmstore.VMRecord) {
 			_ = deleteCNI(context.Background(), r.cfg.Runtime.RootDir, r.cfg.Network, kbnetwork.CNIDeleteRequest{
 				VMID:      rec.ID,
 				Network:   rec.Network,
-				IfName:    nc.TAP,
+				IfName:    cniIfName(nc),
+				TAP:       nc.TAP,
 				NetNSPath: nc.NetnsPath,
 			})
 			continue
@@ -466,7 +469,8 @@ func cleanupNetworkConfig(
 		if err := deleteCNI(ctx, cfg.Runtime.RootDir, cfg.Network, kbnetwork.CNIDeleteRequest{
 			VMID:      rec.ID,
 			Network:   rec.Network,
-			IfName:    nc.TAP,
+			IfName:    cniIfName(nc),
+			TAP:       nc.TAP,
 			NetNSPath: nc.NetnsPath,
 		}); err != nil {
 			return err
@@ -491,4 +495,11 @@ func cleanupNetworkConfig(
 		return fmt.Errorf("delete network provider record %s: %w", nc.ID, err)
 	}
 	return nil
+}
+
+func cniIfName(nc kbnetwork.Config) string {
+	if nc.IfName != "" {
+		return nc.IfName
+	}
+	return nc.TAP
 }

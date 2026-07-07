@@ -134,8 +134,9 @@ func TestRenderConfigIncludesNetworkDevice(t *testing.T) {
 			MAC:       "02:00:00:00:00:11",
 			NumQueues: 2,
 			QueueSize: 256,
-			Backend:   kbnetwork.ProviderHostTap,
-			BridgeDev: "kumabox0",
+			Backend:   kbnetwork.ProviderCNI,
+			IfName:    "eth0",
+			NetnsPath: "/var/run/netns/kb_net",
 			Network: &kbnetwork.GuestInfo{
 				IP:      "10.88.0.2",
 				Gateway: "10.88.0.1",
@@ -162,6 +163,9 @@ func TestRenderConfigIncludesNetworkDevice(t *testing.T) {
 	}
 	if rendered.Nets[0].TAP != "kbtaptest" || rendered.Nets[0].MAC != "02:00:00:00:00:11" {
 		t.Fatalf("net = %+v", rendered.Nets[0])
+	}
+	if rendered.NetnsPath != "/var/run/netns/kb_net" {
+		t.Fatalf("netns path = %s", rendered.NetnsPath)
 	}
 	if !argsContainPair(rendered.Args, "--net", "tap=kbtaptest,mac=02:00:00:00:00:11,num_queues=2,queue_size=256") {
 		t.Fatalf("net arg missing: %v", rendered.Args)

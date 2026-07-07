@@ -44,6 +44,7 @@ type Config struct {
 	QueueSize int        `json:"queueSize"`
 	Backend   string     `json:"backend"`
 	BridgeDev string     `json:"bridgeDev,omitempty"`
+	IfName    string     `json:"ifName,omitempty"`
 	NetnsPath string     `json:"netnsPath,omitempty"`
 	Network   *GuestInfo `json:"network,omitempty"`
 }

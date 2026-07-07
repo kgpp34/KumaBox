@@ -705,7 +705,7 @@ func TestDeleteVMCleansCNIResources(t *testing.T) {
 	if len(deleted) != 1 {
 		t.Fatalf("deleted cni calls = %+v", deleted)
 	}
-	if deleted[0].VMID != rec.ID || deleted[0].Network != "cni:default" || deleted[0].IfName != "kbcni0" {
+	if deleted[0].VMID != rec.ID || deleted[0].Network != "cni:default" || deleted[0].IfName != "eth0" || deleted[0].TAP != "kbcni0" {
 		t.Fatalf("delete request = %+v", deleted[0])
 	}
 	records, err := kbnetwork.NewStore(rootDir).List()
@@ -850,6 +850,7 @@ func testCNIAllocation(vmID string) *kbnetwork.Allocation {
 		NumQueues: 2,
 		QueueSize: 256,
 		Backend:   kbnetwork.ProviderCNI,
+		IfName:    "eth0",
 		NetnsPath: "/proc/self/ns/net",
 	}
 	record := kbnetwork.Record{
@@ -857,7 +858,7 @@ func testCNIAllocation(vmID string) *kbnetwork.Allocation {
 		VMID:      vmID,
 		Network:   "cni:default",
 		Provider:  kbnetwork.ProviderCNI,
-		IfName:    netCfg.TAP,
+		IfName:    netCfg.IfName,
 		TAP:       netCfg.TAP,
 		MAC:       netCfg.MAC,
 		NumQueues: netCfg.NumQueues,

@@ -29,6 +29,7 @@ type Config struct {
 	PIDFile      string      `json:"pidFile"`
 	StdoutLog    string      `json:"stdoutLog"`
 	StderrLog    string      `json:"stderrLog"`
+	NetnsPath    string      `json:"netnsPath,omitempty"`
 	Kernel       *Kernel     `json:"kernel,omitempty"`
 	Initramfs    *Initramfs  `json:"initramfs,omitempty"`
 	Firmware     *Firmware   `json:"firmware,omitempty"`
@@ -193,6 +194,7 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		PIDFile:      filepath.Join(rec.RunDir, "ch.pid"),
 		StdoutLog:    stdoutLog,
 		StderrLog:    stderrLog,
+		NetnsPath:    netnsPath(rec),
 		Disks:        newDisks(rec),
 		Nets:         newNets(rec),
 		Serial:       Serial{Path: serialLog},
@@ -213,6 +215,15 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		rendered.Initramfs = &Initramfs{Path: rec.Initrd}
 	}
 	return rendered
+}
+
+func netnsPath(rec *vmstore.VMRecord) string {
+	for _, nc := range rec.NetworkConfigs {
+		if nc.NetnsPath != "" {
+			return nc.NetnsPath
+		}
+	}
+	return ""
 }
 
 func newNets(rec *vmstore.VMRecord) []Net {

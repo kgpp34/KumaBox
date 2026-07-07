@@ -60,7 +60,7 @@ func (Starter) StartConfig(path string) (*backend.StartResult, error) {
 	cmd.Stderr = stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	if err := cmd.Start(); err != nil {
+	if err := startInNetNS(cmd, cfg.NetnsPath); err != nil {
 		return nil, fmt.Errorf("start Cloud Hypervisor: %w", err)
 	}
 
