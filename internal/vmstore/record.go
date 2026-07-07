@@ -7,7 +7,9 @@
 package vmstore
 
 import (
+	"errors"
 	"path/filepath"
+	"strings"
 	"time"
 
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
@@ -78,6 +80,7 @@ type VMRecord struct {
 	Metadata       *Metadata                `json:"metadata,omitempty"`
 	NetworkConfigs []kbnetwork.Config       `json:"networkConfigs,omitempty"`
 	Network        string                   `json:"network,omitempty"`
+	Networks       []string                 `json:"networks,omitempty"`
 	NetworkStatus  *kbnetwork.InspectResult `json:"networkStatus,omitempty"`
 	RunDir         string                   `json:"runDir"`
 	LogDir         string                   `json:"logDir"`
@@ -136,6 +139,11 @@ func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
 		return nil, err
 	}
 
+	networks, err := normalizeNetworks(req.Network, req.Networks)
+	if err != nil {
+		return nil, err
+	}
+	network := primaryNetwork(networks)
 	rec := &VMRecord{
 		ID:        id,
 		Name:      req.Name,
@@ -146,7 +154,8 @@ func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
 		Initrd:    initrd,
 		Firmware:  firmware,
 		Image:     cloneImageRef(req.Image),
-		Network:   req.Network,
+		Network:   network,
+		Networks:  cloneStrings(networks),
 		RunDir:    runDir,
 		LogDir:    logDir,
 		Config:    filepath.Join(runDir, "cloud-hypervisor.json"),
@@ -177,6 +186,7 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 		copied.Metadata = &metadata
 	}
 	copied.Image = cloneImageRef(rec.Image)
+	copied.Networks = cloneStrings(rec.Networks)
 	copied.NetworkConfigs = cloneNetworkConfigs(rec.NetworkConfigs)
 	copied.NetworkStatus = cloneNetworkStatus(rec.NetworkStatus)
 	if rec.StartedAt != nil {
@@ -223,6 +233,69 @@ func cloneImageRef(ref *ImageRef) *ImageRef {
 	}
 	copied := *ref
 	return &copied
+}
+
+func normalizeNetworks(network string, networks []string) ([]string, error) {
+	values := append([]string(nil), networks...)
+	if len(values) == 0 && network != "" {
+		values = append(values, network)
+	}
+	if len(values) == 0 {
+		values = append(values, "none")
+	}
+	for i, value := range values {
+		if value == "" {
+			return nil, errors.New("network value must not be empty")
+		}
+		values[i] = value
+	}
+	if len(values) > 1 {
+		var family string
+		for _, value := range values {
+			if value == kbnetwork.ProviderNone {
+				return nil, errors.New("network none cannot be combined with other networks")
+			}
+			currentFamily := networkProviderFamily(value)
+			if family == "" {
+				family = currentFamily
+				continue
+			}
+			if currentFamily != family {
+				return nil, errors.New("multiple networks must use the same provider family")
+			}
+		}
+	}
+	return values, nil
+}
+
+func networkProviderFamily(network string) string {
+	if kbnetwork.IsCNISelection(network) {
+		return kbnetwork.ProviderCNI
+	}
+	if network == "default" || network == kbnetwork.ProviderHostTap {
+		return kbnetwork.ProviderHostTap
+	}
+	if strings.HasPrefix(network, kbnetwork.ProviderHostTap+":") {
+		return kbnetwork.ProviderHostTap
+	}
+	return network
+}
+
+func primaryNetwork(networks []string) string {
+	if len(networks) == 0 {
+		return ""
+	}
+	if len(networks) == 1 {
+		return networks[0]
+	}
+	return "multi"
+}
+
+func cloneStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	return append([]string(nil), values...)
 }
 
 func normalizePath(path string) (string, error) {

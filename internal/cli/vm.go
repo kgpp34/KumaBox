@@ -234,7 +234,7 @@ type createVMFlags struct {
 	kernel   string
 	initrd   string
 	firmware string
-	network  string
+	networks []string
 }
 
 func addCreateVMFlags(cmd *cobra.Command, flags *createVMFlags) {
@@ -243,7 +243,7 @@ func addCreateVMFlags(cmd *cobra.Command, flags *createVMFlags) {
 	cmd.Flags().StringVar(&flags.kernel, "kernel", "", "kernel image path")
 	cmd.Flags().StringVar(&flags.initrd, "initrd", "", "initrd image path")
 	cmd.Flags().StringVar(&flags.firmware, "firmware", "", "UEFI firmware path")
-	cmd.Flags().StringVar(&flags.network, "network", "none", "network mode: none, default, host-tap, cni, or cni:NAME")
+	cmd.Flags().StringArrayVar(&flags.networks, "network", nil, "network attachment, repeatable: none, default, host-tap, cni, or cni:NAME")
 	_ = cmd.MarkFlagRequired("name")
 }
 
@@ -258,7 +258,7 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 			Kernel:   flags.kernel,
 			Initrd:   flags.initrd,
 			Firmware: flags.firmware,
-			Network:  flags.network,
+			Networks: normalizedNetworkFlags(flags.networks),
 			RunDir:   cfg.Runtime.RunDir,
 			LogDir:   cfg.Runtime.LogDir,
 		}, nil
@@ -280,7 +280,7 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 		Kernel:   image.Boot.Kernel,
 		Initrd:   image.Boot.Initrd,
 		Firmware: image.Boot.Firmware,
-		Network:  flags.network,
+		Networks: normalizedNetworkFlags(flags.networks),
 		Image: &vmstore.ImageRef{
 			ID:       image.ID,
 			Name:     image.Name,
@@ -294,6 +294,13 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 		return vmstore.CreateRequest{}, fmt.Errorf("image %q has no usable boot configuration", args[0])
 	}
 	return req, nil
+}
+
+func normalizedNetworkFlags(values []string) []string {
+	if len(values) == 0 {
+		return []string{"none"}
+	}
+	return append([]string(nil), values...)
 }
 
 func newPSCommand(opts *rootOptions) *cobra.Command {

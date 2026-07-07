@@ -37,16 +37,17 @@ type Provider interface {
 // It is copied into VMRecord so a VM can be restarted with the same tap, MAC,
 // and guest IP even if provider indexes need reconciliation.
 type Config struct {
-	ID        string     `json:"id,omitempty"`
-	TAP       string     `json:"tap"`
-	MAC       string     `json:"mac"`
-	NumQueues int        `json:"numQueues"`
-	QueueSize int        `json:"queueSize"`
-	Backend   string     `json:"backend"`
-	BridgeDev string     `json:"bridgeDev,omitempty"`
-	IfName    string     `json:"ifName,omitempty"`
-	NetnsPath string     `json:"netnsPath,omitempty"`
-	Network   *GuestInfo `json:"network,omitempty"`
+	ID          string     `json:"id,omitempty"`
+	NetworkName string     `json:"networkName,omitempty"`
+	TAP         string     `json:"tap"`
+	MAC         string     `json:"mac"`
+	NumQueues   int        `json:"numQueues"`
+	QueueSize   int        `json:"queueSize"`
+	Backend     string     `json:"backend"`
+	BridgeDev   string     `json:"bridgeDev,omitempty"`
+	IfName      string     `json:"ifName,omitempty"`
+	NetnsPath   string     `json:"netnsPath,omitempty"`
+	Network     *GuestInfo `json:"network,omitempty"`
 }
 
 // GuestInfo is the static network configuration delivered to the guest.
@@ -102,6 +103,7 @@ type InspectResult struct {
 	VMID       string   `json:"vmId"`
 	VMName     string   `json:"vmName,omitempty"`
 	Network    string   `json:"network,omitempty"`
+	Networks   []string `json:"networks,omitempty"`
 	Interfaces []Record `json:"interfaces"`
 	VMConfigs  []Config `json:"vmConfigs,omitempty"`
 	Drift      []string `json:"drift,omitempty"`

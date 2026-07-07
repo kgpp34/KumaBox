@@ -32,11 +32,12 @@ type CNIAddRequest struct {
 }
 
 type CNIDeleteRequest struct {
-	VMID      string
-	Network   string
-	IfName    string
-	TAP       string
-	NetNSPath string
+	VMID          string
+	Network       string
+	IfName        string
+	TAP           string
+	NetNSPath     string
+	PreserveNetNS bool
 }
 
 type cniNetworkConfig struct {
@@ -157,15 +158,16 @@ func (p *CNIProvider) Add(ctx context.Context, req CNIAddRequest) (_ *Allocation
 		record.IPs = []string{fmt.Sprintf("%s/%d", guest.IP, guest.Prefix)}
 	}
 	vmConfig := Config{
-		ID:        record.ID,
-		TAP:       record.TAP,
-		MAC:       record.MAC,
-		NumQueues: record.NumQueues,
-		QueueSize: record.QueueSize,
-		Backend:   record.Provider,
-		IfName:    record.IfName,
-		NetnsPath: record.NetnsPath,
-		Network:   guest,
+		ID:          record.ID,
+		NetworkName: record.Network,
+		TAP:         record.TAP,
+		MAC:         record.MAC,
+		NumQueues:   record.NumQueues,
+		QueueSize:   record.QueueSize,
+		Backend:     record.Provider,
+		IfName:      record.IfName,
+		NetnsPath:   record.NetnsPath,
+		Network:     guest,
 	}
 	return &Allocation{Record: record, Config: vmConfig}, nil
 }
@@ -210,8 +212,10 @@ func (p *CNIProvider) Delete(ctx context.Context, req CNIDeleteRequest) error {
 	if err := deleteCNIDatapath(netnsPath, tapName); err != nil {
 		return fmt.Errorf("delete cni datapath for VM %s: %w", req.VMID, err)
 	}
-	if err := deleteCNINetns(req.VMID, netnsPath); err != nil {
-		return fmt.Errorf("delete cni netns for VM %s: %w", req.VMID, err)
+	if !req.PreserveNetNS {
+		if err := deleteCNINetns(req.VMID, netnsPath); err != nil {
+			return fmt.Errorf("delete cni netns for VM %s: %w", req.VMID, err)
+		}
 	}
 	return nil
 }

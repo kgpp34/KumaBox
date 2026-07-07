@@ -162,11 +162,11 @@ func (s *Store) MarkCleanupPending(id, reason string) error {
 //
 // Most CLI calls should prefer InspectVM so drift can be reported.
 func (s *Store) Inspect(vmID string) (*InspectResult, error) {
-	return s.InspectVM(vmID, "", "", nil)
+	return s.InspectVM(vmID, "", "", nil, nil)
 }
 
 // InspectVM compares provider records with the VM's persisted network configs.
-func (s *Store) InspectVM(vmID, vmName, network string, configs []Config) (*InspectResult, error) {
+func (s *Store) InspectVM(vmID, vmName, network string, networks []string, configs []Config) (*InspectResult, error) {
 	records, err := s.List()
 	if err != nil {
 		return nil, err
@@ -175,6 +175,7 @@ func (s *Store) InspectVM(vmID, vmName, network string, configs []Config) (*Insp
 		VMID:       vmID,
 		VMName:     vmName,
 		Network:    network,
+		Networks:   append([]string(nil), networks...),
 		Interfaces: []Record{},
 		VMConfigs:  cloneConfigs(configs),
 	}
@@ -211,6 +212,7 @@ func inspectDrift(records []Record, configs []Config) []string {
 			drift = append(drift, fmt.Sprintf("VM network config %s is missing provider record", cfg.ID))
 			continue
 		}
+		drift = appendDriftMismatch(drift, cfg.ID, "networkName", cfg.NetworkName, rec.Network)
 		drift = appendDriftMismatch(drift, cfg.ID, "tap", cfg.TAP, rec.TAP)
 		drift = appendDriftMismatch(drift, cfg.ID, "mac", cfg.MAC, rec.MAC)
 		drift = appendDriftMismatch(drift, cfg.ID, "backend", cfg.Backend, rec.Provider)

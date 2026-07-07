@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -127,11 +128,12 @@ func TestNetworkInspectResolvesVMName(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := kbnetwork.Config{
-		ID:        kbnetwork.NetworkID(rec.ID, 0),
-		TAP:       "kbtaptest",
-		MAC:       "5a:00:00:00:00:01",
-		Backend:   kbnetwork.ProviderHostTap,
-		BridgeDev: "kumabox0",
+		ID:          kbnetwork.NetworkID(rec.ID, 0),
+		NetworkName: "default",
+		TAP:         "kbtaptest",
+		MAC:         "5a:00:00:00:00:01",
+		Backend:     kbnetwork.ProviderHostTap,
+		BridgeDev:   "kumabox0",
 		Network: &kbnetwork.GuestInfo{
 			IP:      "10.88.0.2",
 			Gateway: "10.88.0.1",
@@ -280,6 +282,54 @@ func TestCreateInspectAndPSCommands(t *testing.T) {
 	}
 	if len(records) != 1 || records[0].ID != created.ID {
 		t.Fatalf("ps records = %+v", records)
+	}
+}
+
+func TestNewCreateRequestPreservesRepeatedNetworks(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Runtime.RootDir = filepath.Join(dir, "data")
+	cfg.Runtime.RunDir = filepath.Join(dir, "run")
+	cfg.Runtime.LogDir = filepath.Join(dir, "log")
+
+	req, err := newCreateRequest(createVMFlags{
+		name:     "multi-net",
+		rootDisk: "fixtures/base.qcow2",
+		firmware: "fixtures/CLOUDHV.fd",
+		networks: []string{"cni:front", "cni:back"},
+	}, nil, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Networks) != 2 || req.Networks[0] != "cni:front" || req.Networks[1] != "cni:back" {
+		t.Fatalf("networks = %#v", req.Networks)
+	}
+}
+
+func TestCreateRejectsMixedNetworkProviderFamilies(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	runDir := filepath.Join(dir, "run")
+	logDir := filepath.Join(dir, "log")
+
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{
+		"--root-dir", rootDir,
+		"--run-dir", runDir,
+		"--log-dir", logDir,
+		"create",
+		"--name", "mixed-net",
+		"--root-disk", "fixtures/base.qcow2",
+		"--kernel", "fixtures/vmlinuz",
+		"--initrd", "fixtures/initrd.img",
+		"--network", "default",
+		"--network", "cni:isolated",
+	})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "same provider family") {
+		t.Fatalf("create error = %v", err)
 	}
 }
 

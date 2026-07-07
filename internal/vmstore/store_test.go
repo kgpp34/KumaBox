@@ -172,6 +172,71 @@ func TestCreatePersistsImageRef(t *testing.T) {
 	}
 }
 
+func TestCreatePersistsNetworkAttachments(t *testing.T) {
+	dir := t.TempDir()
+	store := New(filepath.Join(dir, "data"))
+
+	rec, err := store.Create(CreateRequest{
+		Name:     "multi-net",
+		RootDisk: "ubuntu.img",
+		Firmware: "CLOUDHV.fd",
+		Networks: []string{"cni:front", "cni:back"},
+		RunDir:   filepath.Join(dir, "run"),
+		LogDir:   filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Network != "multi" {
+		t.Fatalf("legacy network = %s", rec.Network)
+	}
+	if len(rec.Networks) != 2 || rec.Networks[0] != "cni:front" || rec.Networks[1] != "cni:back" {
+		t.Fatalf("networks = %#v", rec.Networks)
+	}
+
+	inspected, err := store.Inspect(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inspected.Networks) != 2 || inspected.Networks[0] != "cni:front" || inspected.Networks[1] != "cni:back" {
+		t.Fatalf("inspected networks = %#v", inspected.Networks)
+	}
+}
+
+func TestCreateRejectsNoneWithOtherNetworks(t *testing.T) {
+	dir := t.TempDir()
+	store := New(filepath.Join(dir, "data"))
+
+	_, err := store.Create(CreateRequest{
+		Name:     "bad-net",
+		RootDisk: "ubuntu.img",
+		Firmware: "CLOUDHV.fd",
+		Networks: []string{"none", "default"},
+		RunDir:   filepath.Join(dir, "run"),
+		LogDir:   filepath.Join(dir, "log"),
+	})
+	if err == nil {
+		t.Fatal("expected mixed none network error")
+	}
+}
+
+func TestCreateRejectsMixedNetworkProviderFamilies(t *testing.T) {
+	dir := t.TempDir()
+	store := New(filepath.Join(dir, "data"))
+
+	_, err := store.Create(CreateRequest{
+		Name:     "mixed-provider-net",
+		RootDisk: "ubuntu.img",
+		Firmware: "CLOUDHV.fd",
+		Networks: []string{"default", "cni:isolated"},
+		RunDir:   filepath.Join(dir, "run"),
+		LogDir:   filepath.Join(dir, "log"),
+	})
+	if err == nil {
+		t.Fatal("expected mixed provider family error")
+	}
+}
+
 func TestMarkRunningMarksFirmwareVMFirstBooted(t *testing.T) {
 	dir := t.TempDir()
 	store := New(filepath.Join(dir, "data"))

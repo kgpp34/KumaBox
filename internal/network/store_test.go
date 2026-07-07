@@ -95,12 +95,13 @@ func TestStoreInspectVMReportsDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := store.InspectVM("kb_1", "p2", "default", []Config{{
-		ID:        "net_1",
-		TAP:       "kbtap1",
-		MAC:       "5a:00:00:00:00:ff",
-		Backend:   ProviderHostTap,
-		BridgeDev: "kumabox0",
+	result, err := store.InspectVM("kb_1", "p2", "default", []string{"default"}, []Config{{
+		ID:          "net_1",
+		NetworkName: "default",
+		TAP:         "kbtap1",
+		MAC:         "5a:00:00:00:00:ff",
+		Backend:     ProviderHostTap,
+		BridgeDev:   "kumabox0",
 		Network: &GuestInfo{
 			IP:      "10.88.0.2",
 			Gateway: "10.88.0.1",
@@ -113,6 +114,9 @@ func TestStoreInspectVMReportsDrift(t *testing.T) {
 	}
 	if result.VMID != "kb_1" || result.VMName != "p2" || result.Network != "default" {
 		t.Fatalf("unexpected inspect identity: %+v", result)
+	}
+	if len(result.Networks) != 1 || result.Networks[0] != "default" {
+		t.Fatalf("networks = %#v", result.Networks)
 	}
 	if len(result.Interfaces) != 1 || len(result.VMConfigs) != 1 {
 		t.Fatalf("unexpected inspect payload: %+v", result)

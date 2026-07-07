@@ -118,6 +118,7 @@ func newNetworkInspectCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 			var vmID, vmName, networkName string
+			var networks []string
 			var networkConfigs []kbnetwork.Config
 			rec, err := vmstore.New(cfg.Runtime.RootDir).Inspect(args[0])
 			if err != nil && !errors.Is(err, vmstore.ErrNotFound) {
@@ -127,11 +128,12 @@ func newNetworkInspectCommand(opts *rootOptions) *cobra.Command {
 				vmID = rec.ID
 				vmName = rec.Name
 				networkName = rec.Network
+				networks = append([]string(nil), rec.Networks...)
 				networkConfigs = rec.NetworkConfigs
 			} else {
 				vmID = args[0]
 			}
-			result, err := kbnetwork.NewStore(cfg.Runtime.RootDir).InspectVM(vmID, vmName, networkName, networkConfigs)
+			result, err := kbnetwork.NewStore(cfg.Runtime.RootDir).InspectVM(vmID, vmName, networkName, networks, networkConfigs)
 			if err != nil {
 				return err
 			}

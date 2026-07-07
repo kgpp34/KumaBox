@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -744,6 +745,51 @@ func TestDeleteVMMarksCNICleanupPendingOnFailure(t *testing.T) {
 	}
 }
 
+func TestCreateVMAttachesMultipleNetworkConfigs(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	store := vmstore.New(rootDir)
+	rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	rt.cfg = testRuntimeConfig(rootDir)
+
+	var requests []kbnetwork.CNIAddRequest
+	withAddCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIAddRequest) (*kbnetwork.Allocation, error) {
+		requests = append(requests, req)
+		return testIndexedCNIAllocation(req.VMID, req.Network, req.Index), nil
+	})
+
+	rec, err := rt.CreateVM(vmstore.CreateRequest{
+		Name:     "multi-cni",
+		RootDisk: "base.qcow2",
+		Kernel:   "vmlinuz",
+		Initrd:   "initrd.img",
+		Networks: []string{"cni:front", "cni:back"},
+		RunDir:   filepath.Join(dir, "run"),
+		LogDir:   filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Network != "multi" || len(rec.Networks) != 2 {
+		t.Fatalf("network intent = network:%s networks:%#v", rec.Network, rec.Networks)
+	}
+	if len(requests) != 2 || requests[0].Index != 0 || requests[1].Index != 1 {
+		t.Fatalf("cni add requests = %+v", requests)
+	}
+	if requests[0].Network != "cni:front" || requests[1].Network != "cni:back" {
+		t.Fatalf("cni add request networks = %+v", requests)
+	}
+	if len(rec.NetworkConfigs) != 2 {
+		t.Fatalf("network configs = %+v", rec.NetworkConfigs)
+	}
+	if rec.NetworkConfigs[0].NetworkName != "cni:front" || rec.NetworkConfigs[0].IfName != "eth0" {
+		t.Fatalf("first network config = %+v", rec.NetworkConfigs[0])
+	}
+	if rec.NetworkConfigs[1].NetworkName != "cni:back" || rec.NetworkConfigs[1].IfName != "eth1" {
+		t.Fatalf("second network config = %+v", rec.NetworkConfigs[1])
+	}
+}
+
 func testRuntimeConfig(rootDir string) config.Config {
 	cfg := config.Default()
 	cfg.Runtime.RootDir = rootDir
@@ -843,20 +889,25 @@ func createVMWithCNIConfig(t *testing.T, rt *Runtime, name string) *vmstore.VMRe
 }
 
 func testCNIAllocation(vmID string) *kbnetwork.Allocation {
+	return testIndexedCNIAllocation(vmID, "cni:default", 0)
+}
+
+func testIndexedCNIAllocation(vmID, networkName string, index int) *kbnetwork.Allocation {
 	netCfg := kbnetwork.Config{
-		ID:        "net_cni",
-		TAP:       "kbcni0",
-		MAC:       "5a:00:00:00:00:55",
-		NumQueues: 2,
-		QueueSize: 256,
-		Backend:   kbnetwork.ProviderCNI,
-		IfName:    "eth0",
-		NetnsPath: "/proc/self/ns/net",
+		ID:          kbnetwork.NetworkID(vmID, index),
+		NetworkName: networkName,
+		TAP:         fmt.Sprintf("kbcni%d", index),
+		MAC:         "5a:00:00:00:00:55",
+		NumQueues:   2,
+		QueueSize:   256,
+		Backend:     kbnetwork.ProviderCNI,
+		IfName:      fmt.Sprintf("eth%d", index),
+		NetnsPath:   "/proc/self/ns/net",
 	}
 	record := kbnetwork.Record{
 		ID:        netCfg.ID,
 		VMID:      vmID,
-		Network:   "cni:default",
+		Network:   networkName,
 		Provider:  kbnetwork.ProviderCNI,
 		IfName:    netCfg.IfName,
 		TAP:       netCfg.TAP,

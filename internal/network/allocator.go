@@ -127,13 +127,15 @@ func (a *Allocator) Allocate(req AllocateRequest) (*Allocation, error) {
 		UpdatedAt: now,
 	}
 	cfg := Config{
-		ID:        record.ID,
-		TAP:       record.TAP,
-		MAC:       record.MAC,
-		NumQueues: record.NumQueues,
-		QueueSize: record.QueueSize,
-		Backend:   record.Provider,
-		BridgeDev: record.BridgeDev,
+		ID:          record.ID,
+		NetworkName: record.Network,
+		TAP:         record.TAP,
+		MAC:         record.MAC,
+		NumQueues:   record.NumQueues,
+		QueueSize:   record.QueueSize,
+		Backend:     record.Provider,
+		BridgeDev:   record.BridgeDev,
+		IfName:      record.IfName,
 		Network: &GuestInfo{
 			IP:      ip,
 			Gateway: record.Gateway,

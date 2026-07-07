@@ -51,6 +51,7 @@ type CreateRequest struct {
 	Firmware string
 	Image    *ImageRef
 	Network  string
+	Networks []string
 	RunDir   string
 	LogDir   string
 }
@@ -372,6 +373,9 @@ func validateCreateRequest(req CreateRequest) error {
 	}
 	if req.LogDir == "" {
 		return errors.New("log dir must not be empty")
+	}
+	if _, err := normalizeNetworks(req.Network, req.Networks); err != nil {
+		return err
 	}
 	return nil
 }
