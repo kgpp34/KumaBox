@@ -28,6 +28,8 @@ type Runtime struct {
 }
 
 var deleteHostTap = kbnetwork.DeleteHostTap
+var addCNI = kbnetwork.AddCNI
+var deleteCNI = kbnetwork.DeleteCNI
 
 // New creates a Runtime backed by the configured Cloud Hypervisor backend.
 func New(cfg config.Config) *Runtime {
@@ -315,6 +317,9 @@ func (r *Runtime) attachNetwork(rec *vmstore.VMRecord) error {
 	if rec == nil || rec.Network == "" || rec.Network == kbnetwork.ProviderNone {
 		return nil
 	}
+	if kbnetwork.IsCNISelection(rec.Network) {
+		return r.attachCNI(rec)
+	}
 	if rec.Network != "default" && rec.Network != kbnetwork.ProviderHostTap {
 		return fmt.Errorf("unsupported network %q", rec.Network)
 	}
@@ -362,6 +367,42 @@ func (r *Runtime) attachNetwork(rec *vmstore.VMRecord) error {
 	return nil
 }
 
+func (r *Runtime) attachCNI(rec *vmstore.VMRecord) error {
+	if err := config.EnsureRuntimeDirs(r.cfg); err != nil {
+		return err
+	}
+	allocation, err := addCNI(context.Background(), r.cfg.Runtime.RootDir, r.cfg.Network, kbnetwork.CNIAddRequest{
+		VMID:    rec.ID,
+		Network: rec.Network,
+		Index:   0,
+		CPU:     1,
+	})
+	if err != nil {
+		return err
+	}
+	networkStore := kbnetwork.NewStore(r.cfg.Runtime.RootDir)
+	if err := networkStore.UpsertRecord(allocation.Record); err != nil {
+		_ = deleteCNI(context.Background(), r.cfg.Runtime.RootDir, r.cfg.Network, kbnetwork.CNIDeleteRequest{
+			VMID:      rec.ID,
+			Network:   rec.Network,
+			IfName:    allocation.Record.TAP,
+			NetNSPath: allocation.Record.NetnsPath,
+		})
+		return err
+	}
+	if _, err := r.store.SetNetworkConfigs(rec.ID, []kbnetwork.Config{allocation.Config}); err != nil {
+		_ = networkStore.DeleteRecord(allocation.Record.ID)
+		_ = deleteCNI(context.Background(), r.cfg.Runtime.RootDir, r.cfg.Network, kbnetwork.CNIDeleteRequest{
+			VMID:      rec.ID,
+			Network:   rec.Network,
+			IfName:    allocation.Record.TAP,
+			NetNSPath: allocation.Record.NetnsPath,
+		})
+		return err
+	}
+	return nil
+}
+
 func (r *Runtime) rollbackNetwork(rec *vmstore.VMRecord) {
 	if rec == nil {
 		return
@@ -369,6 +410,16 @@ func (r *Runtime) rollbackNetwork(rec *vmstore.VMRecord) {
 	store := kbnetwork.NewStore(r.cfg.Runtime.RootDir)
 	allocator := kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network)
 	for _, nc := range rec.NetworkConfigs {
+		if nc.Backend == kbnetwork.ProviderCNI {
+			_ = store.DeleteRecord(nc.ID)
+			_ = deleteCNI(context.Background(), r.cfg.Runtime.RootDir, r.cfg.Network, kbnetwork.CNIDeleteRequest{
+				VMID:      rec.ID,
+				Network:   rec.Network,
+				IfName:    nc.TAP,
+				NetNSPath: nc.NetnsPath,
+			})
+			continue
+		}
 		_ = store.DeleteRecord(nc.ID)
 		_ = deleteHostTap(nc.TAP)
 		if nc.Network != nil {
@@ -386,7 +437,7 @@ func (r *Runtime) cleanupNetwork(rec *vmstore.VMRecord) error {
 	allocator := kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network)
 	var cleanupErrs []error
 	for _, nc := range rec.NetworkConfigs {
-		if err := cleanupNetworkConfig(store, allocator, nc); err != nil {
+		if err := cleanupNetworkConfig(context.Background(), store, allocator, r.cfg, rec, nc); err != nil {
 			// Preserve the provider record when cleanup fails. A later GC or
 			// explicit retry needs the original tap/IP metadata to finish the
 			// cleanup safely.
@@ -403,7 +454,28 @@ func (r *Runtime) cleanupNetwork(rec *vmstore.VMRecord) error {
 	return nil
 }
 
-func cleanupNetworkConfig(store *kbnetwork.Store, allocator *kbnetwork.Allocator, nc kbnetwork.Config) error {
+func cleanupNetworkConfig(
+	ctx context.Context,
+	store *kbnetwork.Store,
+	allocator *kbnetwork.Allocator,
+	cfg config.Config,
+	rec *vmstore.VMRecord,
+	nc kbnetwork.Config,
+) error {
+	if nc.Backend == kbnetwork.ProviderCNI {
+		if err := deleteCNI(ctx, cfg.Runtime.RootDir, cfg.Network, kbnetwork.CNIDeleteRequest{
+			VMID:      rec.ID,
+			Network:   rec.Network,
+			IfName:    nc.TAP,
+			NetNSPath: nc.NetnsPath,
+		}); err != nil {
+			return err
+		}
+		if err := store.DeleteRecord(nc.ID); err != nil {
+			return fmt.Errorf("delete network provider record %s: %w", nc.ID, err)
+		}
+		return nil
+	}
 	if err := deleteHostTap(nc.TAP); err != nil {
 		return fmt.Errorf("delete tap %s: %w", nc.TAP, err)
 	}

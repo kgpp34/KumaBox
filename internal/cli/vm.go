@@ -243,7 +243,7 @@ func addCreateVMFlags(cmd *cobra.Command, flags *createVMFlags) {
 	cmd.Flags().StringVar(&flags.kernel, "kernel", "", "kernel image path")
 	cmd.Flags().StringVar(&flags.initrd, "initrd", "", "initrd image path")
 	cmd.Flags().StringVar(&flags.firmware, "firmware", "", "UEFI firmware path")
-	cmd.Flags().StringVar(&flags.network, "network", "none", "network mode: none or default")
+	cmd.Flags().StringVar(&flags.network, "network", "none", "network mode: none, default, host-tap, cni, or cni:NAME")
 	_ = cmd.MarkFlagRequired("name")
 }
 

@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -682,9 +683,72 @@ func TestDeleteVMMarksNetworkCleanupPendingOnFailure(t *testing.T) {
 	}
 }
 
+func TestDeleteVMCleansCNIResources(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	store := vmstore.New(rootDir)
+	rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	rt.cfg = testRuntimeConfig(rootDir)
+	withAddCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIAddRequest) (*kbnetwork.Allocation, error) {
+		return testCNIAllocation(req.VMID), nil
+	})
+	deleted := []kbnetwork.CNIDeleteRequest{}
+	withDeleteCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIDeleteRequest) error {
+		deleted = append(deleted, req)
+		return nil
+	})
+
+	rec := createVMWithCNIConfig(t, rt, "delete-cni")
+	if _, err := rt.DeleteVM(rec.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(deleted) != 1 {
+		t.Fatalf("deleted cni calls = %+v", deleted)
+	}
+	if deleted[0].VMID != rec.ID || deleted[0].Network != "cni:default" || deleted[0].IfName != "kbcni0" {
+		t.Fatalf("delete request = %+v", deleted[0])
+	}
+	records, err := kbnetwork.NewStore(rootDir).List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("network records after delete = %+v", records)
+	}
+}
+
+func TestDeleteVMMarksCNICleanupPendingOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	store := vmstore.New(rootDir)
+	rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	rt.cfg = testRuntimeConfig(rootDir)
+	withAddCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIAddRequest) (*kbnetwork.Allocation, error) {
+		return testCNIAllocation(req.VMID), nil
+	})
+	delErr := errors.New("cni del failed")
+	withDeleteCNI(t, func(context.Context, string, config.NetworkConfig, kbnetwork.CNIDeleteRequest) error {
+		return delErr
+	})
+
+	rec := createVMWithCNIConfig(t, rt, "pending-cni")
+	if _, err := rt.DeleteVM(rec.ID, false); !errors.Is(err, delErr) {
+		t.Fatalf("delete error = %v, want %v", err, delErr)
+	}
+	records, err := kbnetwork.NewStore(rootDir).List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || !records[0].Cleanup.Pending || !strings.Contains(records[0].Cleanup.Reason, "cni del failed") {
+		t.Fatalf("records after failure = %+v", records)
+	}
+}
+
 func testRuntimeConfig(rootDir string) config.Config {
 	cfg := config.Default()
 	cfg.Runtime.RootDir = rootDir
+	cfg.Runtime.RunDir = filepath.Join(filepath.Dir(rootDir), "run")
+	cfg.Runtime.LogDir = filepath.Join(filepath.Dir(rootDir), "log")
 	return cfg
 }
 
@@ -694,6 +758,30 @@ func withDeleteHostTap(t *testing.T, fn func(string) error) {
 	deleteHostTap = fn
 	t.Cleanup(func() {
 		deleteHostTap = previous
+	})
+}
+
+func withDeleteCNI(
+	t *testing.T,
+	fn func(context.Context, string, config.NetworkConfig, kbnetwork.CNIDeleteRequest) error,
+) {
+	t.Helper()
+	previous := deleteCNI
+	deleteCNI = fn
+	t.Cleanup(func() {
+		deleteCNI = previous
+	})
+}
+
+func withAddCNI(
+	t *testing.T,
+	fn func(context.Context, string, config.NetworkConfig, kbnetwork.CNIAddRequest) (*kbnetwork.Allocation, error),
+) {
+	t.Helper()
+	previous := addCNI
+	addCNI = fn
+	t.Cleanup(func() {
+		addCNI = previous
 	})
 }
 
@@ -735,4 +823,48 @@ func createVMWithNetwork(
 		t.Fatal(err)
 	}
 	return updated, allocation
+}
+
+func createVMWithCNIConfig(t *testing.T, rt *Runtime, name string) *vmstore.VMRecord {
+	t.Helper()
+	rec, err := rt.CreateVM(vmstore.CreateRequest{
+		Name:     name,
+		RootDisk: "base.qcow2",
+		Kernel:   "vmlinuz",
+		Initrd:   "initrd.img",
+		Network:  "cni:default",
+		RunDir:   filepath.Join(t.TempDir(), "run"),
+		LogDir:   filepath.Join(t.TempDir(), "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rec
+}
+
+func testCNIAllocation(vmID string) *kbnetwork.Allocation {
+	netCfg := kbnetwork.Config{
+		ID:        "net_cni",
+		TAP:       "kbcni0",
+		MAC:       "5a:00:00:00:00:55",
+		NumQueues: 2,
+		QueueSize: 256,
+		Backend:   kbnetwork.ProviderCNI,
+		NetnsPath: "/proc/self/ns/net",
+	}
+	record := kbnetwork.Record{
+		ID:        netCfg.ID,
+		VMID:      vmID,
+		Network:   "cni:default",
+		Provider:  kbnetwork.ProviderCNI,
+		IfName:    netCfg.TAP,
+		TAP:       netCfg.TAP,
+		MAC:       netCfg.MAC,
+		NumQueues: netCfg.NumQueues,
+		QueueSize: netCfg.QueueSize,
+		NetnsPath: netCfg.NetnsPath,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	return &kbnetwork.Allocation{Record: record, Config: netCfg}
 }
