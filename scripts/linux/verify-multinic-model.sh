@@ -444,6 +444,11 @@ if [[ "$mode" == "host-tap" ]]; then
     print_failure_context
     exit 1
   fi
+  if [[ "${guest_ips[0]}" == "${guest_ips[1]}" ]]; then
+    echo "guest NIC IPs must be unique, got duplicate ${guest_ips[0]}" >&2
+    print_failure_context
+    exit 1
+  fi
   deadline=$((SECONDS + timeout))
   wait_start=$SECONDS
   pending_ips=("${guest_ips[@]}")

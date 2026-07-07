@@ -85,7 +85,7 @@ func (a *Allocator) Allocate(req AllocateRequest) (*Allocation, error) {
 	if err != nil {
 		return nil, err
 	}
-	ip, prefix, err := a.allocateIP(leases, req.VMID)
+	ip, prefix, err := a.allocateIP(leases)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +166,7 @@ func (a *Allocator) ReleaseIP(ip string) error {
 	return a.store.writeLeases(leases)
 }
 
-func (a *Allocator) allocateIP(leases *leaseIndex, vmID string) (string, int, error) {
+func (a *Allocator) allocateIP(leases *leaseIndex) (string, int, error) {
 	networkIP, ipNet, err := net.ParseCIDR(a.cfg.CIDR)
 	if err != nil {
 		return "", 0, fmt.Errorf("parse network CIDR: %w", err)
@@ -186,7 +186,7 @@ func (a *Allocator) allocateIP(leases *leaseIndex, vmID string) (string, int, er
 		}
 		ipString := ip.String()
 		lease, used := leases.Leases[ipString]
-		if !used || lease == nil || lease.VMID == vmID {
+		if !used || lease == nil {
 			return ipString, ones, nil
 		}
 	}

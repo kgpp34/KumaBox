@@ -75,6 +75,30 @@ func TestAllocatorSkipsUsedLeaseAndGateway(t *testing.T) {
 	}
 }
 
+func TestAllocatorAllocatesDistinctIPsForSameVMInterfaces(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testNetworkConfig()
+	allocator := NewAllocator(dir, cfg)
+	first, err := allocator.Allocate(AllocateRequest{VMID: "kb_multi", Index: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := allocator.Allocate(AllocateRequest{VMID: "kb_multi", Index: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if first.Config.Network.IP != "10.88.0.2" {
+		t.Fatalf("first IP = %s", first.Config.Network.IP)
+	}
+	if second.Config.Network.IP != "10.88.0.3" {
+		t.Fatalf("second IP = %s", second.Config.Network.IP)
+	}
+	if first.Record.ID == second.Record.ID || first.Record.TAP == second.Record.TAP {
+		t.Fatalf("interfaces should have distinct identities: first=%+v second=%+v", first.Record, second.Record)
+	}
+}
+
 func TestAllocatorUsesCloudHypervisorMinimumNetworkQueues(t *testing.T) {
 	dir := t.TempDir()
 	cfg := testNetworkConfig()
