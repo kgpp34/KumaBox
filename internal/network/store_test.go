@@ -121,3 +121,89 @@ func TestStoreInspectVMReportsDrift(t *testing.T) {
 		t.Fatalf("drift = %#v", result.Drift)
 	}
 }
+
+func TestStoreMarkCleanupPending(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	now := time.Date(2026, 7, 6, 0, 0, 0, 0, time.UTC)
+	rec := Record{
+		ID:        "net_pending",
+		VMID:      "kb_pending",
+		Network:   "default",
+		Provider:  ProviderHostTap,
+		IfName:    "eth0",
+		TAP:       "kbtappending",
+		MAC:       "5a:00:00:00:00:02",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.UpsertRecord(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.MarkCleanupPending("net_pending", "tap delete failed"); err != nil {
+		t.Fatal(err)
+	}
+	records, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want 1", len(records))
+	}
+	if !records[0].Cleanup.Pending || records[0].Cleanup.Reason != "tap delete failed" {
+		t.Fatalf("cleanup = %+v", records[0].Cleanup)
+	}
+	if records[0].Cleanup.LastAttemptAt == "" {
+		t.Fatal("cleanup last attempt time is empty")
+	}
+	if !records[0].UpdatedAt.After(now) {
+		t.Fatalf("updatedAt = %s, want after %s", records[0].UpdatedAt, now)
+	}
+}
+
+func TestStoreAdjustHostTapRef(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	now := time.Date(2026, 7, 6, 0, 0, 0, 0, time.UTC)
+	if err := store.writeHostTapState(&HostTapState{
+		SchemaVersion: hostTapSchemaVersion,
+		Bridge:        "kumabox0",
+		CIDR:          "10.88.0.0/16",
+		Gateway:       "10.88.0.1",
+		NATBackend:    "iptables",
+		Owner:         Owner{Kind: "kumabox", RootDir: dir},
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.IncrementHostTapRef(2); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DecrementHostTapRef(1); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.ReadHostTapState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.RefCount != 1 {
+		t.Fatalf("ref count = %d, want 1", state.RefCount)
+	}
+	if !state.UpdatedAt.After(now) {
+		t.Fatalf("updatedAt = %s, want after %s", state.UpdatedAt, now)
+	}
+
+	if err := store.DecrementHostTapRef(5); err != nil {
+		t.Fatal(err)
+	}
+	state, err = store.ReadHostTapState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.RefCount != 0 {
+		t.Fatalf("ref count = %d, want 0", state.RefCount)
+	}
+}

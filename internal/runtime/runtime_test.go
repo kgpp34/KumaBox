@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/backend"
+	"github.com/kumabox/kumabox/internal/config"
+	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -549,4 +551,188 @@ func TestDeleteVMRequiresForceForRunningVM(t *testing.T) {
 	if _, err := store.Inspect(rec.ID); !errors.Is(err, vmstore.ErrNotFound) {
 		t.Fatalf("inspect after force delete error = %v", err)
 	}
+}
+
+func TestStopVMPreservesNetworkResources(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	store := vmstore.New(rootDir)
+	rt := NewWithBackend(
+		store,
+		backendFake{
+			render: func(*vmstore.VMRecord) error { return nil },
+			start: func(*vmstore.VMRecord) (*backend.StartResult, error) {
+				return &backend.StartResult{PID: 12345, APISocket: filepath.Join(dir, "run", "ch.sock")}, nil
+			},
+			observe: func(rec *vmstore.VMRecord) vmstore.Observation {
+				state := vmstore.ObservedStateCreated
+				if rec.State == vmstore.StateRunning {
+					state = vmstore.ObservedStateRunning
+				}
+				if rec.State == vmstore.StateStopped {
+					state = vmstore.ObservedStateStopped
+				}
+				return vmstore.Observation{
+					State:     state,
+					Reason:    string(state),
+					CheckedAt: time.Now().UTC(),
+				}
+			},
+		},
+	)
+	rt.cfg = testRuntimeConfig(rootDir)
+
+	rec, allocation := createVMWithNetwork(t, rt, store, "stop-network")
+	if _, err := rt.StartVM(rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.StopVM(rec.ID, backend.StopOptions{Timeout: time.Second}); err != nil {
+		t.Fatal(err)
+	}
+
+	networkStore := kbnetwork.NewStore(rootDir)
+	records, err := networkStore.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].ID != allocation.Record.ID {
+		t.Fatalf("network records after stop = %+v", records)
+	}
+	leases, err := networkStore.ListLeases()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := leases[allocation.Config.Network.IP]; !ok {
+		t.Fatalf("lease was removed on stop: %+v", leases)
+	}
+}
+
+func TestDeleteVMCleansNetworkResources(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	store := vmstore.New(rootDir)
+	rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	rt.cfg = testRuntimeConfig(rootDir)
+	deletedTaps := []string{}
+	withDeleteHostTap(t, func(tap string) error {
+		deletedTaps = append(deletedTaps, tap)
+		return nil
+	})
+
+	rec, allocation := createVMWithNetwork(t, rt, store, "delete-network")
+	if _, err := rt.DeleteVM(rec.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(deletedTaps) != 1 || deletedTaps[0] != allocation.Record.TAP {
+		t.Fatalf("deleted taps = %+v", deletedTaps)
+	}
+	if _, err := store.Inspect(rec.ID); !errors.Is(err, vmstore.ErrNotFound) {
+		t.Fatalf("inspect after delete error = %v", err)
+	}
+	networkStore := kbnetwork.NewStore(rootDir)
+	records, err := networkStore.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("network records after delete = %+v", records)
+	}
+	leases, err := networkStore.ListLeases()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 0 {
+		t.Fatalf("leases after delete = %+v", leases)
+	}
+}
+
+func TestDeleteVMMarksNetworkCleanupPendingOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	store := vmstore.New(rootDir)
+	rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	rt.cfg = testRuntimeConfig(rootDir)
+	tapErr := errors.New("tap delete failed")
+	withDeleteHostTap(t, func(string) error { return tapErr })
+
+	rec, allocation := createVMWithNetwork(t, rt, store, "pending-network")
+	if _, err := rt.DeleteVM(rec.ID, false); !errors.Is(err, tapErr) {
+		t.Fatalf("delete error = %v, want %v", err, tapErr)
+	}
+	if _, err := store.Inspect(rec.ID); err != nil {
+		t.Fatalf("VM record should remain after cleanup failure: %v", err)
+	}
+	networkStore := kbnetwork.NewStore(rootDir)
+	records, err := networkStore.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].ID != allocation.Record.ID {
+		t.Fatalf("network records after failure = %+v", records)
+	}
+	if !records[0].Cleanup.Pending || !strings.Contains(records[0].Cleanup.Reason, "tap delete failed") {
+		t.Fatalf("cleanup = %+v", records[0].Cleanup)
+	}
+	leases, err := networkStore.ListLeases()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := leases[allocation.Config.Network.IP]; !ok {
+		t.Fatalf("lease should remain after tap delete failure: %+v", leases)
+	}
+}
+
+func testRuntimeConfig(rootDir string) config.Config {
+	cfg := config.Default()
+	cfg.Runtime.RootDir = rootDir
+	return cfg
+}
+
+func withDeleteHostTap(t *testing.T, fn func(string) error) {
+	t.Helper()
+	previous := deleteHostTap
+	deleteHostTap = fn
+	t.Cleanup(func() {
+		deleteHostTap = previous
+	})
+}
+
+func createVMWithNetwork(
+	t *testing.T,
+	rt *Runtime,
+	store *vmstore.Store,
+	name string,
+) (*vmstore.VMRecord, *kbnetwork.Allocation) {
+	t.Helper()
+	rec, err := rt.CreateVM(vmstore.CreateRequest{
+		Name:     name,
+		RootDisk: "base.qcow2",
+		Kernel:   "vmlinuz",
+		Initrd:   "initrd.img",
+		RunDir:   filepath.Join(t.TempDir(), "run"),
+		LogDir:   filepath.Join(t.TempDir(), "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	allocation, err := kbnetwork.NewAllocator(rt.cfg.Runtime.RootDir, rt.cfg.Network).Allocate(kbnetwork.AllocateRequest{
+		VMID:    rec.ID,
+		Network: "default",
+		Index:   0,
+		CPU:     1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := kbnetwork.NewStore(rt.cfg.Runtime.RootDir).UpsertRecord(allocation.Record); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetNetworkConfigs(rec.ID, []kbnetwork.Config{allocation.Config}); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.Inspect(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return updated, allocation
 }

@@ -111,6 +111,33 @@ func (s *Store) DeleteRecord(id string) error {
 	return s.writeIndex(idx)
 }
 
+func (s *Store) MarkCleanupPending(id, reason string) error {
+	if id == "" {
+		return nil
+	}
+	unlock, err := s.lockIndex()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	idx, err := s.readIndex()
+	if err != nil {
+		return err
+	}
+	rec, ok := idx.Networks[id]
+	if !ok || rec == nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	rec.Cleanup = Cleanup{
+		Pending:       true,
+		Reason:        reason,
+		LastAttemptAt: now.Format(time.RFC3339Nano),
+	}
+	rec.UpdatedAt = now
+	return s.writeIndex(idx)
+}
+
 func (s *Store) Inspect(vmID string) (*InspectResult, error) {
 	return s.InspectVM(vmID, "", "", nil)
 }
@@ -245,6 +272,20 @@ func (s *Store) ListLeases() (map[string]Lease, error) {
 
 func (s *Store) ReadHostTapState() (*HostTapState, error) {
 	return s.readHostTapState()
+}
+
+func (s *Store) IncrementHostTapRef(count int) error {
+	if count <= 0 {
+		return nil
+	}
+	return s.adjustHostTapRef(count, true)
+}
+
+func (s *Store) DecrementHostTapRef(count int) error {
+	if count <= 0 {
+		return nil
+	}
+	return s.adjustHostTapRef(-count, false)
 }
 
 func (s *Store) readIndex() (*index, error) {
@@ -403,6 +444,30 @@ func (s *Store) removeHostTapState() error {
 		return fmt.Errorf("remove host-tap state: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) adjustHostTapRef(delta int, requireState bool) error {
+	unlock, err := s.lockHostTap()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	state, err := s.readHostTapState()
+	if err != nil {
+		return err
+	}
+	if state == nil {
+		if requireState {
+			return fmt.Errorf("host-tap state is missing")
+		}
+		return nil
+	}
+	state.RefCount += delta
+	if state.RefCount < 0 {
+		state.RefCount = 0
+	}
+	state.UpdatedAt = time.Now().UTC()
+	return s.writeHostTapState(state)
 }
 
 func (s *Store) lockHostTap() (func(), error) {

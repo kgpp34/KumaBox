@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +21,8 @@ type Runtime struct {
 	backend backend.Lifecycle
 	cfg     config.Config
 }
+
+var deleteHostTap = kbnetwork.DeleteHostTap
 
 // New creates a Runtime backed by the configured Cloud Hypervisor backend.
 func New(cfg config.Config) *Runtime {
@@ -155,6 +158,10 @@ func (r *Runtime) DeleteVM(ref string, force bool) (*vmstore.VMRecord, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if err := r.cleanupNetwork(observed); err != nil {
+		return nil, err
 	}
 
 	_ = writeVMEvent(observed, "backend.delete.completed", vmstore.Observation{
@@ -308,14 +315,22 @@ func (r *Runtime) attachNetwork(rec *vmstore.VMRecord) error {
 		_ = kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network).ReleaseIP(allocation.Config.Network.IP)
 		return err
 	}
-	if err := kbnetwork.NewStore(r.cfg.Runtime.RootDir).UpsertRecord(allocation.Record); err != nil {
-		_ = kbnetwork.DeleteHostTap(allocation.Record.TAP)
+	networkStore := kbnetwork.NewStore(r.cfg.Runtime.RootDir)
+	if err := networkStore.UpsertRecord(allocation.Record); err != nil {
+		_ = deleteHostTap(allocation.Record.TAP)
 		_ = kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network).ReleaseIP(allocation.Config.Network.IP)
 		return err
 	}
 	if _, err := r.store.SetNetworkConfigs(rec.ID, []kbnetwork.Config{allocation.Config}); err != nil {
-		_ = kbnetwork.NewStore(r.cfg.Runtime.RootDir).DeleteRecord(allocation.Record.ID)
-		_ = kbnetwork.DeleteHostTap(allocation.Record.TAP)
+		_ = networkStore.DeleteRecord(allocation.Record.ID)
+		_ = deleteHostTap(allocation.Record.TAP)
+		_ = kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network).ReleaseIP(allocation.Config.Network.IP)
+		return err
+	}
+	if err := networkStore.IncrementHostTapRef(1); err != nil {
+		_, _ = r.store.SetNetworkConfigs(rec.ID, nil)
+		_ = networkStore.DeleteRecord(allocation.Record.ID)
+		_ = deleteHostTap(allocation.Record.TAP)
 		_ = kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network).ReleaseIP(allocation.Config.Network.IP)
 		return err
 	}
@@ -330,9 +345,50 @@ func (r *Runtime) rollbackNetwork(rec *vmstore.VMRecord) {
 	allocator := kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network)
 	for _, nc := range rec.NetworkConfigs {
 		_ = store.DeleteRecord(nc.ID)
-		_ = kbnetwork.DeleteHostTap(nc.TAP)
+		_ = deleteHostTap(nc.TAP)
 		if nc.Network != nil {
 			_ = allocator.ReleaseIP(nc.Network.IP)
 		}
+		_ = store.DecrementHostTapRef(1)
 	}
+}
+
+func (r *Runtime) cleanupNetwork(rec *vmstore.VMRecord) error {
+	if rec == nil || len(rec.NetworkConfigs) == 0 {
+		return nil
+	}
+	store := kbnetwork.NewStore(r.cfg.Runtime.RootDir)
+	allocator := kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network)
+	var cleanupErrs []error
+	for _, nc := range rec.NetworkConfigs {
+		if err := cleanupNetworkConfig(store, allocator, nc); err != nil {
+			reason := err.Error()
+			if markErr := store.MarkCleanupPending(nc.ID, reason); markErr != nil {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("mark network cleanup pending for %s: %w", nc.ID, markErr))
+			}
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("cleanup network %s: %w", nc.ID, err))
+		}
+	}
+	if err := errors.Join(cleanupErrs...); err != nil {
+		return fmt.Errorf("delete VM network resources: %w", err)
+	}
+	return nil
+}
+
+func cleanupNetworkConfig(store *kbnetwork.Store, allocator *kbnetwork.Allocator, nc kbnetwork.Config) error {
+	if err := deleteHostTap(nc.TAP); err != nil {
+		return fmt.Errorf("delete tap %s: %w", nc.TAP, err)
+	}
+	if nc.Network != nil && nc.Network.IP != "" {
+		if err := allocator.ReleaseIP(nc.Network.IP); err != nil {
+			return fmt.Errorf("release IP %s: %w", nc.Network.IP, err)
+		}
+	}
+	if err := store.DecrementHostTapRef(1); err != nil {
+		return err
+	}
+	if err := store.DeleteRecord(nc.ID); err != nil {
+		return fmt.Errorf("delete network provider record %s: %w", nc.ID, err)
+	}
+	return nil
 }
