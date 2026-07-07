@@ -12,13 +12,19 @@ root_disk=""
 firmware=""
 mode="host-tap"
 use_sudo=0
+timeout=240
+ping_interval=5
+vm_exists=0
+script_status=1
+taps=()
 
 usage() {
   cat <<'USAGE'
 Usage: scripts/linux/verify-multinic-model.sh --root-disk PATH --firmware PATH [options]
 
-Verifies P2-09 multi-NIC network model without starting a VM. By default it uses
-two default host-tap attachments, so it does not require a CNI installation.
+Verifies P2-09 multi-NIC network model. By default it starts a real microVM with
+two default host-tap attachments and waits until both guest NIC IPs respond to
+host ping, so it does not require a CNI installation.
 
 Options:
   --kumabox PATH             kumabox binary path
@@ -31,6 +37,8 @@ Options:
   --root-disk PATH           root disk fixture path
   --firmware PATH            UEFI firmware path
   --mode MODE                host-tap or cni (default: host-tap)
+  --timeout SECONDS          max seconds to wait for guest ping, default 240
+  --ping-interval SECONDS    seconds between ping attempts, default 5
   --sudo                     clean/write state through sudo
 USAGE
 }
@@ -110,6 +118,16 @@ while [[ $# -gt 0 ]]; do
       mode="$2"
       shift 2
       ;;
+    --timeout)
+      require_value "$1" "${2:-}"
+      timeout="$2"
+      shift 2
+      ;;
+    --ping-interval)
+      require_value "$1" "${2:-}"
+      ping_interval="$2"
+      shift 2
+      ;;
     --sudo)
       use_sudo=1
       shift
@@ -145,7 +163,7 @@ if [[ "$(uname -s)" != "Linux" ]]; then
   exit 1
 fi
 
-for bin in jq ip; do
+for bin in jq ip ping; do
   if ! command -v "$bin" >/dev/null 2>&1; then
     echo "$bin is required" >&2
     exit 1
@@ -177,10 +195,51 @@ config_path="$root_dir/kumabox-multinic.toml"
 
 cleanup() {
   set +e
+  if [[ "$script_status" -ne 0 ]]; then
+    printf '\n==> preserving failed P2-09 state\n' >&2
+    printf 'state: preserved root_dir=%s run_dir=%s log_dir=%s\n' "$root_dir" "$run_dir" "$log_dir" >&2
+    printf 'state: rerun this script to clean preserved state before the next attempt\n' >&2
+    return
+  fi
   "${kumabox_cmd[@]}" --config "$config_path" delete "$name" --force >/dev/null 2>&1
   "${remove_cmd[@]}" "$root_dir" "$run_dir" "$log_dir"
 }
 trap cleanup EXIT
+
+print_failure_context() {
+  set +e
+  section "failure context: VM inspect"
+  "${kumabox_cmd[@]}" --config "$config_path" inspect "$name" --json 2>/dev/null || true
+
+  section "failure context: network inspect"
+  "${kumabox_cmd[@]}" --config "$config_path" network inspect "$name" --json 2>/dev/null || true
+
+  section "failure context: bridge"
+  "${ip_cmd[@]}" -d link show kumabox0 2>/dev/null || true
+  "${ip_cmd[@]}" -4 addr show kumabox0 2>/dev/null || true
+
+  if [[ "${#taps[@]}" -gt 0 ]]; then
+    section "failure context: host taps"
+    for tap in "${taps[@]}"; do
+      "${ip_cmd[@]}" -d link show "$tap" 2>/dev/null || true
+    done
+  fi
+
+  if [[ -n "${console_log:-}" && "$console_log" != "null" ]]; then
+    section "failure context: console tail"
+    "${cat_cmd[@]}" "$console_log" 2>/dev/null | tail -n 120 || true
+  fi
+
+  if [[ -n "${config_file:-}" && "$config_file" != "null" ]]; then
+    section "failure context: rendered config"
+    "${cat_cmd[@]}" "$config_file" 2>/dev/null | jq '.' || true
+  fi
+
+  if [[ -n "${log_dir_for_vm:-}" && "$log_dir_for_vm" != "null" ]]; then
+    section "failure context: cloud-hypervisor stderr"
+    "${cat_cmd[@]}" "$log_dir_for_vm/cloud-hypervisor.stderr.log" 2>/dev/null | tail -n 120 || true
+  fi
+}
 
 write_host_tap_config() {
   write_file "$config_path" "[runtime]
@@ -276,7 +335,8 @@ scripts/linux/env-check.sh \
   --kumabox "$kumabox_path" \
   --cloud-hypervisor "$cloud_hypervisor_path" \
   --qemu-img "$qemu_img_path" \
-  --strict
+  --strict \
+  --network
 
 section "write $mode config"
 if [[ "$mode" == "cni" ]]; then
@@ -286,24 +346,46 @@ else
   write_host_tap_config
 fi
 
-section "create VM with two --network flags"
+if [[ "$mode" == "host-tap" ]]; then
+  lifecycle_cmd="run"
+  section "run VM with two --network flags"
+else
+  lifecycle_cmd="create"
+  section "create VM with two --network flags"
+fi
 if [[ "$mode" == "cni" ]]; then
   create_network_args=(--network cni:front --network cni:back)
 else
   create_network_args=(--network default --network default)
 fi
 
-created_json="$("${kumabox_cmd[@]}" \
+set +e
+created_output="$("${kumabox_cmd[@]}" \
   --config "$config_path" \
-  create \
+  "$lifecycle_cmd" \
   --name "$name" \
   --root-disk "$root_disk" \
   --firmware "$firmware" \
-  "${create_network_args[@]}")"
+  "${create_network_args[@]}" 2>&1)"
+created_status=$?
+set -e
+if [[ "$created_status" -ne 0 ]]; then
+  printf '%s\n' "$created_output" >&2
+  echo "kumabox $lifecycle_cmd failed" >&2
+  print_failure_context
+  exit "$created_status"
+fi
+created_json="$created_output"
 printf '%s\n' "$created_json"
+vm_exists=1
 
 vm_id="$(printf '%s' "$created_json" | jq -r '.id')"
 config_file="$(printf '%s' "$created_json" | jq -r '.config')"
+state="$(printf '%s' "$created_json" | jq -r '.state')"
+console_log="$(printf '%s' "$created_json" | jq -r '.logDir + "/console.log"')"
+log_dir_for_vm="$(printf '%s' "$created_json" | jq -r '.logDir')"
+mapfile -t taps < <(printf '%s' "$created_json" | jq -r '.networkConfigs[].tap')
+mapfile -t guest_ips < <(printf '%s' "$created_json" | jq -r '.networkConfigs[].network.ip')
 
 if [[ "$(printf '%s' "$created_json" | jq -r '.network')" != "multi" ]]; then
   echo "legacy network summary should be multi" >&2
@@ -315,6 +397,11 @@ if [[ "$(printf '%s' "$created_json" | jq -r '.networks | length')" != "2" ]]; t
 fi
 if [[ "$(printf '%s' "$created_json" | jq -r '.networkConfigs | length')" != "2" ]]; then
   echo "VM networkConfigs should contain two attachments" >&2
+  exit 1
+fi
+if [[ "$mode" == "host-tap" && "$state" != "running" ]]; then
+  echo "VM did not enter running state: $state" >&2
+  print_failure_context
   exit 1
 fi
 printf 'state: vm=%s networks=%s\n' "$vm_id" "$(printf '%s' "$created_json" | jq -c '.networks')"
@@ -341,16 +428,58 @@ fi
 
 if [[ "$mode" == "host-tap" ]]; then
   section "host tap links"
-  mapfile -t taps < <(printf '%s' "$created_json" | jq -r '.networkConfigs[].tap')
   for tap in "${taps[@]}"; do
     "${ip_cmd[@]}" -d link show "$tap"
   done
   "${ip_cmd[@]}" -d link show kumabox0
   "${ip_cmd[@]}" addr show kumabox0
+
+  section "cidata network-config"
+  cidata_dir="$(printf '%s' "$created_json" | jq -r '.metadata.cidataDir')"
+  "${cat_cmd[@]}" "$cidata_dir/network-config"
+
+  section "wait for host-to-guest ping on both NICs"
+  if [[ "${#guest_ips[@]}" -ne 2 ]]; then
+    echo "expected two guest IPs, got ${#guest_ips[@]}" >&2
+    print_failure_context
+    exit 1
+  fi
+  deadline=$((SECONDS + timeout))
+  wait_start=$SECONDS
+  pending_ips=("${guest_ips[@]}")
+  printf 'state: waiting up to %ss for guest boot and both cloud-init NIC configs\n' "$timeout"
+  while [[ "${#pending_ips[@]}" -gt 0 ]]; do
+    next_pending=()
+    for guest_ip in "${pending_ips[@]}"; do
+      if ping -c 1 -W 2 "$guest_ip" >/dev/null 2>&1; then
+        printf 'pass: host can ping guest NIC IP %s\n' "$guest_ip"
+      else
+        next_pending+=("$guest_ip")
+      fi
+    done
+    pending_ips=("${next_pending[@]}")
+    if [[ "${#pending_ips[@]}" -eq 0 ]]; then
+      break
+    fi
+    if (( SECONDS >= deadline )); then
+      echo "guest IPs did not all respond to ping within ${timeout}s: ${pending_ips[*]}" >&2
+      print_failure_context
+      exit 1
+    fi
+    elapsed=$((SECONDS - wait_start))
+    printf 'state: still waiting after %ss/%ss for IPs: %s\n' "$elapsed" "$timeout" "${pending_ips[*]}"
+    if (( elapsed > 0 && elapsed % 30 == 0 )); then
+      section "guest console tail while waiting"
+      "${cat_cmd[@]}" "$console_log" 2>/dev/null | tail -n 60 || true
+      section "wait for host-to-guest ping on both NICs"
+    fi
+    sleep "$ping_interval"
+  done
 fi
 
 section "delete VM and verify cleanup"
 "${kumabox_cmd[@]}" --config "$config_path" delete "$name" --force
+vm_exists=0
 if [[ "$("${kumabox_cmd[@]}" --config "$config_path" network ls --json | jq 'length')" != "0" ]]; then
   echo "provider records remain after delete" >&2
   exit 1
@@ -377,3 +506,4 @@ else
 fi
 
 echo "P2-09 multi-NIC network model verification passed ($mode)"
+script_status=0
