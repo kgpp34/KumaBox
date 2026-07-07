@@ -400,7 +400,7 @@ section "stop and delete VM"
 vm_exists=0
 
 if "${ip_cmd[@]}" link show dev "$tap" >/dev/null 2>&1; then
-  printf 'state: P2-06 cleanup is not implemented yet; removing leftover tap %s manually\n' "$tap"
+  printf 'state: delete did not remove tap %s; removing leftover tap manually\n' "$tap"
   "${ip_cmd[@]}" link delete "$tap"
 fi
 

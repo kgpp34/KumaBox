@@ -4,9 +4,11 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
+	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -147,6 +149,167 @@ func TestDryRunFailsWhenImageIndexIsCorrupt(t *testing.T) {
 
 	if _, err := DryRun(cfg); err == nil {
 		t.Fatal("expected corrupt image index error")
+	}
+}
+
+func TestDryRunReportsNetworkPendingAndOrphans(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Runtime.RootDir = filepath.Join(dir, "data")
+	cfg.Runtime.RunDir = filepath.Join(dir, "run")
+	cfg.Runtime.LogDir = filepath.Join(dir, "log")
+
+	vmStore := vmstore.New(cfg.Runtime.RootDir)
+	rec, err := vmStore.Create(vmstore.CreateRequest{
+		Name:     "network-live",
+		RootDisk: "base.qcow2",
+		Firmware: "CLOUDHV.fd",
+		RunDir:   cfg.Runtime.RunDir,
+		LogDir:   cfg.Runtime.LogDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveAlloc, err := kbnetwork.NewAllocator(cfg.Runtime.RootDir, cfg.Network).Allocate(kbnetwork.AllocateRequest{
+		VMID:    rec.ID,
+		Network: "default",
+		Index:   0,
+		CPU:     1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	networkStore := kbnetwork.NewStore(cfg.Runtime.RootDir)
+	if err := networkStore.UpsertRecord(liveAlloc.Record); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vmStore.SetNetworkConfigs(rec.ID, []kbnetwork.Config{liveAlloc.Config}); err != nil {
+		t.Fatal(err)
+	}
+
+	pending := kbnetwork.Record{
+		ID:        "net_pending",
+		VMID:      "kb_missing",
+		Network:   "default",
+		Provider:  kbnetwork.ProviderHostTap,
+		IfName:    "eth0",
+		TAP:       "kbtappending",
+		MAC:       "5a:00:00:00:00:10",
+		BridgeDev: cfg.Network.Bridge,
+		IPs:       []string{"10.88.0.42/16"},
+		Gateway:   cfg.Network.Gateway,
+		Cleanup: kbnetwork.Cleanup{
+			Pending:       true,
+			Reason:        "tap delete failed",
+			LastAttemptAt: time.Now().UTC().Format(time.RFC3339Nano),
+		},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	if err := networkStore.UpsertRecord(pending); err != nil {
+		t.Fatal(err)
+	}
+	orphanLease, err := kbnetwork.NewAllocator(cfg.Runtime.RootDir, cfg.Network).Allocate(kbnetwork.AllocateRequest{
+		VMID:    "kb_orphan",
+		Network: "default",
+		Index:   0,
+		CPU:     1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := DryRun(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoCandidate(t, report, liveAlloc.Record.TAP)
+	assertCandidate(t, report, pending.ID, "pending_cleanup")
+	assertCandidate(t, report, pending.TAP, "stale_tap")
+	assertCandidate(t, report, orphanLease.Config.Network.IP, "orphan_lease")
+}
+
+func TestDryRunReportsNetworkDriftWithoutDeleteGuess(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Runtime.RootDir = filepath.Join(dir, "data")
+	cfg.Runtime.RunDir = filepath.Join(dir, "run")
+	cfg.Runtime.LogDir = filepath.Join(dir, "log")
+
+	vmStore := vmstore.New(cfg.Runtime.RootDir)
+	rec, err := vmStore.Create(vmstore.CreateRequest{
+		Name:     "network-drift",
+		RootDisk: "base.qcow2",
+		Firmware: "CLOUDHV.fd",
+		RunDir:   cfg.Runtime.RunDir,
+		LogDir:   cfg.Runtime.LogDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alloc, err := kbnetwork.NewAllocator(cfg.Runtime.RootDir, cfg.Network).Allocate(kbnetwork.AllocateRequest{
+		VMID:    rec.ID,
+		Network: "default",
+		Index:   0,
+		CPU:     1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drifted := alloc.Record
+	drifted.MAC = "5a:00:00:00:00:99"
+	if err := kbnetwork.NewStore(cfg.Runtime.RootDir).UpsertRecord(drifted); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vmStore.SetNetworkConfigs(rec.ID, []kbnetwork.Config{alloc.Config}); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := DryRun(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCandidate(t, report, alloc.Record.ID, "network_drift")
+	assertNoCandidate(t, report, alloc.Record.TAP)
+}
+
+func TestDryRunFailsWhenNetworkStateIsCorrupt(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Runtime.RootDir = filepath.Join(dir, "data")
+	cfg.Runtime.RunDir = filepath.Join(dir, "run")
+	cfg.Runtime.LogDir = filepath.Join(dir, "log")
+
+	indexPath := filepath.Join(cfg.Runtime.RootDir, "network", "index.json")
+	if err := os.MkdirAll(filepath.Dir(indexPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := DryRun(cfg); err == nil {
+		t.Fatal("expected corrupt network index error")
+	}
+}
+
+func TestDryRunFailsWhenNetworkLeasesAreCorrupt(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Runtime.RootDir = filepath.Join(dir, "data")
+	cfg.Runtime.RunDir = filepath.Join(dir, "run")
+	cfg.Runtime.LogDir = filepath.Join(dir, "log")
+
+	leasePath := filepath.Join(cfg.Runtime.RootDir, "network", "leases.json")
+	if err := os.MkdirAll(filepath.Dir(leasePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(leasePath, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := DryRun(cfg); err == nil {
+		t.Fatal("expected corrupt network lease error")
 	}
 }
 
