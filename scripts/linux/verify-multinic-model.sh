@@ -10,15 +10,15 @@ log_dir="/tmp/kumabox-p0/logs"
 name="p2-multinic"
 root_disk=""
 firmware=""
+mode="host-tap"
 use_sudo=0
 
 usage() {
   cat <<'USAGE'
 Usage: scripts/linux/verify-multinic-model.sh --root-disk PATH --firmware PATH [options]
 
-Verifies P2-09 multi-NIC network model without starting a VM. The script creates
-a VM with two CNI network attachments and checks VM intent, provider records,
-rendered Cloud Hypervisor nets, and delete cleanup.
+Verifies P2-09 multi-NIC network model without starting a VM. By default it uses
+two default host-tap attachments, so it does not require a CNI installation.
 
 Options:
   --kumabox PATH             kumabox binary path
@@ -30,6 +30,7 @@ Options:
   --name NAME                VM name
   --root-disk PATH           root disk fixture path
   --firmware PATH            UEFI firmware path
+  --mode MODE                host-tap or cni (default: host-tap)
   --sudo                     clean/write state through sudo
 USAGE
 }
@@ -104,6 +105,11 @@ while [[ $# -gt 0 ]]; do
       firmware="$2"
       shift 2
       ;;
+    --mode)
+      require_value "$1" "${2:-}"
+      mode="$2"
+      shift 2
+      ;;
     --sudo)
       use_sudo=1
       shift
@@ -125,6 +131,15 @@ if [[ -z "$root_disk" || -z "$firmware" ]]; then
   exit 2
 fi
 
+case "$mode" in
+  host-tap|cni)
+    ;;
+  *)
+    echo "--mode must be host-tap or cni" >&2
+    exit 2
+    ;;
+esac
+
 if [[ "$(uname -s)" != "Linux" ]]; then
   echo "verify-multinic-model must run on Linux" >&2
   exit 1
@@ -144,6 +159,7 @@ if [[ "$use_sudo" -eq 1 ]]; then
   chmod_cmd=(sudo chmod)
   copy_cmd=(sudo cp)
   cat_cmd=(sudo cat)
+  ip_cmd=(sudo ip)
 else
   kumabox_cmd=("$kumabox_path")
   remove_cmd=(rm -rf)
@@ -151,6 +167,7 @@ else
   chmod_cmd=(chmod)
   copy_cmd=(cp)
   cat_cmd=(cat)
+  ip_cmd=(ip)
 fi
 
 cni_conf_dir="$root_dir/cni/net.d"
@@ -165,19 +182,30 @@ cleanup() {
 }
 trap cleanup EXIT
 
-section "clean previous P2-09 state"
-"${remove_cmd[@]}" "$root_dir" "$run_dir" "$log_dir"
-"${mkdir_cmd[@]}" "$root_dir" "$run_dir" "$log_dir" "$cni_conf_dir" "$cni_bin_dir"
+write_host_tap_config() {
+  write_file "$config_path" "[runtime]
+root_dir = \"$root_dir\"
+run_dir = \"$run_dir\"
+log_dir = \"$log_dir\"
 
-section "environment checks"
-scripts/linux/env-check.sh \
-  --kumabox "$kumabox_path" \
-  --cloud-hypervisor "$cloud_hypervisor_path" \
-  --qemu-img "$qemu_img_path" \
-  --strict
+[backend.cloud_hypervisor]
+binary = \"$cloud_hypervisor_path\"
+api_socket_timeout_ms = 5000
+stop_timeout_ms = 10000
 
-section "write mock CNI config and plugin"
-write_file "$config_path" "[runtime]
+[network]
+mode = \"host-tap\"
+default = \"default\"
+bridge = \"kumabox0\"
+cidr = \"10.88.0.0/16\"
+gateway = \"10.88.0.1\"
+dns = [\"1.1.1.1\", \"8.8.8.8\"]
+tap_prefix = \"kbtap\"
+nat_backend = \"none\""
+}
+
+write_cni_config() {
+  write_file "$config_path" "[runtime]
 root_dir = \"$root_dir\"
 run_dir = \"$run_dir\"
 log_dir = \"$log_dir\"
@@ -198,16 +226,18 @@ tap_prefix = \"kbtap\"
 nat_backend = \"none\"
 cni_config_dir = \"$cni_conf_dir\"
 cni_bin_dir = \"$cni_bin_dir\""
+}
 
-for net in front back; do
-  write_file "$cni_conf_dir/$net.conf" "{
+write_mock_cni() {
+  for net in front back; do
+    write_file "$cni_conf_dir/$net.conf" "{
   \"cniVersion\": \"1.0.0\",
   \"name\": \"$net\",
   \"type\": \"kumabox-mock\"
 }"
-done
+  done
 
-write_file "$cni_bin_dir/kumabox-mock" "#!/bin/sh
+  write_file "$cni_bin_dir/kumabox-mock" "#!/bin/sh
 set -eu
 cat >/dev/null
 printf '%s %s %s %s\n' \"\$CNI_COMMAND\" \"\$CNI_CONTAINERID\" \"\$CNI_IFNAME\" \"\$CNI_NETNS\" >> \"$cni_log\"
@@ -231,17 +261,45 @@ if [ \"\$CNI_COMMAND\" = \"DEL\" ]; then
   exit 0
 fi
 exit 0"
-"${chmod_cmd[@]}" +x "$cni_bin_dir/kumabox-mock"
+  "${chmod_cmd[@]}" +x "$cni_bin_dir/kumabox-mock"
+}
+
+section "clean previous P2-09 state"
+"${remove_cmd[@]}" "$root_dir" "$run_dir" "$log_dir"
+"${mkdir_cmd[@]}" "$root_dir" "$run_dir" "$log_dir"
+if [[ "$mode" == "cni" ]]; then
+  "${mkdir_cmd[@]}" "$cni_conf_dir" "$cni_bin_dir"
+fi
+
+section "environment checks"
+scripts/linux/env-check.sh \
+  --kumabox "$kumabox_path" \
+  --cloud-hypervisor "$cloud_hypervisor_path" \
+  --qemu-img "$qemu_img_path" \
+  --strict
+
+section "write $mode config"
+if [[ "$mode" == "cni" ]]; then
+  write_cni_config
+  write_mock_cni
+else
+  write_host_tap_config
+fi
 
 section "create VM with two --network flags"
+if [[ "$mode" == "cni" ]]; then
+  create_network_args=(--network cni:front --network cni:back)
+else
+  create_network_args=(--network default --network default)
+fi
+
 created_json="$("${kumabox_cmd[@]}" \
   --config "$config_path" \
   create \
   --name "$name" \
   --root-disk "$root_disk" \
   --firmware "$firmware" \
-  --network cni:front \
-  --network cni:back)"
+  "${create_network_args[@]}")"
 printf '%s\n' "$created_json"
 
 vm_id="$(printf '%s' "$created_json" | jq -r '.id')"
@@ -260,7 +318,7 @@ if [[ "$(printf '%s' "$created_json" | jq -r '.networkConfigs | length')" != "2"
   exit 1
 fi
 printf 'state: vm=%s networks=%s\n' "$vm_id" "$(printf '%s' "$created_json" | jq -c '.networks')"
-printf 'state: configs=%s\n' "$(printf '%s' "$created_json" | jq -c '[.networkConfigs[] | {networkName, ifName, tap, mac}]')"
+printf 'state: configs=%s\n' "$(printf '%s' "$created_json" | jq -c '[.networkConfigs[] | {networkName, ifName, tap, mac, backend, ip: .network.ip}]')"
 
 section "network inspect"
 network_json="$("${kumabox_cmd[@]}" --config "$config_path" network inspect "$name" --json)"
@@ -281,21 +339,41 @@ if [[ "$("${cat_cmd[@]}" "$config_file" | jq -r '.nets | length')" != "2" ]]; th
   exit 1
 fi
 
+if [[ "$mode" == "host-tap" ]]; then
+  section "host tap links"
+  mapfile -t taps < <(printf '%s' "$created_json" | jq -r '.networkConfigs[].tap')
+  for tap in "${taps[@]}"; do
+    "${ip_cmd[@]}" -d link show "$tap"
+  done
+  "${ip_cmd[@]}" -d link show kumabox0
+  "${ip_cmd[@]}" addr show kumabox0
+fi
+
 section "delete VM and verify cleanup"
 "${kumabox_cmd[@]}" --config "$config_path" delete "$name" --force
-if ! "${cat_cmd[@]}" "$cni_log" | grep -q "DEL $vm_id eth0 /var/run/netns/$vm_id"; then
-  echo "missing CNI DEL for eth0" >&2
-  "${cat_cmd[@]}" "$cni_log" || true
-  exit 1
-fi
-if ! "${cat_cmd[@]}" "$cni_log" | grep -q "DEL $vm_id eth1 /var/run/netns/$vm_id"; then
-  echo "missing CNI DEL for eth1" >&2
-  "${cat_cmd[@]}" "$cni_log" || true
-  exit 1
-fi
 if [[ "$("${kumabox_cmd[@]}" --config "$config_path" network ls --json | jq 'length')" != "0" ]]; then
   echo "provider records remain after delete" >&2
   exit 1
 fi
 
-echo "P2-09 multi-NIC network model verification passed"
+if [[ "$mode" == "cni" ]]; then
+  if ! "${cat_cmd[@]}" "$cni_log" | grep -q "DEL $vm_id eth0 /var/run/netns/$vm_id"; then
+    echo "missing CNI DEL for eth0" >&2
+    "${cat_cmd[@]}" "$cni_log" || true
+    exit 1
+  fi
+  if ! "${cat_cmd[@]}" "$cni_log" | grep -q "DEL $vm_id eth1 /var/run/netns/$vm_id"; then
+    echo "missing CNI DEL for eth1" >&2
+    "${cat_cmd[@]}" "$cni_log" || true
+    exit 1
+  fi
+else
+  for tap in "${taps[@]}"; do
+    if "${ip_cmd[@]}" link show "$tap" >/dev/null 2>&1; then
+      echo "tap $tap still exists after delete" >&2
+      exit 1
+    fi
+  done
+fi
+
+echo "P2-09 multi-NIC network model verification passed ($mode)"
