@@ -192,6 +192,7 @@ cni_conf_dir="$root_dir/cni/net.d"
 cni_bin_dir="$root_dir/cni/bin"
 cni_log="$root_dir/cni/plugin.log"
 config_path="$root_dir/kumabox-multinic.toml"
+bridge_name="kumabox0"
 
 cleanup() {
   set +e
@@ -239,6 +240,45 @@ print_failure_context() {
     section "failure context: cloud-hypervisor stderr"
     "${cat_cmd[@]}" "$log_dir_for_vm/cloud-hypervisor.stderr.log" 2>/dev/null | tail -n 120 || true
   fi
+}
+
+clean_previous_state() {
+  section "clean previous P2-09 state"
+  set +e
+
+  old_taps=()
+  if [[ -f "$root_dir/network/index.json" ]]; then
+    mapfile -t old_taps < <("${cat_cmd[@]}" "$root_dir/network/index.json" 2>/dev/null | jq -r '.networks[]?.tap // empty' 2>/dev/null)
+  fi
+
+  "${kumabox_cmd[@]}" \
+    --root-dir "$root_dir" \
+    --run-dir "$run_dir" \
+    --log-dir "$log_dir" \
+    --cloud-hypervisor-bin "$cloud_hypervisor_path" \
+    delete "$name" --force >/dev/null 2>&1
+
+  "${kumabox_cmd[@]}" \
+    --root-dir "$root_dir" \
+    --run-dir "$run_dir" \
+    --log-dir "$log_dir" \
+    --cloud-hypervisor-bin "$cloud_hypervisor_path" \
+    network teardown --json >/dev/null 2>&1
+
+  for old_tap in "${old_taps[@]}"; do
+    if [[ -n "$old_tap" && "$old_tap" != "null" ]]; then
+      "${ip_cmd[@]}" link delete "$old_tap" >/dev/null 2>&1
+    fi
+  done
+
+  if [[ "$mode" == "host-tap" ]] && "${ip_cmd[@]}" link show "$bridge_name" >/dev/null 2>&1; then
+    printf 'state: removing leftover test bridge %s without owner state\n' "$bridge_name"
+    "${ip_cmd[@]}" link delete "$bridge_name" >/dev/null 2>&1
+  fi
+
+  "${remove_cmd[@]}" "$root_dir" "$run_dir" "$log_dir"
+  "${mkdir_cmd[@]}" "$root_dir" "$run_dir" "$log_dir"
+  set -e
 }
 
 write_host_tap_config() {
@@ -323,9 +363,7 @@ exit 0"
   "${chmod_cmd[@]}" +x "$cni_bin_dir/kumabox-mock"
 }
 
-section "clean previous P2-09 state"
-"${remove_cmd[@]}" "$root_dir" "$run_dir" "$log_dir"
-"${mkdir_cmd[@]}" "$root_dir" "$run_dir" "$log_dir"
+clean_previous_state
 if [[ "$mode" == "cni" ]]; then
   "${mkdir_cmd[@]}" "$cni_conf_dir" "$cni_bin_dir"
 fi
