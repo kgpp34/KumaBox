@@ -1,11 +1,22 @@
+// Package network manages host-side network intent for KumaBox VMs.
+//
+// The package separates VM render config from provider state. VM records keep a
+// Config copy used by Cloud Hypervisor, while the network store keeps provider
+// records, IP leases, and host-tap bridge ownership used for reconciliation and
+// cleanup.
 package network
 
 import "time"
 
 const (
+	// ProviderHostTap is KumaBox's built-in Linux bridge + TAP provider.
 	ProviderHostTap = "host-tap"
-	ProviderCNI     = "cni"
-	ProviderNone    = "none"
+
+	// ProviderCNI is reserved for a future CNI-backed provider.
+	ProviderCNI = "cni"
+
+	// ProviderNone disables VM network attachment.
+	ProviderNone = "none"
 )
 
 const maxInterfaceNameLength = 15
@@ -21,6 +32,10 @@ type Provider interface {
 	Inspect(vmRef string) (*InspectResult, error)
 }
 
+// Config is the VM-side network attachment rendered into the VMM config.
+//
+// It is copied into VMRecord so a VM can be restarted with the same tap, MAC,
+// and guest IP even if provider indexes need reconciliation.
 type Config struct {
 	ID        string     `json:"id,omitempty"`
 	TAP       string     `json:"tap"`
@@ -33,6 +48,10 @@ type Config struct {
 	Network   *GuestInfo `json:"network,omitempty"`
 }
 
+// GuestInfo is the static network configuration delivered to the guest.
+//
+// For cloud images this is rendered into cloud-init NoCloud network-config.
+// Direct boot paths may use the same values through a later guest-agent flow.
 type GuestInfo struct {
 	IP      string   `json:"ip,omitempty"`
 	Gateway string   `json:"gateway,omitempty"`
@@ -40,12 +59,20 @@ type GuestInfo struct {
 	DNS     []string `json:"dns,omitempty"`
 }
 
+// Cleanup records a provider cleanup failure that needs retry or GC attention.
+//
+// A pending cleanup keeps the provider record in place rather than losing the
+// tap/IP identity required to safely finish deletion later.
 type Cleanup struct {
 	Pending       bool   `json:"pending"`
 	Reason        string `json:"reason,omitempty"`
 	LastAttemptAt string `json:"lastAttemptAt,omitempty"`
 }
 
+// Record is the provider-side view of one VM network interface.
+//
+// Records are indexed outside the VM store so network commands can inspect and
+// reconcile provider state independently from VM lifecycle state.
 type Record struct {
 	ID        string    `json:"id"`
 	VMID      string    `json:"vmId"`
@@ -66,6 +93,10 @@ type Record struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// InspectResult compares provider records with the VM's rendered network config.
+//
+// Drift is populated when either side is missing or important fields such as
+// tap, MAC, backend, or guest IP disagree.
 type InspectResult struct {
 	VMID       string   `json:"vmId"`
 	VMName     string   `json:"vmName,omitempty"`
@@ -75,6 +106,10 @@ type InspectResult struct {
 	Drift      []string `json:"drift,omitempty"`
 }
 
+// HostTapState records ownership of the global host-tap bridge/NAT domain.
+//
+// RefCount tracks VM network attachments. VM delete decrements it; network
+// teardown refuses to remove the bridge while references remain.
 type HostTapState struct {
 	SchemaVersion string    `json:"schemaVersion"`
 	Bridge        string    `json:"bridge"`
@@ -87,11 +122,16 @@ type HostTapState struct {
 	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
+// Owner identifies the KumaBox root that owns a host network resource.
+//
+// This prevents one root directory from tearing down a bridge created by
+// another independent KumaBox state root.
 type Owner struct {
 	Kind    string `json:"kind"`
 	RootDir string `json:"rootDir"`
 }
 
+// HostTapReport describes the changes made by setup or teardown.
 type HostTapReport struct {
 	Bridge     string        `json:"bridge"`
 	CIDR       string        `json:"cidr"`

@@ -18,6 +18,11 @@ const indexSchemaVersion = "kumabox.network.index.v1"
 const leaseSchemaVersion = "kumabox.network.leases.v1"
 const hostTapSchemaVersion = "kumabox.network.hostTap.v1"
 
+// Store persists network provider state under a KumaBox root directory.
+//
+// The store owns three related files: provider records, IP leases, and global
+// host-tap bridge ownership. Each file has its own flock because lifecycle and
+// network commands may touch them independently.
 type Store struct {
 	indexPath   string
 	indexLock   string
@@ -32,6 +37,7 @@ type index struct {
 	Networks      map[string]*Record `json:"networks"`
 }
 
+// Lease records exclusive ownership of one guest IP address.
 type Lease struct {
 	VMID      string    `json:"vmId"`
 	MAC       string    `json:"mac"`
@@ -45,6 +51,7 @@ type leaseIndex struct {
 	Leases        map[string]*Lease `json:"leases"`
 }
 
+// NewStore returns a network store rooted under rootDir.
 func NewStore(rootDir string) *Store {
 	networkDir := filepath.Join(rootDir, "network")
 	return &Store{
@@ -57,6 +64,7 @@ func NewStore(rootDir string) *Store {
 	}
 }
 
+// List returns provider records sorted by creation time.
 func (s *Store) List() ([]Record, error) {
 	idx, err := s.readIndex()
 	if err != nil {
@@ -77,6 +85,10 @@ func (s *Store) List() ([]Record, error) {
 	return records, nil
 }
 
+// UpsertRecord inserts or replaces one provider record.
+//
+// Callers use this after the host-side device exists, so inspect can treat the
+// record as the source of provider truth.
 func (s *Store) UpsertRecord(rec Record) error {
 	if rec.ID == "" {
 		return fmt.Errorf("network record id must not be empty")
@@ -94,6 +106,10 @@ func (s *Store) UpsertRecord(rec Record) error {
 	return s.writeIndex(idx)
 }
 
+// DeleteRecord removes a provider record.
+//
+// Device and lease cleanup must be completed before this call; otherwise the
+// metadata needed for a later cleanup retry would be lost.
 func (s *Store) DeleteRecord(id string) error {
 	if id == "" {
 		return nil
@@ -111,6 +127,10 @@ func (s *Store) DeleteRecord(id string) error {
 	return s.writeIndex(idx)
 }
 
+// MarkCleanupPending records a failed provider cleanup attempt.
+//
+// Missing records are ignored so delete paths can be retried after partial
+// cleanup without turning "already gone" into a hard failure.
 func (s *Store) MarkCleanupPending(id, reason string) error {
 	if id == "" {
 		return nil
@@ -138,10 +158,14 @@ func (s *Store) MarkCleanupPending(id, reason string) error {
 	return s.writeIndex(idx)
 }
 
+// Inspect returns provider state for a VM ID without VM-record comparison.
+//
+// Most CLI calls should prefer InspectVM so drift can be reported.
 func (s *Store) Inspect(vmID string) (*InspectResult, error) {
 	return s.InspectVM(vmID, "", "", nil)
 }
 
+// InspectVM compares provider records with the VM's persisted network configs.
 func (s *Store) InspectVM(vmID, vmName, network string, configs []Config) (*InspectResult, error) {
 	records, err := s.List()
 	if err != nil {
@@ -256,6 +280,7 @@ func cloneConfigs(configs []Config) []Config {
 	return copied
 }
 
+// ListLeases returns a defensive copy of the IP lease map keyed by IP address.
 func (s *Store) ListLeases() (map[string]Lease, error) {
 	leases, err := s.readLeases()
 	if err != nil {
@@ -270,10 +295,15 @@ func (s *Store) ListLeases() (map[string]Lease, error) {
 	return out, nil
 }
 
+// ReadHostTapState returns the global host-tap state, if it exists.
 func (s *Store) ReadHostTapState() (*HostTapState, error) {
 	return s.readHostTapState()
 }
 
+// IncrementHostTapRef increases the number of VM attachments using host-tap.
+//
+// The state file must already exist; setup is responsible for creating it
+// before VM network attachment proceeds.
 func (s *Store) IncrementHostTapRef(count int) error {
 	if count <= 0 {
 		return nil
@@ -281,6 +311,9 @@ func (s *Store) IncrementHostTapRef(count int) error {
 	return s.adjustHostTapRef(count, true)
 }
 
+// DecrementHostTapRef decreases the host-tap attachment count.
+//
+// Missing state is treated as already cleaned up to keep delete idempotent.
 func (s *Store) DecrementHostTapRef(count int) error {
 	if count <= 0 {
 		return nil

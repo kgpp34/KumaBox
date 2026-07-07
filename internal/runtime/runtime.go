@@ -16,6 +16,11 @@ import (
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
+// Runtime coordinates VM lifecycle operations across the store, backend, and
+// host-side providers.
+//
+// KumaBox is daemonless, so each command must reconcile persisted intent with
+// the current backend process state before making lifecycle decisions.
 type Runtime struct {
 	store   *vmstore.Store
 	backend backend.Lifecycle
@@ -40,6 +45,10 @@ func NewWithBackend(store *vmstore.Store, vmBackend backend.Lifecycle) *Runtime 
 }
 
 // CreateVM creates a VM record and renders its backend configuration.
+//
+// Network allocation is part of creation because the rendered VMM config needs
+// stable tap/MAC/IP values. If rendering fails, runtime rolls back any provider
+// resources before removing the VM record.
 func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
 	rec, err := r.store.Create(req)
 	if err != nil {
@@ -61,6 +70,10 @@ func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error)
 }
 
 // StartVM starts an existing VM and records backend runtime details.
+//
+// The backend config is rendered again immediately before start. That keeps the
+// run directory recoverable after tmp cleanup and allows later phases to update
+// generated metadata without mutating durable VM intent.
 func (r *Runtime) StartVM(ref string) (*vmstore.VMRecord, error) {
 	rec, err := r.store.Inspect(ref)
 	if err != nil {
@@ -102,6 +115,10 @@ func (r *Runtime) RunVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
 }
 
 // StopVM stops a running VM and updates its persisted state.
+//
+// Stop does not release network leases, delete tap devices, or remove provider
+// records. Those resources are part of the VM's restartable identity and are
+// released only by DeleteVM.
 func (r *Runtime) StopVM(ref string, opts backend.StopOptions) (*vmstore.VMRecord, error) {
 	rec, err := r.store.Inspect(ref)
 	if err != nil {
@@ -143,7 +160,12 @@ func (r *Runtime) StopVM(ref string, opts backend.StopOptions) (*vmstore.VMRecor
 	return r.applyObservation(stopped), nil
 }
 
-// DeleteVM removes a VM record and KumaBox-managed runtime directories.
+// DeleteVM removes a VM record and KumaBox-managed resources.
+//
+// A running VM must be deleted with force so runtime can stop the backend first.
+// Network cleanup is performed before deleting the VM record; if cleanup fails,
+// the record remains available for inspect/logs/retry and the provider record is
+// marked cleanup-pending.
 func (r *Runtime) DeleteVM(ref string, force bool) (*vmstore.VMRecord, error) {
 	rec, err := r.store.Inspect(ref)
 	if err != nil {
@@ -296,6 +318,9 @@ func (r *Runtime) attachNetwork(rec *vmstore.VMRecord) error {
 	if rec.Network != "default" && rec.Network != kbnetwork.ProviderHostTap {
 		return fmt.Errorf("unsupported network %q", rec.Network)
 	}
+	// Provider state is created before the VM is rendered so Cloud Hypervisor
+	// always receives a concrete tap device name. The reverse cleanup path below
+	// keeps lease/index/tap state consistent if any later step fails.
 	if err := config.EnsureRuntimeDirs(r.cfg); err != nil {
 		return err
 	}
@@ -362,6 +387,9 @@ func (r *Runtime) cleanupNetwork(rec *vmstore.VMRecord) error {
 	var cleanupErrs []error
 	for _, nc := range rec.NetworkConfigs {
 		if err := cleanupNetworkConfig(store, allocator, nc); err != nil {
+			// Preserve the provider record when cleanup fails. A later GC or
+			// explicit retry needs the original tap/IP metadata to finish the
+			// cleanup safely.
 			reason := err.Error()
 			if markErr := store.MarkCleanupPending(nc.ID, reason); markErr != nil {
 				cleanupErrs = append(cleanupErrs, fmt.Errorf("mark network cleanup pending for %s: %w", nc.ID, markErr))

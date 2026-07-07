@@ -9,30 +9,50 @@ import (
 )
 
 const (
+	// LogSourceConsole is the guest serial console stream.
+	//
+	// This is the default because it contains kernel, cloud-init, and login
+	// output needed to debug early boot before guest-agent support exists.
 	LogSourceConsole = "console"
-	LogSourceStdout  = "stdout"
-	LogSourceStderr  = "stderr"
-	LogSourceVMM     = "vmm"
-	LogSourceAll     = "all"
+
+	// LogSourceStdout is Cloud Hypervisor's stdout stream.
+	LogSourceStdout = "stdout"
+
+	// LogSourceStderr is Cloud Hypervisor's stderr stream.
+	LogSourceStderr = "stderr"
+
+	// LogSourceVMM returns both Cloud Hypervisor process streams.
+	LogSourceVMM = "vmm"
+
+	// LogSourceAll returns guest console plus VMM process streams.
+	LogSourceAll = "all"
 )
 
+// LogOptions controls which VM logs are returned and how much content is read.
 type LogOptions struct {
 	Tail   int
 	Source string
 }
 
+// VMLogFile is one log file returned by a logs request.
 type VMLogFile struct {
 	Name    string `json:"name"`
 	Path    string `json:"path"`
 	Content string `json:"content"`
 }
 
+// VMLogs groups all log files selected for a VM.
 type VMLogs struct {
 	VMID  string      `json:"vmId"`
 	Name  string      `json:"name"`
 	Files []VMLogFile `json:"files"`
 }
 
+// LogsVM reads selected VM logs without requiring the VM to be running.
+//
+// Missing log files are skipped. This lets logs work consistently for created,
+// failed, stopped, and deleted-after-failure states where only some streams may
+// have been produced.
 func (r *Runtime) LogsVM(ref string, opts LogOptions) (*VMLogs, error) {
 	rec, err := r.store.Inspect(ref)
 	if err != nil {
@@ -81,6 +101,9 @@ func logFileNames(source string) []string {
 	}
 }
 
+// ValidLogSource reports whether source is accepted by LogsVM.
+//
+// An empty source is valid and resolves to the guest console.
 func ValidLogSource(source string) bool {
 	return source == "" || len(logFileNames(source)) > 0
 }

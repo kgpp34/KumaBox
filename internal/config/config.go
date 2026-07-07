@@ -1,3 +1,9 @@
+// Package config owns KumaBox's process-level configuration model.
+//
+// Configuration is intentionally layered: compiled defaults are loaded first,
+// an optional TOML file may replace them, and CLI overrides win last. Runtime
+// code should receive a fully validated Config instead of reading flags or
+// environment variables directly.
 package config
 
 import (
@@ -14,13 +20,22 @@ const (
 	defaultLogDir  = "/var/log/kumabox"
 )
 
+// Config is the complete configuration snapshot used by a KumaBox command.
+//
+// The value is treated as immutable after Load returns. Packages that need
+// paths or provider settings receive this struct explicitly so tests can use
+// isolated root/run/log directories without mutating global process state.
 type Config struct {
 	Runtime RuntimeConfig `toml:"runtime" json:"runtime"`
 	Backend BackendConfig `toml:"backend" json:"backend"`
 	Network NetworkConfig `toml:"network" json:"network"`
 }
 
-// RuntimeConfig contains host paths used for persistent state and runtime files.
+// RuntimeConfig contains the three host path roots used by KumaBox.
+//
+// RootDir is durable state such as VM/image indexes and network leases. RunDir
+// is ephemeral runtime state such as sockets and rendered VMM config. LogDir is
+// command-readable VM output and event logs.
 type RuntimeConfig struct {
 	RootDir string `toml:"root_dir" json:"rootDir"`
 	RunDir  string `toml:"run_dir" json:"runDir"`
@@ -40,6 +55,10 @@ type CloudHypervisorConfig struct {
 }
 
 // NetworkConfig contains host networking defaults used by network providers.
+//
+// The host-tap provider owns a single bridge/NAT domain per RootDir. CIDR and
+// Gateway define the guest address pool; TapPrefix is constrained by Linux's
+// interface-name limit after KumaBox appends a stable hash suffix.
 type NetworkConfig struct {
 	Mode         string   `toml:"mode" json:"mode"`
 	Default      string   `toml:"default" json:"default"`
@@ -62,6 +81,9 @@ type Overrides struct {
 }
 
 // Load reads config from path, applies overrides, and validates the result.
+//
+// A missing path means "use defaults plus overrides". When path is non-empty it
+// must exist and contain TOML compatible with Config.
 func Load(path string, overrides Overrides) (Config, error) {
 	cfg := Default()
 	if path != "" {
@@ -82,6 +104,9 @@ func Load(path string, overrides Overrides) (Config, error) {
 }
 
 // Default returns the built-in KumaBox configuration.
+//
+// The default network intentionally mirrors Docker-style host networking: a
+// stable bridge device, a private RFC1918 subnet, and NAT enabled by default.
 func Default() Config {
 	return Config{
 		Runtime: RuntimeConfig{
@@ -112,6 +137,10 @@ func Default() Config {
 }
 
 // EnsureRuntimeDirs creates the configured runtime directories.
+//
+// Callers should do this before rendering VM config, writing indexes, or
+// creating host networking state. The function creates only the configured
+// roots; per-VM subdirectories remain owned by runtime/backend code.
 func EnsureRuntimeDirs(cfg Config) error {
 	for _, dir := range []string{cfg.Runtime.RootDir, cfg.Runtime.RunDir, cfg.Runtime.LogDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {

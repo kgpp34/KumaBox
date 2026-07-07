@@ -1,3 +1,8 @@
+// Package doctor runs host capability checks for KumaBox.
+//
+// Checks are deliberately descriptive rather than merely boolean because the
+// Linux/KVM/network setup has several common failure modes that need actionable
+// operator feedback.
 package doctor
 
 import (
@@ -10,16 +15,24 @@ import (
 )
 
 const (
+	// StatusPass means the check succeeded.
 	StatusPass = "pass"
+
+	// StatusWarn means KumaBox can often proceed, but the operator may need
+	// elevated permissions or a different environment.
 	StatusWarn = "warn"
+
+	// StatusFail means the checked capability is unavailable.
 	StatusFail = "fail"
 )
 
+// Report groups all doctor checks with an aggregate status.
 type Report struct {
 	Status string  `json:"status"`
 	Checks []Check `json:"checks"`
 }
 
+// Check describes one host capability result.
 type Check struct {
 	Name            string `json:"name"`
 	Status          string `json:"status"`
@@ -28,6 +41,10 @@ type Check struct {
 	SuggestedAction string `json:"suggestedAction,omitempty"`
 }
 
+// Run executes host, backend, and network capability checks.
+//
+// The function does not mutate host state. Setup commands such as network setup
+// are responsible for making changes after the operator has reviewed failures.
 func Run(cfg config.Config) Report {
 	checks := []Check{
 		checkPaths(cfg),

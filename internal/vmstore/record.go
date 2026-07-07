@@ -1,3 +1,9 @@
+// Package vmstore persists KumaBox VM intent.
+//
+// A VM record stores what KumaBox wants to run: disks, boot mode, network
+// attachments, and managed directories. Runtime reconciliation augments that
+// intent with observed state from the backend, but the store itself does not
+// talk to Cloud Hypervisor or the host network.
 package vmstore
 
 import (
@@ -7,6 +13,11 @@ import (
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 )
 
+// VMState is KumaBox's persisted lifecycle state.
+//
+// It is updated by lifecycle operations such as start, stop, and delete. It is
+// not a direct probe of the VMM process; callers should compare it with
+// ObservedState when reconciling stale records.
 type VMState string
 
 const (
@@ -16,6 +27,11 @@ const (
 	StateError   VMState = "error"
 )
 
+// ObservedState is the runtime state observed from the backend.
+//
+// Observed state may diverge from VMState when a daemonless command exits, the
+// VMM crashes, or host resources disappear. KumaBox records this separately so
+// CLI output can show both desired/persisted state and current reality.
 type ObservedState string
 
 const (
@@ -26,12 +42,23 @@ const (
 	ObservedStateUnknown ObservedState = "UNKNOWN"
 )
 
+// Observation captures one backend reconciliation result.
+//
+// Observations are transient values returned by backend probes. Runtime may
+// copy the latest observation into VMRecord fields and append lifecycle events
+// to the VM log directory.
 type Observation struct {
 	State     ObservedState `json:"state"`
 	Reason    string        `json:"reason,omitempty"`
 	CheckedAt time.Time     `json:"checkedAt"`
 }
 
+// VMRecord is the durable VM metadata stored in the backend index.
+//
+// The record intentionally keeps VM identity, boot configuration, network
+// attachment intent, and managed paths in one document. Provider-specific
+// indexes, such as host-tap leases, remain outside the VM index and are linked
+// by NetworkConfigs.
 type VMRecord struct {
 	ID             string                   `json:"id"`
 	Name           string                   `json:"name"`
@@ -62,12 +89,20 @@ type VMRecord struct {
 	FirstBooted    bool                     `json:"firstBooted,omitempty"`
 }
 
+// Metadata describes the generated cloud-init NoCloud seed attached to a VM.
+//
+// Firmware/cloud-image boots use this seed for hostname, user-data, and static
+// network configuration. Direct kernel/initrd boots may not need metadata.
 type Metadata struct {
 	Type       string `json:"type"`
 	CidataDir  string `json:"cidataDir"`
 	CidataDisk string `json:"cidataDisk"`
 }
 
+// ImageRef records the managed image used to create or run a VM.
+//
+// The root disk path is copied into the VM record so lifecycle operations do
+// not need to resolve mutable image names after creation.
 type ImageRef struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`

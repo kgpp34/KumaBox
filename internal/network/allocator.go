@@ -17,11 +17,19 @@ const defaultQueueSize = 256
 
 var ErrLeaseConflict = errors.New("network lease conflict")
 
+// Allocator assigns deterministic tap names and exclusive MAC/IP leases.
+//
+// Allocation is file-backed and protected by the network lease lock so separate
+// CLI processes cannot hand out the same guest IP concurrently.
 type Allocator struct {
 	store *Store
 	cfg   config.NetworkConfig
 }
 
+// AllocateRequest describes one VM interface allocation.
+//
+// Existing is used during recovery/reconciliation to re-adopt a previously
+// stored VM network config instead of assigning a new identity.
 type AllocateRequest struct {
 	VMID     string
 	Network  string
@@ -30,11 +38,16 @@ type AllocateRequest struct {
 	Existing *Config
 }
 
+// Allocation contains both sides of a network assignment.
+//
+// Record is persisted in the provider index; Config is copied into the VM
+// record and rendered into Cloud Hypervisor arguments.
 type Allocation struct {
 	Record Record `json:"record"`
 	Config Config `json:"config"`
 }
 
+// NewAllocator returns an allocator backed by rootDir's network store.
 func NewAllocator(rootDir string, cfg config.NetworkConfig) *Allocator {
 	return &Allocator{
 		store: NewStore(rootDir),
@@ -42,6 +55,10 @@ func NewAllocator(rootDir string, cfg config.NetworkConfig) *Allocator {
 	}
 }
 
+// Allocate reserves a tap/MAC/IP tuple for one VM interface.
+//
+// The IP lease is written before the caller creates the tap or provider record.
+// Callers must ReleaseIP if later setup steps fail.
 func (a *Allocator) Allocate(req AllocateRequest) (*Allocation, error) {
 	if err := validateAllocateRequest(req); err != nil {
 		return nil, err
@@ -127,6 +144,9 @@ func (a *Allocator) Allocate(req AllocateRequest) (*Allocation, error) {
 	return &Allocation{Record: record, Config: cfg}, nil
 }
 
+// ReleaseIP removes a guest IP lease.
+//
+// The operation is idempotent so delete and rollback paths can safely retry it.
 func (a *Allocator) ReleaseIP(ip string) error {
 	if ip == "" {
 		return nil
@@ -236,6 +256,10 @@ func macInUseByOtherVM(leases *leaseIndex, mac, vmID string) bool {
 	return false
 }
 
+// TapName returns KumaBox's stable Linux TAP name for a VM interface.
+//
+// Linux interface names are limited to 15 bytes, so the VM identity is hashed
+// into a short suffix instead of embedding the full VM ID.
 func TapName(prefix, vmID string, index int) string {
 	if prefix == "" {
 		prefix = "kbtap"
@@ -249,11 +273,13 @@ func TapName(prefix, vmID string, index int) string {
 	return name
 }
 
+// NetworkID returns the stable provider record ID for a VM interface.
 func NetworkID(vmID string, index int) string {
 	hash := sha256.Sum256([]byte(fmt.Sprintf("%s:%d", vmID, index)))
 	return "net_" + hex.EncodeToString(hash[:])[:16]
 }
 
+// GenerateMAC returns a random locally administered unicast MAC address.
 func GenerateMAC() (string, error) {
 	buf := make([]byte, 6)
 	if _, err := rand.Read(buf); err != nil {
@@ -274,6 +300,8 @@ func validateAllocateRequest(req AllocateRequest) error {
 }
 
 func netNumQueues(cpu int) int {
+	// Cloud Hypervisor validates virtio-net with a minimum of two queues. For a
+	// single vCPU this still maps to one TAP queue pair on the host side.
 	if cpu <= 1 {
 		return 2
 	}

@@ -1,3 +1,8 @@
+// Package gc identifies KumaBox-managed files that are safe candidates for
+// cleanup.
+//
+// The current phase is dry-run only. It reports stale runtime files and orphaned
+// managed directories without deleting anything.
 package gc
 
 import (
@@ -12,6 +17,8 @@ import (
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
+// Candidate describes one file or directory that GC would remove in a future
+// non-dry-run mode.
 type Candidate struct {
 	Component string `json:"component"`
 	Path      string `json:"path"`
@@ -19,12 +26,17 @@ type Candidate struct {
 	Reason    string `json:"reason"`
 }
 
+// Report is the result of a GC scan.
 type Report struct {
 	DryRun     bool        `json:"dryRun"`
 	CheckedAt  time.Time   `json:"checkedAt"`
 	Candidates []Candidate `json:"candidates"`
 }
 
+// DryRun scans VM, runtime, log, and image state for orphaned managed files.
+//
+// It never removes data. The report is intended for operator review and for
+// validating GC policy before destructive cleanup is implemented.
 func DryRun(cfg config.Config) (*Report, error) {
 	records, err := vmstore.New(cfg.Runtime.RootDir).List()
 	if err != nil {

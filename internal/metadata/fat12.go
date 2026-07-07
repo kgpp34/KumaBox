@@ -40,6 +40,11 @@ type fat12Builder struct {
 	shortSeq    int
 }
 
+// WriteFAT12 writes a small deterministic FAT12 filesystem image.
+//
+// Cloud-init accepts CIDATA on a vfat disk, and FAT12 is simple enough to build
+// without invoking mkfs tools on the host. The image is intentionally tiny
+// because it only carries NoCloud text files.
 func WriteFAT12(w io.Writer, label string, files map[string][]byte) error {
 	builder := newFAT12Builder(label)
 	names := make([]string, 0, len(files))

@@ -1,3 +1,7 @@
+// Package cloudhypervisor implements KumaBox's Cloud Hypervisor backend.
+//
+// The backend renders an auditable JSON config beside the VM runtime files and
+// then starts the cloud-hypervisor process with the corresponding CLI arguments.
 package cloudhypervisor
 
 import (
@@ -13,6 +17,11 @@ import (
 
 const defaultKernelCmdline = "console=ttyS0 reboot=k panic=1 root=/dev/vda rw"
 
+// Config is the rendered Cloud Hypervisor launch plan.
+//
+// It is written to the VM run directory before start so users and verification
+// scripts can inspect exactly which disks, networks, sockets, and logs were
+// handed to the VMM.
 type Config struct {
 	Binary       string      `json:"binary"`
 	APISocket    string      `json:"apiSocket"`
@@ -44,12 +53,14 @@ type Firmware struct {
 	Path string `json:"path"`
 }
 
+// Disk is one block device passed to Cloud Hypervisor.
 type Disk struct {
 	Path      string `json:"path"`
 	Readonly  bool   `json:"readonly"`
 	ImageType string `json:"imageType,omitempty"`
 }
 
+// Net is one virtio-net device backed by a host TAP interface.
 type Net struct {
 	TAP       string `json:"tap"`
 	MAC       string `json:"mac"`
@@ -70,14 +81,21 @@ type Annotations struct {
 	VMName string `json:"vmName"`
 }
 
+// Renderer writes Cloud Hypervisor config and first-boot metadata.
 type Renderer struct {
 	cfg config.Config
 }
 
+// NewRenderer returns a renderer using the supplied process configuration.
 func NewRenderer(cfg config.Config) Renderer {
 	return Renderer{cfg: cfg}
 }
 
+// RenderConfig writes all files required before starting Cloud Hypervisor.
+//
+// For cloud-image boots it also regenerates the NoCloud CIDATA disk from the
+// VM's current network configs, so the guest sees the same IP/MAC assignment
+// that Cloud Hypervisor receives.
 func (r Renderer) RenderConfig(rec *vmstore.VMRecord) error {
 	if rec == nil {
 		return fmt.Errorf("VM record is nil")
@@ -123,6 +141,10 @@ func metadataNetworks(rec *vmstore.VMRecord) []metadata.Network {
 	return networks
 }
 
+// NewConfig derives Cloud Hypervisor arguments from a VM record.
+//
+// The function is pure with respect to the filesystem; Renderer.RenderConfig is
+// responsible for writing the returned config and any metadata sidecars.
 func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 	apiSocket := filepath.Join(rec.RunDir, "ch.sock")
 	stdoutLog := filepath.Join(rec.LogDir, "cloud-hypervisor.stdout.log")

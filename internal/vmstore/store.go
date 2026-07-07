@@ -16,11 +16,20 @@ import (
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 )
 
+// Store serializes access to the VM index for one backend.
+//
+// The current implementation uses a single JSON index guarded by flock. This is
+// sufficient for the daemonless CLI model: each command can safely update
+// records without requiring a resident coordinator process.
 type Store struct {
 	indexPath string
 	lockPath  string
 }
 
+// New returns a VM store rooted under rootDir.
+//
+// The store path is backend-scoped so future backends can maintain independent
+// indexes without changing the VMRecord shape.
 func New(rootDir string) *Store {
 	backendDir := filepath.Join(rootDir, "backends", backendCloudHypervisor)
 	return &Store{
@@ -29,6 +38,11 @@ func New(rootDir string) *Store {
 	}
 }
 
+// CreateRequest is the normalized intent needed to create a VM record.
+//
+// Paths are resolved to absolute paths before persistence. The request does not
+// create disks, render VMM config, or allocate network resources; runtime code
+// coordinates those side effects around store.Create.
 type CreateRequest struct {
 	Name     string
 	RootDisk string
@@ -41,6 +55,11 @@ type CreateRequest struct {
 	LogDir   string
 }
 
+// Create validates and inserts a VM record.
+//
+// Name uniqueness is enforced inside the store lock. On success the returned
+// record is a defensive copy and may be mutated by the caller without changing
+// the stored index.
 func (s *Store) Create(req CreateRequest) (*VMRecord, error) {
 	if err := validateCreateRequest(req); err != nil {
 		return nil, err
@@ -84,6 +103,10 @@ func (s *Store) Create(req CreateRequest) (*VMRecord, error) {
 	return created, nil
 }
 
+// Inspect returns a VM by ID or name.
+//
+// The returned record is a defensive copy. Callers that want live backend
+// information should use runtime.InspectVM, which overlays an Observation.
 func (s *Store) Inspect(ref string) (*VMRecord, error) {
 	var rec *VMRecord
 	err := s.withIndex(func(idx *vmIndex) error {
@@ -100,6 +123,11 @@ func (s *Store) Inspect(ref string) (*VMRecord, error) {
 	return rec, nil
 }
 
+// Delete removes a VM record from the index.
+//
+// Delete intentionally affects only the VM index. Runtime.DeleteVM is
+// responsible for stopping VMMs and cleaning run/log/network resources before
+// calling this method.
 func (s *Store) Delete(ref string) error {
 	return s.update(func(idx *vmIndex) error {
 		id, err := idx.resolve(ref)
@@ -115,6 +143,10 @@ func (s *Store) Delete(ref string) error {
 	})
 }
 
+// MarkRunning records backend process identity after a successful start.
+//
+// For cloud-image boots, marking running also flips FirstBooted so subsequent
+// starts do not regenerate one-shot first-boot metadata unexpectedly.
 func (s *Store) MarkRunning(ref string, pid int, apiSocket string) (*VMRecord, error) {
 	var updated *VMRecord
 	err := s.update(func(idx *vmIndex) error {
@@ -142,6 +174,10 @@ func (s *Store) MarkRunning(ref string, pid int, apiSocket string) (*VMRecord, e
 	return updated, nil
 }
 
+// MarkError records a lifecycle failure while preserving the VM record.
+//
+// Keeping the record allows inspect, logs, and delete cleanup to work after a
+// failed render/start/stop operation.
 func (s *Store) MarkError(ref string, message string) (*VMRecord, error) {
 	var updated *VMRecord
 	err := s.update(func(idx *vmIndex) error {
@@ -163,6 +199,10 @@ func (s *Store) MarkError(ref string, message string) (*VMRecord, error) {
 	return updated, nil
 }
 
+// MarkStopped clears transient backend identity after a VM has stopped.
+//
+// Network attachments and image references are intentionally preserved so the
+// VM can be started again with the same identity.
 func (s *Store) MarkStopped(ref string) (*VMRecord, error) {
 	var updated *VMRecord
 	err := s.update(func(idx *vmIndex) error {
@@ -187,6 +227,11 @@ func (s *Store) MarkStopped(ref string) (*VMRecord, error) {
 	return updated, nil
 }
 
+// SetNetworkConfigs stores the VM-side view of allocated network attachments.
+//
+// Provider records and leases live in the network store. Keeping a copy here
+// lets runtime render Cloud Hypervisor config even if provider inspection later
+// reports drift.
 func (s *Store) SetNetworkConfigs(ref string, configs []kbnetwork.Config) (*VMRecord, error) {
 	var updated *VMRecord
 	err := s.update(func(idx *vmIndex) error {
@@ -207,6 +252,10 @@ func (s *Store) SetNetworkConfigs(ref string, configs []kbnetwork.Config) (*VMRe
 	return updated, nil
 }
 
+// List returns all VM records sorted by creation time.
+//
+// Each element is a defensive copy. Runtime.ListVMs may update observations on
+// these copies without changing persisted state.
 func (s *Store) List() ([]*VMRecord, error) {
 	var records []*VMRecord
 	err := s.withIndex(func(idx *vmIndex) error {

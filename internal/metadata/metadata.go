@@ -1,3 +1,8 @@
+// Package metadata renders NoCloud seed data for cloud-image guests.
+//
+// Cloud images rely on cloud-init to set hostname, users, and first-boot
+// networking. KumaBox writes the standard NoCloud files both as plain files for
+// inspection and as a small CIDATA disk consumed by the guest.
 package metadata
 
 import (
@@ -10,8 +15,11 @@ import (
 	"text/template"
 )
 
+// CidataLabel is the volume label cloud-init uses to discover NoCloud media.
 const CidataLabel = "CIDATA"
 
+// Config is the input used to render NoCloud metadata, user-data, and network
+// configuration.
 type Config struct {
 	InstanceID string
 	Hostname   string
@@ -19,6 +27,10 @@ type Config struct {
 	Networks   []Network
 }
 
+// Network describes one guest interface in cloud-init network-config format.
+//
+// Interfaces are matched by MAC so guest interface names can be set
+// deterministically even if kernel enumeration order changes.
 type Network struct {
 	MAC     string
 	IP      string
@@ -27,6 +39,7 @@ type Network struct {
 	DNS     []string
 }
 
+// Rendered contains the three NoCloud files before they are written to disk.
 type Rendered struct {
 	MetaData      []byte
 	UserData      []byte
@@ -81,6 +94,7 @@ ethernets:
 `))
 )
 
+// Render builds NoCloud meta-data, user-data, and network-config files.
 func Render(cfg Config) (*Rendered, error) {
 	if cfg.InstanceID == "" {
 		return nil, fmt.Errorf("instance ID must not be empty")
@@ -104,6 +118,10 @@ func Render(cfg Config) (*Rendered, error) {
 	return &rendered, nil
 }
 
+// WriteNoCloud writes NoCloud files and a CIDATA disk image.
+//
+// The directory files are useful for debugging. The disk image is what Cloud
+// Hypervisor attaches to the guest during firmware/cloud-image boots.
 func WriteNoCloud(dir, diskPath string, cfg Config) error {
 	rendered, err := Render(cfg)
 	if err != nil {
@@ -147,6 +165,7 @@ func executeTemplate(tmpl *template.Template, cfg Config, out *[]byte) error {
 	return nil
 }
 
+// ContainsNoCloudFiles performs a lightweight smoke check for rendered seed data.
 func ContainsNoCloudFiles(raw []byte) bool {
 	s := string(raw)
 	return strings.Contains(s, "instance-id:") &&
@@ -154,6 +173,7 @@ func ContainsNoCloudFiles(raw []byte) bool {
 		strings.Contains(s, "version: 2")
 }
 
+// WriteNoCloudImage writes only the CIDATA disk image to w.
 func WriteNoCloudImage(w io.Writer, cfg Config) error {
 	rendered, err := Render(cfg)
 	if err != nil {

@@ -35,10 +35,19 @@ func (execRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 	return out, nil
 }
 
+// EnsureHostTap creates or reconciles the global host-tap bridge.
+//
+// The bridge, gateway address, IP forwarding, and NAT rule are shared by VMs
+// under one KumaBox root. Ownership is recorded on disk so another root cannot
+// accidentally tear down or reconfigure the same host device.
 func EnsureHostTap(ctx context.Context, rootDir string, cfg config.NetworkConfig) (*HostTapReport, error) {
 	return ensureHostTap(ctx, rootDir, cfg, execRunner{})
 }
 
+// TeardownHostTap removes the global host-tap bridge and NAT rule.
+//
+// Teardown refuses to run while HostTapState.RefCount is non-zero. VM delete is
+// responsible for deleting per-VM taps and decrementing that reference count.
 func TeardownHostTap(ctx context.Context, rootDir string, cfg config.NetworkConfig) (*HostTapReport, error) {
 	return teardownHostTap(ctx, rootDir, cfg, execRunner{})
 }
@@ -67,6 +76,9 @@ func ensureHostTap(ctx context.Context, rootDir string, cfg config.NetworkConfig
 		return nil, err
 	}
 
+	// Host-tap setup is intentionally idempotent. Every create/run path may call
+	// it, while the persisted owner state prevents KumaBox from adopting an
+	// unrelated bridge with the same name.
 	report := &HostTapReport{
 		Bridge:     cfg.Bridge,
 		CIDR:       cfg.CIDR,

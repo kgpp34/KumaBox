@@ -8,6 +8,11 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
+// AttachHostTap creates a TAP device and enslaves it to the configured bridge.
+//
+// The TAP is created with IFF_NO_PI and vnet_hdr support because Cloud
+// Hypervisor's virtio-net path expects packet frames without Linux's extra
+// packet-info header and benefits from virtio network header offload metadata.
 func AttachHostTap(rec Record) error {
 	if rec.TAP == "" {
 		return fmt.Errorf("tap name must not be empty")
@@ -38,6 +43,10 @@ func AttachHostTap(rec Record) error {
 	return nil
 }
 
+// DeleteHostTap removes a per-VM TAP device.
+//
+// The operation is idempotent. VM delete and failure rollback both call it, and
+// a missing device means the desired cleanup state has already been reached.
 func DeleteHostTap(tapName string) error {
 	if tapName == "" {
 		return nil
