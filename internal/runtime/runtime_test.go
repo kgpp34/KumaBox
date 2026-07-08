@@ -839,7 +839,10 @@ func TestCreateVMAttachesMultipleNetworkConfigs(t *testing.T) {
 	var requests []kbnetwork.CNIAddRequest
 	withAddCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIAddRequest) (*kbnetwork.Allocation, error) {
 		requests = append(requests, req)
-		return testIndexedCNIAllocation(req.VMID, req.Network, req.Index), nil
+		allocation := testIndexedCNIAllocation(req.VMID, req.Network, req.Index)
+		allocation.Record.NumQueues = req.CPU * 2
+		allocation.Config.NumQueues = req.CPU * 2
+		return allocation, nil
 	})
 
 	rec, err := rt.CreateVM(vmstore.CreateRequest{
@@ -847,6 +850,7 @@ func TestCreateVMAttachesMultipleNetworkConfigs(t *testing.T) {
 		RootDisk: "base.qcow2",
 		Kernel:   "vmlinuz",
 		Initrd:   "initrd.img",
+		CPUs:     3,
 		Networks: []string{"cni:front", "cni:back"},
 		RunDir:   filepath.Join(dir, "run"),
 		LogDir:   filepath.Join(dir, "log"),
@@ -860,6 +864,9 @@ func TestCreateVMAttachesMultipleNetworkConfigs(t *testing.T) {
 	if len(requests) != 2 || requests[0].Index != 0 || requests[1].Index != 1 {
 		t.Fatalf("cni add requests = %+v", requests)
 	}
+	if requests[0].CPU != 3 || requests[1].CPU != 3 {
+		t.Fatalf("cni add request cpus = %+v", requests)
+	}
 	if requests[0].Network != "cni:front" || requests[1].Network != "cni:back" {
 		t.Fatalf("cni add request networks = %+v", requests)
 	}
@@ -871,6 +878,9 @@ func TestCreateVMAttachesMultipleNetworkConfigs(t *testing.T) {
 	}
 	if rec.NetworkConfigs[1].NetworkName != "cni:back" || rec.NetworkConfigs[1].IfName != "eth1" {
 		t.Fatalf("second network config = %+v", rec.NetworkConfigs[1])
+	}
+	if rec.NetworkConfigs[0].NumQueues != 6 || rec.NetworkConfigs[1].NumQueues != 6 {
+		t.Fatalf("network config queues = %+v", rec.NetworkConfigs)
 	}
 }
 

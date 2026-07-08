@@ -296,6 +296,7 @@ func TestNewCreateRequestPreservesRepeatedNetworks(t *testing.T) {
 		name:     "multi-net",
 		rootDisk: "fixtures/base.qcow2",
 		firmware: "fixtures/CLOUDHV.fd",
+		cpus:     3,
 		networks: []string{"cni:front", "cni:back"},
 	}, nil, cfg)
 	if err != nil {
@@ -303,6 +304,9 @@ func TestNewCreateRequestPreservesRepeatedNetworks(t *testing.T) {
 	}
 	if len(req.Networks) != 2 || req.Networks[0] != "cni:front" || req.Networks[1] != "cni:back" {
 		t.Fatalf("networks = %#v", req.Networks)
+	}
+	if req.CPUs != 3 {
+		t.Fatalf("cpus = %d", req.CPUs)
 	}
 }
 

@@ -77,6 +77,7 @@ type VMRecord struct {
 	Initrd         string                   `json:"initrd,omitempty"`
 	Firmware       string                   `json:"firmware,omitempty"`
 	Image          *ImageRef                `json:"image,omitempty"`
+	CPUs           int                      `json:"cpus"`
 	Metadata       *Metadata                `json:"metadata,omitempty"`
 	NetworkConfigs []kbnetwork.Config       `json:"networkConfigs,omitempty"`
 	Network        string                   `json:"network,omitempty"`
@@ -144,6 +145,7 @@ func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
 		return nil, err
 	}
 	network := primaryNetwork(networks)
+	cpus := normalizeCPUs(req.CPUs)
 	rec := &VMRecord{
 		ID:        id,
 		Name:      req.Name,
@@ -154,6 +156,7 @@ func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
 		Initrd:    initrd,
 		Firmware:  firmware,
 		Image:     cloneImageRef(req.Image),
+		CPUs:      cpus,
 		Network:   network,
 		Networks:  cloneStrings(networks),
 		RunDir:    runDir,
@@ -170,6 +173,13 @@ func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
 		}
 	}
 	return rec, nil
+}
+
+func normalizeCPUs(cpus int) int {
+	if cpus <= 0 {
+		return 1
+	}
+	return cpus
 }
 
 func cloneRecord(rec *VMRecord) *VMRecord {

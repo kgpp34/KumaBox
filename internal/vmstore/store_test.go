@@ -134,6 +134,40 @@ func TestCreateSupportsFirmwareBoot(t *testing.T) {
 	}
 }
 
+func TestCreatePersistsCPUs(t *testing.T) {
+	dir := t.TempDir()
+	store := New(filepath.Join(dir, "data"))
+
+	defaulted, err := store.Create(CreateRequest{
+		Name:     "default-cpu",
+		RootDisk: "ubuntu.img",
+		Firmware: "CLOUDHV.fd",
+		RunDir:   filepath.Join(dir, "run"),
+		LogDir:   filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaulted.CPUs != 1 {
+		t.Fatalf("default cpus = %d", defaulted.CPUs)
+	}
+
+	custom, err := store.Create(CreateRequest{
+		Name:     "custom-cpu",
+		RootDisk: "ubuntu.img",
+		Firmware: "CLOUDHV.fd",
+		CPUs:     4,
+		RunDir:   filepath.Join(dir, "run"),
+		LogDir:   filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if custom.CPUs != 4 {
+		t.Fatalf("custom cpus = %d", custom.CPUs)
+	}
+}
+
 func TestCreatePersistsImageRef(t *testing.T) {
 	dir := t.TempDir()
 	store := New(filepath.Join(dir, "data"))

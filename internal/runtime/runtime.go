@@ -359,7 +359,7 @@ func (r *Runtime) attachNetworkConfig(rec *vmstore.VMRecord, selection string, i
 		VMID:    rec.ID,
 		Network: selection,
 		Index:   index,
-		CPU:     1,
+		CPU:     rec.CPUs,
 	})
 	if err != nil {
 		return nil, err
@@ -391,7 +391,7 @@ func (r *Runtime) attachCNIConfig(rec *vmstore.VMRecord, selection string, index
 		VMID:    rec.ID,
 		Network: selection,
 		Index:   index,
-		CPU:     1,
+		CPU:     rec.CPUs,
 	})
 	if err != nil {
 		return nil, err

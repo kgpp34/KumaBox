@@ -234,6 +234,7 @@ type createVMFlags struct {
 	kernel   string
 	initrd   string
 	firmware string
+	cpus     int
 	networks []string
 }
 
@@ -243,11 +244,18 @@ func addCreateVMFlags(cmd *cobra.Command, flags *createVMFlags) {
 	cmd.Flags().StringVar(&flags.kernel, "kernel", "", "kernel image path")
 	cmd.Flags().StringVar(&flags.initrd, "initrd", "", "initrd image path")
 	cmd.Flags().StringVar(&flags.firmware, "firmware", "", "UEFI firmware path")
+	cmd.Flags().IntVar(&flags.cpus, "cpus", 1, "number of vCPUs")
 	cmd.Flags().StringArrayVar(&flags.networks, "network", nil, "network attachment, repeatable: none, default, host-tap, cni, or cni:NAME")
 	_ = cmd.MarkFlagRequired("name")
 }
 
 func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vmstore.CreateRequest, error) {
+	if flags.cpus < 0 {
+		return vmstore.CreateRequest{}, fmt.Errorf("--cpus must be greater than zero")
+	}
+	if flags.cpus == 0 {
+		flags.cpus = 1
+	}
 	if len(args) == 0 {
 		if flags.rootDisk == "" {
 			return vmstore.CreateRequest{}, fmt.Errorf("either IMAGE or --root-disk is required")
@@ -258,6 +266,7 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 			Kernel:   flags.kernel,
 			Initrd:   flags.initrd,
 			Firmware: flags.firmware,
+			CPUs:     flags.cpus,
 			Networks: normalizedNetworkFlags(flags.networks),
 			RunDir:   cfg.Runtime.RunDir,
 			LogDir:   cfg.Runtime.LogDir,
@@ -280,6 +289,7 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 		Kernel:   image.Boot.Kernel,
 		Initrd:   image.Boot.Initrd,
 		Firmware: image.Boot.Firmware,
+		CPUs:     flags.cpus,
 		Networks: normalizedNetworkFlags(flags.networks),
 		Image: &vmstore.ImageRef{
 			ID:       image.ID,

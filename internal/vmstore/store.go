@@ -50,6 +50,7 @@ type CreateRequest struct {
 	Initrd   string
 	Firmware string
 	Image    *ImageRef
+	CPUs     int
 	Network  string
 	Networks []string
 	RunDir   string
@@ -373,6 +374,9 @@ func validateCreateRequest(req CreateRequest) error {
 	}
 	if req.LogDir == "" {
 		return errors.New("log dir must not be empty")
+	}
+	if req.CPUs < 0 {
+		return errors.New("cpus must be greater than zero")
 	}
 	if _, err := normalizeNetworks(req.Network, req.Networks); err != nil {
 		return err

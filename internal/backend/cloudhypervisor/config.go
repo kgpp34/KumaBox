@@ -33,6 +33,7 @@ type Config struct {
 	Kernel       *Kernel     `json:"kernel,omitempty"`
 	Initramfs    *Initramfs  `json:"initramfs,omitempty"`
 	Firmware     *Firmware   `json:"firmware,omitempty"`
+	CPUs         CPUs        `json:"cpus"`
 	Disks        []Disk      `json:"disks"`
 	Nets         []Net       `json:"nets,omitempty"`
 	Serial       Serial      `json:"serial"`
@@ -52,6 +53,10 @@ type Initramfs struct {
 
 type Firmware struct {
 	Path string `json:"path"`
+}
+
+type CPUs struct {
+	Boot int `json:"boot"`
 }
 
 // Disk is one block device passed to Cloud Hypervisor.
@@ -117,10 +122,22 @@ func (r Renderer) RenderConfig(rec *vmstore.VMRecord) error {
 			return fmt.Errorf("render NoCloud metadata: %w", err)
 		}
 	}
+	if err := validateNetworkQueues(rec); err != nil {
+		return err
+	}
 
 	rendered := NewConfig(r.cfg, rec)
 	if err := fileutil.WriteJSONAtomic(rec.Config, rendered, ".cloud-hypervisor-*.tmp"); err != nil {
 		return fmt.Errorf("write Cloud Hypervisor config: %w", err)
+	}
+	return nil
+}
+
+func validateNetworkQueues(rec *vmstore.VMRecord) error {
+	for _, nc := range rec.NetworkConfigs {
+		if nc.NumQueues > 0 && nc.NumQueues < 2 {
+			return fmt.Errorf("network %s numQueues must be at least 2", nc.ID)
+		}
 	}
 	return nil
 }
@@ -151,9 +168,11 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 	stdoutLog := filepath.Join(rec.LogDir, "cloud-hypervisor.stdout.log")
 	stderrLog := filepath.Join(rec.LogDir, "cloud-hypervisor.stderr.log")
 	serialLog := filepath.Join(rec.LogDir, "console.log")
+	cpus := vmCPUs(rec)
 
 	args := []string{
 		"--api-socket", apiSocket,
+		"--cpus", fmt.Sprintf("boot=%d", cpus),
 	}
 	if rec.Firmware != "" {
 		args = append(args, "--firmware", rec.Firmware)
@@ -195,6 +214,7 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		StdoutLog:    stdoutLog,
 		StderrLog:    stderrLog,
 		NetnsPath:    netnsPath(rec),
+		CPUs:         CPUs{Boot: cpus},
 		Disks:        newDisks(rec),
 		Nets:         newNets(rec),
 		Serial:       Serial{Path: serialLog},
@@ -215,6 +235,13 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		rendered.Initramfs = &Initramfs{Path: rec.Initrd}
 	}
 	return rendered
+}
+
+func vmCPUs(rec *vmstore.VMRecord) int {
+	if rec == nil || rec.CPUs <= 0 {
+		return 1
+	}
+	return rec.CPUs
 }
 
 func netnsPath(rec *vmstore.VMRecord) string {

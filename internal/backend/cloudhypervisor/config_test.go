@@ -120,6 +120,7 @@ func TestRenderConfigIncludesNetworkDevice(t *testing.T) {
 		Name:     "net",
 		RootDisk: "/fixtures/ubuntu.img",
 		Firmware: "/fixtures/CLOUDHV.fd",
+		CPUs:     4,
 		RunDir:   filepath.Join(dir, "run", "vms", "kb_net"),
 		LogDir:   filepath.Join(dir, "logs", "vms", "kb_net"),
 		Config:   filepath.Join(dir, "run", "vms", "kb_net", "cloud-hypervisor.json"),
@@ -167,6 +168,12 @@ func TestRenderConfigIncludesNetworkDevice(t *testing.T) {
 	if rendered.NetnsPath != "/var/run/netns/kb_net" {
 		t.Fatalf("netns path = %s", rendered.NetnsPath)
 	}
+	if rendered.CPUs.Boot != 4 {
+		t.Fatalf("cpus = %+v", rendered.CPUs)
+	}
+	if !argsContainPair(rendered.Args, "--cpus", "boot=4") {
+		t.Fatalf("cpus arg missing: %v", rendered.Args)
+	}
 	if !argsContainPair(rendered.Args, "--net", "tap=kbtaptest,mac=02:00:00:00:00:11,num_queues=2,queue_size=256") {
 		t.Fatalf("net arg missing: %v", rendered.Args)
 	}
@@ -178,6 +185,31 @@ func TestRenderConfigIncludesNetworkDevice(t *testing.T) {
 		!bytes.Contains(networkConfig, []byte("10.88.0.2/16")) ||
 		!bytes.Contains(networkConfig, []byte("gateway4: 10.88.0.1")) {
 		t.Fatalf("network-config = %s", networkConfig)
+	}
+}
+
+func TestRenderConfigRejectsInvalidNetworkQueues(t *testing.T) {
+	dir := t.TempDir()
+	rec := &vmstore.VMRecord{
+		ID:       "kb_bad_queue",
+		Name:     "bad-queue",
+		RootDisk: "/fixtures/ubuntu.img",
+		Firmware: "/fixtures/CLOUDHV.fd",
+		RunDir:   filepath.Join(dir, "run", "vms", "kb_bad_queue"),
+		LogDir:   filepath.Join(dir, "logs", "vms", "kb_bad_queue"),
+		Config:   filepath.Join(dir, "run", "vms", "kb_bad_queue", "cloud-hypervisor.json"),
+		NetworkConfigs: []kbnetwork.Config{{
+			ID:        "net_bad",
+			TAP:       "kbtapbad",
+			MAC:       "02:00:00:00:00:12",
+			NumQueues: 1,
+			Backend:   kbnetwork.ProviderHostTap,
+		}},
+	}
+
+	err := NewRenderer(config.Default()).RenderConfig(rec)
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("numQueues must be at least 2")) {
+		t.Fatalf("render error = %v", err)
 	}
 }
 
