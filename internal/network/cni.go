@@ -63,6 +63,10 @@ func DeleteCNI(ctx context.Context, rootDir string, cfg config.NetworkConfig, re
 	return NewCNIProvider(rootDir, cfg).Delete(ctx, req)
 }
 
+func DeleteCNINetNS(vmID, netnsPath string) error {
+	return deleteCNINetns(vmID, netnsPath)
+}
+
 func (p *CNIProvider) Add(ctx context.Context, req CNIAddRequest) (_ *Allocation, retErr error) {
 	if req.VMID == "" {
 		return nil, fmt.Errorf("vm id must not be empty")

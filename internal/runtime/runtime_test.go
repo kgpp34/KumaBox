@@ -698,6 +698,7 @@ func TestDeleteVMCleansCNIResources(t *testing.T) {
 		deleted = append(deleted, req)
 		return nil
 	})
+	withDeleteCNINetNS(t, func(string, string) error { return nil })
 
 	rec := createVMWithCNIConfig(t, rt, "delete-cni")
 	if _, err := rt.DeleteVM(rec.ID, false); err != nil {
@@ -708,6 +709,51 @@ func TestDeleteVMCleansCNIResources(t *testing.T) {
 	}
 	if deleted[0].VMID != rec.ID || deleted[0].Network != "cni:default" || deleted[0].IfName != "eth0" || deleted[0].TAP != "kbcni0" {
 		t.Fatalf("delete request = %+v", deleted[0])
+	}
+	records, err := kbnetwork.NewStore(rootDir).List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("network records after delete = %+v", records)
+	}
+}
+
+func TestDeleteVMCleansMultipleCNIResourcesAndNetNS(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	store := vmstore.New(rootDir)
+	rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	rt.cfg = testRuntimeConfig(rootDir)
+	withAddCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIAddRequest) (*kbnetwork.Allocation, error) {
+		return testIndexedCNIAllocation(req.VMID, req.Network, req.Index), nil
+	})
+	deleted := []kbnetwork.CNIDeleteRequest{}
+	withDeleteCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIDeleteRequest) error {
+		deleted = append(deleted, req)
+		return nil
+	})
+	deletedNetNS := []string{}
+	withDeleteCNINetNS(t, func(vmID, netnsPath string) error {
+		deletedNetNS = append(deletedNetNS, vmID+" "+netnsPath)
+		return nil
+	})
+
+	rec := createVMWithMultiCNIConfig(t, rt, "delete-multi-cni")
+	if _, err := rt.DeleteVM(rec.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(deleted) != 2 {
+		t.Fatalf("deleted cni calls = %+v", deleted)
+	}
+	if deleted[0].IfName != "eth0" || deleted[0].TAP != "kbcni0" || !deleted[0].PreserveNetNS {
+		t.Fatalf("first delete request = %+v", deleted[0])
+	}
+	if deleted[1].IfName != "eth1" || deleted[1].TAP != "kbcni1" || !deleted[1].PreserveNetNS {
+		t.Fatalf("second delete request = %+v", deleted[1])
+	}
+	if len(deletedNetNS) != 1 || deletedNetNS[0] != rec.ID+" /proc/self/ns/net" {
+		t.Fatalf("deleted netns = %+v", deletedNetNS)
 	}
 	records, err := kbnetwork.NewStore(rootDir).List()
 	if err != nil {
@@ -742,6 +788,44 @@ func TestDeleteVMMarksCNICleanupPendingOnFailure(t *testing.T) {
 	}
 	if len(records) != 1 || !records[0].Cleanup.Pending || !strings.Contains(records[0].Cleanup.Reason, "cni del failed") {
 		t.Fatalf("records after failure = %+v", records)
+	}
+}
+
+func TestDeleteVMMultiCNIPreservesNetNSOnPartialFailure(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	store := vmstore.New(rootDir)
+	rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	rt.cfg = testRuntimeConfig(rootDir)
+	withAddCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIAddRequest) (*kbnetwork.Allocation, error) {
+		return testIndexedCNIAllocation(req.VMID, req.Network, req.Index), nil
+	})
+	delErr := errors.New("cni del eth0 failed")
+	withDeleteCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIDeleteRequest) error {
+		if req.IfName == "eth0" {
+			return delErr
+		}
+		return nil
+	})
+	netnsDeleted := false
+	withDeleteCNINetNS(t, func(string, string) error {
+		netnsDeleted = true
+		return nil
+	})
+
+	rec := createVMWithMultiCNIConfig(t, rt, "pending-multi-cni")
+	if _, err := rt.DeleteVM(rec.ID, false); !errors.Is(err, delErr) {
+		t.Fatalf("delete error = %v, want %v", err, delErr)
+	}
+	if netnsDeleted {
+		t.Fatal("netns should be preserved when one CNI NIC cleanup fails")
+	}
+	records, err := kbnetwork.NewStore(rootDir).List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].IfName != "eth0" || !records[0].Cleanup.Pending {
+		t.Fatalf("records after partial failure = %+v", records)
 	}
 }
 
@@ -831,6 +915,15 @@ func withAddCNI(
 	})
 }
 
+func withDeleteCNINetNS(t *testing.T, fn func(string, string) error) {
+	t.Helper()
+	previous := deleteCNINetNS
+	deleteCNINetNS = fn
+	t.Cleanup(func() {
+		deleteCNINetNS = previous
+	})
+}
+
 func createVMWithNetwork(
 	t *testing.T,
 	rt *Runtime,
@@ -879,6 +972,23 @@ func createVMWithCNIConfig(t *testing.T, rt *Runtime, name string) *vmstore.VMRe
 		Kernel:   "vmlinuz",
 		Initrd:   "initrd.img",
 		Network:  "cni:default",
+		RunDir:   filepath.Join(t.TempDir(), "run"),
+		LogDir:   filepath.Join(t.TempDir(), "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rec
+}
+
+func createVMWithMultiCNIConfig(t *testing.T, rt *Runtime, name string) *vmstore.VMRecord {
+	t.Helper()
+	rec, err := rt.CreateVM(vmstore.CreateRequest{
+		Name:     name,
+		RootDisk: "base.qcow2",
+		Kernel:   "vmlinuz",
+		Initrd:   "initrd.img",
+		Networks: []string{"cni:front", "cni:back"},
 		RunDir:   filepath.Join(t.TempDir(), "run"),
 		LogDir:   filepath.Join(t.TempDir(), "log"),
 	})

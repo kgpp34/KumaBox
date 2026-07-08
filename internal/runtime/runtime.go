@@ -30,6 +30,7 @@ type Runtime struct {
 var deleteHostTap = kbnetwork.DeleteHostTap
 var addCNI = kbnetwork.AddCNI
 var deleteCNI = kbnetwork.DeleteCNI
+var deleteCNINetNS = kbnetwork.DeleteCNINetNS
 
 // New creates a Runtime backed by the configured Cloud Hypervisor backend.
 func New(cfg config.Config) *Runtime {
@@ -423,22 +424,30 @@ func (r *Runtime) cleanupNetwork(rec *vmstore.VMRecord) error {
 	store := kbnetwork.NewStore(r.cfg.Runtime.RootDir)
 	allocator := kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network)
 	var cleanupErrs []error
-	cniRemaining := countCNIConfigs(rec.NetworkConfigs)
+	cniCount := countCNIConfigs(rec.NetworkConfigs)
+	cniCleanupFailed := false
 	for _, nc := range rec.NetworkConfigs {
 		preserveCNI := false
 		if nc.Backend == kbnetwork.ProviderCNI {
-			cniRemaining--
-			preserveCNI = cniRemaining > 0
+			preserveCNI = true
 		}
 		if err := cleanupNetworkConfig(context.Background(), store, allocator, r.cfg, rec, nc, preserveCNI); err != nil {
 			// Preserve the provider record when cleanup fails. A later GC or
 			// explicit retry needs the original tap/IP metadata to finish the
 			// cleanup safely.
+			if nc.Backend == kbnetwork.ProviderCNI {
+				cniCleanupFailed = true
+			}
 			reason := err.Error()
 			if markErr := store.MarkCleanupPending(nc.ID, reason); markErr != nil {
 				cleanupErrs = append(cleanupErrs, fmt.Errorf("mark network cleanup pending for %s: %w", nc.ID, markErr))
 			}
 			cleanupErrs = append(cleanupErrs, fmt.Errorf("cleanup network %s: %w", nc.ID, err))
+		}
+	}
+	if cniCount > 0 && !cniCleanupFailed {
+		if err := deleteCNINetNS(rec.ID, cniNetNSPath(rec.NetworkConfigs)); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("delete CNI netns for VM %s: %w", rec.ID, err))
 		}
 	}
 	if err := errors.Join(cleanupErrs...); err != nil {
@@ -497,6 +506,15 @@ func countCNIConfigs(configs []kbnetwork.Config) int {
 		}
 	}
 	return count
+}
+
+func cniNetNSPath(configs []kbnetwork.Config) string {
+	for _, cfg := range configs {
+		if cfg.Backend == kbnetwork.ProviderCNI && cfg.NetnsPath != "" {
+			return cfg.NetnsPath
+		}
+	}
+	return ""
 }
 
 func cniIfName(nc kbnetwork.Config) string {

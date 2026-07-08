@@ -424,6 +424,8 @@ console_log="$(printf '%s' "$created_json" | jq -r '.logDir + "/console.log"')"
 log_dir_for_vm="$(printf '%s' "$created_json" | jq -r '.logDir')"
 mapfile -t taps < <(printf '%s' "$created_json" | jq -r '.networkConfigs[].tap')
 mapfile -t guest_ips < <(printf '%s' "$created_json" | jq -r '.networkConfigs[].network.ip')
+mapfile -t if_names < <(printf '%s' "$created_json" | jq -r '.networkConfigs[].ifName')
+mapfile -t netns_paths < <(printf '%s' "$created_json" | jq -r '.networkConfigs[].netnsPath // empty')
 
 if [[ "$(printf '%s' "$created_json" | jq -r '.network')" != "multi" ]]; then
   echo "legacy network summary should be multi" >&2
@@ -518,6 +520,33 @@ if [[ "$mode" == "host-tap" ]]; then
     fi
     sleep "$ping_interval"
   done
+else
+  section "CNI netns links"
+  if [[ "${#if_names[@]}" -ne 2 || "${if_names[0]}" != "eth0" || "${if_names[1]}" != "eth1" ]]; then
+    echo "expected CNI ifNames eth0 and eth1, got ${if_names[*]}" >&2
+    print_failure_context
+    exit 1
+  fi
+  if [[ "${#netns_paths[@]}" -ne 2 || "${netns_paths[0]}" != "/var/run/netns/$vm_id" || "${netns_paths[1]}" != "/var/run/netns/$vm_id" ]]; then
+    echo "expected both CNI NICs in /var/run/netns/$vm_id, got ${netns_paths[*]}" >&2
+    print_failure_context
+    exit 1
+  fi
+  for i in 0 1; do
+    "${ip_cmd[@]}" netns exec "$vm_id" ip -d link show "${if_names[$i]}"
+    "${ip_cmd[@]}" netns exec "$vm_id" ip -d link show "${taps[$i]}"
+    if "${ip_cmd[@]}" netns exec "$vm_id" ip addr show "${if_names[$i]}" | grep -q "${guest_ips[$i]}"; then
+      echo "CNI address ${guest_ips[$i]} should have been flushed from ${if_names[$i]}" >&2
+      print_failure_context
+      exit 1
+    fi
+  done
+
+  section "CNI tc redirect filters"
+  for i in 0 1; do
+    "${ip_cmd[@]}" netns exec "$vm_id" tc filter show dev "${if_names[$i]}" ingress
+    "${ip_cmd[@]}" netns exec "$vm_id" tc filter show dev "${taps[$i]}" ingress
+  done
 fi
 
 section "delete VM and verify cleanup"
@@ -537,6 +566,11 @@ if [[ "$mode" == "cni" ]]; then
   if ! "${cat_cmd[@]}" "$cni_log" | grep -q "DEL $vm_id eth1 /var/run/netns/$vm_id"; then
     echo "missing CNI DEL for eth1" >&2
     "${cat_cmd[@]}" "$cni_log" || true
+    exit 1
+  fi
+  if "${ip_cmd[@]}" netns list | grep -q "^$vm_id "; then
+    echo "netns remains after successful CNI multi-NIC delete" >&2
+    "${ip_cmd[@]}" netns list
     exit 1
   fi
 else
