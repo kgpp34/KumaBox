@@ -1,6 +1,8 @@
 FROM ubuntu:24.04
 
 ARG TARGETARCH
+ARG APT_MIRROR=""
+ARG APT_SECURITY_MIRROR=""
 ENV DEBIAN_FRONTEND=noninteractive
 
 COPY overlay.sh /usr/local/share/kumabox/initramfs/kumabox-overlay
@@ -8,7 +10,14 @@ COPY network.sh /usr/local/share/kumabox/initramfs/kumabox-network
 COPY agent-stub.sh /usr/local/bin/kumabox-agent
 COPY kumabox-agent.service /etc/systemd/system/kumabox-agent.service
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN if [ -n "$APT_MIRROR" ]; then \
+        sed -i "s|http://archive.ubuntu.com/ubuntu|$APT_MIRROR|g; s|http://ports.ubuntu.com/ubuntu-ports|$APT_MIRROR|g" /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true; \
+    fi \
+    && if [ -n "$APT_SECURITY_MIRROR" ]; then \
+        sed -i "s|http://security.ubuntu.com/ubuntu|$APT_SECURITY_MIRROR|g; s|http://ports.ubuntu.com/ubuntu-ports|$APT_SECURITY_MIRROR|g" /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true; \
+    fi \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         initramfs-tools \
