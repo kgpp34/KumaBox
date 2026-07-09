@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-context_dir="os-image/ubuntu"
-dockerfile="os-image/ubuntu/24.04/Dockerfile"
+context_dir="oci-images/ubuntu"
+dockerfile="oci-images/ubuntu/24.04/Dockerfile"
 tag="kumabox/ubuntu:24.04-p3"
 platform="linux/amd64"
 fixture_dir="/tmp/kumabox-p0/fixtures/oci"
@@ -17,8 +17,8 @@ usage() {
 Usage: scripts/linux/verify-oci-base-image.sh [options]
 
 Options:
-  --context-dir PATH   Docker build context, defaults to os-image/ubuntu
-  --dockerfile PATH    Dockerfile path, defaults to os-image/ubuntu/24.04/Dockerfile
+  --context-dir PATH   Docker build context, defaults to oci-images/ubuntu
+  --dockerfile PATH    Dockerfile path, defaults to oci-images/ubuntu/24.04/Dockerfile
   --tag REF            Local image tag, defaults to kumabox/ubuntu:24.04-p3
   --platform PLATFORM  Docker build platform, defaults to linux/amd64
   --fixture-dir PATH   Output fixture directory, defaults to /tmp/kumabox-p0/fixtures/oci
