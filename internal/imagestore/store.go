@@ -51,6 +51,7 @@ type CreateRequest struct {
 	RootDisk RootDisk
 	Boot     Boot
 	OS       OS
+	OCI      *OCI
 }
 
 // ImportRequest describes a local cloud image import operation.
@@ -135,8 +136,21 @@ func (s *Store) Create(req CreateRequest) (*ImageRecord, error) {
 			RootDisk:      req.RootDisk,
 			Boot:          req.Boot,
 			OS:            req.OS,
+			OCI:           cloneOCI(req.OCI),
 			CreatedAt:     now,
 			UpdatedAt:     now,
+		}
+		imageDir := filepath.Join(s.cloudimgDir, id)
+		if err := os.MkdirAll(imageDir, 0o755); err != nil {
+			return fmt.Errorf("create image dir: %w", err)
+		}
+		if err := fileutil.WriteJSONAtomic(filepath.Join(imageDir, "image.json"), rec, ".image-*.tmp"); err != nil {
+			_ = os.RemoveAll(imageDir)
+			return fmt.Errorf("write image manifest: %w", err)
+		}
+		if err := fileutil.WriteJSONAtomic(filepath.Join(imageDir, "source.json"), rec.Source, ".source-*.tmp"); err != nil {
+			_ = os.RemoveAll(imageDir)
+			return fmt.Errorf("write image source manifest: %w", err)
 		}
 
 		idx.Images[id] = rec
@@ -400,6 +414,7 @@ func (s *Store) commitImportedImage(req CreateRequest, stagedDisk string) (*Imag
 			},
 			Boot:      req.Boot,
 			OS:        req.OS,
+			OCI:       cloneOCI(req.OCI),
 			CreatedAt: now,
 			UpdatedAt: now,
 		}
@@ -421,6 +436,22 @@ func (s *Store) commitImportedImage(req CreateRequest, stagedDisk string) (*Imag
 		return nil, err
 	}
 	return created, nil
+}
+
+func cloneOCI(oci *OCI) *OCI {
+	if oci == nil {
+		return nil
+	}
+	copied := *oci
+	copied.Layers = append([]OCILayer(nil), oci.Layers...)
+	for i := range copied.Layers {
+		if copied.Layers[i].EROFS == nil {
+			continue
+		}
+		erofs := *copied.Layers[i].EROFS
+		copied.Layers[i].EROFS = &erofs
+	}
+	return &copied
 }
 
 func referencesForImage(refs []Reference, imageID string) []Reference {

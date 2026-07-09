@@ -40,6 +40,49 @@ type OS struct {
 	Profile string `json:"profile,omitempty"`
 }
 
+// OCIPlatform identifies the image platform selected during OCI resolution.
+type OCIPlatform struct {
+	OS           string `json:"os"`
+	Architecture string `json:"architecture"`
+	Variant      string `json:"variant,omitempty"`
+}
+
+// OCIDescriptor records one digest-addressed OCI object.
+type OCIDescriptor struct {
+	Digest    string `json:"digest"`
+	MediaType string `json:"mediaType,omitempty"`
+	SizeBytes int64  `json:"sizeBytes,omitempty"`
+}
+
+// EROFSLayer records the converted read-only filesystem for one OCI layer.
+type EROFSLayer struct {
+	Path        string `json:"path"`
+	Filesystem  string `json:"filesystem"`
+	Digest      string `json:"digest"`
+	SizeBytes   int64  `json:"sizeBytes"`
+	SourceLayer string `json:"sourceLayer"`
+}
+
+// OCILayer records one OCI layer and its converted shared filesystem.
+type OCILayer struct {
+	Index     int         `json:"index"`
+	Digest    string      `json:"digest"`
+	MediaType string      `json:"mediaType"`
+	SizeBytes int64       `json:"sizeBytes"`
+	EROFS     *EROFSLayer `json:"erofs,omitempty"`
+}
+
+// OCI records the OCI source and layer order for an image build.
+type OCI struct {
+	Ref       string        `json:"ref"`
+	Source    string        `json:"source"`
+	DigestRef string        `json:"digestRef"`
+	Platform  OCIPlatform   `json:"platform"`
+	Config    OCIDescriptor `json:"config"`
+	Layers    []OCILayer    `json:"layers"`
+	BuiltAt   time.Time     `json:"builtAt"`
+}
+
 // ImageRecord is the persisted metadata for one managed image.
 type ImageRecord struct {
 	SchemaVersion string    `json:"schemaVersion"`
@@ -49,6 +92,7 @@ type ImageRecord struct {
 	RootDisk      RootDisk  `json:"rootDisk"`
 	Boot          Boot      `json:"boot"`
 	OS            OS        `json:"os"`
+	OCI           *OCI      `json:"oci,omitempty"`
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
 }
@@ -58,5 +102,17 @@ func cloneRecord(rec *ImageRecord) *ImageRecord {
 		return nil
 	}
 	copied := *rec
+	if rec.OCI != nil {
+		oci := *rec.OCI
+		oci.Layers = append([]OCILayer(nil), rec.OCI.Layers...)
+		for i := range oci.Layers {
+			if oci.Layers[i].EROFS == nil {
+				continue
+			}
+			erofs := *oci.Layers[i].EROFS
+			oci.Layers[i].EROFS = &erofs
+		}
+		copied.OCI = &oci
+	}
 	return &copied
 }
