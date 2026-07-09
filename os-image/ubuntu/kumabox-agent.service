@@ -1,0 +1,17 @@
+[Unit]
+Description=KumaBox agent
+Documentation=https://github.com/kumabox/kumabox
+After=multi-user.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStartPre=-/sbin/modprobe vhost_vsock
+ExecStart=/usr/local/bin/kumabox-agent serve
+Restart=always
+RestartSec=2s
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
