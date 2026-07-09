@@ -22,6 +22,15 @@ type Platform struct {
 	Variant      string `json:"variant,omitempty"`
 }
 
+// V1 converts Platform to go-containerregistry's platform type.
+func (p Platform) V1() v1.Platform {
+	return v1.Platform{
+		OS:           p.OS,
+		Architecture: p.Architecture,
+		Variant:      p.Variant,
+	}
+}
+
 // Descriptor describes one OCI descriptor needed by later content-store steps.
 type Descriptor struct {
 	Digest    string `json:"digest"`
@@ -58,11 +67,7 @@ func (Resolver) Resolve(ctx context.Context, ref string, platform string) (*Resu
 	img, err := remote.Image(parsed,
 		remote.WithAuthFromKeychain(authn.DefaultKeychain),
 		remote.WithContext(ctx),
-		remote.WithPlatform(v1.Platform{
-			OS:           selected.OS,
-			Architecture: selected.Architecture,
-			Variant:      selected.Variant,
-		}),
+		remote.WithPlatform(selected.V1()),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("OCI_RESOLVE_FAILED: %w", err)

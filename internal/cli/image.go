@@ -10,6 +10,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/ociresolver"
+	"github.com/kumabox/kumabox/internal/ocistore"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -20,10 +21,39 @@ func newImageCommand(opts *rootOptions) *cobra.Command {
 	}
 	cmd.AddCommand(newImageImportCommand(opts))
 	cmd.AddCommand(newImagePullCommand(opts))
+	cmd.AddCommand(newImagePullOCICommand(opts))
 	cmd.AddCommand(newImageBuildCommand(opts))
 	cmd.AddCommand(newImageLSCommand(opts))
 	cmd.AddCommand(newImageInspectCommand(opts))
 	cmd.AddCommand(newImageRMCommand(opts))
+	return cmd
+}
+
+func newImagePullOCICommand(opts *rootOptions) *cobra.Command {
+	var platform string
+	var jsonOutput bool
+
+	cmd := &cobra.Command{
+		Use:   "pull-oci REF",
+		Short: "Pull OCI blobs into the content store",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			result, err := ocistore.New(cfg.Runtime.RootDir).Pull(cmd.Context(), ocistore.PullRequest{
+				Ref:      args[0],
+				Platform: platform,
+			})
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), result)
+		},
+	}
+	cmd.Flags().StringVar(&platform, "platform", ociresolver.DefaultPlatform(), "OCI platform os/arch[/variant]")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
 	return cmd
 }
 
