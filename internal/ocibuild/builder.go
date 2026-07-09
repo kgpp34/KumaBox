@@ -4,6 +4,7 @@
 package ocibuild
 
 import (
+	"archive/tar"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
@@ -14,6 +15,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -23,6 +25,8 @@ import (
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/ocistore"
 )
+
+const ociCmdlineTemplate = "console=ttyS0 reboot=k panic=1 root=/dev/ram0 rw kumabox.layers={{layers}} kumabox.cow={{cow}} kumabox.timeout=10"
 
 // BuildRequest describes an OCI image build.
 type BuildRequest struct {
@@ -85,6 +89,10 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 			EROFS:     erofs,
 		})
 	}
+	boot, err := b.resolveBootProfile(pull.Layers)
+	if err != nil {
+		return nil, err
+	}
 
 	return imagestore.New(b.rootDir).Create(imagestore.CreateRequest{
 		Name: req.Name,
@@ -96,6 +104,7 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 			Family:  "linux",
 			Profile: "oci-erofs",
 		},
+		Boot: boot,
 		OCI: &imagestore.OCI{
 			Ref:       pull.Ref,
 			Source:    pull.Source,
@@ -114,6 +123,164 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 			BuiltAt: time.Now().UTC(),
 		},
 	})
+}
+
+func (b *Builder) resolveBootProfile(layers []ocistore.BlobRecord) (imagestore.Boot, error) {
+	var kernel *bootAsset
+	var initrd *bootAsset
+
+	for _, layer := range layers {
+		layerKernel, layerInitrd, err := b.scanBootAssets(layer)
+		if err != nil {
+			return imagestore.Boot{}, err
+		}
+		if layerKernel != nil {
+			kernel = layerKernel
+		}
+		if layerInitrd != nil {
+			initrd = layerInitrd
+		}
+	}
+	if kernel == nil || initrd == nil {
+		return imagestore.Boot{}, fmt.Errorf("BOOT_PROFILE_UNSUPPORTED: OCI image must contain /boot/vmlinuz-* and /boot/initrd.img-*")
+	}
+	return imagestore.Boot{
+		Mode:    "direct",
+		Kernel:  kernel.Path,
+		Initrd:  initrd.Path,
+		Cmdline: ociCmdlineTemplate,
+	}, nil
+}
+
+func (b *Builder) scanBootAssets(layer ocistore.BlobRecord) (*bootAsset, *bootAsset, error) {
+	in, err := os.Open(layer.Path) //nolint:gosec
+	if err != nil {
+		return nil, nil, fmt.Errorf("open layer blob: %w", err)
+	}
+	defer in.Close() //nolint:errcheck
+
+	reader, closeReader, err := layerTarReader(layer.MediaType, in)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer closeReader()
+
+	var kernel *bootAsset
+	var initrd *bootAsset
+	tr := tar.NewReader(reader)
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("read layer tar: %w", err)
+		}
+		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+			continue
+		}
+		kind, ok := bootAssetKind(hdr.Name)
+		if !ok {
+			continue
+		}
+		asset, err := b.commitBootAsset(kind, hdr.Name, layer.Digest, tr)
+		if err != nil {
+			return nil, nil, err
+		}
+		switch kind {
+		case "kernel":
+			if kernel == nil || asset.SourcePath > kernel.SourcePath {
+				kernel = asset
+			}
+		case "initrd":
+			if initrd == nil || asset.SourcePath > initrd.SourcePath {
+				initrd = asset
+			}
+		}
+	}
+	return kernel, initrd, nil
+}
+
+type bootAsset struct {
+	Path        string
+	Digest      string
+	SizeBytes   int64
+	SourceLayer string
+	SourcePath  string
+}
+
+func bootAssetKind(name string) (string, bool) {
+	cleaned := strings.TrimPrefix(path.Clean(strings.TrimPrefix(name, "/")), "./")
+	dir := path.Dir(cleaned)
+	base := path.Base(cleaned)
+	if dir != "boot" && dir != "." {
+		return "", false
+	}
+	if base == "vmlinuz" || strings.HasPrefix(base, "vmlinuz-") {
+		return "kernel", true
+	}
+	if base == "initrd.img" || strings.HasPrefix(base, "initrd.img-") || strings.HasPrefix(base, "initramfs-") {
+		return "initrd", true
+	}
+	return "", false
+}
+
+func (b *Builder) commitBootAsset(kind, sourcePath, sourceLayer string, src io.Reader) (*bootAsset, error) {
+	opID, err := operationID()
+	if err != nil {
+		return nil, err
+	}
+	stage := filepath.Join(b.stageDir, "boot-"+opID)
+	if err := os.MkdirAll(stage, 0o755); err != nil {
+		return nil, fmt.Errorf("create boot asset staging dir: %w", err)
+	}
+	defer os.RemoveAll(stage) //nolint:errcheck
+
+	tmpPath := filepath.Join(stage, kind)
+	tmp, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec
+	if err != nil {
+		return nil, fmt.Errorf("create boot asset staging file: %w", err)
+	}
+	hasher := sha256.New()
+	_, copyErr := io.Copy(tmp, io.TeeReader(src, hasher))
+	if copyErr == nil {
+		copyErr = tmp.Sync()
+	}
+	closeErr := tmp.Close()
+	if copyErr != nil {
+		return nil, fmt.Errorf("write boot asset staging file: %w", copyErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close boot asset staging file: %w", closeErr)
+	}
+
+	digest := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+	_, value, err := splitDigest(digest)
+	if err != nil {
+		return nil, err
+	}
+	target := filepath.Join(b.rootDir, "oci", "boot", "blobs", "sha256", value)
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return nil, fmt.Errorf("create boot asset dir: %w", err)
+	}
+	if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
+		if err := os.Rename(tmpPath, target); err != nil {
+			return nil, fmt.Errorf("commit boot asset: %w", err)
+		}
+	} else if err != nil {
+		return nil, fmt.Errorf("stat boot asset: %w", err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return nil, fmt.Errorf("stat committed boot asset: %w", err)
+	}
+	return &bootAsset{
+		Path:        target,
+		Digest:      digest,
+		SizeBytes:   info.Size(),
+		SourceLayer: sourceLayer,
+		SourcePath:  strings.TrimPrefix(path.Clean(strings.TrimPrefix(sourcePath, "/")), "./"),
+	}, nil
 }
 
 func (b *Builder) ensureEROFS(ctx context.Context, mkfs string, layer ocistore.BlobRecord) (*imagestore.EROFSLayer, error) {

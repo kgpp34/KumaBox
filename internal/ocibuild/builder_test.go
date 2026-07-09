@@ -68,12 +68,95 @@ func TestEnsureEROFSBuildsAndReusesLayer(t *testing.T) {
 	}
 }
 
+func TestResolveBootProfileExtractsKernelAndInitrd(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	layerPath := filepath.Join(dir, "layer.tar")
+	layerBytes := plainTar(t, map[string]string{
+		"boot/vmlinuz-6.8.0":    "kernel",
+		"boot/initrd.img-6.8.0": "initrd",
+	})
+	if err := os.WriteFile(layerPath, layerBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(layerBytes)
+
+	boot, err := New(dir).resolveBootProfile([]ocistore.BlobRecord{{
+		Digest:    "sha256:" + hex.EncodeToString(sum[:]),
+		Path:      layerPath,
+		MediaType: "application/vnd.oci.image.layer.v1.tar",
+		SizeBytes: int64(len(layerBytes)),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if boot.Mode != "direct" || boot.Kernel == "" || boot.Initrd == "" || boot.Cmdline == "" {
+		t.Fatalf("boot profile = %+v", boot)
+	}
+	for _, path := range []string{boot.Kernel, boot.Initrd} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !strings.Contains(boot.Cmdline, "kumabox.layers={{layers}}") || !strings.Contains(boot.Cmdline, "kumabox.cow={{cow}}") {
+		t.Fatalf("cmdline template missing overlay placeholders: %s", boot.Cmdline)
+	}
+}
+
+func TestResolveBootProfileRejectsMissingAssets(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	layerPath := filepath.Join(dir, "layer.tar")
+	layerBytes := plainTar(t, map[string]string{"etc/os-release": "ID=test"})
+	if err := os.WriteFile(layerPath, layerBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(layerBytes)
+
+	_, err := New(dir).resolveBootProfile([]ocistore.BlobRecord{{
+		Digest:    "sha256:" + hex.EncodeToString(sum[:]),
+		Path:      layerPath,
+		MediaType: "application/vnd.oci.image.layer.v1.tar",
+		SizeBytes: int64(len(layerBytes)),
+	}})
+	if err == nil || !strings.Contains(err.Error(), "BOOT_PROFILE_UNSUPPORTED") {
+		t.Fatalf("expected BOOT_PROFILE_UNSUPPORTED, got %v", err)
+	}
+}
+
 func gzipTar(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 
 	var compressed bytes.Buffer
 	gz := gzip.NewWriter(&compressed)
 	tw := tar.NewWriter(gz)
+	writeTarFiles(t, tw, files)
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return compressed.Bytes()
+}
+
+func plainTar(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+
+	var raw bytes.Buffer
+	tw := tar.NewWriter(&raw)
+	writeTarFiles(t, tw, files)
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return raw.Bytes()
+}
+
+func writeTarFiles(t *testing.T, tw *tar.Writer, files map[string]string) {
+	t.Helper()
+
 	for name, content := range files {
 		body := []byte(content)
 		if err := tw.WriteHeader(&tar.Header{
@@ -87,11 +170,4 @@ func gzipTar(t *testing.T, files map[string]string) []byte {
 			t.Fatal(err)
 		}
 	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return compressed.Bytes()
 }
