@@ -3,9 +3,13 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/ociresolver"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -16,9 +20,59 @@ func newImageCommand(opts *rootOptions) *cobra.Command {
 	}
 	cmd.AddCommand(newImageImportCommand(opts))
 	cmd.AddCommand(newImagePullCommand(opts))
+	cmd.AddCommand(newImageBuildCommand(opts))
 	cmd.AddCommand(newImageLSCommand(opts))
 	cmd.AddCommand(newImageInspectCommand(opts))
 	cmd.AddCommand(newImageRMCommand(opts))
+	return cmd
+}
+
+func newImageBuildCommand(opts *rootOptions) *cobra.Command {
+	var name string
+	var platform string
+	var dryRun bool
+	var jsonOutput bool
+
+	cmd := &cobra.Command{
+		Use:   "build REF",
+		Short: "Resolve an OCI VM image reference",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := loadConfig(opts); err != nil {
+				return err
+			}
+			if name == "" {
+				return errors.New("--name is required")
+			}
+			if !dryRun {
+				return fmt.Errorf("P3_BUILD_NOT_IMPLEMENTED: image build without --dry-run is implemented in later P3 sections")
+			}
+			if !jsonOutput {
+				return fmt.Errorf("P3_RESOLVE_REQUIRES_JSON: P3-01 dry-run output requires --json")
+			}
+
+			result, err := (ociresolver.Resolver{}).Resolve(cmd.Context(), args[0], platform)
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), struct {
+				SchemaVersion string              `json:"schemaVersion"`
+				Name          string              `json:"name"`
+				DryRun        bool                `json:"dryRun"`
+				Result        *ociresolver.Result `json:"result"`
+			}{
+				SchemaVersion: "kumabox.oci.resolve.v1",
+				Name:          name,
+				DryRun:        true,
+				Result:        result,
+			})
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "", "image name")
+	cmd.Flags().StringVar(&platform, "platform", ociresolver.DefaultPlatform(), "OCI platform os/arch[/variant]")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "resolve OCI metadata without publishing an image")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
+	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }
 
