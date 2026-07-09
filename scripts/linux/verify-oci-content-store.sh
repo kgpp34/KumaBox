@@ -5,6 +5,7 @@ kumabox_path="./bin/kumabox"
 root_dir="/tmp/kumabox-p0/data"
 ref="ghcr.io/cocoonstack/cocoon/ubuntu:24.04"
 platform="linux/amd64"
+source="auto"
 
 usage() {
   cat <<'USAGE'
@@ -15,6 +16,7 @@ Options:
   --root-dir PATH   state root directory, defaults to /tmp/kumabox-p0/data
   --ref REF         OCI image ref, defaults to ghcr.io/cocoonstack/cocoon/ubuntu:24.04
   --platform VALUE  OCI platform, defaults to linux/amd64
+  --source VALUE    OCI source: auto, registry, or daemon. Defaults to auto
 
 Verifies P3-02 OCI content blob store:
 pull-oci downloads manifest/config/layers into data/oci/content/blobs by digest,
@@ -57,6 +59,11 @@ while [[ $# -gt 0 ]]; do
       platform="$2"
       shift 2
       ;;
+    --source)
+      require_value "$1" "${2:-}"
+      source="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -83,11 +90,13 @@ pull_json="$("$kumabox_path" \
   --root-dir "$root_dir" \
   image pull-oci "$ref" \
   --platform "$platform" \
+  --source "$source" \
   --json)"
 printf '%s\n' "$pull_json"
 
 schema="$(printf '%s' "$pull_json" | jq -r '.schemaVersion')"
 digest_ref="$(printf '%s' "$pull_json" | jq -r '.digestRef')"
+resolved_source="$(printf '%s' "$pull_json" | jq -r '.source')"
 manifest_path="$(printf '%s' "$pull_json" | jq -r '.manifest.path')"
 config_path="$(printf '%s' "$pull_json" | jq -r '.config.path')"
 layers_len="$(printf '%s' "$pull_json" | jq '.layers | length')"
@@ -99,6 +108,10 @@ if [[ "$schema" != "kumabox.oci.content.pull.v1" ]]; then
 fi
 if [[ "$digest_ref" != *@sha256:* ]]; then
   echo "digestRef is not pinned: $digest_ref" >&2
+  exit 1
+fi
+if [[ "$source" != "auto" && "$resolved_source" != "$source" ]]; then
+  echo "source mismatch: got $resolved_source want $source" >&2
   exit 1
 fi
 if [[ "$layers_len" -lt 1 ]]; then
@@ -133,12 +146,14 @@ if [[ ! -s "$index_path" ]]; then
   exit 1
 fi
 printf 'state: index=%s\n' "$index_path"
+printf 'state: source=%s\n' "$resolved_source"
 
 step "repeat pull should hit cache"
 cached_json="$("$kumabox_path" \
   --root-dir "$root_dir" \
   image pull-oci "$ref" \
   --platform "$platform" \
+  --source "$source" \
   --json)"
 printf '%s\n' "$cached_json"
 

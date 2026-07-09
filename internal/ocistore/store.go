@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -18,7 +19,9 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
 	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/kumabox/kumabox/internal/ociresolver"
@@ -37,6 +40,7 @@ type Store struct {
 type PullRequest struct {
 	Ref      string
 	Platform string
+	Source   string
 }
 
 // BlobRecord is one content-addressed blob on disk.
@@ -64,6 +68,7 @@ type RefRecord struct {
 type PullResult struct {
 	SchemaVersion string               `json:"schemaVersion"`
 	Ref           string               `json:"ref"`
+	Source        string               `json:"source"`
 	DigestRef     string               `json:"digestRef"`
 	Platform      ociresolver.Platform `json:"platform"`
 	Manifest      BlobRecord           `json:"manifest"`
@@ -97,21 +102,9 @@ func (s *Store) Pull(ctx context.Context, req PullRequest) (*PullResult, error) 
 		return nil, fmt.Errorf("OCI_REF_REQUIRED: ref must not be empty")
 	}
 
-	resolved, err := (ociresolver.Resolver{}).Resolve(ctx, req.Ref, req.Platform)
+	img, resolved, source, err := resolveImage(ctx, req)
 	if err != nil {
 		return nil, err
-	}
-	parsed, err := name.ParseReference(req.Ref)
-	if err != nil {
-		return nil, fmt.Errorf("OCI_REF_INVALID: %w", err)
-	}
-	img, err := remote.Image(parsed,
-		remote.WithAuthFromKeychain(authn.DefaultKeychain),
-		remote.WithContext(ctx),
-		remote.WithPlatform(resolved.Platform.V1()),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("OCI_PULL_FAILED: %w", err)
 	}
 
 	manifestBytes, err := img.RawManifest()
@@ -141,6 +134,7 @@ func (s *Store) Pull(ctx context.Context, req PullRequest) (*PullResult, error) 
 	result := &PullResult{
 		SchemaVersion: "kumabox.oci.content.pull.v1",
 		Ref:           resolved.Ref,
+		Source:        source,
 		DigestRef:     resolved.DigestRef,
 		Platform:      resolved.Platform,
 	}
@@ -204,6 +198,109 @@ func (s *Store) Pull(ctx context.Context, req PullRequest) (*PullResult, error) 
 		return nil, err
 	}
 	return result, nil
+}
+
+func resolveImage(ctx context.Context, req PullRequest) (v1.Image, *ociresolver.Result, string, error) {
+	source := req.Source
+	if source == "" {
+		source = "auto"
+	}
+	switch source {
+	case "auto":
+		img, resolved, err := resolveDaemonImage(ctx, req)
+		if err == nil {
+			return img, resolved, "daemon", nil
+		}
+		img, resolved, err = resolveRegistryImage(ctx, req)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		return img, resolved, "registry", nil
+	case "daemon":
+		img, resolved, err := resolveDaemonImage(ctx, req)
+		return img, resolved, "daemon", err
+	case "registry":
+		img, resolved, err := resolveRegistryImage(ctx, req)
+		return img, resolved, "registry", err
+	default:
+		return nil, nil, "", fmt.Errorf("OCI_SOURCE_INVALID: source must be one of auto, registry, or daemon")
+	}
+}
+
+func resolveRegistryImage(ctx context.Context, req PullRequest) (v1.Image, *ociresolver.Result, error) {
+	resolved, err := (ociresolver.Resolver{}).Resolve(ctx, req.Ref, req.Platform)
+	if err != nil {
+		return nil, nil, err
+	}
+	parsed, err := name.ParseReference(req.Ref)
+	if err != nil {
+		return nil, nil, fmt.Errorf("OCI_REF_INVALID: %w", err)
+	}
+	img, err := remote.Image(parsed,
+		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		remote.WithContext(ctx),
+		remote.WithPlatform(resolved.Platform.V1()),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("OCI_PULL_FAILED: %w", err)
+	}
+	return img, resolved, nil
+}
+
+func resolveDaemonImage(ctx context.Context, req PullRequest) (v1.Image, *ociresolver.Result, error) {
+	platform, err := ociresolver.ParsePlatform(req.Platform)
+	if err != nil {
+		return nil, nil, err
+	}
+	parsed, err := name.ParseReference(req.Ref)
+	if err != nil {
+		return nil, nil, fmt.Errorf("OCI_REF_INVALID: %w", err)
+	}
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, "docker", "image", "save", req.Ref)
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, nil, fmt.Errorf("OCI_DAEMON_IMAGE_FAILED: docker image save %s: %w: %s", req.Ref, err, strings.TrimSpace(stderr.String()))
+	}
+	img, err := tarball.Image(func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(out.Bytes())), nil
+	}, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("OCI_DAEMON_IMAGE_FAILED: parse docker image tar: %w", err)
+	}
+	digest, err := img.Digest()
+	if err != nil {
+		return nil, nil, fmt.Errorf("OCI_DIGEST_FAILED: %w", err)
+	}
+	manifest, err := img.Manifest()
+	if err != nil {
+		return nil, nil, fmt.Errorf("OCI_MANIFEST_FAILED: %w", err)
+	}
+	layers := make([]ociresolver.Descriptor, 0, len(manifest.Layers))
+	for _, layer := range manifest.Layers {
+		layers = append(layers, ociresolver.Descriptor{
+			Digest:    layer.Digest.String(),
+			MediaType: string(layer.MediaType),
+			SizeBytes: layer.Size,
+		})
+	}
+	resolved := &ociresolver.Result{
+		Ref:            req.Ref,
+		Repository:     parsed.Context().String(),
+		ResolvedDigest: digest.String(),
+		DigestRef:      parsed.Context().String() + "@" + digest.String(),
+		Platform:       platform,
+		Config: ociresolver.Descriptor{
+			Digest:    manifest.Config.Digest.String(),
+			MediaType: string(manifest.Config.MediaType),
+			SizeBytes: manifest.Config.Size,
+		},
+		Layers:     layers,
+		ResolvedAt: time.Now().UTC(),
+	}
+	return img, resolved, nil
 }
 
 func (s *Store) ensureBlob(idx *indexFile, digest, mediaType string, src io.Reader) (BlobRecord, error) {

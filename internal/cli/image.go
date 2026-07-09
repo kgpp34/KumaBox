@@ -32,6 +32,7 @@ func newImageCommand(opts *rootOptions) *cobra.Command {
 func newImagePullOCICommand(opts *rootOptions) *cobra.Command {
 	var platform string
 	var jsonOutput bool
+	var source string
 
 	cmd := &cobra.Command{
 		Use:   "pull-oci REF",
@@ -45,6 +46,7 @@ func newImagePullOCICommand(opts *rootOptions) *cobra.Command {
 			result, err := ocistore.New(cfg.Runtime.RootDir).Pull(cmd.Context(), ocistore.PullRequest{
 				Ref:      args[0],
 				Platform: platform,
+				Source:   source,
 			})
 			if err != nil {
 				return err
@@ -53,6 +55,7 @@ func newImagePullOCICommand(opts *rootOptions) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&platform, "platform", ociresolver.DefaultPlatform(), "OCI platform os/arch[/variant]")
+	cmd.Flags().StringVar(&source, "source", "auto", "OCI source: auto, registry, or daemon")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
 	return cmd
 }
