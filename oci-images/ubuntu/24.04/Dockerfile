@@ -46,7 +46,7 @@ RUN if [ -n "$APT_MIRROR" ]; then \
     && mkdir -p /etc/systemd/network /run/sshd \
     && printf "[Match]\nName=e* v*\n\n[Network]\nDHCP=yes\n\n[DHCPv4]\nClientIdentifier=mac\n" > /etc/systemd/network/20-wired.network \
     && sed -i 's/^#*PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config \
-    && systemctl enable ssh \
+    && systemctl enable ssh kumabox-agent \
     && rm -rf /var/lib/apt/lists/*
 
 CMD ["/sbin/init"]
