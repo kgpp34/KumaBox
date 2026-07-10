@@ -36,7 +36,7 @@ Options:
   --source VALUE             OCI source: auto, registry, or daemon. Defaults to auto
   --mkfs-erofs PATH          mkfs.erofs binary path, defaults to mkfs.erofs
   --wait-seconds N           seconds to keep VM alive for console collection, defaults to 60
-  --sudo                     use sudo for host network cleanup in env-check
+  --sudo                     run kumabox and root-owned file reads through sudo
 
 Verifies OCI direct boot network rendering and smoke startup:
 build OCI image -> run VM with --network default -> verify cmdline has layer/COW,
@@ -99,8 +99,22 @@ elif ! command -v "$mkfs_erofs" >/dev/null 2>&1; then
   exit 1
 fi
 
+if [[ "$use_sudo" == true ]]; then
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "--sudo requested but sudo is missing" >&2
+    exit 1
+  fi
+  kumabox_cmd=(sudo "$kumabox_path")
+  cat_cmd=(sudo cat)
+  tail_cmd=(sudo tail)
+else
+  kumabox_cmd=("$kumabox_path")
+  cat_cmd=(cat)
+  tail_cmd=(tail)
+fi
+
 kb() {
-  "$kumabox_path" \
+  "${kumabox_cmd[@]}" \
     --root-dir "$root_dir" \
     --run-dir "$run_dir" \
     --log-dir "$log_dir" \
@@ -121,10 +135,9 @@ env_args=(
   --kumabox "$kumabox_path"
   --cloud-hypervisor "$cloud_hypervisor_path"
   --qemu-img "$qemu_img_path"
+  --strict
+  --network
 )
-if [[ "$use_sudo" == true ]]; then
-  env_args+=(--sudo)
-fi
 ./scripts/linux/env-check.sh "${env_args[@]}"
 
 step "build OCI image"
@@ -159,8 +172,9 @@ step "network inspect"
 kb network inspect "$vm_name" --json
 
 step "rendered direct boot config"
-jq '.kernel, .disks, .nets' "$config_path"
-cmdline="$(jq -r '.kernel.cmdline' "$config_path")"
+config_json="$("${cat_cmd[@]}" "$config_path")"
+printf '%s\n' "$config_json" | jq '.kernel, .disks, .nets'
+cmdline="$(printf '%s\n' "$config_json" | jq -r '.kernel.cmdline')"
 if [[ "$cmdline" != *"kumabox.layers=kumabox-layer0"* || "$cmdline" != *"kumabox.cow=kumabox-cow"* ]]; then
   echo "cmdline missing layer/COW serials: $cmdline" >&2
   exit 1
@@ -178,7 +192,7 @@ printf 'state: cmdline=%s\n' "$cmdline"
 step "wait for console output"
 sleep "$wait_seconds"
 if [[ -f "$console_log" ]]; then
-  tail -n 120 "$console_log" || true
+  "${tail_cmd[@]}" -n 120 "$console_log" || true
 else
   echo "console log does not exist yet: $console_log"
 fi
