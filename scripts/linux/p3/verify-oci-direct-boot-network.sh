@@ -36,7 +36,7 @@ Options:
   --storage SIZE             per-VM COW size, defaults to 64M
   --source VALUE             OCI source: auto, registry, or daemon. Defaults to auto
   --mkfs-erofs PATH          mkfs.erofs binary path, defaults to mkfs.erofs
-  --wait-seconds N           seconds to keep VM alive for console collection, defaults to 60
+  --wait-seconds N           seconds to follow console output, defaults to 60
   --sudo                     run kumabox and root-owned file reads through sudo
 
 Verifies OCI direct boot network rendering and smoke startup:
@@ -214,12 +214,13 @@ if [[ "$guest_ip" != "null" && "$guest_ip" != "" && "$cmdline" != *"ip=$guest_ip
 fi
 printf 'state: cmdline=%s\n' "$cmdline"
 
-step "wait for console output"
-sleep "$wait_seconds"
-if [[ -f "$console_log" ]]; then
-  "${tail_cmd[@]}" -n 120 "$console_log" || true
+step "follow console output"
+printf 'state: following console for %ss: %s\n' "$wait_seconds" "$console_log"
+if command -v timeout >/dev/null 2>&1; then
+  timeout "$wait_seconds" "${tail_cmd[@]}" -n +1 -F "$console_log" || true
 else
-  echo "console log does not exist yet: $console_log"
+  echo "timeout command is missing; printing current console tail only" >&2
+  "${tail_cmd[@]}" -n 120 "$console_log" || true
 fi
 
 step "delete VM and cleanup image"
