@@ -7,7 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 COPY overlay.sh /usr/local/share/kumabox/initramfs/kumabox-overlay
 COPY network.sh /usr/local/share/kumabox/initramfs/kumabox-network
-COPY agent-stub.sh /usr/local/bin/kumabox-agent
+COPY kumabox-agent-linux-amd64 /usr/local/bin/kumabox-agent
 COPY kumabox-agent.service /etc/systemd/system/kumabox-agent.service
 
 RUN if [ -n "$APT_MIRROR" ]; then \

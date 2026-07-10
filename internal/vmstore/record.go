@@ -72,6 +72,7 @@ type VMRecord struct {
 	ObservedAt     *time.Time               `json:"observedAt,omitempty"`
 	PID            int                      `json:"pid,omitempty"`
 	APISocket      string                   `json:"apiSocket,omitempty"`
+	VsockSocket    string                   `json:"vsockSocket,omitempty"`
 	Error          string                   `json:"error,omitempty"`
 	RootDisk       string                   `json:"rootDisk"`
 	Kernel         string                   `json:"kernel,omitempty"`
@@ -180,6 +181,7 @@ func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
 		RunDir:         runDir,
 		LogDir:         logDir,
 		Config:         filepath.Join(runDir, "cloud-hypervisor.json"),
+		VsockSocket:    filepath.Join(runDir, "vsock.uds"),
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}

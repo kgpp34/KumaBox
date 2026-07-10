@@ -24,6 +24,7 @@ func TestRenderConfigWritesResolvedPaths(t *testing.T) {
 		LogDir:   filepath.Join(dir, "logs", "vms", "kb_test"),
 		Config:   filepath.Join(dir, "run", "vms", "kb_test", "cloud-hypervisor.json"),
 	}
+	rec.VsockSocket = filepath.Join(rec.RunDir, "vsock.uds")
 
 	cfg := config.Default()
 	cfg.Backend.CloudHypervisor.Binary = "/usr/local/bin/cloud-hypervisor"
@@ -52,6 +53,12 @@ func TestRenderConfigWritesResolvedPaths(t *testing.T) {
 	}
 	if rendered.APISocket != filepath.Join(rec.RunDir, "ch.sock") {
 		t.Fatalf("api socket = %s", rendered.APISocket)
+	}
+	if rendered.Vsock == nil || rendered.Vsock.CID != 3 || rendered.Vsock.Socket != rec.VsockSocket {
+		t.Fatalf("vsock = %+v", rendered.Vsock)
+	}
+	if !argsContainPair(rendered.Args, "--vsock", "cid=3,socket="+rec.VsockSocket) {
+		t.Fatalf("vsock arg missing: %v", rendered.Args)
 	}
 }
 

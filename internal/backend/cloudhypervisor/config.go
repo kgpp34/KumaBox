@@ -38,6 +38,7 @@ type Config struct {
 	CPUs         CPUs        `json:"cpus"`
 	Disks        []Disk      `json:"disks"`
 	Nets         []Net       `json:"nets,omitempty"`
+	Vsock        *Vsock      `json:"vsock,omitempty"`
 	Serial       Serial      `json:"serial"`
 	Console      Console     `json:"console"`
 	Args         []string    `json:"args"`
@@ -75,6 +76,11 @@ type Net struct {
 	MAC       string `json:"mac"`
 	NumQueues int    `json:"numQueues"`
 	QueueSize int    `json:"queueSize"`
+}
+
+type Vsock struct {
+	CID    uint32 `json:"cid"`
+	Socket string `json:"socket"`
 }
 
 type Serial struct {
@@ -204,6 +210,10 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		}
 		args = append(args, "--net", netArg)
 	}
+	vsock := newVsock(rec)
+	if vsock != nil {
+		args = append(args, "--vsock", fmt.Sprintf("cid=%d,socket=%s", vsock.CID, vsock.Socket))
+	}
 
 	rendered := Config{
 		Binary:       cfg.Backend.CloudHypervisor.Binary,
@@ -216,6 +226,7 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		CPUs:         CPUs{Boot: cpus},
 		Disks:        newDisks(rec),
 		Nets:         newNets(rec),
+		Vsock:        vsock,
 		Serial:       Serial{Path: serialLog},
 		Console:      Console{Mode: "off"},
 		Args:         args,
@@ -234,6 +245,16 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		rendered.Initramfs = &Initramfs{Path: rec.Initrd}
 	}
 	return rendered
+}
+
+func newVsock(rec *vmstore.VMRecord) *Vsock {
+	if rec == nil || rec.VsockSocket == "" {
+		return nil
+	}
+	return &Vsock{
+		CID:    3,
+		Socket: rec.VsockSocket,
+	}
 }
 
 func vmCPUs(rec *vmstore.VMRecord) int {

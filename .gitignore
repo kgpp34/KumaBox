@@ -3,3 +3,4 @@ bin/
 dist/
 coverage.out
 docs/
+oci-images/ubuntu/kumabox-agent-linux-amd64

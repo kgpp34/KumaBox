@@ -11,6 +11,7 @@ keep_fixture=0
 apt_mirror="${KUMABOX_APT_MIRROR:-}"
 apt_security_mirror="${KUMABOX_APT_SECURITY_MIRROR:-}"
 docker_network=""
+agent_binary="kumabox-agent-linux-amd64"
 
 usage() {
   cat <<'USAGE'
@@ -141,6 +142,14 @@ mkdir -p "$fixture_dir"
 pass "fixture directory ready: $fixture_dir"
 
 if [[ "$skip_build" -eq 0 ]]; then
+  step "build KumaBox guest agent"
+  if ! command -v go >/dev/null 2>&1; then
+    echo "go is required to build kumabox-agent" >&2
+    exit 1
+  fi
+  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$context_dir/$agent_binary" ./cmd/kumabox-agent
+  pass "guest agent binary ready: $context_dir/$agent_binary"
+
   step "build KumaBox OCI VM base image"
   build_args=()
   if [[ -n "$apt_mirror" ]]; then
@@ -207,6 +216,7 @@ run_check "systemd init exists" 'test -e /sbin/init'
 run_check "networkd default config exists" 'test -f /etc/systemd/network/20-wired.network'
 run_check "networkd uses MAC DHCP identity" 'grep -q "ClientIdentifier=mac" /etc/systemd/network/20-wired.network'
 run_check "agent path reserved" 'test -x /usr/local/bin/kumabox-agent'
+run_check "agent binary reports version" '/usr/local/bin/kumabox-agent version | grep -Eq "^[0-9]+\\.[0-9]+\\.[0-9]+$"'
 run_check "agent unit installed" 'test -f /etc/systemd/system/kumabox-agent.service'
 run_check "agent unit points at kumabox-agent serve" 'grep -q "ExecStart=/usr/local/bin/kumabox-agent serve" /etc/systemd/system/kumabox-agent.service'
 
