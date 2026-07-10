@@ -141,6 +141,18 @@ func TestRenderConfigSupportsOCIStorageDisks(t *testing.T) {
 				Serial:    "kumabox-cow",
 			},
 		},
+		NetworkConfigs: []kbnetwork.Config{
+			{
+				MAC:    "5a:00:00:00:00:01",
+				IfName: "eth0",
+				Network: &kbnetwork.GuestInfo{
+					IP:      "10.88.0.2",
+					Gateway: "10.88.0.1",
+					Prefix:  16,
+					DNS:     []string{"1.1.1.1", "8.8.8.8"},
+				},
+			},
+		},
 	}
 
 	cfg := config.Default()
@@ -165,7 +177,8 @@ func TestRenderConfigSupportsOCIStorageDisks(t *testing.T) {
 	if rendered.Disks[1].Readonly || rendered.Disks[1].Serial != "kumabox-cow" {
 		t.Fatalf("cow disk = %+v", rendered.Disks[1])
 	}
-	if rendered.Kernel == nil || rendered.Kernel.Cmdline != "console=ttyS0 kumabox.layers=kumabox-layer0 kumabox.cow=kumabox-cow" {
+	wantCmdline := "console=ttyS0 kumabox.layers=kumabox-layer0 kumabox.cow=kumabox-cow kumabox.hostname=oci net.ifnames=0 ip=10.88.0.2::10.88.0.1:255.255.0.0:oci:eth0:off:1.1.1.1:8.8.8.8"
+	if rendered.Kernel == nil || rendered.Kernel.Cmdline != wantCmdline {
 		t.Fatalf("kernel = %+v", rendered.Kernel)
 	}
 	if !argsContainPair(rendered.Args, "--disk", "path=/data/oci/erofs/blobs/sha256/layer0.erofs,readonly=on,image_type=raw,serial=kumabox-layer0") {

@@ -6,6 +6,7 @@ package cloudhypervisor
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -328,7 +329,72 @@ func kernelCmdline(rec *vmstore.VMRecord) string {
 	}
 	cmdline = strings.ReplaceAll(cmdline, "{{layers}}", strings.Join(layers, ","))
 	cmdline = strings.ReplaceAll(cmdline, "{{cow}}", cow)
+	if len(rec.StorageConfigs) > 0 {
+		cmdline += directBootNetworkCmdline(rec)
+	}
 	return cmdline
+}
+
+func directBootNetworkCmdline(rec *vmstore.VMRecord) string {
+	var b strings.Builder
+	if rec.Name != "" {
+		b.WriteString(" kumabox.hostname=")
+		b.WriteString(rec.Name)
+	}
+	if len(rec.NetworkConfigs) == 0 {
+		return b.String()
+	}
+	b.WriteString(" net.ifnames=0")
+	for i, nc := range rec.NetworkConfigs {
+		if nc.Network == nil || nc.Network.IP == "" {
+			continue
+		}
+		b.WriteString(" ip=")
+		b.WriteString(nc.Network.IP)
+		b.WriteString("::")
+		b.WriteString(nc.Network.Gateway)
+		b.WriteString(":")
+		b.WriteString(prefixNetmask(nc.Network.Prefix))
+		b.WriteString(":")
+		b.WriteString(rec.Name)
+		b.WriteString(":")
+		b.WriteString(guestNICName(nc.IfName, i))
+		b.WriteString(":off")
+		for _, dns := range firstDNS(nc.Network.DNS, 2) {
+			b.WriteString(":")
+			b.WriteString(dns)
+		}
+	}
+	return b.String()
+}
+
+func guestNICName(ifName string, index int) string {
+	if ifName != "" {
+		return ifName
+	}
+	return fmt.Sprintf("eth%d", index)
+}
+
+func prefixNetmask(prefix int) string {
+	mask := net.CIDRMask(prefix, 32)
+	if mask == nil {
+		return "255.255.255.0"
+	}
+	return net.IP(mask).String()
+}
+
+func firstDNS(values []string, max int) []string {
+	out := make([]string, 0, max)
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		out = append(out, value)
+		if len(out) == max {
+			break
+		}
+	}
+	return out
 }
 
 func activeMetadata(rec *vmstore.VMRecord) *vmstore.Metadata {
