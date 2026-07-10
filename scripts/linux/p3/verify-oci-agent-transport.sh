@@ -17,6 +17,7 @@ mkfs_erofs="mkfs.erofs"
 timeout="90s"
 skip_base_build=0
 use_sudo=false
+script_status=1
 
 usage() {
   cat <<'USAGE'
@@ -58,6 +59,40 @@ require_value() {
 step() {
   printf '\n==> %s\n' "$1"
 }
+
+print_failure_context() {
+  set +e
+  step "failure context: VM inspect"
+  kb inspect "$vm_name" --json 2>/dev/null || true
+
+  if [[ -n "${config_path:-}" && "$config_path" != "null" ]]; then
+    step "failure context: rendered config"
+    "${cat_cmd[@]}" "$config_path" 2>/dev/null | jq '.' || true
+  fi
+
+  if [[ -n "${run_json:-}" ]]; then
+    vm_log_dir="$(printf '%s' "$run_json" | jq -r '.logDir // empty' 2>/dev/null)"
+    if [[ -n "$vm_log_dir" && "$vm_log_dir" != "null" ]]; then
+      step "failure context: console tail"
+      "${cat_cmd[@]}" "$vm_log_dir/console.log" 2>/dev/null | tail -n 200 || true
+
+      step "failure context: cloud-hypervisor stderr"
+      "${cat_cmd[@]}" "$vm_log_dir/cloud-hypervisor.stderr.log" 2>/dev/null | tail -n 120 || true
+
+      step "failure context: cloud-hypervisor stdout"
+      "${cat_cmd[@]}" "$vm_log_dir/cloud-hypervisor.stdout.log" 2>/dev/null | tail -n 120 || true
+    fi
+  fi
+}
+
+on_exit() {
+  if [[ "$script_status" -ne 0 ]]; then
+    print_failure_context
+    printf '\n==> preserving failed OCI agent state\n' >&2
+    printf 'state: preserved root_dir=%s run_dir=%s log_dir=%s\n' "$root_dir" "$run_dir" "$log_dir" >&2
+  fi
+}
+trap on_exit EXIT
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -188,7 +223,15 @@ if [[ "$rendered_socket" != "$vsock_socket" ]]; then
 fi
 
 step "ping guest agent"
-agent_json="$(kb agent ping "$vm_name" --timeout "$timeout")"
+set +e
+agent_output="$(kb agent ping "$vm_name" --timeout "$timeout" 2>&1)"
+agent_status=$?
+set -e
+if [[ "$agent_status" -ne 0 ]]; then
+  printf '%s\n' "$agent_output" >&2
+  exit "$agent_status"
+fi
+agent_json="$agent_output"
 printf '%s\n' "$agent_json"
 agent_ok="$(printf '%s' "$agent_json" | jq -r '.agent.ok')"
 agent_os="$(printf '%s' "$agent_json" | jq -r '.agent.os')"
@@ -202,4 +245,5 @@ delete_json="$(kb delete "$vm_name" --force)"
 printf '%s\n' "$delete_json"
 kb image rm "$image_name" >/dev/null
 
+script_status=0
 echo "P3-08 OCI agent transport verification passed"

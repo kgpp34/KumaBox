@@ -219,6 +219,7 @@ run_check "agent path reserved" 'test -x /usr/local/bin/kumabox-agent'
 run_check "agent binary reports version" '/usr/local/bin/kumabox-agent version | grep -Eq "^[0-9]+\\.[0-9]+\\.[0-9]+$"'
 run_check "agent unit installed" 'test -f /etc/systemd/system/kumabox-agent.service'
 run_check "agent unit points at kumabox-agent serve" 'grep -q "ExecStart=/usr/local/bin/kumabox-agent serve" /etc/systemd/system/kumabox-agent.service'
+run_check "agent unit logs to console" 'grep -q "StandardError=journal+console" /etc/systemd/system/kumabox-agent.service'
 run_check "agent unit enabled" 'test -e /etc/systemd/system/multi-user.target.wants/kumabox-agent.service'
 
 step "write fixture manifest"

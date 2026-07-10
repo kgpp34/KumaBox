@@ -1,7 +1,7 @@
 [Unit]
 Description=KumaBox agent
 Documentation=https://github.com/kumabox/kumabox
-After=multi-user.target
+After=systemd-modules-load.service
 
 [Service]
 Type=simple
@@ -11,6 +11,8 @@ ExecStartPre=-/sbin/modprobe vmw_vsock_virtio_transport
 ExecStart=/usr/local/bin/kumabox-agent serve
 Restart=always
 RestartSec=2s
+StandardOutput=journal+console
+StandardError=journal+console
 LimitNOFILE=65536
 
 [Install]
