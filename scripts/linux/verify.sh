@@ -13,7 +13,7 @@ Checks:
   p0 start | reconcile | stop | logs | delete | gc
   p1 image | image-ref | image-rm-gc | cidata-firstboot
   p2 config | allocator | hosttap | render | inspect | e2e | cleanup | gc | cni | multinic | queues | parity
-  p3 base-image | resolver | content-store | erofs-builder | boot-profile | cow-runtime | direct-boot-network
+  p3 base-image | resolver | content-store | erofs-builder | boot-profile | cow-runtime | direct-boot-network | metadata
 
 Examples:
   scripts/linux/verify.sh p2 e2e --root-disk /tmp/kumabox-p0/fixtures/jammy-server-cloudimg-amd64.img --firmware /tmp/kumabox-p0/fixtures/CLOUDHV.fd --sudo
@@ -97,6 +97,7 @@ case "$phase:$check" in
   p3:boot-profile) target="$script_dir/p3/verify-oci-boot-profile.sh" ;;
   p3:cow-runtime|p3:cow) target="$script_dir/p3/verify-oci-cow-runtime.sh" ;;
   p3:direct-boot-network|p3:network) target="$script_dir/p3/verify-oci-direct-boot-network.sh" ;;
+  p3:metadata) target="$script_dir/p3/verify-oci-metadata.sh" ;;
 
   *) die "unknown check: $phase $check" ;;
 esac

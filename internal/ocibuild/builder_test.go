@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,6 +124,77 @@ func TestResolveBootProfileRejectsMissingAssets(t *testing.T) {
 	}})
 	if err == nil || !strings.Contains(err.Error(), "BOOT_PROFILE_UNSUPPORTED") {
 		t.Fatalf("expected BOOT_PROFILE_UNSUPPORTED, got %v", err)
+	}
+}
+
+func TestDecodeOCIImageConfigPreservesExecutionMetadata(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+		"config": {
+			"Env": ["A=1", "B=2"],
+			"Cmd": ["/sbin/init"],
+			"Entrypoint": [],
+			"WorkingDir": "/work",
+			"User": "1000:1000",
+			"Labels": {"org.opencontainers.image.title": "kumabox"}
+		}
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := decodeOCIImageConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Env == nil || strings.Join(*cfg.Env, ",") != "A=1,B=2" {
+		t.Fatalf("env = %#v", cfg.Env)
+	}
+	if cfg.Cmd == nil || strings.Join(*cfg.Cmd, ",") != "/sbin/init" {
+		t.Fatalf("cmd = %#v", cfg.Cmd)
+	}
+	if cfg.Entrypoint == nil || len(*cfg.Entrypoint) != 0 {
+		t.Fatalf("entrypoint = %#v", cfg.Entrypoint)
+	}
+	if cfg.Workdir == nil || *cfg.Workdir != "/work" {
+		t.Fatalf("workdir = %#v", cfg.Workdir)
+	}
+	if cfg.User == nil || *cfg.User != "1000:1000" {
+		t.Fatalf("user = %#v", cfg.User)
+	}
+	if cfg.Labels == nil || (*cfg.Labels)["org.opencontainers.image.title"] != "kumabox" {
+		t.Fatalf("labels = %#v", cfg.Labels)
+	}
+
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"entrypoint":[]`) {
+		t.Fatalf("explicit empty entrypoint was not preserved: %s", raw)
+	}
+}
+
+func TestDecodeOCIImageConfigOmitsMissingFields(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"config":{"Cmd":[]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := decodeOCIImageConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Cmd == nil || len(*cfg.Cmd) != 0 {
+		t.Fatalf("cmd = %#v", cfg.Cmd)
+	}
+	if cfg.Env != nil || cfg.Entrypoint != nil || cfg.Workdir != nil || cfg.User != nil || cfg.Labels != nil {
+		t.Fatalf("missing fields should remain nil: %+v", cfg)
 	}
 }
 

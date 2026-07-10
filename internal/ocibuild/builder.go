@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -93,6 +94,10 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 	if err != nil {
 		return nil, err
 	}
+	imageConfig, err := decodeOCIImageConfig(pull.Config.Path)
+	if err != nil {
+		return nil, err
+	}
 
 	return imagestore.New(b.rootDir).Create(imagestore.CreateRequest{
 		Name: req.Name,
@@ -119,10 +124,100 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 				MediaType: pull.Config.MediaType,
 				SizeBytes: pull.Config.SizeBytes,
 			},
-			Layers:  layers,
-			BuiltAt: time.Now().UTC(),
+			ImageConfig:    imageConfig,
+			AgentInjection: "deferred",
+			Layers:         layers,
+			BuiltAt:        time.Now().UTC(),
 		},
 	})
+}
+
+func decodeOCIImageConfig(configPath string) (imagestore.OCIImageConfig, error) {
+	raw, err := os.ReadFile(configPath) //nolint:gosec
+	if err != nil {
+		return imagestore.OCIImageConfig{}, fmt.Errorf("read OCI config: %w", err)
+	}
+	var doc struct {
+		Config map[string]json.RawMessage `json:"config"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return imagestore.OCIImageConfig{}, fmt.Errorf("decode OCI config: %w", err)
+	}
+	if len(doc.Config) == 0 {
+		return imagestore.OCIImageConfig{}, nil
+	}
+
+	cfg := imagestore.OCIImageConfig{}
+	if value, ok, err := decodeConfigStringSlice(doc.Config, "Env"); err != nil {
+		return imagestore.OCIImageConfig{}, err
+	} else if ok {
+		cfg.Env = value
+	}
+	if value, ok, err := decodeConfigStringSlice(doc.Config, "Cmd"); err != nil {
+		return imagestore.OCIImageConfig{}, err
+	} else if ok {
+		cfg.Cmd = value
+	}
+	if value, ok, err := decodeConfigStringSlice(doc.Config, "Entrypoint"); err != nil {
+		return imagestore.OCIImageConfig{}, err
+	} else if ok {
+		cfg.Entrypoint = value
+	}
+	if value, ok, err := decodeConfigString(doc.Config, "WorkingDir"); err != nil {
+		return imagestore.OCIImageConfig{}, err
+	} else if ok {
+		cfg.Workdir = value
+	}
+	if value, ok, err := decodeConfigString(doc.Config, "User"); err != nil {
+		return imagestore.OCIImageConfig{}, err
+	} else if ok {
+		cfg.User = value
+	}
+	if value, ok, err := decodeConfigLabels(doc.Config, "Labels"); err != nil {
+		return imagestore.OCIImageConfig{}, err
+	} else if ok {
+		cfg.Labels = value
+	}
+	return cfg, nil
+}
+
+func decodeConfigStringSlice(config map[string]json.RawMessage, key string) (*[]string, bool, error) {
+	raw, ok := config[key]
+	if !ok {
+		return nil, false, nil
+	}
+	var values []string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil, false, fmt.Errorf("decode OCI config %s: %w", key, err)
+	}
+	return &values, true, nil
+}
+
+func decodeConfigString(config map[string]json.RawMessage, key string) (*string, bool, error) {
+	raw, ok := config[key]
+	if !ok {
+		return nil, false, nil
+	}
+	if strings.TrimSpace(string(raw)) == "null" {
+		return nil, true, nil
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, false, fmt.Errorf("decode OCI config %s: %w", key, err)
+	}
+	return &value, true, nil
+}
+
+func decodeConfigLabels(config map[string]json.RawMessage, key string) (*map[string]string, bool, error) {
+	raw, ok := config[key]
+	if !ok {
+		return nil, false, nil
+	}
+	var labels map[string]string
+	if err := json.Unmarshal(raw, &labels); err != nil {
+		return nil, false, fmt.Errorf("decode OCI config %s: %w", key, err)
+	}
+	return &labels, true, nil
 }
 
 func (b *Builder) resolveBootProfile(layers []ocistore.BlobRecord) (imagestore.Boot, error) {

@@ -443,6 +443,7 @@ func cloneOCI(oci *OCI) *OCI {
 		return nil
 	}
 	copied := *oci
+	copied.ImageConfig = cloneOCIImageConfig(oci.ImageConfig)
 	copied.Layers = append([]OCILayer(nil), oci.Layers...)
 	for i := range copied.Layers {
 		if copied.Layers[i].EROFS == nil {

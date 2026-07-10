@@ -72,15 +72,28 @@ type OCILayer struct {
 	EROFS     *EROFSLayer `json:"erofs,omitempty"`
 }
 
+// OCIImageConfig preserves the container config fields needed by future agent
+// execution without starting the OCI entrypoint as the VM init process.
+type OCIImageConfig struct {
+	Env        *[]string          `json:"env,omitempty"`
+	Cmd        *[]string          `json:"cmd,omitempty"`
+	Entrypoint *[]string          `json:"entrypoint,omitempty"`
+	Workdir    *string            `json:"workdir,omitempty"`
+	User       *string            `json:"user,omitempty"`
+	Labels     *map[string]string `json:"labels,omitempty"`
+}
+
 // OCI records the OCI source and layer order for an image build.
 type OCI struct {
-	Ref       string        `json:"ref"`
-	Source    string        `json:"source"`
-	DigestRef string        `json:"digestRef"`
-	Platform  OCIPlatform   `json:"platform"`
-	Config    OCIDescriptor `json:"config"`
-	Layers    []OCILayer    `json:"layers"`
-	BuiltAt   time.Time     `json:"builtAt"`
+	Ref            string         `json:"ref"`
+	Source         string         `json:"source"`
+	DigestRef      string         `json:"digestRef"`
+	Platform       OCIPlatform    `json:"platform"`
+	Config         OCIDescriptor  `json:"config"`
+	ImageConfig    OCIImageConfig `json:"imageConfig,omitempty"`
+	AgentInjection string         `json:"agentInjection,omitempty"`
+	Layers         []OCILayer     `json:"layers"`
+	BuiltAt        time.Time      `json:"builtAt"`
 }
 
 // ImageRecord is the persisted metadata for one managed image.
@@ -104,6 +117,7 @@ func cloneRecord(rec *ImageRecord) *ImageRecord {
 	copied := *rec
 	if rec.OCI != nil {
 		oci := *rec.OCI
+		oci.ImageConfig = cloneOCIImageConfig(rec.OCI.ImageConfig)
 		oci.Layers = append([]OCILayer(nil), rec.OCI.Layers...)
 		for i := range oci.Layers {
 			if oci.Layers[i].EROFS == nil {
@@ -115,4 +129,36 @@ func cloneRecord(rec *ImageRecord) *ImageRecord {
 		copied.OCI = &oci
 	}
 	return &copied
+}
+
+func cloneOCIImageConfig(cfg OCIImageConfig) OCIImageConfig {
+	copied := cfg
+	if cfg.Env != nil {
+		env := append([]string(nil), (*cfg.Env)...)
+		copied.Env = &env
+	}
+	if cfg.Cmd != nil {
+		cmd := append([]string(nil), (*cfg.Cmd)...)
+		copied.Cmd = &cmd
+	}
+	if cfg.Entrypoint != nil {
+		entrypoint := append([]string(nil), (*cfg.Entrypoint)...)
+		copied.Entrypoint = &entrypoint
+	}
+	if cfg.Workdir != nil {
+		workdir := *cfg.Workdir
+		copied.Workdir = &workdir
+	}
+	if cfg.User != nil {
+		user := *cfg.User
+		copied.User = &user
+	}
+	if cfg.Labels != nil {
+		labels := make(map[string]string, len(*cfg.Labels))
+		for key, value := range *cfg.Labels {
+			labels[key] = value
+		}
+		copied.Labels = &labels
+	}
+	return copied
 }
