@@ -16,6 +16,7 @@ source="auto"
 mkfs_erofs="mkfs.erofs"
 use_sudo=false
 wait_seconds=60
+bridge_name="kumabox0"
 
 usage() {
   cat <<'USAGE'
@@ -107,10 +108,16 @@ if [[ "$use_sudo" == true ]]; then
   kumabox_cmd=(sudo "$kumabox_path")
   cat_cmd=(sudo cat)
   tail_cmd=(sudo tail)
+  ip_cmd=(sudo ip)
+  remove_cmd=(sudo rm -rf)
+  mkdir_cmd=(sudo mkdir -p)
 else
   kumabox_cmd=("$kumabox_path")
   cat_cmd=(cat)
   tail_cmd=(tail)
+  ip_cmd=(ip)
+  remove_cmd=(rm -rf)
+  mkdir_cmd=(mkdir -p)
 fi
 
 kb() {
@@ -128,7 +135,25 @@ cleanup() {
 }
 
 step "clean previous OCI direct boot state"
+set +e
+old_taps=()
+if [[ -f "$root_dir/network/index.json" ]]; then
+  mapfile -t old_taps < <("${cat_cmd[@]}" "$root_dir/network/index.json" 2>/dev/null | jq -r '.networks[]?.tap // empty' 2>/dev/null)
+fi
 cleanup
+kb network teardown --json >/dev/null 2>&1
+for old_tap in "${old_taps[@]}"; do
+  if [[ -n "$old_tap" && "$old_tap" != "null" ]]; then
+    "${ip_cmd[@]}" link delete "$old_tap" >/dev/null 2>&1
+  fi
+done
+if "${ip_cmd[@]}" link show "$bridge_name" >/dev/null 2>&1; then
+  printf 'state: removing leftover test bridge %s without owner state\n' "$bridge_name"
+  "${ip_cmd[@]}" link delete "$bridge_name" >/dev/null 2>&1
+fi
+"${remove_cmd[@]}" "$root_dir" "$run_dir" "$log_dir"
+"${mkdir_cmd[@]}" "$root_dir" "$run_dir" "$log_dir"
+set -e
 
 step "environment checks"
 env_args=(
