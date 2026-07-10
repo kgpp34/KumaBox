@@ -8,6 +8,7 @@ package vmstore
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -75,10 +76,12 @@ type VMRecord struct {
 	RootDisk       string                   `json:"rootDisk"`
 	Kernel         string                   `json:"kernel,omitempty"`
 	Initrd         string                   `json:"initrd,omitempty"`
+	KernelCmdline  string                   `json:"kernelCmdline,omitempty"`
 	Firmware       string                   `json:"firmware,omitempty"`
 	Image          *ImageRef                `json:"image,omitempty"`
 	CPUs           int                      `json:"cpus"`
 	Metadata       *Metadata                `json:"metadata,omitempty"`
+	StorageConfigs []StorageConfig          `json:"storageConfigs,omitempty"`
 	NetworkConfigs []kbnetwork.Config       `json:"networkConfigs,omitempty"`
 	Network        string                   `json:"network,omitempty"`
 	Networks       []string                 `json:"networks,omitempty"`
@@ -114,6 +117,19 @@ type ImageRef struct {
 	BootMode string `json:"bootMode,omitempty"`
 }
 
+// StorageConfig describes one block device rendered for a VM.
+type StorageConfig struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	Path        string `json:"path"`
+	Readonly    bool   `json:"readonly"`
+	ImageType   string `json:"imageType,omitempty"`
+	Serial      string `json:"serial,omitempty"`
+	Filesystem  string `json:"filesystem,omitempty"`
+	SourceLayer string `json:"sourceLayer,omitempty"`
+	SizeBytes   int64  `json:"sizeBytes,omitempty"`
+}
+
 func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
 	rootDisk, err := normalizePath(req.RootDisk)
 	if err != nil {
@@ -147,23 +163,25 @@ func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
 	network := primaryNetwork(networks)
 	cpus := normalizeCPUs(req.CPUs)
 	rec := &VMRecord{
-		ID:        id,
-		Name:      req.Name,
-		Backend:   backendCloudHypervisor,
-		State:     StateCreated,
-		RootDisk:  rootDisk,
-		Kernel:    kernel,
-		Initrd:    initrd,
-		Firmware:  firmware,
-		Image:     cloneImageRef(req.Image),
-		CPUs:      cpus,
-		Network:   network,
-		Networks:  cloneStrings(networks),
-		RunDir:    runDir,
-		LogDir:    logDir,
-		Config:    filepath.Join(runDir, "cloud-hypervisor.json"),
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:             id,
+		Name:           req.Name,
+		Backend:        backendCloudHypervisor,
+		State:          StateCreated,
+		RootDisk:       rootDisk,
+		Kernel:         kernel,
+		Initrd:         initrd,
+		KernelCmdline:  req.KernelCmdline,
+		Firmware:       firmware,
+		Image:          cloneImageRef(req.Image),
+		CPUs:           cpus,
+		StorageConfigs: normalizeStorageConfigs(req.StorageConfigs, runDir),
+		Network:        network,
+		Networks:       cloneStrings(networks),
+		RunDir:         runDir,
+		LogDir:         logDir,
+		Config:         filepath.Join(runDir, "cloud-hypervisor.json"),
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	if firmware != "" {
 		rec.Metadata = &Metadata{
@@ -196,6 +214,7 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 		copied.Metadata = &metadata
 	}
 	copied.Image = cloneImageRef(rec.Image)
+	copied.StorageConfigs = cloneStorageConfigs(rec.StorageConfigs)
 	copied.Networks = cloneStrings(rec.Networks)
 	copied.NetworkConfigs = cloneNetworkConfigs(rec.NetworkConfigs)
 	copied.NetworkStatus = cloneNetworkStatus(rec.NetworkStatus)
@@ -208,6 +227,33 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 		copied.StoppedAt = &stoppedAt
 	}
 	return &copied
+}
+
+func normalizeStorageConfigs(configs []StorageConfig, runDir string) []StorageConfig {
+	if len(configs) == 0 {
+		return nil
+	}
+	normalized := make([]StorageConfig, 0, len(configs))
+	for i, cfg := range configs {
+		if cfg.ID == "" {
+			cfg.ID = fmt.Sprintf("storage%d", i)
+		}
+		if cfg.Type == "cow" && cfg.Path == "" {
+			cfg.Path = filepath.Join(runDir, "cow.ext4")
+		}
+		if abs, err := normalizePath(cfg.Path); err == nil {
+			cfg.Path = abs
+		}
+		normalized = append(normalized, cfg)
+	}
+	return normalized
+}
+
+func cloneStorageConfigs(configs []StorageConfig) []StorageConfig {
+	if len(configs) == 0 {
+		return nil
+	}
+	return append([]StorageConfig(nil), configs...)
 }
 
 func cloneNetworkStatus(status *kbnetwork.InspectResult) *kbnetwork.InspectResult {

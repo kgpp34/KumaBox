@@ -529,6 +529,55 @@ func TestCreateImageRefCommand(t *testing.T) {
 	}
 }
 
+func TestNewCreateRequestSupportsOCIImageStorage(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Runtime.RunDir = filepath.Join(dir, "run")
+	cfg.Runtime.LogDir = filepath.Join(dir, "log")
+
+	req, err := newOCIImageCreateRequest(createVMFlags{
+		name:    "oci-vm",
+		storage: "8M",
+		cpus:    2,
+	}, &imagestore.ImageRecord{
+		ID:   "img_oci",
+		Name: "oci-image",
+		Boot: imagestore.Boot{
+			Mode:    "direct",
+			Kernel:  filepath.Join(dir, "vmlinuz"),
+			Initrd:  filepath.Join(dir, "initrd.img"),
+			Cmdline: "kumabox.layers={{layers}} kumabox.cow={{cow}}",
+		},
+		OCI: &imagestore.OCI{
+			Layers: []imagestore.OCILayer{
+				{
+					Index:  0,
+					Digest: "sha256:" + strings.Repeat("a", 64),
+					EROFS: &imagestore.EROFSLayer{
+						Path:      filepath.Join(dir, "layer0.erofs"),
+						SizeBytes: 4096,
+					},
+				},
+			},
+		},
+	}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.RootDisk != "" || req.Kernel == "" || req.Initrd == "" || req.KernelCmdline == "" {
+		t.Fatalf("unexpected boot request: %+v", req)
+	}
+	if len(req.StorageConfigs) != 2 {
+		t.Fatalf("storage configs = %+v", req.StorageConfigs)
+	}
+	if req.StorageConfigs[0].Type != "layer" || !req.StorageConfigs[0].Readonly || req.StorageConfigs[0].Serial != "kumabox-layer0" {
+		t.Fatalf("layer storage = %+v", req.StorageConfigs[0])
+	}
+	if req.StorageConfigs[1].Type != "cow" || req.StorageConfigs[1].SizeBytes != 8*1024*1024 || req.StorageConfigs[1].Serial != "kumabox-cow" {
+		t.Fatalf("cow storage = %+v", req.StorageConfigs[1])
+	}
+}
+
 func TestLogsCommandTailsVMLogs(t *testing.T) {
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")

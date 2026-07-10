@@ -1040,3 +1040,46 @@ func testIndexedCNIAllocation(vmID, networkName string, index int) *kbnetwork.Al
 	}
 	return &kbnetwork.Allocation{Record: record, Config: netCfg}
 }
+
+func TestPrepareStorageCreatesCOWAndChecksLayers(t *testing.T) {
+	dir := t.TempDir()
+	layer := filepath.Join(dir, "layer.erofs")
+	if err := os.WriteFile(layer, []byte("erofs"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cow := filepath.Join(dir, "cow.ext4")
+	oldMkfs := mkfsExt4
+	mkfsExt4 = func(path string) ([]byte, error) {
+		if path != cow {
+			t.Fatalf("mkfs path = %s, want %s", path, cow)
+		}
+		return []byte("ok"), nil
+	}
+	defer func() { mkfsExt4 = oldMkfs }()
+
+	rec := &vmstore.VMRecord{
+		StorageConfigs: []vmstore.StorageConfig{
+			{ID: "layer0", Type: "layer", Path: layer},
+			{ID: "cow", Type: "cow", Path: cow, SizeBytes: 2 * 1024 * 1024},
+		},
+	}
+	if err := prepareStorage(rec); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(cow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != 2*1024*1024 {
+		t.Fatalf("cow size = %d", info.Size())
+	}
+}
+
+func TestPrepareStorageRejectsMissingLayer(t *testing.T) {
+	err := prepareStorage(&vmstore.VMRecord{
+		StorageConfigs: []vmstore.StorageConfig{{ID: "layer0", Type: "layer", Path: "/missing/layer.erofs"}},
+	})
+	if err == nil {
+		t.Fatal("expected missing layer error")
+	}
+}

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/kumabox/kumabox/internal/backend"
@@ -31,6 +33,9 @@ var deleteHostTap = kbnetwork.DeleteHostTap
 var addCNI = kbnetwork.AddCNI
 var deleteCNI = kbnetwork.DeleteCNI
 var deleteCNINetNS = kbnetwork.DeleteCNINetNS
+var mkfsExt4 = func(path string) ([]byte, error) {
+	return exec.Command("mkfs.ext4", "-F", path).CombinedOutput() //nolint:gosec
+}
 
 // New creates a Runtime backed by the configured Cloud Hypervisor backend.
 func New(cfg config.Config) *Runtime {
@@ -64,8 +69,15 @@ func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error)
 	if updated, err := r.store.Inspect(rec.ID); err == nil {
 		rec = updated
 	}
+	if err := prepareStorage(rec); err != nil {
+		r.rollbackNetwork(rec)
+		_ = removeManagedDirs(rec)
+		_ = r.store.Delete(rec.ID)
+		return nil, err
+	}
 	if err := r.backend.RenderConfig(rec); err != nil {
 		r.rollbackNetwork(rec)
+		_ = removeManagedDirs(rec)
 		_ = r.store.Delete(rec.ID)
 		return nil, err
 	}
@@ -80,6 +92,13 @@ func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error)
 func (r *Runtime) StartVM(ref string) (*vmstore.VMRecord, error) {
 	rec, err := r.store.Inspect(ref)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := prepareStorage(rec); err != nil {
+		if _, markErr := r.store.MarkError(rec.ID, err.Error()); markErr != nil {
+			return nil, markErr
+		}
 		return nil, err
 	}
 
@@ -311,6 +330,63 @@ func removeManagedDirs(rec *vmstore.VMRecord) error {
 		if err := os.RemoveAll(dir); err != nil {
 			return fmt.Errorf("remove managed directory %s: %w", dir, err)
 		}
+	}
+	return nil
+}
+
+func prepareStorage(rec *vmstore.VMRecord) error {
+	for _, cfg := range rec.StorageConfigs {
+		switch cfg.Type {
+		case "layer":
+			if cfg.Path == "" {
+				return fmt.Errorf("storage layer %s path must not be empty", cfg.ID)
+			}
+			info, err := os.Stat(cfg.Path)
+			if err != nil {
+				return fmt.Errorf("stat storage layer %s: %w", cfg.ID, err)
+			}
+			if info.IsDir() {
+				return fmt.Errorf("storage layer %s must be a file: %s", cfg.ID, cfg.Path)
+			}
+		case "cow":
+			if err := prepareCOW(cfg); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func prepareCOW(cfg vmstore.StorageConfig) error {
+	if cfg.Path == "" {
+		return fmt.Errorf("COW storage path must not be empty")
+	}
+	if cfg.SizeBytes <= 0 {
+		return fmt.Errorf("COW storage %s size must be positive", cfg.ID)
+	}
+	if info, err := os.Stat(cfg.Path); err == nil && info.Mode().IsRegular() && info.Size() == cfg.SizeBytes {
+		return nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("stat COW storage %s: %w", cfg.ID, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cfg.Path), 0o755); err != nil {
+		return fmt.Errorf("create COW storage dir: %w", err)
+	}
+	file, err := os.OpenFile(cfg.Path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o600) //nolint:gosec
+	if err != nil {
+		return fmt.Errorf("create COW storage %s: %w", cfg.ID, err)
+	}
+	if err := file.Truncate(cfg.SizeBytes); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("size COW storage %s: %w", cfg.ID, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close COW storage %s: %w", cfg.ID, err)
+	}
+	out, err := mkfsExt4(cfg.Path)
+	if err != nil {
+		_ = os.Remove(cfg.Path)
+		return fmt.Errorf("mkfs.ext4 COW storage %s: %w: %s", cfg.ID, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

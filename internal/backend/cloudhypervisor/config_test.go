@@ -113,6 +113,69 @@ func TestRenderConfigSupportsFirmwareBoot(t *testing.T) {
 	}
 }
 
+func TestRenderConfigSupportsOCIStorageDisks(t *testing.T) {
+	dir := t.TempDir()
+	rec := &vmstore.VMRecord{
+		ID:            "kb_oci",
+		Name:          "oci",
+		Kernel:        "/fixtures/vmlinuz",
+		Initrd:        "/fixtures/initrd.img",
+		KernelCmdline: "console=ttyS0 kumabox.layers={{layers}} kumabox.cow={{cow}}",
+		RunDir:        filepath.Join(dir, "run", "vms", "kb_oci"),
+		LogDir:        filepath.Join(dir, "logs", "vms", "kb_oci"),
+		Config:        filepath.Join(dir, "run", "vms", "kb_oci", "cloud-hypervisor.json"),
+		StorageConfigs: []vmstore.StorageConfig{
+			{
+				ID:        "layer0",
+				Type:      "layer",
+				Path:      "/data/oci/erofs/blobs/sha256/layer0.erofs",
+				Readonly:  true,
+				ImageType: "raw",
+				Serial:    "kumabox-layer0",
+			},
+			{
+				ID:        "cow",
+				Type:      "cow",
+				Path:      filepath.Join(dir, "run", "vms", "kb_oci", "cow.ext4"),
+				ImageType: "raw",
+				Serial:    "kumabox-cow",
+			},
+		},
+	}
+
+	cfg := config.Default()
+	if err := NewRenderer(cfg).RenderConfig(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(rec.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rendered Config
+	if err := json.Unmarshal(raw, &rendered); err != nil {
+		t.Fatal(err)
+	}
+	if len(rendered.Disks) != 2 {
+		t.Fatalf("disks = %+v", rendered.Disks)
+	}
+	if !rendered.Disks[0].Readonly || rendered.Disks[0].Serial != "kumabox-layer0" {
+		t.Fatalf("layer disk = %+v", rendered.Disks[0])
+	}
+	if rendered.Disks[1].Readonly || rendered.Disks[1].Serial != "kumabox-cow" {
+		t.Fatalf("cow disk = %+v", rendered.Disks[1])
+	}
+	if rendered.Kernel == nil || rendered.Kernel.Cmdline != "console=ttyS0 kumabox.layers=kumabox-layer0 kumabox.cow=kumabox-cow" {
+		t.Fatalf("kernel = %+v", rendered.Kernel)
+	}
+	if !argsContainPair(rendered.Args, "--disk", "path=/data/oci/erofs/blobs/sha256/layer0.erofs,readonly=on,image_type=raw,serial=kumabox-layer0") {
+		t.Fatalf("layer disk arg missing: %v", rendered.Args)
+	}
+	if !argsContainPair(rendered.Args, "--disk", "path="+filepath.Join(dir, "run", "vms", "kb_oci", "cow.ext4")+",image_type=raw,serial=kumabox-cow") {
+		t.Fatalf("cow disk arg missing: %v", rendered.Args)
+	}
+}
+
 func TestRenderConfigIncludesNetworkDevice(t *testing.T) {
 	dir := t.TempDir()
 	rec := &vmstore.VMRecord{

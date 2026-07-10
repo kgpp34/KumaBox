@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -235,6 +237,7 @@ type createVMFlags struct {
 	initrd   string
 	firmware string
 	cpus     int
+	storage  string
 	networks []string
 }
 
@@ -245,6 +248,7 @@ func addCreateVMFlags(cmd *cobra.Command, flags *createVMFlags) {
 	cmd.Flags().StringVar(&flags.initrd, "initrd", "", "initrd image path")
 	cmd.Flags().StringVar(&flags.firmware, "firmware", "", "UEFI firmware path")
 	cmd.Flags().IntVar(&flags.cpus, "cpus", 1, "number of vCPUs")
+	cmd.Flags().StringVar(&flags.storage, "storage", "", "per-VM writable COW size for OCI images, for example 4G")
 	cmd.Flags().StringArrayVar(&flags.networks, "network", nil, "network attachment, repeatable: none, default, host-tap, cni, or cni:NAME")
 	_ = cmd.MarkFlagRequired("name")
 }
@@ -280,8 +284,11 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 	if err != nil {
 		return vmstore.CreateRequest{}, fmt.Errorf("resolve image %q: %w", args[0], err)
 	}
-	if image.RootDisk.Path == "" {
+	if image.OCI == nil && image.RootDisk.Path == "" {
 		return vmstore.CreateRequest{}, fmt.Errorf("image %q has no root disk", args[0])
+	}
+	if image.OCI != nil {
+		return newOCIImageCreateRequest(flags, image, cfg)
 	}
 	req := vmstore.CreateRequest{
 		Name:     flags.name,
@@ -304,6 +311,91 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 		return vmstore.CreateRequest{}, fmt.Errorf("image %q has no usable boot configuration", args[0])
 	}
 	return req, nil
+}
+
+func newOCIImageCreateRequest(flags createVMFlags, image *imagestore.ImageRecord, cfg config.Config) (vmstore.CreateRequest, error) {
+	if image.Boot.Mode != "direct" || image.Boot.Kernel == "" || image.Boot.Initrd == "" {
+		return vmstore.CreateRequest{}, fmt.Errorf("image %q has no OCI direct boot profile", image.Name)
+	}
+	cowSize, err := parseByteSize(defaultString(flags.storage, "4G"))
+	if err != nil {
+		return vmstore.CreateRequest{}, err
+	}
+	storageConfigs := make([]vmstore.StorageConfig, 0, len(image.OCI.Layers)+1)
+	for i, layer := range image.OCI.Layers {
+		if layer.EROFS == nil || layer.EROFS.Path == "" {
+			return vmstore.CreateRequest{}, fmt.Errorf("image %q layer %d has no EROFS blob", image.Name, i)
+		}
+		storageConfigs = append(storageConfigs, vmstore.StorageConfig{
+			ID:          fmt.Sprintf("layer%d", i),
+			Type:        "layer",
+			Path:        layer.EROFS.Path,
+			Readonly:    true,
+			ImageType:   "raw",
+			Serial:      fmt.Sprintf("kumabox-layer%d", i),
+			Filesystem:  "erofs",
+			SourceLayer: layer.Digest,
+			SizeBytes:   layer.EROFS.SizeBytes,
+		})
+	}
+	storageConfigs = append(storageConfigs, vmstore.StorageConfig{
+		ID:         "cow",
+		Type:       "cow",
+		Readonly:   false,
+		ImageType:  "raw",
+		Serial:     "kumabox-cow",
+		Filesystem: "ext4",
+		SizeBytes:  cowSize,
+	})
+	return vmstore.CreateRequest{
+		Name:           flags.name,
+		Kernel:         image.Boot.Kernel,
+		Initrd:         image.Boot.Initrd,
+		KernelCmdline:  image.Boot.Cmdline,
+		CPUs:           flags.cpus,
+		Networks:       normalizedNetworkFlags(flags.networks),
+		StorageConfigs: storageConfigs,
+		Image: &vmstore.ImageRef{
+			ID:       image.ID,
+			Name:     image.Name,
+			RootDisk: image.RootDisk.Path,
+			BootMode: image.Boot.Mode,
+		},
+		RunDir: cfg.Runtime.RunDir,
+		LogDir: cfg.Runtime.LogDir,
+	}, nil
+}
+
+func parseByteSize(value string) (int64, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, fmt.Errorf("--storage must not be empty")
+	}
+	multiplier := int64(1)
+	suffix := strings.ToUpper(trimmed[len(trimmed)-1:])
+	switch suffix {
+	case "K":
+		multiplier = 1024
+		trimmed = trimmed[:len(trimmed)-1]
+	case "M":
+		multiplier = 1024 * 1024
+		trimmed = trimmed[:len(trimmed)-1]
+	case "G":
+		multiplier = 1024 * 1024 * 1024
+		trimmed = trimmed[:len(trimmed)-1]
+	}
+	n, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("--storage must be a positive size like 4G")
+	}
+	return n * multiplier, nil
+}
+
+func defaultString(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func normalizedNetworkFlags(values []string) []string {

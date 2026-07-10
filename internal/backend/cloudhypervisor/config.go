@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/fileutil"
@@ -64,6 +65,7 @@ type Disk struct {
 	Path      string `json:"path"`
 	Readonly  bool   `json:"readonly"`
 	ImageType string `json:"imageType,omitempty"`
+	Serial    string `json:"serial,omitempty"`
 }
 
 // Net is one virtio-net device backed by a host TAP interface.
@@ -174,24 +176,20 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		"--api-socket", apiSocket,
 		"--cpus", fmt.Sprintf("boot=%d", cpus),
 	}
+	cmdline := kernelCmdline(rec)
 	if rec.Firmware != "" {
 		args = append(args, "--firmware", rec.Firmware)
 	} else {
 		args = append(args,
 			"--kernel", rec.Kernel,
 			"--initramfs", rec.Initrd,
-			"--cmdline", defaultKernelCmdline,
+			"--cmdline", cmdline,
 		)
 	}
-	diskArg := "path=" + rec.RootDisk
-	if imageType := rootDiskImageType(rec); imageType != "" {
-		diskArg += ",image_type=" + imageType
+	for _, disk := range launchDisks(rec) {
+		args = append(args, "--disk", diskArg(disk))
 	}
-	args = append(args,
-		"--disk", diskArg,
-		"--serial", "file="+serialLog,
-		"--console", "off",
-	)
+	args = append(args, "--serial", "file="+serialLog, "--console", "off")
 	if meta := activeMetadata(rec); meta != nil && meta.CidataDisk != "" {
 		args = append(args, "--disk", "path="+meta.CidataDisk+",readonly=on,image_type=raw")
 	}
@@ -230,7 +228,7 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 	} else {
 		rendered.Kernel = &Kernel{
 			Path:    rec.Kernel,
-			Cmdline: defaultKernelCmdline,
+			Cmdline: cmdline,
 		}
 		rendered.Initramfs = &Initramfs{Path: rec.Initrd}
 	}
@@ -270,7 +268,7 @@ func newNets(rec *vmstore.VMRecord) []Net {
 }
 
 func newDisks(rec *vmstore.VMRecord) []Disk {
-	disks := []Disk{newRootDisk(rec)}
+	disks := launchDisks(rec)
 	if meta := activeMetadata(rec); meta != nil && meta.CidataDisk != "" {
 		disks = append(disks, Disk{
 			Path:      meta.CidataDisk,
@@ -279,6 +277,58 @@ func newDisks(rec *vmstore.VMRecord) []Disk {
 		})
 	}
 	return disks
+}
+
+func launchDisks(rec *vmstore.VMRecord) []Disk {
+	if len(rec.StorageConfigs) > 0 {
+		disks := make([]Disk, 0, len(rec.StorageConfigs))
+		for _, cfg := range rec.StorageConfigs {
+			disks = append(disks, Disk{
+				Path:      cfg.Path,
+				Readonly:  cfg.Readonly,
+				ImageType: cfg.ImageType,
+				Serial:    cfg.Serial,
+			})
+		}
+		return disks
+	}
+	return []Disk{newRootDisk(rec)}
+}
+
+func diskArg(disk Disk) string {
+	arg := "path=" + disk.Path
+	if disk.Readonly {
+		arg += ",readonly=on"
+	}
+	if disk.ImageType != "" {
+		arg += ",image_type=" + disk.ImageType
+	}
+	if disk.Serial != "" {
+		arg += ",serial=" + disk.Serial
+	}
+	return arg
+}
+
+func kernelCmdline(rec *vmstore.VMRecord) string {
+	cmdline := rec.KernelCmdline
+	if cmdline == "" {
+		cmdline = defaultKernelCmdline
+	}
+	layers := make([]string, 0)
+	cow := ""
+	for _, cfg := range rec.StorageConfigs {
+		switch cfg.Type {
+		case "layer":
+			if cfg.Serial != "" {
+				layers = append(layers, cfg.Serial)
+			}
+		case "cow":
+			cow = cfg.Serial
+		}
+	}
+	cmdline = strings.ReplaceAll(cmdline, "{{layers}}", strings.Join(layers, ","))
+	cmdline = strings.ReplaceAll(cmdline, "{{cow}}", cow)
+	return cmdline
 }
 
 func activeMetadata(rec *vmstore.VMRecord) *vmstore.Metadata {

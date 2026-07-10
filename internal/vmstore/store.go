@@ -44,17 +44,19 @@ func New(rootDir string) *Store {
 // create disks, render VMM config, or allocate network resources; runtime code
 // coordinates those side effects around store.Create.
 type CreateRequest struct {
-	Name     string
-	RootDisk string
-	Kernel   string
-	Initrd   string
-	Firmware string
-	Image    *ImageRef
-	CPUs     int
-	Network  string
-	Networks []string
-	RunDir   string
-	LogDir   string
+	Name           string
+	RootDisk       string
+	Kernel         string
+	Initrd         string
+	KernelCmdline  string
+	Firmware       string
+	Image          *ImageRef
+	CPUs           int
+	Network        string
+	Networks       []string
+	StorageConfigs []StorageConfig
+	RunDir         string
+	LogDir         string
 }
 
 // Create validates and inserts a VM record.
@@ -357,7 +359,7 @@ func validateCreateRequest(req CreateRequest) error {
 	if req.Name == "" {
 		return errors.New("name must not be empty")
 	}
-	if req.RootDisk == "" {
+	if req.RootDisk == "" && len(req.StorageConfigs) == 0 {
 		return errors.New("root disk must not be empty")
 	}
 	if req.Firmware == "" && req.Kernel == "" {
