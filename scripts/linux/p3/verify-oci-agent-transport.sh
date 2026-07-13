@@ -215,7 +215,12 @@ printf 'state: vsockSocket=%s config=%s\n' "$vsock_socket" "$config_path"
 
 step "inspect rendered vsock config"
 config_json="$("${cat_cmd[@]}" "$config_path")"
-printf '%s\n' "$config_json" | jq '.vsock'
+printf '%s\n' "$config_json" | jq '.kernel, .vsock'
+cmdline="$(printf '%s\n' "$config_json" | jq -r '.kernel.cmdline')"
+if [[ "$cmdline" != *"boot=kumabox-overlay"* || "$cmdline" == *"root=/dev/ram0"* ]]; then
+  echo "cmdline does not select KumaBox overlay boot: $cmdline" >&2
+  exit 1
+fi
 rendered_socket="$(printf '%s\n' "$config_json" | jq -r '.vsock.socket')"
 if [[ "$rendered_socket" != "$vsock_socket" ]]; then
   echo "rendered vsock socket mismatch: got $rendered_socket want $vsock_socket" >&2
