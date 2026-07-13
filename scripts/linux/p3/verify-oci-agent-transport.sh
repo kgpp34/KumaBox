@@ -18,6 +18,7 @@ timeout="90s"
 skip_base_build=0
 use_sudo=false
 script_status=1
+tail_pid=""
 
 usage() {
   cat <<'USAGE'
@@ -85,7 +86,16 @@ print_failure_context() {
   fi
 }
 
+stop_console_tail() {
+  if [[ -n "$tail_pid" ]]; then
+    kill "$tail_pid" >/dev/null 2>&1 || true
+    wait "$tail_pid" >/dev/null 2>&1 || true
+    tail_pid=""
+  fi
+}
+
 on_exit() {
+  stop_console_tail
   if [[ "$script_status" -ne 0 ]]; then
     print_failure_context
     printf '\n==> preserving failed OCI agent state\n' >&2
@@ -144,11 +154,13 @@ if [[ "$use_sudo" == true ]]; then
   fi
   kumabox_cmd=(sudo "$kumabox_path")
   cat_cmd=(sudo cat)
+  tail_cmd=(sudo tail)
   remove_cmd=(sudo rm -rf)
   mkdir_cmd=(sudo mkdir -p)
 else
   kumabox_cmd=("$kumabox_path")
   cat_cmd=(cat)
+  tail_cmd=(tail)
   remove_cmd=(rm -rf)
   mkdir_cmd=(mkdir -p)
 fi
@@ -203,6 +215,8 @@ printf '%s\n' "$run_json"
 state="$(printf '%s' "$run_json" | jq -r '.state')"
 config_path="$(printf '%s' "$run_json" | jq -r '.config')"
 vsock_socket="$(printf '%s' "$run_json" | jq -r '.vsockSocket')"
+vm_log_dir="$(printf '%s' "$run_json" | jq -r '.logDir')"
+console_log="$vm_log_dir/console.log"
 if [[ "$state" != "running" ]]; then
   echo "VM did not reach running state: $state" >&2
   exit 1
@@ -227,11 +241,17 @@ if [[ "$rendered_socket" != "$vsock_socket" ]]; then
   exit 1
 fi
 
+step "tail console while waiting for agent"
+printf 'state: console=%s\n' "$console_log"
+"${tail_cmd[@]}" -n +1 -F "$console_log" &
+tail_pid=$!
+
 step "ping guest agent"
 set +e
 agent_output="$(kb agent ping "$vm_name" --timeout "$timeout" 2>&1)"
 agent_status=$?
 set -e
+stop_console_tail
 if [[ "$agent_status" -ne 0 ]]; then
   printf '%s\n' "$agent_output" >&2
   exit "$agent_status"
