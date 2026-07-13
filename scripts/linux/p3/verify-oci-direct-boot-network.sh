@@ -204,6 +204,10 @@ if [[ "$cmdline" != *"kumabox.layers=kumabox-layer0"* || "$cmdline" != *"kumabox
   echo "cmdline missing layer/COW serials: $cmdline" >&2
   exit 1
 fi
+if [[ "$cmdline" != *"boot=kumabox-overlay"* || "$cmdline" == *"root=/dev/ram0"* ]]; then
+  echo "cmdline does not select KumaBox overlay boot: $cmdline" >&2
+  exit 1
+fi
 if [[ "$cmdline" != *"kumabox.hostname=$vm_name"* ]]; then
   echo "cmdline missing hostname: $cmdline" >&2
   exit 1

@@ -103,6 +103,9 @@ func TestResolveBootProfileExtractsKernelAndInitrd(t *testing.T) {
 	if !strings.Contains(boot.Cmdline, "kumabox.layers={{layers}}") || !strings.Contains(boot.Cmdline, "kumabox.cow={{cow}}") {
 		t.Fatalf("cmdline template missing overlay placeholders: %s", boot.Cmdline)
 	}
+	if !strings.Contains(boot.Cmdline, "boot=kumabox-overlay") || strings.Contains(boot.Cmdline, "root=/dev/ram0") {
+		t.Fatalf("cmdline template does not select KumaBox overlay boot: %s", boot.Cmdline)
+	}
 }
 
 func TestResolveBootProfileRejectsMissingAssets(t *testing.T) {

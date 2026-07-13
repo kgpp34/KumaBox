@@ -204,6 +204,10 @@ if [[ "$cmdline" != *"kumabox.layers=kumabox-layer0"* || "$cmdline" != *"kumabox
   echo "kernel cmdline missing storage serials: $cmdline" >&2
   exit 1
 fi
+if [[ "$cmdline" != *"boot=kumabox-overlay"* || "$cmdline" == *"root=/dev/ram0"* ]]; then
+  echo "kernel cmdline does not select KumaBox overlay boot: $cmdline" >&2
+  exit 1
+fi
 printf 'state: cmdline=%s\n' "$cmdline"
 
 step "delete VM and verify COW cleanup"

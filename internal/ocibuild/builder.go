@@ -27,7 +27,7 @@ import (
 	"github.com/kumabox/kumabox/internal/ocistore"
 )
 
-const ociCmdlineTemplate = "console=ttyS0 reboot=k panic=1 root=/dev/ram0 rw kumabox.layers={{layers}} kumabox.cow={{cow}} kumabox.timeout=10"
+const ociCmdlineTemplate = "console=ttyS0 reboot=k panic=1 boot=kumabox-overlay kumabox.layers={{layers}} kumabox.cow={{cow}} kumabox.timeout=10 rw"
 
 // BuildRequest describes an OCI image build.
 type BuildRequest struct {

@@ -142,6 +142,10 @@ if [[ "$cmdline" != *"kumabox.layers={{layers}}"* || "$cmdline" != *"kumabox.cow
   echo "cmdline template missing overlay placeholders: $cmdline" >&2
   exit 1
 fi
+if [[ "$cmdline" != *"boot=kumabox-overlay"* || "$cmdline" == *"root=/dev/ram0"* ]]; then
+  echo "cmdline template does not select KumaBox overlay boot: $cmdline" >&2
+  exit 1
+fi
 printf 'state: boot mode=%s kernel=%s initrd=%s\n' "$boot_mode" "$kernel_path" "$initrd_path"
 printf 'state: cmdline=%s\n' "$cmdline"
 
