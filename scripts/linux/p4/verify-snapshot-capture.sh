@@ -60,29 +60,32 @@ snapshot_id=
 success=false
 
 cleanup() {
-  if [[ $success == true && $keep == false ]]; then
-    [[ -z $snapshot_id ]] || kb snapshot rm "$snapshot_id" >/dev/null 2>&1 || true
-    [[ -z $vm_id ]] || kb delete "$vm_id" --force >/dev/null 2>&1 || true
-  else
-    echo
-    echo "==> preserving failed stopped snapshot state"
-    echo "state: root_dir=$root_dir run_dir=$run_dir log_dir=$log_dir"
-	if [[ -n $vm_id ]]; then
-	  step "failure context: VM inspect"
-	  inspect=$(kb inspect "$vm_id" --json 2>/dev/null || true)
-	  printf '%s\n' "$inspect"
-	  vm_log_dir=$(jq -r '.logDir // empty' <<<"$inspect" 2>/dev/null || true)
-	  vm_config=$(jq -r '.config // empty' <<<"$inspect" 2>/dev/null || true)
-	  if [[ -n $vm_config ]]; then
-	    step "failure context: rendered config"
-	    cat "$vm_config" 2>/dev/null | jq . || true
-	  fi
-	  if [[ -n $vm_log_dir ]]; then
-	    step "failure context: cloud-hypervisor stderr"
-	    tail -n 120 "$vm_log_dir/cloud-hypervisor.stderr.log" 2>/dev/null || true
-	  fi
+	if [[ $success == true ]]; then
+		if [[ $keep == false ]]; then
+			[[ -z $snapshot_id ]] || kb snapshot rm "$snapshot_id" >/dev/null 2>&1 || true
+			[[ -z $vm_id ]] || kb delete "$vm_id" --force >/dev/null 2>&1 || true
+		fi
+		return
 	fi
-  fi
+
+	echo
+	echo "==> preserving failed stopped snapshot state"
+	echo "state: root_dir=$root_dir run_dir=$run_dir log_dir=$log_dir"
+	if [[ -n $vm_id ]]; then
+		step "failure context: VM inspect"
+		inspect=$(kb inspect "$vm_id" --json 2>/dev/null || true)
+		printf '%s\n' "$inspect"
+		vm_log_dir=$(jq -r '.logDir // empty' <<<"$inspect" 2>/dev/null || true)
+		vm_config=$(jq -r '.config // empty' <<<"$inspect" 2>/dev/null || true)
+		if [[ -n $vm_config ]]; then
+			step "failure context: rendered config"
+			cat "$vm_config" 2>/dev/null | jq . || true
+		fi
+		if [[ -n $vm_log_dir ]]; then
+			step "failure context: cloud-hypervisor stderr"
+			tail -n 120 "$vm_log_dir/cloud-hypervisor.stderr.log" 2>/dev/null || true
+		fi
+	fi
 }
 trap cleanup EXIT
 
