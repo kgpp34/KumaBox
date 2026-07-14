@@ -10,6 +10,7 @@ var _ backend.Lifecycle = Backend{}
 var _ backend.StateController = Backend{}
 var _ backend.NativeSnapshotter = Backend{}
 var _ backend.NativeHostInspector = Backend{}
+var _ backend.NativeRestorer = Backend{}
 
 type Backend struct {
 	renderer Renderer

@@ -24,7 +24,15 @@ type backendFake struct {
 	resume     func(context.Context, *vmstore.VMRecord) error
 	snapshot   func(context.Context, *vmstore.VMRecord, string) error
 	nativeHost func(context.Context, *vmstore.VMRecord) (backend.NativeHost, error)
+	restore    func(context.Context, *vmstore.VMRecord, string, string) (*backend.StartResult, error)
 	observe    func(*vmstore.VMRecord) vmstore.Observation
+}
+
+func (b backendFake) RestoreVM(ctx context.Context, rec *vmstore.VMRecord, sourceDir, mode string) (*backend.StartResult, error) {
+	if b.restore != nil {
+		return b.restore(ctx, rec, sourceDir, mode)
+	}
+	return nil, errors.New("restore is not configured")
 }
 
 func (b backendFake) RenderConfig(rec *vmstore.VMRecord) error {

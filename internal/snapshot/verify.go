@@ -48,6 +48,16 @@ func (s *Store) VerifyNative(ctx context.Context, ref string, target NativeVerif
 		return nil, err
 	}
 	defer lease.Release() //nolint:errcheck
+	return s.VerifyNativeRecord(ctx, rec, target)
+}
+
+// VerifyNativeRecord validates a record whose caller already holds a read
+// lease. Restore uses this form to keep one lease across preflight, staging,
+// destructive mutation, and backend resume.
+func (s *Store) VerifyNativeRecord(ctx context.Context, rec *Record, target NativeVerifyTarget) (*Manifest, error) {
+	if rec == nil {
+		return nil, errors.New("SNAPSHOT_NOT_FOUND: snapshot record is required")
+	}
 	if target.VM == nil {
 		return nil, errors.New("SNAPSHOT_INCOMPATIBLE: target VM is required")
 	}

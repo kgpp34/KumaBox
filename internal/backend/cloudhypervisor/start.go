@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,6 +31,10 @@ func (Starter) StartConfig(path string) (*backend.StartResult, error) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return nil, fmt.Errorf("parse Cloud Hypervisor config: %w", err)
 	}
+	return startProcess(cfg)
+}
+
+func startProcess(cfg Config) (*backend.StartResult, error) {
 	if err := validateStartConfig(cfg); err != nil {
 		return nil, err
 	}
@@ -111,6 +117,18 @@ func writePIDFile(path string, pid int) error {
 		return fmt.Errorf("write pid file: %w", err)
 	}
 	return nil
+}
+
+func readPIDFile(path string) (int, error) {
+	raw, err := os.ReadFile(path) //nolint:gosec
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || pid <= 0 {
+		return 0, fmt.Errorf("invalid pid file %s", path)
+	}
+	return pid, nil
 }
 
 func waitForUnixSocket(path string, pid int, timeout time.Duration) error {

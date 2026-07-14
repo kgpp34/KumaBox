@@ -184,6 +184,92 @@ func (s *Store) MarkRunning(ref string, pid int, apiSocket string) (*VMRecord, e
 	return updated, nil
 }
 
+// BeginRestore writes the recovery marker before any writable disk is
+// replaced. Repeated calls deliberately refresh the marker so restore is the
+// recovery path for an interrupted prior attempt.
+func (s *Store) BeginRestore(ref, snapshotID, mode string) (*VMRecord, error) {
+	var updated *VMRecord
+	err := s.update(func(idx *vmIndex) error {
+		id, err := idx.resolve(ref)
+		if err != nil {
+			return err
+		}
+		rec := idx.VMs[id]
+		now := time.Now().UTC()
+		rec.State = StateStopped
+		rec.PID = 0
+		rec.APISocket = ""
+		rec.Error = ""
+		rec.Restore = &RestoreStatus{
+			SnapshotID: snapshotID,
+			Mode:       mode,
+			State:      "dirty",
+			StartedAt:  now,
+			UpdatedAt:  now,
+		}
+		rec.UpdatedAt = now
+		updated = cloneRecord(rec)
+		return nil
+	})
+	return updated, err
+}
+
+// MarkRestoreFailed quarantines a VM after the destructive restore boundary.
+// The restore marker is retained so start cannot boot mixed-generation state.
+func (s *Store) MarkRestoreFailed(ref, message string) (*VMRecord, error) {
+	var updated *VMRecord
+	err := s.update(func(idx *vmIndex) error {
+		id, err := idx.resolve(ref)
+		if err != nil {
+			return err
+		}
+		rec := idx.VMs[id]
+		now := time.Now().UTC()
+		rec.State = StateError
+		rec.PID = 0
+		rec.APISocket = ""
+		rec.Error = message
+		if rec.Restore == nil {
+			rec.Restore = &RestoreStatus{State: "dirty", StartedAt: now}
+		}
+		rec.Restore.State = "failed"
+		rec.Restore.Error = message
+		rec.Restore.UpdatedAt = now
+		rec.UpdatedAt = now
+		updated = cloneRecord(rec)
+		return nil
+	})
+	return updated, err
+}
+
+// MarkRestored atomically publishes restored process identity and clears the
+// recovery marker only after the backend has restored and resumed the VM.
+func (s *Store) MarkRestored(ref string, pid int, apiSocket string) (*VMRecord, error) {
+	var updated *VMRecord
+	err := s.update(func(idx *vmIndex) error {
+		id, err := idx.resolve(ref)
+		if err != nil {
+			return err
+		}
+		rec := idx.VMs[id]
+		if rec.Restore == nil {
+			return errors.New("VM_RESTORE_STATE_MISSING: restore transaction is not active")
+		}
+		now := time.Now().UTC()
+		rec.State = StateRunning
+		rec.PID = pid
+		rec.APISocket = apiSocket
+		rec.Error = ""
+		rec.Restore = nil
+		rec.StartedAt = &now
+		rec.StoppedAt = nil
+		rec.UpdatedAt = now
+		updated = cloneRecord(rec)
+		return nil
+	})
+	return updated, err
+}
+
 // MarkPaused records a live paused VM without clearing backend process identity.
 func (s *Store) MarkPaused(ref string) (*VMRecord, error) {
 	return s.markLiveState(ref, StatePaused)

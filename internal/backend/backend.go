@@ -24,6 +24,14 @@ type NativeSnapshotter interface {
 	SnapshotVM(context.Context, *vmstore.VMRecord, string) error
 }
 
+// NativeRestorer recreates a backend process from validated native state.
+// Runtime owns snapshot leases, writable disk replacement, and durable VM
+// state transitions; implementations own backend-specific config patching and
+// the restore/resume API sequence.
+type NativeRestorer interface {
+	RestoreVM(context.Context, *vmstore.VMRecord, string, string) (*StartResult, error)
+}
+
 // NativeHost describes host and backend properties that constrain whether a
 // native snapshot can be restored safely.
 type NativeHost struct {

@@ -40,6 +40,7 @@ func NewRootCommand() *cobra.Command {
 	cmd.AddCommand(newStopCommand(opts))
 	cmd.AddCommand(newPauseCommand(opts))
 	cmd.AddCommand(newResumeCommand(opts))
+	cmd.AddCommand(newRestoreCommand(opts))
 	cmd.AddCommand(newInspectCommand(opts))
 	cmd.AddCommand(newLogsCommand(opts))
 	cmd.AddCommand(newDeleteCommand(opts))

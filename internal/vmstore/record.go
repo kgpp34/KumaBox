@@ -76,6 +76,7 @@ type VMRecord struct {
 	APISocket      string                   `json:"apiSocket,omitempty"`
 	VsockSocket    string                   `json:"vsockSocket,omitempty"`
 	Error          string                   `json:"error,omitempty"`
+	Restore        *RestoreStatus           `json:"restore,omitempty"`
 	RootDisk       string                   `json:"rootDisk"`
 	Kernel         string                   `json:"kernel,omitempty"`
 	Initrd         string                   `json:"initrd,omitempty"`
@@ -98,6 +99,19 @@ type VMRecord struct {
 	StartedAt      *time.Time               `json:"startedAt,omitempty"`
 	StoppedAt      *time.Time               `json:"stoppedAt,omitempty"`
 	FirstBooted    bool                     `json:"firstBooted,omitempty"`
+}
+
+// RestoreStatus is the durable recovery marker for an in-place native
+// restore. Its presence means writable state may have been replaced and a
+// normal cold start must fail closed until restore succeeds or the VM is
+// deleted.
+type RestoreStatus struct {
+	SnapshotID string    `json:"snapshotId"`
+	Mode       string    `json:"mode"`
+	State      string    `json:"state"`
+	Error      string    `json:"error,omitempty"`
+	StartedAt  time.Time `json:"startedAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
 func (r *VMRecord) EffectiveMemoryBytes() int64 {
@@ -288,6 +302,10 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 	if rec.Metadata != nil {
 		metadata := *rec.Metadata
 		copied.Metadata = &metadata
+	}
+	if rec.Restore != nil {
+		restore := *rec.Restore
+		copied.Restore = &restore
 	}
 	copied.Image = cloneImageRef(rec.Image)
 	copied.StorageConfigs = cloneStorageConfigs(rec.StorageConfigs)

@@ -40,6 +40,16 @@ func (Stopper) StopVM(rec *vmstore.VMRecord, opts backend.StopOptions) (*backend
 		apiSocket = cfg.APISocket
 	}
 	if rec.PID <= 0 {
+		if rec.Restore != nil {
+			pid, pidErr := readPIDFile(cfg.PIDFile)
+			if pidErr == nil && processAlive(pid) {
+				if err := terminateProcess(pid, cfg.Binary, apiSocket); err != nil {
+					return nil, fmt.Errorf("stop interrupted restore process: %w", err)
+				}
+			} else if pidErr != nil && !errors.Is(pidErr, os.ErrNotExist) {
+				return nil, fmt.Errorf("read interrupted restore pid: %w", pidErr)
+			}
+		}
 		cleanupRuntimeFiles(rec.RunDir)
 		return &backend.StopResult{}, nil
 	}
