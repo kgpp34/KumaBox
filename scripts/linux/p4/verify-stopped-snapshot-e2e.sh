@@ -57,9 +57,11 @@ step() { printf '\n==> %s\n' "$1"; }
 if [[ $use_sudo == true ]]; then
   kb_cmd=(sudo "$kumabox")
   rm_cmd=(sudo rm -f)
+  ip_cmd=(sudo ip)
 else
   kb_cmd=("$kumabox")
   rm_cmd=(rm -f)
+  ip_cmd=(ip)
 fi
 kb() {
   "${kb_cmd[@]}" --root-dir "$root_dir" --run-dir "$run_dir" --log-dir "$log_dir" \
@@ -71,6 +73,32 @@ file_exists() {
   else
     test -f "$1"
   fi
+}
+
+reset_unowned_test_bridge() {
+  local bridge=kumabox0
+  local owner_state=$root_dir/network/host-tap.json
+  if file_exists "$owner_state" || ! "${ip_cmd[@]}" link show dev "$bridge" >/dev/null 2>&1; then
+    return
+  fi
+
+  local slave
+  local -a slaves=()
+  for slave_path in /sys/class/net/"$bridge"/brif/*; do
+    [[ -e $slave_path ]] || continue
+    slave=${slave_path##*/}
+    if [[ $slave != kbtap* ]]; then
+      echo "refusing to reset unowned bridge $bridge with non-KumaBox slave $slave" >&2
+      exit 1
+    fi
+    slaves+=("$slave")
+  done
+
+  echo "state: removing unowned leftover test bridge $bridge"
+  for slave in "${slaves[@]}"; do
+    "${ip_cmd[@]}" link delete "$slave"
+  done
+  "${ip_cmd[@]}" link delete "$bridge"
 }
 
 source_snapshot=${source_name}-disk
@@ -102,6 +130,7 @@ done
 
 step "clean previous named P4 restore state"
 cleanup_named
+reset_unowned_test_bridge
 "${rm_cmd[@]}" "$package" >/dev/null 2>&1 || true
 
 step "run source VM with an independently allocated network identity"
