@@ -6,6 +6,7 @@ qemu_img=qemu-img
 root_dir=/tmp/kumabox-p0/data
 input=/tmp/kumabox-p0/p4-snap.kbsnap
 name=p4-imported
+keep=false
 
 while (($#)); do
   case "$1" in
@@ -14,7 +15,8 @@ while (($#)); do
     --root-dir) root_dir=$2; shift 2 ;;
     --input) input=$2; shift 2 ;;
     --name) name=$2; shift 2 ;;
-    -h|--help) echo "Usage: verify-snapshot-import.sh [--kumabox PATH] [--qemu-img PATH] [--root-dir PATH] [--input FILE] [--name NAME]"; exit 0 ;;
+    --keep) keep=true; shift ;;
+    -h|--help) echo "Usage: verify-snapshot-import.sh [--kumabox PATH] [--qemu-img PATH] [--root-dir PATH] [--input FILE] [--name NAME] [--keep]"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -22,7 +24,7 @@ done
 step() { printf '\n==> %s\n' "$1"; }
 kb() { "$kumabox" --root-dir "$root_dir" --qemu-img-bin "$qemu_img" "$@"; }
 imported_id=
-cleanup() { [[ -z $imported_id ]] || kb snapshot rm "$imported_id" >/dev/null 2>&1 || true; }
+cleanup() { [[ $keep == true || -z $imported_id ]] || kb snapshot rm "$imported_id" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 step "clean previous imported snapshot"
@@ -45,4 +47,7 @@ jq . "$data_dir/snapshot.json"
 [[ $(jq -r '.id' "$data_dir/snapshot.json") == "$imported_id" ]] || { echo "manifest ID was not regenerated" >&2; exit 1; }
 [[ $(jq -r '.name' "$data_dir/snapshot.json") == "$name" ]] || { echo "manifest name was not overridden" >&2; exit 1; }
 
+if [[ $keep == true ]]; then
+  echo "state: kept imported_snapshot=$imported_id for restore verification"
+fi
 echo "P4 secure snapshot import verification passed"

@@ -29,8 +29,8 @@ func ValidateStorageContract(rec *VMRecord, rootDir string) error {
 	ids := make(map[string]struct{}, len(rec.StorageConfigs))
 	cowCount := 0
 	for i, storage := range rec.StorageConfigs {
-		if storage.ID == "" {
-			return storageError("storage %d has an empty id", i)
+		if storage.ID == "" || storage.ID == "." || storage.ID == ".." || strings.ContainsAny(storage.ID, `/\\`) {
+			return storageError("storage %d has unsafe id %q", i, storage.ID)
 		}
 		if _, exists := ids[storage.ID]; exists {
 			return storageError("duplicate storage id %q", storage.ID)

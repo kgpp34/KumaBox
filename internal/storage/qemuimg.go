@@ -99,6 +99,18 @@ func (q *QEMUImg) Info(ctx context.Context, path string) (ImageInfo, error) {
 	return info, nil
 }
 
+// RebaseOverlay rewrites an imported qcow2 overlay to an equivalent local base.
+// Callers must verify the base digest before using the metadata-only operation.
+func (q *QEMUImg) RebaseOverlay(ctx context.Context, overlay, base, baseFormat string) error {
+	if err := validateOverlaySpec(OverlaySpec{Path: overlay, BasePath: base, BaseFormat: baseFormat}); err != nil {
+		return err
+	}
+	if _, err := q.run(ctx, "rebase", "-u", "-f", "qcow2", "-F", baseFormat, "-b", base, overlay); err != nil {
+		return fmt.Errorf("rebase qcow2 overlay: %w", err)
+	}
+	return q.validateOverlay(ctx, OverlaySpec{Path: overlay, BasePath: base, BaseFormat: baseFormat})
+}
+
 func (q *QEMUImg) validateOverlay(ctx context.Context, spec OverlaySpec) error {
 	info, err := q.Info(ctx, spec.Path)
 	if err != nil {

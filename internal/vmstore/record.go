@@ -315,6 +315,13 @@ func normalizeStorageConfigs(configs []StorageConfig, rootDir, vmID string) []St
 			}
 			cfg.Path = filepath.Join(rootDir, "storage", "vms", vmID, name)
 		}
+		if cfg.Role == StorageRoleData && cfg.Path == "" {
+			ext := ".raw"
+			if cfg.Format == "qcow2" {
+				ext = ".qcow2"
+			}
+			cfg.Path = filepath.Join(rootDir, "storage", "vms", vmID, "data-"+cfg.ID+ext)
+		}
 		if abs, err := normalizePath(cfg.Path); err == nil {
 			cfg.Path = abs
 		}

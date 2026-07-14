@@ -52,6 +52,22 @@ func TestQEMUImgEnsureOverlayRejectsUnexpectedBacking(t *testing.T) {
 	}
 }
 
+func TestQEMUImgRebaseOverlayValidatesLocalBacking(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	base := filepath.Join(dir, "base.qcow2")
+	overlay := filepath.Join(dir, "root.overlay.qcow2")
+	for _, path := range []string{base, overlay} {
+		if err := os.WriteFile(path, []byte("image"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	qemuImg := NewQEMUImg(fakeQEMUImg(t, dir, base))
+	if err := qemuImg.RebaseOverlay(context.Background(), overlay, base, "qcow2"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func fakeQEMUImg(t *testing.T, dir, backing string) string {
 	t.Helper()
 	path := filepath.Join(dir, "qemu-img")
@@ -64,6 +80,8 @@ case "$1" in
     ;;
   info)
     printf '%%s\n' '{"format":"qcow2","backing-filename":%q,"virtual-size":1048576}'
+    ;;
+  rebase)
     ;;
   *) exit 2 ;;
 esac

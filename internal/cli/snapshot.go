@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kumabox/kumabox/internal/config"
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/snapshot"
 )
@@ -17,9 +18,47 @@ func newSnapshotCommand(opts *rootOptions) *cobra.Command {
 	cmd.AddCommand(newSnapshotCreateCommand(opts))
 	cmd.AddCommand(newSnapshotExportCommand(opts))
 	cmd.AddCommand(newSnapshotImportCommand(opts))
+	cmd.AddCommand(newSnapshotRestoreCommand(opts))
 	cmd.AddCommand(newSnapshotLSCommand(opts))
 	cmd.AddCommand(newSnapshotInspectCommand(opts))
 	cmd.AddCommand(newSnapshotRMCommand(opts))
+	return cmd
+}
+
+func newSnapshotRestoreCommand(opts *rootOptions) *cobra.Command {
+	var name string
+	var cpus int
+	var networks []string
+	cmd := &cobra.Command{
+		Use:   "restore SNAPSHOT",
+		Short: "Create a new VM from a stopped snapshot",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if cpus <= 0 {
+				return fmt.Errorf("--cpus must be greater than zero")
+			}
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			if err := config.EnsureRuntimeDirs(cfg); err != nil {
+				return err
+			}
+			rec, err := kbruntime.New(cfg).RestoreSnapshot(cmd.Context(), args[0], kbruntime.RestoreOptions{
+				Name:     name,
+				CPUs:     cpus,
+				Networks: normalizedNetworkFlags(networks),
+			})
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), rec)
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "", "new VM name")
+	cmd.Flags().IntVar(&cpus, "cpus", 1, "number of vCPUs")
+	cmd.Flags().StringArrayVar(&networks, "network", nil, "network attachment, repeatable")
+	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }
 

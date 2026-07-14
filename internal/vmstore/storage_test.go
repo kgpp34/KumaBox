@@ -52,6 +52,7 @@ func TestValidateStorageContract(t *testing.T) {
 		{name: "writable layer", mutate: func(rec *VMRecord) { rec.StorageConfigs[0].Readonly = false }},
 		{name: "unsupported role", mutate: func(rec *VMRecord) { rec.StorageConfigs[1].Role = "cache" }},
 		{name: "duplicate id", mutate: func(rec *VMRecord) { rec.StorageConfigs[1].ID = "layer0" }},
+		{name: "unsafe id", mutate: func(rec *VMRecord) { rec.StorageConfigs[1].ID = "../cow" }},
 		{name: "writable path outside owner", mutate: func(rec *VMRecord) { rec.StorageConfigs[1].Path = filepath.Join(rootDir, "escape.ext4") }},
 		{name: "missing base digest", mutate: func(rec *VMRecord) { rec.StorageConfigs[1].Base.Digest = "" }},
 		{name: "wrong OCI format", mutate: func(rec *VMRecord) { rec.StorageConfigs[1].Format = "qcow2" }},
