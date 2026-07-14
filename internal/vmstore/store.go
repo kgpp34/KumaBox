@@ -22,6 +22,7 @@ import (
 // sufficient for the daemonless CLI model: each command can safely update
 // records without requiring a resident coordinator process.
 type Store struct {
+	rootDir   string
 	indexPath string
 	lockPath  string
 }
@@ -33,6 +34,7 @@ type Store struct {
 func New(rootDir string) *Store {
 	backendDir := filepath.Join(rootDir, "backends", backendCloudHypervisor)
 	return &Store{
+		rootDir:   rootDir,
 		indexPath: filepath.Join(backendDir, "index.json"),
 		lockPath:  filepath.Join(backendDir, "index.lock"),
 	}
@@ -90,9 +92,12 @@ func (s *Store) Create(req CreateRequest) (*VMRecord, error) {
 		}
 
 		now := time.Now().UTC()
-		rec, err := newRecord(id, req, now)
+		rec, err := newRecord(id, req, s.rootDir, now)
 		if err != nil {
 			return fmt.Errorf("create VM record: %w", err)
+		}
+		if err := ValidateStorageContract(rec, s.rootDir); err != nil {
+			return err
 		}
 
 		idx.VMs[id] = rec
@@ -278,6 +283,11 @@ func (s *Store) List() ([]*VMRecord, error) {
 	return records, nil
 }
 
+// RootDir returns the durable state root used by this store.
+func (s *Store) RootDir() string {
+	return s.rootDir
+}
+
 func (s *Store) withIndex(fn func(*vmIndex) error) error {
 	unlock, err := s.lock()
 	if err != nil {
@@ -325,6 +335,11 @@ func (s *Store) load() (*vmIndex, error) {
 		return nil, fmt.Errorf("parse VM index: %w", err)
 	}
 	idx.init()
+	for id, rec := range idx.VMs {
+		if err := ValidateStorageContract(rec, s.rootDir); err != nil {
+			return nil, fmt.Errorf("validate VM %s storage: %w", id, err)
+		}
+	}
 	return &idx, nil
 }
 

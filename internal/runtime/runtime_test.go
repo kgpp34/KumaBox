@@ -121,6 +121,85 @@ func TestStartVMMarksRunning(t *testing.T) {
 	}
 }
 
+func TestStartVMContextSerializesSameVM(t *testing.T) {
+	dir := t.TempDir()
+	store := vmstore.New(filepath.Join(dir, "data"))
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	rt := NewWithBackend(store, backendFake{
+		render: func(*vmstore.VMRecord) error { return nil },
+		start: func(*vmstore.VMRecord) (*backend.StartResult, error) {
+			close(entered)
+			<-release
+			return &backend.StartResult{PID: 1234, APISocket: "/tmp/ch.sock"}, nil
+		},
+		observe: func(*vmstore.VMRecord) vmstore.Observation {
+			return vmstore.Observation{State: vmstore.ObservedStateRunning, CheckedAt: time.Now().UTC()}
+		},
+	})
+	rec, err := rt.CreateVM(vmstore.CreateRequest{
+		Name: "locked", RootDisk: "base.qcow2", Kernel: "vmlinuz", Initrd: "initrd",
+		RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, startErr := rt.StartVMContext(context.Background(), rec.ID)
+		firstDone <- startErr
+	}()
+	<-entered
+
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	_, err = rt.StartVMContext(ctx, rec.ID)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second start error = %v, want context deadline", err)
+	}
+	close(release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first start error = %v", err)
+	}
+}
+
+func TestVMOperationLockDoesNotBlockDifferentVM(t *testing.T) {
+	dir := t.TempDir()
+	store := vmstore.New(filepath.Join(dir, "data"))
+	rt := NewWithBackend(store, backendFake{
+		render: func(*vmstore.VMRecord) error { return nil },
+		start: func(*vmstore.VMRecord) (*backend.StartResult, error) {
+			return &backend.StartResult{PID: 1234, APISocket: "/tmp/ch.sock"}, nil
+		},
+	})
+	first, err := rt.CreateVM(vmstore.CreateRequest{
+		Name: "first", RootDisk: "base.qcow2", Kernel: "vmlinuz", Initrd: "initrd",
+		RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := rt.CreateVM(vmstore.CreateRequest{
+		Name: "second", RootDisk: "base.qcow2", Kernel: "vmlinuz", Initrd: "initrd",
+		RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := rt.vmLocks.Acquire(context.Background(), first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Release() //nolint:errcheck
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := rt.StartVMContext(ctx, second.ID); err != nil {
+		t.Fatalf("different VM was blocked: %v", err)
+	}
+}
+
 func TestStartVMRerendersAfterFirstBoot(t *testing.T) {
 	dir := t.TempDir()
 	store := vmstore.New(filepath.Join(dir, "data"))
@@ -465,6 +544,13 @@ func TestDeleteVMRemovesRecordAndManagedDirsOnly(t *testing.T) {
 	if err := os.MkdirAll(rec.LogDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	storageDir := filepath.Join(store.RootDir(), "storage", "vms", rec.ID)
+	if err := os.MkdirAll(storageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storageDir, "cow.ext4"), []byte("owned"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	deleted, err := rt.DeleteVM("delete-me", false)
 	if err != nil {
@@ -484,6 +570,9 @@ func TestDeleteVMRemovesRecordAndManagedDirsOnly(t *testing.T) {
 	}
 	if _, err := os.Stat(rec.LogDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("log dir still exists or unexpected error: %v", err)
+	}
+	if _, err := os.Stat(storageDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("storage owner dir still exists or unexpected error: %v", err)
 	}
 }
 
@@ -1043,11 +1132,12 @@ func testIndexedCNIAllocation(vmID, networkName string, index int) *kbnetwork.Al
 
 func TestPrepareStorageCreatesCOWAndChecksLayers(t *testing.T) {
 	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
 	layer := filepath.Join(dir, "layer.erofs")
 	if err := os.WriteFile(layer, []byte("erofs"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cow := filepath.Join(dir, "cow.ext4")
+	cow := filepath.Join(rootDir, "storage", "vms", "kb_storage", "cow.ext4")
 	oldMkfs := mkfsExt4
 	mkfsExt4 = func(path string) ([]byte, error) {
 		if path != cow {
@@ -1058,12 +1148,31 @@ func TestPrepareStorageCreatesCOWAndChecksLayers(t *testing.T) {
 	defer func() { mkfsExt4 = oldMkfs }()
 
 	rec := &vmstore.VMRecord{
+		ID:     "kb_storage",
+		RunDir: filepath.Join(dir, "run", "vms", "kb_storage"),
+		Image: &vmstore.ImageRef{
+			ID:       "img_oci",
+			BootMode: "direct",
+		},
 		StorageConfigs: []vmstore.StorageConfig{
-			{ID: "layer0", Type: "layer", Path: layer},
-			{ID: "cow", Type: "cow", Path: cow, SizeBytes: 2 * 1024 * 1024},
+			{ID: "layer0", Role: vmstore.StorageRoleLayer, Path: layer, Readonly: true, Format: "raw", Filesystem: "erofs"},
+			{
+				ID:               "cow",
+				Role:             vmstore.StorageRoleCOW,
+				Path:             cow,
+				Format:           "raw",
+				Filesystem:       "ext4",
+				VirtualSizeBytes: 2 * 1024 * 1024,
+				Base: &vmstore.StorageBase{
+					Family:       "oci",
+					ImageID:      "img_oci",
+					Digest:       "sha256:manifest",
+					LayerDigests: []string{"sha256:layer"},
+				},
+			},
 		},
 	}
-	if err := prepareStorage(rec); err != nil {
+	if err := prepareStorage(rec, rootDir); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(cow)
@@ -1076,9 +1185,14 @@ func TestPrepareStorageCreatesCOWAndChecksLayers(t *testing.T) {
 }
 
 func TestPrepareStorageRejectsMissingLayer(t *testing.T) {
+	dir := t.TempDir()
 	err := prepareStorage(&vmstore.VMRecord{
-		StorageConfigs: []vmstore.StorageConfig{{ID: "layer0", Type: "layer", Path: "/missing/layer.erofs"}},
-	})
+		ID:     "kb_missing",
+		RunDir: filepath.Join(dir, "run", "vms", "kb_missing"),
+		StorageConfigs: []vmstore.StorageConfig{
+			{ID: "layer0", Role: vmstore.StorageRoleLayer, Path: "/missing/layer.erofs", Readonly: true, Format: "raw", Filesystem: "erofs"},
+		},
+	}, filepath.Join(dir, "data"))
 	if err == nil {
 		t.Fatal("expected missing layer error")
 	}

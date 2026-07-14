@@ -308,7 +308,7 @@ func launchDisks(rec *vmstore.VMRecord) []Disk {
 			disks = append(disks, Disk{
 				Path:      cfg.Path,
 				Readonly:  cfg.Readonly,
-				ImageType: cfg.ImageType,
+				ImageType: cfg.EffectiveFormat(),
 				Serial:    cfg.Serial,
 			})
 		}
@@ -339,12 +339,12 @@ func kernelCmdline(rec *vmstore.VMRecord) string {
 	layers := make([]string, 0)
 	cow := ""
 	for _, cfg := range rec.StorageConfigs {
-		switch cfg.Type {
-		case "layer":
+		switch cfg.EffectiveRole() {
+		case vmstore.StorageRoleLayer:
 			if cfg.Serial != "" {
 				layers = append(layers, cfg.Serial)
 			}
-		case "cow":
+		case vmstore.StorageRoleCOW:
 			cow = cfg.Serial
 		}
 	}

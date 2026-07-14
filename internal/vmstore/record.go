@@ -112,26 +112,78 @@ type Metadata struct {
 // The root disk path is copied into the VM record so lifecycle operations do
 // not need to resolve mutable image names after creation.
 type ImageRef struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	RootDisk string `json:"rootDisk"`
-	BootMode string `json:"bootMode,omitempty"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	RootDisk     string   `json:"rootDisk"`
+	BootMode     string   `json:"bootMode,omitempty"`
+	Digest       string   `json:"digest,omitempty"`
+	LayerDigests []string `json:"layerDigests,omitempty"`
 }
 
-// StorageConfig describes one block device rendered for a VM.
+// StorageRole describes the semantic purpose of a VM block device.
+type StorageRole string
+
+const (
+	StorageRoleLayer  StorageRole = "layer"
+	StorageRoleBase   StorageRole = "base"
+	StorageRoleCOW    StorageRole = "cow"
+	StorageRoleData   StorageRole = "data"
+	StorageRoleCidata StorageRole = "cidata"
+)
+
+// StorageBase pins the immutable image assets backing a writable root disk.
+// Paths are local resolution hints; digests are the portable identity.
+type StorageBase struct {
+	Family       string   `json:"family"`
+	ImageID      string   `json:"imageId,omitempty"`
+	Digest       string   `json:"digest,omitempty"`
+	Format       string   `json:"format,omitempty"`
+	Path         string   `json:"path,omitempty"`
+	LayerDigests []string `json:"layerDigests,omitempty"`
+}
+
+// StorageConfig describes one block device owned or referenced by a VM.
 type StorageConfig struct {
-	ID          string `json:"id"`
-	Type        string `json:"type"`
-	Path        string `json:"path"`
-	Readonly    bool   `json:"readonly"`
-	ImageType   string `json:"imageType,omitempty"`
-	Serial      string `json:"serial,omitempty"`
-	Filesystem  string `json:"filesystem,omitempty"`
-	SourceLayer string `json:"sourceLayer,omitempty"`
-	SizeBytes   int64  `json:"sizeBytes,omitempty"`
+	ID               string       `json:"id"`
+	Role             StorageRole  `json:"role,omitempty"`
+	Path             string       `json:"path"`
+	Readonly         bool         `json:"readonly"`
+	Format           string       `json:"format,omitempty"`
+	Serial           string       `json:"serial,omitempty"`
+	Filesystem       string       `json:"filesystem,omitempty"`
+	VirtualSizeBytes int64        `json:"virtualSizeBytes,omitempty"`
+	Base             *StorageBase `json:"base,omitempty"`
+	Type             string       `json:"type,omitempty"`      // Legacy P3 field.
+	ImageType        string       `json:"imageType,omitempty"` // Legacy P3 field.
+	SourceLayer      string       `json:"sourceLayer,omitempty"`
+	SizeBytes        int64        `json:"sizeBytes,omitempty"` // Legacy P3 field.
 }
 
-func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
+// EffectiveRole returns Role or its legacy Type equivalent.
+func (c StorageConfig) EffectiveRole() StorageRole {
+	if c.Role != "" {
+		return c.Role
+	}
+	return StorageRole(c.Type)
+}
+
+// EffectiveFormat returns Format or its legacy ImageType equivalent.
+func (c StorageConfig) EffectiveFormat() string {
+	if c.Format != "" {
+		return c.Format
+	}
+	return c.ImageType
+}
+
+// EffectiveVirtualSize returns VirtualSizeBytes or its legacy SizeBytes value.
+func (c StorageConfig) EffectiveVirtualSize() int64 {
+	if c.VirtualSizeBytes > 0 {
+		return c.VirtualSizeBytes
+	}
+	return c.SizeBytes
+}
+
+func newRecord(id string, req CreateRequest, rootDir string, now time.Time) (*VMRecord, error) {
 	rootDisk, err := normalizePath(req.RootDisk)
 	if err != nil {
 		return nil, err
@@ -175,7 +227,7 @@ func newRecord(id string, req CreateRequest, now time.Time) (*VMRecord, error) {
 		Firmware:       firmware,
 		Image:          cloneImageRef(req.Image),
 		CPUs:           cpus,
-		StorageConfigs: normalizeStorageConfigs(req.StorageConfigs, runDir),
+		StorageConfigs: normalizeStorageConfigs(req.StorageConfigs, rootDir, id),
 		Network:        network,
 		Networks:       cloneStrings(networks),
 		RunDir:         runDir,
@@ -231,17 +283,29 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 	return &copied
 }
 
-func normalizeStorageConfigs(configs []StorageConfig, runDir string) []StorageConfig {
+func normalizeStorageConfigs(configs []StorageConfig, rootDir, vmID string) []StorageConfig {
 	if len(configs) == 0 {
 		return nil
 	}
 	normalized := make([]StorageConfig, 0, len(configs))
 	for i, cfg := range configs {
+		if cfg.Role == "" {
+			cfg.Role = StorageRole(cfg.Type)
+		}
+		if cfg.Format == "" {
+			cfg.Format = cfg.ImageType
+		}
+		if cfg.VirtualSizeBytes == 0 {
+			cfg.VirtualSizeBytes = cfg.SizeBytes
+		}
+		cfg.Type = ""
+		cfg.ImageType = ""
+		cfg.SizeBytes = 0
 		if cfg.ID == "" {
 			cfg.ID = fmt.Sprintf("storage%d", i)
 		}
-		if cfg.Type == "cow" && cfg.Path == "" {
-			cfg.Path = filepath.Join(runDir, "cow.ext4")
+		if cfg.Role == StorageRoleCOW && cfg.Path == "" {
+			cfg.Path = filepath.Join(rootDir, "storage", "vms", vmID, "cow.ext4")
 		}
 		if abs, err := normalizePath(cfg.Path); err == nil {
 			cfg.Path = abs
@@ -255,7 +319,16 @@ func cloneStorageConfigs(configs []StorageConfig) []StorageConfig {
 	if len(configs) == 0 {
 		return nil
 	}
-	return append([]StorageConfig(nil), configs...)
+	copied := append([]StorageConfig(nil), configs...)
+	for i := range copied {
+		if configs[i].Base == nil {
+			continue
+		}
+		base := *configs[i].Base
+		base.LayerDigests = cloneStrings(configs[i].Base.LayerDigests)
+		copied[i].Base = &base
+	}
+	return copied
 }
 
 func cloneNetworkStatus(status *kbnetwork.InspectResult) *kbnetwork.InspectResult {
@@ -290,6 +363,7 @@ func cloneImageRef(ref *ImageRef) *ImageRef {
 		return nil
 	}
 	copied := *ref
+	copied.LayerDigests = cloneStrings(ref.LayerDigests)
 	return &copied
 }
 

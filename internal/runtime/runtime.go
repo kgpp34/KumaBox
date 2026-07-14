@@ -14,6 +14,7 @@ import (
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/backend/cloudhypervisor"
 	"github.com/kumabox/kumabox/internal/config"
+	"github.com/kumabox/kumabox/internal/lockfile"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -27,6 +28,7 @@ type Runtime struct {
 	store   *vmstore.Store
 	backend backend.Lifecycle
 	cfg     config.Config
+	vmLocks *lockfile.Locker
 }
 
 var deleteHostTap = kbnetwork.DeleteHostTap
@@ -49,6 +51,7 @@ func NewWithBackend(store *vmstore.Store, vmBackend backend.Lifecycle) *Runtime 
 	return &Runtime{
 		store:   store,
 		backend: vmBackend,
+		vmLocks: lockfile.New(filepath.Join(store.RootDir(), "locks", "vms")),
 	}
 }
 
@@ -69,15 +72,15 @@ func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error)
 	if updated, err := r.store.Inspect(rec.ID); err == nil {
 		rec = updated
 	}
-	if err := prepareStorage(rec); err != nil {
+	if err := prepareStorage(rec, r.store.RootDir()); err != nil {
 		r.rollbackNetwork(rec)
-		_ = removeManagedDirs(rec)
+		_ = removeManagedDirs(rec, r.store.RootDir())
 		_ = r.store.Delete(rec.ID)
 		return nil, err
 	}
 	if err := r.backend.RenderConfig(rec); err != nil {
 		r.rollbackNetwork(rec)
-		_ = removeManagedDirs(rec)
+		_ = removeManagedDirs(rec, r.store.RootDir())
 		_ = r.store.Delete(rec.ID)
 		return nil, err
 	}
@@ -90,12 +93,33 @@ func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error)
 // run directory recoverable after tmp cleanup and allows later phases to update
 // generated metadata without mutating durable VM intent.
 func (r *Runtime) StartVM(ref string) (*vmstore.VMRecord, error) {
+	return r.StartVMContext(context.Background(), ref)
+}
+
+// StartVMContext starts an existing VM while holding its cross-process
+// operation lock. Waiting for the lock observes ctx cancellation.
+func (r *Runtime) StartVMContext(ctx context.Context, ref string) (*vmstore.VMRecord, error) {
 	rec, err := r.store.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
+	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
+	if err != nil {
+		return nil, fmt.Errorf("lock VM %s for start: %w", rec.ID, err)
+	}
+	defer lock.Release() //nolint:errcheck
+	return r.startVMLocked(ctx, rec.ID)
+}
 
-	if err := prepareStorage(rec); err != nil {
+func (r *Runtime) startVMLocked(ctx context.Context, ref string) (*vmstore.VMRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("start VM: %w", err)
+	}
+	rec, err := r.store.Inspect(ref)
+	if err != nil {
+		return nil, err
+	}
+	if err := prepareStorage(rec, r.store.RootDir()); err != nil {
 		if _, markErr := r.store.MarkError(rec.ID, err.Error()); markErr != nil {
 			return nil, markErr
 		}
@@ -107,6 +131,9 @@ func (r *Runtime) StartVM(ref string) (*vmstore.VMRecord, error) {
 			return nil, markErr
 		}
 		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("start VM: %w", err)
 	}
 
 	result, err := r.backend.StartVM(rec)
@@ -125,11 +152,16 @@ func (r *Runtime) StartVM(ref string) (*vmstore.VMRecord, error) {
 
 // RunVM creates and starts a VM.
 func (r *Runtime) RunVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
+	return r.RunVMContext(context.Background(), req)
+}
+
+// RunVMContext creates and starts a VM with cancellation propagated to start.
+func (r *Runtime) RunVMContext(ctx context.Context, req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
 	rec, err := r.CreateVM(req)
 	if err != nil {
 		return nil, err
 	}
-	started, err := r.StartVM(rec.ID)
+	started, err := r.StartVMContext(ctx, rec.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -142,11 +174,31 @@ func (r *Runtime) RunVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
 // records. Those resources are part of the VM's restartable identity and are
 // released only by DeleteVM.
 func (r *Runtime) StopVM(ref string, opts backend.StopOptions) (*vmstore.VMRecord, error) {
+	return r.StopVMContext(context.Background(), ref, opts)
+}
+
+// StopVMContext stops a VM while holding its cross-process operation lock.
+func (r *Runtime) StopVMContext(ctx context.Context, ref string, opts backend.StopOptions) (*vmstore.VMRecord, error) {
 	rec, err := r.store.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
+	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
+	if err != nil {
+		return nil, fmt.Errorf("lock VM %s for stop: %w", rec.ID, err)
+	}
+	defer lock.Release() //nolint:errcheck
+	return r.stopVMLocked(ctx, rec.ID, opts)
+}
 
+func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.StopOptions) (*vmstore.VMRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("stop VM: %w", err)
+	}
+	rec, err := r.store.Inspect(ref)
+	if err != nil {
+		return nil, err
+	}
 	observed := r.applyObservation(rec)
 	if observed.State == vmstore.StateRunning && observed.ObservedState != vmstore.ObservedStateRunning {
 		stopped, markErr := r.store.MarkStopped(observed.ID)
@@ -189,7 +241,26 @@ func (r *Runtime) StopVM(ref string, opts backend.StopOptions) (*vmstore.VMRecor
 // the record remains available for inspect/logs/retry and the provider record is
 // marked cleanup-pending.
 func (r *Runtime) DeleteVM(ref string, force bool) (*vmstore.VMRecord, error) {
+	return r.DeleteVMContext(context.Background(), ref, force)
+}
+
+// DeleteVMContext deletes a VM while serializing stop and cleanup under one
+// operation lock.
+func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (*vmstore.VMRecord, error) {
 	rec, err := r.store.Inspect(ref)
+	if err != nil {
+		return nil, err
+	}
+	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
+	if err != nil {
+		return nil, fmt.Errorf("lock VM %s for delete: %w", rec.ID, err)
+	}
+	defer lock.Release() //nolint:errcheck
+
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("delete VM: %w", err)
+	}
+	rec, err = r.store.Inspect(rec.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +269,7 @@ func (r *Runtime) DeleteVM(ref string, force bool) (*vmstore.VMRecord, error) {
 		if !force {
 			return nil, fmt.Errorf("VM %s is running; use --force to stop and delete", ref)
 		}
-		observed, err = r.StopVM(ref, backend.StopOptions{Force: true})
+		observed, err = r.stopVMLocked(ctx, rec.ID, backend.StopOptions{Force: true})
 		if err != nil {
 			return nil, err
 		}
@@ -213,7 +284,7 @@ func (r *Runtime) DeleteVM(ref string, force bool) (*vmstore.VMRecord, error) {
 		Reason:    "VM deleted",
 		CheckedAt: time.Now().UTC(),
 	})
-	if err := removeManagedDirs(observed); err != nil {
+	if err := removeManagedDirs(observed, r.store.RootDir()); err != nil {
 		return nil, err
 	}
 	if err := r.store.Delete(observed.ID); err != nil {
@@ -322,8 +393,9 @@ func writeVMEvent(rec *vmstore.VMRecord, eventType string, obs vmstore.Observati
 	return nil
 }
 
-func removeManagedDirs(rec *vmstore.VMRecord) error {
-	for _, dir := range []string{rec.RunDir, rec.LogDir} {
+func removeManagedDirs(rec *vmstore.VMRecord, rootDir string) error {
+	storageDir := filepath.Join(rootDir, "storage", "vms", rec.ID)
+	for _, dir := range []string{rec.RunDir, rec.LogDir, storageDir} {
 		if dir == "" {
 			continue
 		}
@@ -334,10 +406,13 @@ func removeManagedDirs(rec *vmstore.VMRecord) error {
 	return nil
 }
 
-func prepareStorage(rec *vmstore.VMRecord) error {
+func prepareStorage(rec *vmstore.VMRecord, rootDir string) error {
+	if err := vmstore.ValidateStorageContract(rec, rootDir); err != nil {
+		return err
+	}
 	for _, cfg := range rec.StorageConfigs {
-		switch cfg.Type {
-		case "layer":
+		switch cfg.EffectiveRole() {
+		case vmstore.StorageRoleLayer:
 			if cfg.Path == "" {
 				return fmt.Errorf("storage layer %s path must not be empty", cfg.ID)
 			}
@@ -348,7 +423,7 @@ func prepareStorage(rec *vmstore.VMRecord) error {
 			if info.IsDir() {
 				return fmt.Errorf("storage layer %s must be a file: %s", cfg.ID, cfg.Path)
 			}
-		case "cow":
+		case vmstore.StorageRoleCOW:
 			if err := prepareCOW(cfg); err != nil {
 				return err
 			}
@@ -361,10 +436,11 @@ func prepareCOW(cfg vmstore.StorageConfig) error {
 	if cfg.Path == "" {
 		return fmt.Errorf("COW storage path must not be empty")
 	}
-	if cfg.SizeBytes <= 0 {
+	sizeBytes := cfg.EffectiveVirtualSize()
+	if sizeBytes <= 0 {
 		return fmt.Errorf("COW storage %s size must be positive", cfg.ID)
 	}
-	if info, err := os.Stat(cfg.Path); err == nil && info.Mode().IsRegular() && info.Size() == cfg.SizeBytes {
+	if info, err := os.Stat(cfg.Path); err == nil && info.Mode().IsRegular() && info.Size() == sizeBytes {
 		return nil
 	} else if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("stat COW storage %s: %w", cfg.ID, err)
@@ -376,7 +452,7 @@ func prepareCOW(cfg vmstore.StorageConfig) error {
 	if err != nil {
 		return fmt.Errorf("create COW storage %s: %w", cfg.ID, err)
 	}
-	if err := file.Truncate(cfg.SizeBytes); err != nil {
+	if err := file.Truncate(sizeBytes); err != nil {
 		_ = file.Close()
 		return fmt.Errorf("size COW storage %s: %w", cfg.ID, err)
 	}

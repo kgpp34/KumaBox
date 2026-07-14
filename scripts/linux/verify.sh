@@ -14,12 +14,13 @@ Checks:
   p1 image | image-ref | image-rm-gc | cidata-firstboot
   p2 config | allocator | hosttap | render | inspect | e2e | cleanup | gc | cni | multinic | queues | parity
   p3 base-image | resolver | content-store | erofs-builder | boot-profile | cow-runtime | direct-boot-network | metadata | agent | exec | gc | performance
+  p4 storage-contract
 
 Examples:
   scripts/linux/verify.sh p2 e2e --root-disk /tmp/kumabox-p0/fixtures/jammy-server-cloudimg-amd64.img --firmware /tmp/kumabox-p0/fixtures/CLOUDHV.fd --sudo
   scripts/linux/verify.sh p3 direct-boot-network --kumabox ./bin/kumabox --sudo
 
-Direct script paths are also available under scripts/linux/p0, p1, p2, and p3.
+Direct script paths are also available under scripts/linux/p0, p1, p2, p3, and p4.
 USAGE
 }
 
@@ -46,13 +47,13 @@ check="$1"
 shift
 
 case "$check" in
-  p0|p1|p2|p3)
+  p0|p1|p2|p3|p4)
     phase="$check"
     [[ $# -gt 0 ]] || die "missing check name for $phase"
     check="$1"
     shift
     ;;
-  p0-*|p1-*|p2-*|p3-*)
+  p0-*|p1-*|p2-*|p3-*|p4-*)
     phase="${check%%-*}"
     check="${check#*-}"
     ;;
@@ -102,6 +103,8 @@ case "$phase:$check" in
   p3:exec) target="$script_dir/p3/verify-oci-exec.sh" ;;
   p3:gc) target="$script_dir/p3/verify-oci-gc.sh" ;;
   p3:performance|p3:performance-parity) target="$script_dir/p3/verify-oci-performance-parity.sh" ;;
+
+  p4:storage-contract|p4:storage) target="$script_dir/p4/verify-storage-contract.sh" ;;
 
   *) die "unknown check: $phase $check" ;;
 esac

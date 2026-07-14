@@ -549,6 +549,7 @@ func TestNewCreateRequestSupportsOCIImageStorage(t *testing.T) {
 			Cmdline: "kumabox.layers={{layers}} kumabox.cow={{cow}}",
 		},
 		OCI: &imagestore.OCI{
+			DigestRef: "index.docker.io/kumabox/ubuntu@sha256:" + strings.Repeat("b", 64),
 			Layers: []imagestore.OCILayer{
 				{
 					Index:  0,
@@ -570,11 +571,14 @@ func TestNewCreateRequestSupportsOCIImageStorage(t *testing.T) {
 	if len(req.StorageConfigs) != 2 {
 		t.Fatalf("storage configs = %+v", req.StorageConfigs)
 	}
-	if req.StorageConfigs[0].Type != "layer" || !req.StorageConfigs[0].Readonly || req.StorageConfigs[0].Serial != "kumabox-layer0" {
+	if req.StorageConfigs[0].Role != vmstore.StorageRoleLayer || !req.StorageConfigs[0].Readonly || req.StorageConfigs[0].Serial != "kumabox-layer0" {
 		t.Fatalf("layer storage = %+v", req.StorageConfigs[0])
 	}
-	if req.StorageConfigs[1].Type != "cow" || req.StorageConfigs[1].SizeBytes != 8*1024*1024 || req.StorageConfigs[1].Serial != "kumabox-cow" {
+	if req.StorageConfigs[1].Role != vmstore.StorageRoleCOW || req.StorageConfigs[1].VirtualSizeBytes != 8*1024*1024 || req.StorageConfigs[1].Serial != "kumabox-cow" || req.StorageConfigs[1].Base == nil {
 		t.Fatalf("cow storage = %+v", req.StorageConfigs[1])
+	}
+	if req.StorageConfigs[1].Base.Digest != "sha256:"+strings.Repeat("b", 64) {
+		t.Fatalf("base digest = %q", req.StorageConfigs[1].Base.Digest)
 	}
 }
 

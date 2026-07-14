@@ -73,7 +73,7 @@ func newRunCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rec, err := rt.RunVM(req)
+			rec, err := rt.RunVMContext(cmd.Context(), req)
 			if err != nil {
 				return err
 			}
@@ -96,7 +96,7 @@ func newStartCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 			rt := kbruntime.New(cfg)
-			rec, err := rt.StartVM(args[0])
+			rec, err := rt.StartVMContext(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
@@ -123,7 +123,7 @@ func newStopCommand(opts *rootOptions) *cobra.Command {
 				timeout = time.Duration(cfg.Backend.CloudHypervisor.StopTimeoutMS) * time.Millisecond
 			}
 			rt := kbruntime.New(cfg)
-			rec, err := rt.StopVM(args[0], backend.StopOptions{
+			rec, err := rt.StopVMContext(cmd.Context(), args[0], backend.StopOptions{
 				Timeout: timeout,
 				Force:   force,
 			})
@@ -218,7 +218,7 @@ func newDeleteCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 			rt := kbruntime.New(cfg)
-			rec, err := rt.DeleteVM(args[0], force)
+			rec, err := rt.DeleteVMContext(cmd.Context(), args[0], force)
 			if err != nil {
 				return err
 			}
@@ -321,31 +321,46 @@ func newOCIImageCreateRequest(flags createVMFlags, image *imagestore.ImageRecord
 	if err != nil {
 		return vmstore.CreateRequest{}, err
 	}
+	manifestDigest := image.OCI.DigestRef
+	if _, digest, found := strings.Cut(manifestDigest, "@"); found {
+		manifestDigest = digest
+	}
+	if manifestDigest == "" {
+		return vmstore.CreateRequest{}, fmt.Errorf("image %q has no OCI manifest digest", image.Name)
+	}
 	storageConfigs := make([]vmstore.StorageConfig, 0, len(image.OCI.Layers)+1)
+	layerDigests := make([]string, 0, len(image.OCI.Layers))
 	for i, layer := range image.OCI.Layers {
 		if layer.EROFS == nil || layer.EROFS.Path == "" {
 			return vmstore.CreateRequest{}, fmt.Errorf("image %q layer %d has no EROFS blob", image.Name, i)
 		}
 		storageConfigs = append(storageConfigs, vmstore.StorageConfig{
-			ID:          fmt.Sprintf("layer%d", i),
-			Type:        "layer",
-			Path:        layer.EROFS.Path,
-			Readonly:    true,
-			ImageType:   "raw",
-			Serial:      fmt.Sprintf("kumabox-layer%d", i),
-			Filesystem:  "erofs",
-			SourceLayer: layer.Digest,
-			SizeBytes:   layer.EROFS.SizeBytes,
+			ID:               fmt.Sprintf("layer%d", i),
+			Role:             vmstore.StorageRoleLayer,
+			Path:             layer.EROFS.Path,
+			Readonly:         true,
+			Format:           "raw",
+			Serial:           fmt.Sprintf("kumabox-layer%d", i),
+			Filesystem:       "erofs",
+			SourceLayer:      layer.Digest,
+			VirtualSizeBytes: layer.EROFS.SizeBytes,
 		})
+		layerDigests = append(layerDigests, layer.Digest)
 	}
 	storageConfigs = append(storageConfigs, vmstore.StorageConfig{
-		ID:         "cow",
-		Type:       "cow",
-		Readonly:   false,
-		ImageType:  "raw",
-		Serial:     "kumabox-cow",
-		Filesystem: "ext4",
-		SizeBytes:  cowSize,
+		ID:               "cow",
+		Role:             vmstore.StorageRoleCOW,
+		Readonly:         false,
+		Format:           "raw",
+		Serial:           "kumabox-cow",
+		Filesystem:       "ext4",
+		VirtualSizeBytes: cowSize,
+		Base: &vmstore.StorageBase{
+			Family:       "oci",
+			ImageID:      image.ID,
+			Digest:       manifestDigest,
+			LayerDigests: append([]string(nil), layerDigests...),
+		},
 	})
 	return vmstore.CreateRequest{
 		Name:           flags.name,
@@ -356,10 +371,12 @@ func newOCIImageCreateRequest(flags createVMFlags, image *imagestore.ImageRecord
 		Networks:       normalizedNetworkFlags(flags.networks),
 		StorageConfigs: storageConfigs,
 		Image: &vmstore.ImageRef{
-			ID:       image.ID,
-			Name:     image.Name,
-			RootDisk: image.RootDisk.Path,
-			BootMode: image.Boot.Mode,
+			ID:           image.ID,
+			Name:         image.Name,
+			RootDisk:     image.RootDisk.Path,
+			BootMode:     image.Boot.Mode,
+			Digest:       manifestDigest,
+			LayerDigests: append([]string(nil), layerDigests...),
 		},
 		RunDir: cfg.Runtime.RunDir,
 		LogDir: cfg.Runtime.LogDir,
