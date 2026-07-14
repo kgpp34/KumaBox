@@ -13,7 +13,7 @@ Checks:
   p0 start | reconcile | stop | logs | delete | gc
   p1 image | image-ref | image-rm-gc | cidata-firstboot
   p2 config | allocator | hosttap | render | inspect | e2e | cleanup | gc | cni | multinic | queues | parity
-  p3 base-image | resolver | content-store | erofs-builder | boot-profile | cow-runtime | direct-boot-network | metadata | agent | exec | gc
+  p3 base-image | resolver | content-store | erofs-builder | boot-profile | cow-runtime | direct-boot-network | metadata | agent | exec | gc | performance
 
 Examples:
   scripts/linux/verify.sh p2 e2e --root-disk /tmp/kumabox-p0/fixtures/jammy-server-cloudimg-amd64.img --firmware /tmp/kumabox-p0/fixtures/CLOUDHV.fd --sudo
@@ -101,6 +101,7 @@ case "$phase:$check" in
   p3:agent|p3:agent-transport) target="$script_dir/p3/verify-oci-agent-transport.sh" ;;
   p3:exec) target="$script_dir/p3/verify-oci-exec.sh" ;;
   p3:gc) target="$script_dir/p3/verify-oci-gc.sh" ;;
+  p3:performance|p3:performance-parity) target="$script_dir/p3/verify-oci-performance-parity.sh" ;;
 
   *) die "unknown check: $phase $check" ;;
 esac

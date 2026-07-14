@@ -31,7 +31,7 @@ resolve_disk() {
             fi
         done
         fallback="$(fallback_disk_by_order "$serial")"
-        if [ -n "$fallback" ] && [ "$i" -ge 1 ]; then
+        if [ -n "$fallback" ]; then
             echo "KumaBox: disk serial ${serial} not exposed; using attach-order fallback ${fallback}" >&2
             echo "$fallback"
             return 0
