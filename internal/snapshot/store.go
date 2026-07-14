@@ -167,6 +167,30 @@ func (s *Store) List() ([]*Record, error) {
 	return records, err
 }
 
+// Scan returns every indexed state for fail-closed GC reconciliation.
+func (s *Store) Scan() ([]*Record, error) {
+	records := make([]*Record, 0)
+	err := s.read(func(idx *snapshotIndex) error {
+		for _, rec := range idx.Snapshots {
+			records = append(records, cloneRecord(rec))
+		}
+		return nil
+	})
+	return records, err
+}
+
+// IsLeased reports whether a build, reader, restore, or delete owns id.
+func (s *Store) IsLeased(id string) (bool, error) {
+	lease, err := s.leaser.acquire(context.Background(), id, leaseExclusive, false)
+	if errors.Is(err, ErrInUse) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return false, lease.Release()
+}
+
 // Inspect resolves a ready snapshot by ID, name, or unambiguous ID prefix.
 func (s *Store) Inspect(ref string) (*Record, error) {
 	var result *Record
@@ -201,6 +225,27 @@ func (s *Store) AcquireRead(ctx context.Context, ref string) (*Record, *Lease, e
 		return nil, nil, err
 	}
 	return current, lease, nil
+}
+
+// LoadManifest reads a ready manifest while holding a shared payload lease.
+func (s *Store) LoadManifest(ctx context.Context, ref string) (*Manifest, error) {
+	rec, lease, err := s.AcquireRead(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	defer lease.Release()                                                //nolint:errcheck
+	raw, err := os.ReadFile(filepath.Join(rec.DataDir, "snapshot.json")) //nolint:gosec
+	if err != nil {
+		return nil, fmt.Errorf("read snapshot manifest: %w", err)
+	}
+	var manifest Manifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return nil, fmt.Errorf("decode snapshot manifest: %w", err)
+	}
+	if manifest.SchemaVersion != "kumabox.snapshot.v1" || manifest.ID != rec.ID {
+		return nil, errors.New("SNAPSHOT_CORRUPT: manifest identity does not match snapshot index")
+	}
+	return &manifest, nil
 }
 
 // Remove deletes an unused ready snapshot and its payload directory.

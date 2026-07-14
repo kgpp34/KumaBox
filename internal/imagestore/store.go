@@ -80,6 +80,7 @@ type RemoveRequest struct {
 
 // Reference describes a VM that currently references an image.
 type Reference struct {
+	Kind    string `json:"kind,omitempty"`
 	VMID    string `json:"vmId"`
 	VMName  string `json:"vmName"`
 	VMState string `json:"vmState,omitempty"`
@@ -94,7 +95,7 @@ type ImageInUseError struct {
 }
 
 func (e *ImageInUseError) Error() string {
-	return fmt.Sprintf("IMAGE_IN_USE: image %s is referenced by %d VM(s)", e.ImageName, len(e.References))
+	return fmt.Sprintf("IMAGE_IN_USE: image %s is referenced by %d resource(s)", e.ImageName, len(e.References))
 }
 
 func (e *ImageInUseError) Unwrap() error {

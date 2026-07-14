@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/kumabox/kumabox/internal/ocibuild"
 	"github.com/kumabox/kumabox/internal/ociresolver"
 	"github.com/kumabox/kumabox/internal/ocistore"
+	kbsnapshot "github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -291,10 +293,28 @@ func imageReferencesFromVMs(rootDir string) ([]imagestore.Reference, error) {
 			continue
 		}
 		refs = append(refs, imagestore.Reference{
+			Kind:    "vm",
 			VMID:    rec.ID,
 			VMName:  rec.Name,
 			VMState: string(rec.State),
 			ImageID: rec.Image.ID,
+		})
+	}
+	snapshotStore := kbsnapshot.NewStore(rootDir)
+	snapshots, err := snapshotStore.List()
+	if err != nil {
+		return nil, fmt.Errorf("read snapshot references: %w", err)
+	}
+	for _, rec := range snapshots {
+		manifest, err := snapshotStore.LoadManifest(context.Background(), rec.ID)
+		if err != nil {
+			return nil, fmt.Errorf("read snapshot %s image reference: %w", rec.ID, err)
+		}
+		if manifest.Base == nil || manifest.Base.ImageID == "" {
+			continue
+		}
+		refs = append(refs, imagestore.Reference{
+			Kind: "snapshot", VMID: rec.ID, VMName: rec.Name, VMState: string(rec.State), ImageID: manifest.Base.ImageID,
 		})
 	}
 	return refs, nil

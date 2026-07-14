@@ -16,6 +16,7 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
+	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -57,6 +58,11 @@ func DryRun(cfg config.Config) (*Report, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read network leases: %w", err)
 	}
+	snapshotStore := snapshot.NewStore(cfg.Runtime.RootDir)
+	snapshots, err := snapshotStore.Scan()
+	if err != nil {
+		return nil, fmt.Errorf("read snapshot store: %w", err)
+	}
 
 	report := &Report{
 		DryRun:     true,
@@ -66,12 +72,14 @@ func DryRun(cfg config.Config) (*Report, error) {
 	liveRunDirs := map[string]struct{}{}
 	liveLogDirs := map[string]struct{}{}
 	liveImageIDs := map[string]struct{}{}
+	liveStorageDirs := map[string]struct{}{}
 	liveOCIPaths := map[string]struct{}{}
 	liveOCIDigests := map[string]struct{}{}
 
 	for _, rec := range records {
 		liveRunDirs[rec.RunDir] = struct{}{}
 		liveLogDirs[rec.LogDir] = struct{}{}
+		liveStorageDirs[filepath.Join(cfg.Runtime.RootDir, "storage", "vms", rec.ID)] = struct{}{}
 		if rec.Image != nil && rec.Image.ID != "" {
 			liveImageIDs[rec.Image.ID] = struct{}{}
 		}
@@ -88,6 +96,12 @@ func DryRun(cfg config.Config) (*Report, error) {
 
 	report.Candidates = append(report.Candidates, orphanDirs(filepath.Join(cfg.Runtime.RunDir, "vms"), liveRunDirs, "runtime", "orphan_run_dir")...)
 	report.Candidates = append(report.Candidates, orphanDirs(filepath.Join(cfg.Runtime.LogDir, "vms"), liveLogDirs, "runtime", "orphan_log_dir")...)
+	report.Candidates = append(report.Candidates, orphanDirs(filepath.Join(cfg.Runtime.RootDir, "storage", "vms"), liveStorageDirs, "storage", "orphan_vm_storage")...)
+	snapshotCandidates, err := snapshotGCCandidates(snapshotStore, cfg.Runtime.RootDir, snapshots, report.CheckedAt)
+	if err != nil {
+		return nil, err
+	}
+	report.Candidates = append(report.Candidates, snapshotCandidates...)
 	report.Candidates = append(report.Candidates, imageCandidates(cfg.Runtime.RootDir, images, liveImageIDs)...)
 	report.Candidates = append(report.Candidates, ociCandidates(cfg.Runtime.RootDir, liveOCIPaths, liveOCIDigests)...)
 	report.Candidates = append(report.Candidates, networkCandidates(records, networkRecords, leases)...)
@@ -99,6 +113,50 @@ func DryRun(cfg config.Config) (*Report, error) {
 		return report.Candidates[i].Path < report.Candidates[j].Path
 	})
 	return report, nil
+}
+
+func snapshotGCCandidates(store *snapshot.Store, rootDir string, records []*snapshot.Record, now time.Time) ([]Candidate, error) {
+	const pendingGrace = time.Hour
+	snapshotDir := filepath.Join(rootDir, "snapshot")
+	liveStaging := make(map[string]struct{}, len(records))
+	indexedIDs := make(map[string]struct{}, len(records))
+	var candidates []Candidate
+	for _, rec := range records {
+		indexedIDs[rec.ID] = struct{}{}
+		if rec.StagingDir != "" {
+			liveStaging[rec.StagingDir] = struct{}{}
+		}
+		if rec.State != snapshot.StatePending || now.Sub(rec.UpdatedAt) < pendingGrace {
+			continue
+		}
+		leased, err := store.IsLeased(rec.ID)
+		if err != nil {
+			return nil, fmt.Errorf("inspect snapshot lease %s: %w", rec.ID, err)
+		}
+		if !leased && rec.StagingDir != "" {
+			candidates = append(candidates, Candidate{Component: "snapshot", Path: rec.StagingDir, Type: "stale_pending_snapshot", Reason: "pending snapshot exceeded the one hour grace period"})
+		}
+	}
+	entries, _ := os.ReadDir(filepath.Join(snapshotDir, "staging"))
+	for _, entry := range entries {
+		path := filepath.Join(snapshotDir, "staging", entry.Name())
+		if entry.IsDir() {
+			if _, ok := liveStaging[path]; !ok {
+				candidates = append(candidates, Candidate{Component: "snapshot", Path: path, Type: "orphan_snapshot_staging", Reason: "staging directory has no snapshot index record"})
+			}
+		}
+	}
+	entries, _ = os.ReadDir(snapshotDir)
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "snap_") {
+			continue
+		}
+		path := filepath.Join(snapshotDir, entry.Name())
+		if _, ok := indexedIDs[entry.Name()]; !ok {
+			candidates = append(candidates, Candidate{Component: "snapshot", Path: path, Type: "orphan_snapshot_payload", Reason: "payload directory has no snapshot index record"})
+		}
+	}
+	return candidates, nil
 }
 
 func addLivePath(live map[string]struct{}, path string) {

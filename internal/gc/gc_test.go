@@ -1,6 +1,8 @@
 package gc
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,8 +12,58 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
+	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
+
+func TestDryRunReportsSnapshotAndStorageOrphansButProtectsLeasedPending(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Runtime.RootDir = filepath.Join(dir, "data")
+	cfg.Runtime.RunDir = filepath.Join(dir, "run")
+	cfg.Runtime.LogDir = filepath.Join(dir, "log")
+
+	orphanStorage := filepath.Join(cfg.Runtime.RootDir, "storage", "vms", "kb_orphan")
+	orphanStaging := filepath.Join(cfg.Runtime.RootDir, "snapshot", "staging", "capture-orphan")
+	for _, path := range []string{orphanStorage, orphanStaging} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	build, err := snapshot.NewStore(cfg.Runtime.RootDir).Reserve(context.Background(), "active-build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer build.Abort() //nolint:errcheck
+	indexPath := filepath.Join(cfg.Runtime.RootDir, "snapshot", "index.json")
+	raw, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var index map[string]any
+	if err := json.Unmarshal(raw, &index); err != nil {
+		t.Fatal(err)
+	}
+	snapshots := index["snapshots"].(map[string]any)
+	record := snapshots[build.Record().ID].(map[string]any)
+	record["updatedAt"] = time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339Nano)
+	raw, err = json.Marshal(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := DryRun(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCandidate(t, report, orphanStorage, "orphan_vm_storage")
+	assertCandidate(t, report, orphanStaging, "orphan_snapshot_staging")
+	assertNoCandidate(t, report, build.Record().StagingDir)
+}
 
 func TestDryRunReportsOnlyManagedCandidates(t *testing.T) {
 	dir := t.TempDir()
