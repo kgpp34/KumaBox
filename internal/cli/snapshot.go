@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -14,9 +15,35 @@ import (
 func newSnapshotCommand(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "snapshot", Short: "Manage stopped VM snapshots"}
 	cmd.AddCommand(newSnapshotCreateCommand(opts))
+	cmd.AddCommand(newSnapshotExportCommand(opts))
 	cmd.AddCommand(newSnapshotLSCommand(opts))
 	cmd.AddCommand(newSnapshotInspectCommand(opts))
 	cmd.AddCommand(newSnapshotRMCommand(opts))
+	return cmd
+}
+
+func newSnapshotExportCommand(opts *rootOptions) *cobra.Command {
+	var output, compression string
+	cmd := &cobra.Command{
+		Use: "export SNAPSHOT", Short: "Export a portable snapshot package", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			absolute, err := filepath.Abs(output)
+			if err != nil {
+				return fmt.Errorf("resolve export output: %w", err)
+			}
+			if err := snapshot.NewStore(cfg.Runtime.RootDir).Export(cmd.Context(), args[0], snapshot.ExportOptions{Output: absolute, Compression: compression}); err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), map[string]string{"snapshot": args[0], "output": absolute, "compression": compression})
+		},
+	}
+	cmd.Flags().StringVar(&output, "output", "", "output .kbsnap path")
+	cmd.Flags().StringVar(&compression, "compression", "none", "compression: none, gzip, or zstd")
+	_ = cmd.MarkFlagRequired("output")
 	return cmd
 }
 

@@ -10,6 +10,7 @@ log_dir=/tmp/kumabox-p0/logs
 image=ubuntu
 name=p4-snapshot
 storage=64M
+keep=false
 
 usage() {
   cat <<'EOF'
@@ -40,6 +41,7 @@ while (($#)); do
     --name) name=$2; shift 2 ;;
     --storage) storage=$2; shift 2 ;;
     --sudo) shift ;;
+    --keep) keep=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -58,7 +60,7 @@ snapshot_id=
 success=false
 
 cleanup() {
-  if [[ $success == true ]]; then
+  if [[ $success == true && $keep == false ]]; then
     [[ -z $snapshot_id ]] || kb snapshot rm "$snapshot_id" >/dev/null 2>&1 || true
     [[ -z $vm_id ]] || kb delete "$vm_id" --force >/dev/null 2>&1 || true
   else
@@ -113,4 +115,7 @@ while IFS=$'\t' read -r relative expected strategy; do
 done < <(jq -r '.disks[] | [.path, .sha256, .copyStrategy] | @tsv' "$manifest")
 
 success=true
+if [[ $keep == true ]]; then
+  echo "state: kept vm=$vm_id snapshot=$snapshot_id for export/import/restore verification"
+fi
 echo "P4 stopped snapshot capture verification passed"
