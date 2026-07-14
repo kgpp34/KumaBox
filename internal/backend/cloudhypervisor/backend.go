@@ -7,6 +7,7 @@ import (
 )
 
 var _ backend.Lifecycle = Backend{}
+var _ backend.StateController = Backend{}
 
 type Backend struct {
 	renderer Renderer

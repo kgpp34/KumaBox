@@ -5,10 +5,18 @@
 package backend
 
 import (
+	"context"
 	"time"
 
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
+
+// StateController exposes live VMM state transitions that do not create or
+// terminate the backend process.
+type StateController interface {
+	PauseVM(context.Context, *vmstore.VMRecord) error
+	ResumeVM(context.Context, *vmstore.VMRecord) error
+}
 
 // Lifecycle is the backend contract required by runtime.
 //

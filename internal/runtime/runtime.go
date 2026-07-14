@@ -240,7 +240,8 @@ func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.Sto
 		return nil, err
 	}
 	observed := r.applyObservation(rec)
-	if observed.State == vmstore.StateRunning && observed.ObservedState != vmstore.ObservedStateRunning {
+	if (observed.State == vmstore.StateRunning || observed.State == vmstore.StatePaused) &&
+		observed.ObservedState != vmstore.ObservedStateRunning && observed.ObservedState != vmstore.ObservedStatePaused {
 		stopped, markErr := r.store.MarkStopped(observed.ID)
 		if markErr != nil {
 			return nil, markErr
@@ -252,7 +253,7 @@ func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.Sto
 		})
 		return r.applyObservation(stopped), nil
 	}
-	if observed.ObservedState != vmstore.ObservedStateRunning {
+	if observed.ObservedState != vmstore.ObservedStateRunning && observed.ObservedState != vmstore.ObservedStatePaused {
 		return observed, nil
 	}
 
@@ -305,9 +306,9 @@ func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (
 		return nil, err
 	}
 	observed := r.applyObservation(rec)
-	if observed.ObservedState == vmstore.ObservedStateRunning {
+	if observed.ObservedState == vmstore.ObservedStateRunning || observed.ObservedState == vmstore.ObservedStatePaused {
 		if !force {
-			return nil, fmt.Errorf("VM %s is running; use --force to stop and delete", ref)
+			return nil, fmt.Errorf("VM %s is running or paused; use --force to stop and delete", ref)
 		}
 		observed, err = r.stopVMLocked(ctx, rec.ID, backend.StopOptions{Force: true})
 		if err != nil {
@@ -364,7 +365,8 @@ func (r *Runtime) applyObservation(rec *vmstore.VMRecord) *vmstore.VMRecord {
 	rec.ObservedState = obs.State
 	rec.ObservedReason = obs.Reason
 	rec.ObservedAt = &obs.CheckedAt
-	if rec.State == vmstore.StateRunning && obs.State != vmstore.ObservedStateRunning {
+	if (rec.State == vmstore.StateRunning || rec.State == vmstore.StatePaused) &&
+		obs.State != vmstore.ObservedStateRunning && obs.State != vmstore.ObservedStatePaused {
 		_ = writeVMEvent(rec, "backend.exit.detected", obs)
 	}
 	return rec

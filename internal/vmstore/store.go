@@ -183,6 +183,38 @@ func (s *Store) MarkRunning(ref string, pid int, apiSocket string) (*VMRecord, e
 	return updated, nil
 }
 
+// MarkPaused records a live paused VM without clearing backend process identity.
+func (s *Store) MarkPaused(ref string) (*VMRecord, error) {
+	return s.markLiveState(ref, StatePaused)
+}
+
+// MarkResumed records a paused VM returning to running without opening a new
+// lifecycle interval or changing its original start timestamp.
+func (s *Store) MarkResumed(ref string) (*VMRecord, error) {
+	return s.markLiveState(ref, StateRunning)
+}
+
+func (s *Store) markLiveState(ref string, state VMState) (*VMRecord, error) {
+	var updated *VMRecord
+	err := s.update(func(idx *vmIndex) error {
+		id, err := idx.resolve(ref)
+		if err != nil {
+			return err
+		}
+		rec := idx.VMs[id]
+		now := time.Now().UTC()
+		rec.State = state
+		rec.Error = ""
+		rec.UpdatedAt = now
+		updated = cloneRecord(rec)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
 // MarkError records a lifecycle failure while preserving the VM record.
 //
 // Keeping the record allows inspect, logs, and delete cleanup to work after a

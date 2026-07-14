@@ -26,6 +26,7 @@ type VMState string
 const (
 	StateCreated VMState = "created"
 	StateRunning VMState = "running"
+	StatePaused  VMState = "paused"
 	StateStopped VMState = "stopped"
 	StateError   VMState = "error"
 )
@@ -40,6 +41,7 @@ type ObservedState string
 const (
 	ObservedStateCreated ObservedState = "CREATED"
 	ObservedStateRunning ObservedState = "RUNNING"
+	ObservedStatePaused  ObservedState = "PAUSED"
 	ObservedStateStopped ObservedState = "STOPPED"
 	ObservedStateFailed  ObservedState = "FAILED"
 	ObservedStateUnknown ObservedState = "UNKNOWN"

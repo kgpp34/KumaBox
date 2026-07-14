@@ -1,10 +1,10 @@
 package cloudhypervisor
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,7 +30,7 @@ func ObserveVM(rec *vmstore.VMRecord) vmstore.Observation {
 			return observation(vmstore.ObservedStateFailed, rec.Error, now)
 		}
 		return observation(vmstore.ObservedStateFailed, "VM is recorded in error state", now)
-	case vmstore.StateRunning:
+	case vmstore.StateRunning, vmstore.StatePaused:
 	default:
 		return observation(vmstore.ObservedStateUnknown, "unrecognized persisted state "+string(rec.State), now)
 	}
@@ -62,11 +62,20 @@ func ObserveVM(rec *vmstore.VMRecord) vmstore.Observation {
 	if apiSocket == "" {
 		return observation(vmstore.ObservedStateUnknown, "running record has no API socket", now)
 	}
-	if err := checkUnixSocket(apiSocket); err != nil {
-		return observation(vmstore.ObservedStateUnknown, fmt.Sprintf("API socket check failed: %v", err), now)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	info, err := queryVMInfo(ctx, apiSocket, 500*time.Millisecond)
+	if err != nil {
+		return observation(vmstore.ObservedStateUnknown, fmt.Sprintf("API state check failed: %v", err), now)
 	}
-
-	return observation(vmstore.ObservedStateRunning, "process identity and API socket are healthy", now)
+	switch strings.ToLower(info.State) {
+	case "running":
+		return observation(vmstore.ObservedStateRunning, "process identity and backend state are healthy", now)
+	case "paused":
+		return observation(vmstore.ObservedStatePaused, "process identity is healthy and backend is paused", now)
+	default:
+		return observation(vmstore.ObservedStateUnknown, "backend reported state "+info.State, now)
+	}
 }
 
 func observation(state vmstore.ObservedState, reason string, checkedAt time.Time) vmstore.Observation {
@@ -107,14 +116,6 @@ func verifyProcessIdentity(pid int, binary string, apiSocket string) (bool, stri
 		return false, fmt.Sprintf("pid %d command line does not contain API socket %q", pid, apiSocket)
 	}
 	return true, ""
-}
-
-func checkUnixSocket(path string) error {
-	conn, err := net.DialTimeout("unix", path, 200*time.Millisecond)
-	if err != nil {
-		return err
-	}
-	return conn.Close()
 }
 
 func processAlive(pid int) bool {

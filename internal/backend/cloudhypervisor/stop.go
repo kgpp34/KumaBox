@@ -1,14 +1,13 @@
 package cloudhypervisor
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -59,7 +58,8 @@ func (Stopper) StopVM(rec *vmstore.VMRecord, opts backend.StopOptions) (*backend
 		timeout = 10 * time.Second
 	}
 	if !opts.Force {
-		_ = shutdownVM(apiSocket)
+		_ = resumeIfPaused(context.Background(), apiSocket)
+		_ = shutdownVM(context.Background(), apiSocket)
 		if waitForExit(rec.PID, timeout) {
 			cleanupRuntimeFiles(rec.RunDir)
 			return &backend.StopResult{}, nil
@@ -73,33 +73,18 @@ func (Stopper) StopVM(rec *vmstore.VMRecord, opts backend.StopOptions) (*backend
 	return &backend.StopResult{}, nil
 }
 
-func shutdownVM(apiSocket string) error {
-	client := socketHTTPClient(apiSocket, 2*time.Second)
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/api/v1/vm.shutdown", bytes.NewReader(nil))
-	if err != nil {
-		return err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("Cloud Hypervisor shutdown status %s", resp.Status)
-	}
-	return nil
+func shutdownVM(ctx context.Context, apiSocket string) error {
+	_, err := doAPIOnce(ctx, apiSocket, 2*time.Second, http.MethodPut, "vm.shutdown", nil, http.StatusNoContent)
+	return err
 }
 
-func socketHTTPClient(socketPath string, timeout time.Duration) *http.Client {
-	return &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				dialer := net.Dialer{}
-				return dialer.DialContext(ctx, "unix", socketPath)
-			},
-		},
+func resumeIfPaused(ctx context.Context, apiSocket string) error {
+	info, err := queryVMInfo(ctx, apiSocket, 2*time.Second)
+	if err != nil || !strings.EqualFold(info.State, "Paused") {
+		return err
 	}
+	_, err = doAPIOnce(ctx, apiSocket, 2*time.Second, http.MethodPut, "vm.resume", nil, http.StatusNoContent)
+	return err
 }
 
 func waitForExit(pid int, timeout time.Duration) bool {

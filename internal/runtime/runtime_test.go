@@ -20,6 +20,8 @@ type backendFake struct {
 	render  func(*vmstore.VMRecord) error
 	start   func(*vmstore.VMRecord) (*backend.StartResult, error)
 	stop    func(*vmstore.VMRecord, backend.StopOptions) (*backend.StopResult, error)
+	pause   func(context.Context, *vmstore.VMRecord) error
+	resume  func(context.Context, *vmstore.VMRecord) error
 	observe func(*vmstore.VMRecord) vmstore.Observation
 }
 
@@ -36,6 +38,20 @@ func (b backendFake) StopVM(rec *vmstore.VMRecord, opts backend.StopOptions) (*b
 		return b.stop(rec, opts)
 	}
 	return &backend.StopResult{}, nil
+}
+
+func (b backendFake) PauseVM(ctx context.Context, rec *vmstore.VMRecord) error {
+	if b.pause != nil {
+		return b.pause(ctx, rec)
+	}
+	return nil
+}
+
+func (b backendFake) ResumeVM(ctx context.Context, rec *vmstore.VMRecord) error {
+	if b.resume != nil {
+		return b.resume(ctx, rec)
+	}
+	return nil
 }
 
 func (b backendFake) ObserveVM(rec *vmstore.VMRecord) vmstore.Observation {
