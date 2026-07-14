@@ -14,14 +14,36 @@ import (
 )
 
 func newSnapshotCommand(opts *rootOptions) *cobra.Command {
-	cmd := &cobra.Command{Use: "snapshot", Short: "Manage stopped VM snapshots"}
+	cmd := &cobra.Command{Use: "snapshot", Short: "Manage VM snapshots"}
 	cmd.AddCommand(newSnapshotCreateCommand(opts))
 	cmd.AddCommand(newSnapshotExportCommand(opts))
 	cmd.AddCommand(newSnapshotImportCommand(opts))
 	cmd.AddCommand(newSnapshotRestoreCommand(opts))
 	cmd.AddCommand(newSnapshotLSCommand(opts))
 	cmd.AddCommand(newSnapshotInspectCommand(opts))
+	cmd.AddCommand(newSnapshotVerifyCommand(opts))
 	cmd.AddCommand(newSnapshotRMCommand(opts))
+	return cmd
+}
+
+func newSnapshotVerifyCommand(opts *rootOptions) *cobra.Command {
+	var vmRef string
+	cmd := &cobra.Command{
+		Use: "verify SNAPSHOT", Short: "Verify native snapshot integrity and compatibility", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			manifest, err := kbruntime.New(cfg).VerifyNativeSnapshot(cmd.Context(), args[0], vmRef)
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), manifest)
+		},
+	}
+	cmd.Flags().StringVar(&vmRef, "vm", "", "target VM used for compatibility checks")
+	_ = cmd.MarkFlagRequired("vm")
 	return cmd
 }
 

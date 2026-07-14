@@ -44,6 +44,10 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 	if !ok {
 		return nil, errors.New("BACKEND_OPERATION_UNSUPPORTED: backend does not support native snapshots")
 	}
+	hostInspector, ok := r.backend.(backend.NativeHostInspector)
+	if !ok {
+		return nil, errors.New("BACKEND_OPERATION_UNSUPPORTED: backend does not expose native compatibility")
+	}
 
 	build, err := snapshot.NewStore(r.store.RootDir()).Reserve(ctx, name)
 	if err != nil {
@@ -77,7 +81,11 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 		return nil, fmt.Errorf("finalize writable disks: %w", err)
 	}
 
-	manifest, totalSize, err := snapshot.WriteNativeManifest(build, rec, disks)
+	host, err := hostInspector.InspectNativeHost(ctx, rec)
+	if err != nil {
+		return nil, fmt.Errorf("inspect native compatibility: %w", err)
+	}
+	manifest, totalSize, err := snapshot.WriteNativeManifest(ctx, build, rec, disks, host)
 	if err != nil {
 		return nil, err
 	}

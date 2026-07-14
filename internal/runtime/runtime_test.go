@@ -17,13 +17,14 @@ import (
 )
 
 type backendFake struct {
-	render   func(*vmstore.VMRecord) error
-	start    func(*vmstore.VMRecord) (*backend.StartResult, error)
-	stop     func(*vmstore.VMRecord, backend.StopOptions) (*backend.StopResult, error)
-	pause    func(context.Context, *vmstore.VMRecord) error
-	resume   func(context.Context, *vmstore.VMRecord) error
-	snapshot func(context.Context, *vmstore.VMRecord, string) error
-	observe  func(*vmstore.VMRecord) vmstore.Observation
+	render     func(*vmstore.VMRecord) error
+	start      func(*vmstore.VMRecord) (*backend.StartResult, error)
+	stop       func(*vmstore.VMRecord, backend.StopOptions) (*backend.StopResult, error)
+	pause      func(context.Context, *vmstore.VMRecord) error
+	resume     func(context.Context, *vmstore.VMRecord) error
+	snapshot   func(context.Context, *vmstore.VMRecord, string) error
+	nativeHost func(context.Context, *vmstore.VMRecord) (backend.NativeHost, error)
+	observe    func(*vmstore.VMRecord) vmstore.Observation
 }
 
 func (b backendFake) RenderConfig(rec *vmstore.VMRecord) error {
@@ -60,6 +61,16 @@ func (b backendFake) SnapshotVM(ctx context.Context, rec *vmstore.VMRecord, dest
 		return b.snapshot(ctx, rec, destination)
 	}
 	return nil
+}
+
+func (b backendFake) InspectNativeHost(ctx context.Context, rec *vmstore.VMRecord) (backend.NativeHost, error) {
+	if b.nativeHost != nil {
+		return b.nativeHost(ctx, rec)
+	}
+	return backend.NativeHost{
+		BackendName: "cloud-hypervisor", BackendVersion: "test", SnapshotFormat: "cloud-hypervisor-native-v1",
+		Architecture: "test", CPUVendor: "test",
+	}, nil
 }
 
 func (b backendFake) ObserveVM(rec *vmstore.VMRecord) vmstore.Observation {

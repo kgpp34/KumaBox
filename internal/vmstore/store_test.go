@@ -168,6 +168,33 @@ func TestCreatePersistsCPUs(t *testing.T) {
 	}
 }
 
+func TestCreatePersistsMemory(t *testing.T) {
+	dir := t.TempDir()
+	store := New(filepath.Join(dir, "data"))
+
+	defaulted, err := store.Create(CreateRequest{
+		Name: "default-memory", RootDisk: "ubuntu.img", Firmware: "CLOUDHV.fd",
+		RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaulted.MemoryBytes != 512<<20 {
+		t.Fatalf("default memory = %d", defaulted.MemoryBytes)
+	}
+
+	custom, err := store.Create(CreateRequest{
+		Name: "custom-memory", RootDisk: "ubuntu.img", Firmware: "CLOUDHV.fd", MemoryBytes: 2 << 30,
+		RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if custom.MemoryBytes != 2<<30 {
+		t.Fatalf("custom memory = %d", custom.MemoryBytes)
+	}
+}
+
 func TestCreatePersistsImageRef(t *testing.T) {
 	dir := t.TempDir()
 	store := New(filepath.Join(dir, "data"))

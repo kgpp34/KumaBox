@@ -54,6 +54,7 @@ type CreateRequest struct {
 	Firmware       string
 	Image          *ImageRef
 	CPUs           int
+	MemoryBytes    int64
 	Network        string
 	Networks       []string
 	StorageConfigs []StorageConfig
@@ -426,6 +427,9 @@ func validateCreateRequest(req CreateRequest) error {
 	}
 	if req.CPUs < 0 {
 		return errors.New("cpus must be greater than zero")
+	}
+	if req.MemoryBytes < 0 {
+		return errors.New("memory bytes must be greater than zero")
 	}
 	if _, err := normalizeNetworks(req.Network, req.Networks); err != nil {
 		return err

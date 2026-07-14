@@ -83,6 +83,7 @@ type VMRecord struct {
 	Firmware       string                   `json:"firmware,omitempty"`
 	Image          *ImageRef                `json:"image,omitempty"`
 	CPUs           int                      `json:"cpus"`
+	MemoryBytes    int64                    `json:"memoryBytes"`
 	Metadata       *Metadata                `json:"metadata,omitempty"`
 	StorageConfigs []StorageConfig          `json:"storageConfigs,omitempty"`
 	NetworkConfigs []kbnetwork.Config       `json:"networkConfigs,omitempty"`
@@ -97,6 +98,13 @@ type VMRecord struct {
 	StartedAt      *time.Time               `json:"startedAt,omitempty"`
 	StoppedAt      *time.Time               `json:"stoppedAt,omitempty"`
 	FirstBooted    bool                     `json:"firstBooted,omitempty"`
+}
+
+func (r *VMRecord) EffectiveMemoryBytes() int64 {
+	if r == nil || r.MemoryBytes <= 0 {
+		return 512 << 20
+	}
+	return r.MemoryBytes
 }
 
 // Metadata describes the generated cloud-init NoCloud seed attached to a VM.
@@ -233,6 +241,7 @@ func newRecord(id string, req CreateRequest, rootDir string, now time.Time) (*VM
 		Firmware:       firmware,
 		Image:          cloneImageRef(req.Image),
 		CPUs:           cpus,
+		MemoryBytes:    normalizeMemoryBytes(req.MemoryBytes),
 		StorageConfigs: storageConfigs,
 		Network:        network,
 		Networks:       cloneStrings(networks),
@@ -258,6 +267,13 @@ func normalizeCPUs(cpus int) int {
 		return 1
 	}
 	return cpus
+}
+
+func normalizeMemoryBytes(memoryBytes int64) int64 {
+	if memoryBytes <= 0 {
+		return 512 << 20
+	}
+	return memoryBytes
 }
 
 func cloneRecord(rec *VMRecord) *VMRecord {

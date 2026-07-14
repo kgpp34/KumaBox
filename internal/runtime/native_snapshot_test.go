@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,7 +31,8 @@ func TestCreateRunningSnapshotCapturesOnePauseWindow(t *testing.T) {
 		snapshot: func(_ context.Context, _ *vmstore.VMRecord, destination string) error {
 			steps = append(steps, "snapshot")
 			for name, content := range map[string]string{
-				"config.json": "{}", "state.json": "{}", "memory-range-0": "memory",
+				"config.json": fmt.Sprintf(`{"cpus":{"boot_vcpus":1},"memory":{"size":536870912},"disks":[{"path":%q,"readonly":false}],"vsock":{}}`, rec.StorageConfigs[0].Path),
+				"state.json":  "{}", "memory-range-0": "memory",
 			} {
 				if err := os.WriteFile(filepath.Join(destination, name), []byte(content), 0o600); err != nil {
 					return err
@@ -56,8 +58,11 @@ func TestCreateRunningSnapshotCapturesOnePauseWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.Type != "native" || manifest.Consistency != "crash" || manifest.Native == nil || len(manifest.Native.Files) != 3 {
+	if manifest.SchemaVersion != "kumabox.snapshot.v2" || manifest.Type != "native" || manifest.Consistency != "crash" || manifest.Native == nil || len(manifest.Native.Files) != 3 {
 		t.Fatalf("manifest = %+v", manifest)
+	}
+	if manifest.Backend == nil || manifest.Machine == nil || manifest.Machine.MemoryBytes != 512<<20 || manifest.Native.Files[0].SHA256 == "" {
+		t.Fatalf("compatibility metadata = %+v", manifest)
 	}
 	if _, err := os.Stat(filepath.Join(ready.DataDir, "disks", "cow.raw")); err != nil {
 		t.Fatal(err)
@@ -106,8 +111,16 @@ func newRunningSnapshotRuntime(t *testing.T) (*Runtime, *vmstore.Store, *vmstore
 	t.Helper()
 	dir := t.TempDir()
 	store := vmstore.New(filepath.Join(dir, "data"))
+	kernel := filepath.Join(dir, "vmlinuz")
+	initrd := filepath.Join(dir, "initrd")
+	if err := os.WriteFile(kernel, []byte("kernel"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(initrd, []byte("initrd"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	rec, err := store.Create(vmstore.CreateRequest{
-		Name: "source", Kernel: filepath.Join(dir, "vmlinuz"), Initrd: filepath.Join(dir, "initrd"),
+		Name: "source", Kernel: kernel, Initrd: initrd,
 		RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"), Network: "none",
 		StorageConfigs: []vmstore.StorageConfig{{
 			ID: "cow", Role: vmstore.StorageRoleData, Format: "raw", Filesystem: "ext4",

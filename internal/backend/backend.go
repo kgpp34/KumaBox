@@ -24,6 +24,23 @@ type NativeSnapshotter interface {
 	SnapshotVM(context.Context, *vmstore.VMRecord, string) error
 }
 
+// NativeHost describes host and backend properties that constrain whether a
+// native snapshot can be restored safely.
+type NativeHost struct {
+	BackendName    string
+	BackendVersion string
+	SnapshotFormat string
+	Architecture   string
+	CPUVendor      string
+	CPUFeatures    []string
+}
+
+// NativeHostInspector reports the compatibility boundary for native backend
+// state captured or restored on the current host.
+type NativeHostInspector interface {
+	InspectNativeHost(context.Context, *vmstore.VMRecord) (NativeHost, error)
+}
+
 // Lifecycle is the backend contract required by runtime.
 //
 // Implementations must make ObserveVM cheap and side-effect free because runtime

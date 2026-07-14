@@ -321,16 +321,32 @@ func parseChecksums(raw string) (map[string]string, error) {
 	return out, nil
 }
 func hashFile(path string) (string, error) {
+	return hashFileContext(context.Background(), path)
+}
+
+func hashFileContext(ctx context.Context, path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close() //nolint:errcheck
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	if _, err := io.Copy(h, &contextReader{ctx: ctx, reader: f}); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
 }
 func validateExt4(path string) error {
 	f, err := os.Open(path)

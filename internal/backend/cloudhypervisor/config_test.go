@@ -282,8 +282,14 @@ func TestRenderConfigIncludesNetworkDevice(t *testing.T) {
 	if rendered.CPUs.Boot != 4 {
 		t.Fatalf("cpus = %+v", rendered.CPUs)
 	}
+	if rendered.Memory.Size != 512<<20 {
+		t.Fatalf("memory = %+v", rendered.Memory)
+	}
 	if !argsContainPair(rendered.Args, "--cpus", "boot=4") {
 		t.Fatalf("cpus arg missing: %v", rendered.Args)
+	}
+	if !argsContainPair(rendered.Args, "--memory", "size=536870912") {
+		t.Fatalf("memory arg missing: %v", rendered.Args)
 	}
 	if !argsContainPair(rendered.Args, "--net", "tap=kbtaptest,mac=02:00:00:00:00:11,num_queues=2,queue_size=256") {
 		t.Fatalf("net arg missing: %v", rendered.Args)

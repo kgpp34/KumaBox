@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -237,6 +238,7 @@ type createVMFlags struct {
 	initrd   string
 	firmware string
 	cpus     int
+	memory   string
 	storage  string
 	networks []string
 }
@@ -248,6 +250,7 @@ func addCreateVMFlags(cmd *cobra.Command, flags *createVMFlags) {
 	cmd.Flags().StringVar(&flags.initrd, "initrd", "", "initrd image path")
 	cmd.Flags().StringVar(&flags.firmware, "firmware", "", "UEFI firmware path")
 	cmd.Flags().IntVar(&flags.cpus, "cpus", 1, "number of vCPUs")
+	cmd.Flags().StringVar(&flags.memory, "memory", "512M", "guest memory size, for example 512M or 2G")
 	cmd.Flags().StringVar(&flags.storage, "storage", "", "per-VM writable COW size for OCI images, for example 4G")
 	cmd.Flags().StringArrayVar(&flags.networks, "network", nil, "network attachment, repeatable: none, default, host-tap, cni, or cni:NAME")
 	_ = cmd.MarkFlagRequired("name")
@@ -260,20 +263,25 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 	if flags.cpus == 0 {
 		flags.cpus = 1
 	}
+	memoryBytes, err := parseMemorySize(defaultString(flags.memory, "512M"))
+	if err != nil {
+		return vmstore.CreateRequest{}, err
+	}
 	if len(args) == 0 {
 		if flags.rootDisk == "" {
 			return vmstore.CreateRequest{}, fmt.Errorf("either IMAGE or --root-disk is required")
 		}
 		return vmstore.CreateRequest{
-			Name:     flags.name,
-			RootDisk: flags.rootDisk,
-			Kernel:   flags.kernel,
-			Initrd:   flags.initrd,
-			Firmware: flags.firmware,
-			CPUs:     flags.cpus,
-			Networks: normalizedNetworkFlags(flags.networks),
-			RunDir:   cfg.Runtime.RunDir,
-			LogDir:   cfg.Runtime.LogDir,
+			Name:        flags.name,
+			RootDisk:    flags.rootDisk,
+			Kernel:      flags.kernel,
+			Initrd:      flags.initrd,
+			Firmware:    flags.firmware,
+			CPUs:        flags.cpus,
+			MemoryBytes: memoryBytes,
+			Networks:    normalizedNetworkFlags(flags.networks),
+			RunDir:      cfg.Runtime.RunDir,
+			LogDir:      cfg.Runtime.LogDir,
 		}, nil
 	}
 
@@ -301,13 +309,14 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 		digest = "sha256:" + digest
 	}
 	req := vmstore.CreateRequest{
-		Name:     flags.name,
-		RootDisk: image.RootDisk.Path,
-		Kernel:   image.Boot.Kernel,
-		Initrd:   image.Boot.Initrd,
-		Firmware: image.Boot.Firmware,
-		CPUs:     flags.cpus,
-		Networks: normalizedNetworkFlags(flags.networks),
+		Name:        flags.name,
+		RootDisk:    image.RootDisk.Path,
+		Kernel:      image.Boot.Kernel,
+		Initrd:      image.Boot.Initrd,
+		Firmware:    image.Boot.Firmware,
+		CPUs:        flags.cpus,
+		MemoryBytes: memoryBytes,
+		Networks:    normalizedNetworkFlags(flags.networks),
 		Image: &vmstore.ImageRef{
 			ID:       image.ID,
 			Name:     image.Name,
@@ -342,6 +351,10 @@ func newOCIImageCreateRequest(flags createVMFlags, image *imagestore.ImageRecord
 		return vmstore.CreateRequest{}, fmt.Errorf("image %q has no OCI direct boot profile", image.Name)
 	}
 	cowSize, err := parseByteSize(defaultString(flags.storage, "4G"))
+	if err != nil {
+		return vmstore.CreateRequest{}, err
+	}
+	memoryBytes, err := parseMemorySize(defaultString(flags.memory, "512M"))
 	if err != nil {
 		return vmstore.CreateRequest{}, err
 	}
@@ -392,6 +405,7 @@ func newOCIImageCreateRequest(flags createVMFlags, image *imagestore.ImageRecord
 		Initrd:         image.Boot.Initrd,
 		KernelCmdline:  image.Boot.Cmdline,
 		CPUs:           flags.cpus,
+		MemoryBytes:    memoryBytes,
 		Networks:       normalizedNetworkFlags(flags.networks),
 		StorageConfigs: storageConfigs,
 		Image: &vmstore.ImageRef{
@@ -408,9 +422,17 @@ func newOCIImageCreateRequest(flags createVMFlags, image *imagestore.ImageRecord
 }
 
 func parseByteSize(value string) (int64, error) {
+	return parsePositiveByteSize("--storage", value)
+}
+
+func parseMemorySize(value string) (int64, error) {
+	return parsePositiveByteSize("--memory", value)
+}
+
+func parsePositiveByteSize(flag, value string) (int64, error) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
-		return 0, fmt.Errorf("--storage must not be empty")
+		return 0, fmt.Errorf("%s must not be empty", flag)
 	}
 	multiplier := int64(1)
 	suffix := strings.ToUpper(trimmed[len(trimmed)-1:])
@@ -427,7 +449,10 @@ func parseByteSize(value string) (int64, error) {
 	}
 	n, err := strconv.ParseInt(trimmed, 10, 64)
 	if err != nil || n <= 0 {
-		return 0, fmt.Errorf("--storage must be a positive size like 4G")
+		return 0, fmt.Errorf("%s must be a positive size like 512M or 4G", flag)
+	}
+	if n > math.MaxInt64/multiplier {
+		return 0, fmt.Errorf("%s exceeds the supported size", flag)
 	}
 	return n * multiplier, nil
 }

@@ -36,6 +36,7 @@ type Config struct {
 	Initramfs    *Initramfs  `json:"initramfs,omitempty"`
 	Firmware     *Firmware   `json:"firmware,omitempty"`
 	CPUs         CPUs        `json:"cpus"`
+	Memory       Memory      `json:"memory"`
 	Disks        []Disk      `json:"disks"`
 	Nets         []Net       `json:"nets,omitempty"`
 	Vsock        *Vsock      `json:"vsock,omitempty"`
@@ -60,6 +61,10 @@ type Firmware struct {
 
 type CPUs struct {
 	Boot int `json:"boot"`
+}
+
+type Memory struct {
+	Size int64 `json:"size"`
 }
 
 // Disk is one block device passed to Cloud Hypervisor.
@@ -183,6 +188,7 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 	args := []string{
 		"--api-socket", apiSocket,
 		"--cpus", fmt.Sprintf("boot=%d", cpus),
+		"--memory", fmt.Sprintf("size=%d", vmMemoryBytes(rec)),
 	}
 	cmdline := kernelCmdline(rec)
 	if rec.Firmware != "" {
@@ -225,6 +231,7 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		StderrLog:    stderrLog,
 		NetnsPath:    netnsPath(rec),
 		CPUs:         CPUs{Boot: cpus},
+		Memory:       Memory{Size: vmMemoryBytes(rec)},
 		Disks:        newDisks(rec),
 		Nets:         newNets(rec),
 		Vsock:        vsock,
@@ -263,6 +270,10 @@ func vmCPUs(rec *vmstore.VMRecord) int {
 		return 1
 	}
 	return rec.CPUs
+}
+
+func vmMemoryBytes(rec *vmstore.VMRecord) int64 {
+	return rec.EffectiveMemoryBytes()
 }
 
 func netnsPath(rec *vmstore.VMRecord) string {

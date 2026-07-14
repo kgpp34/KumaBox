@@ -242,7 +242,7 @@ func (s *Store) LoadManifest(ctx context.Context, ref string) (*Manifest, error)
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return nil, fmt.Errorf("decode snapshot manifest: %w", err)
 	}
-	if manifest.SchemaVersion != "kumabox.snapshot.v1" || manifest.ID != rec.ID {
+	if (manifest.SchemaVersion != "kumabox.snapshot.v1" && manifest.SchemaVersion != "kumabox.snapshot.v2") || manifest.ID != rec.ID {
 		return nil, errors.New("SNAPSHOT_CORRUPT: manifest identity does not match snapshot index")
 	}
 	return &manifest, nil
