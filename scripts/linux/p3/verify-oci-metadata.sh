@@ -8,6 +8,7 @@ platform="linux/amd64"
 name="p3-metadata"
 source="auto"
 mkfs_erofs="mkfs.erofs"
+use_sudo=false
 
 usage() {
   cat <<'USAGE'
@@ -21,6 +22,7 @@ Options:
   --name NAME         image name, defaults to p3-metadata
   --source VALUE      OCI source: auto, registry, or daemon. Defaults to auto
   --mkfs-erofs PATH   mkfs.erofs binary path, defaults to mkfs.erofs
+  --sudo              run kumabox through sudo for root-owned state dirs
 
 Verifies OCI metadata mapping:
 image build records OCI config env/cmd/entrypoint/workdir/user/labels semantics,
@@ -50,6 +52,7 @@ while [[ $# -gt 0 ]]; do
     --name) require_value "$1" "${2:-}"; name="$2"; shift 2 ;;
     --source) require_value "$1" "${2:-}"; source="$2"; shift 2 ;;
     --mkfs-erofs) require_value "$1" "${2:-}"; mkfs_erofs="$2"; shift 2 ;;
+    --sudo) use_sudo=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -72,14 +75,25 @@ elif ! command -v "$mkfs_erofs" >/dev/null 2>&1; then
   echo "mkfs.erofs is required for OCI metadata verification" >&2
   exit 1
 fi
+if [[ "$use_sudo" == true ]]; then
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "--sudo requested but sudo is missing" >&2
+    exit 1
+  fi
+  kumabox_cmd=(sudo "$kumabox_path")
+else
+  kumabox_cmd=("$kumabox_path")
+fi
+
+kb() {
+  "${kumabox_cmd[@]}" --root-dir "$root_dir" "$@"
+}
 
 step "clean previous OCI metadata image record"
-"$kumabox_path" --root-dir "$root_dir" image rm "$name" >/dev/null 2>&1 || true
+kb image rm "$name" >/dev/null 2>&1 || true
 
 step "build OCI image and capture metadata"
-build_json="$("$kumabox_path" \
-  --root-dir "$root_dir" \
-  image build "$ref" \
+build_json="$(kb image build "$ref" \
   --name "$name" \
   --platform "$platform" \
   --source "$source" \
@@ -107,7 +121,7 @@ fi
 printf 'state: agentInjection=%s cmdLen=%s envHasDebianFrontend=%s\n' "$agent_injection" "$cmd_len" "$env_has_debian_frontend"
 
 step "inspect image metadata"
-inspect_json="$("$kumabox_path" --root-dir "$root_dir" image inspect "$name" --json)"
+inspect_json="$(kb image inspect "$name" --json)"
 printf '%s\n' "$inspect_json" | jq '.oci.imageConfig, .oci.agentInjection'
 
 inspect_agent="$(printf '%s' "$inspect_json" | jq -r '.oci.agentInjection')"
@@ -118,6 +132,6 @@ if [[ "$inspect_agent" != "deferred" || "$inspect_cmd_has_init" != "true" ]]; th
 fi
 
 step "cleanup image record"
-"$kumabox_path" --root-dir "$root_dir" image rm "$name" >/dev/null
+kb image rm "$name" >/dev/null
 
 echo "P3-07 OCI metadata mapping verification passed"
