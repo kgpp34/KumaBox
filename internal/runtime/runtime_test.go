@@ -17,12 +17,13 @@ import (
 )
 
 type backendFake struct {
-	render  func(*vmstore.VMRecord) error
-	start   func(*vmstore.VMRecord) (*backend.StartResult, error)
-	stop    func(*vmstore.VMRecord, backend.StopOptions) (*backend.StopResult, error)
-	pause   func(context.Context, *vmstore.VMRecord) error
-	resume  func(context.Context, *vmstore.VMRecord) error
-	observe func(*vmstore.VMRecord) vmstore.Observation
+	render   func(*vmstore.VMRecord) error
+	start    func(*vmstore.VMRecord) (*backend.StartResult, error)
+	stop     func(*vmstore.VMRecord, backend.StopOptions) (*backend.StopResult, error)
+	pause    func(context.Context, *vmstore.VMRecord) error
+	resume   func(context.Context, *vmstore.VMRecord) error
+	snapshot func(context.Context, *vmstore.VMRecord, string) error
+	observe  func(*vmstore.VMRecord) vmstore.Observation
 }
 
 func (b backendFake) RenderConfig(rec *vmstore.VMRecord) error {
@@ -50,6 +51,13 @@ func (b backendFake) PauseVM(ctx context.Context, rec *vmstore.VMRecord) error {
 func (b backendFake) ResumeVM(ctx context.Context, rec *vmstore.VMRecord) error {
 	if b.resume != nil {
 		return b.resume(ctx, rec)
+	}
+	return nil
+}
+
+func (b backendFake) SnapshotVM(ctx context.Context, rec *vmstore.VMRecord, destination string) error {
+	if b.snapshot != nil {
+		return b.snapshot(ctx, rec, destination)
 	}
 	return nil
 }

@@ -1,0 +1,121 @@
+package runtime
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/kumabox/kumabox/internal/backend"
+	"github.com/kumabox/kumabox/internal/snapshot"
+	"github.com/kumabox/kumabox/internal/vmstore"
+)
+
+const snapshotCleanupTimeout = 30 * time.Second
+
+// CreateRunningSnapshot captures native backend state and writable disks from
+// one pause window, then publishes the snapshot after the source VM resumes.
+func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (*snapshot.Record, error) {
+	rec, err := r.store.Inspect(ref)
+	if err != nil {
+		return nil, err
+	}
+	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
+	if err != nil {
+		return nil, fmt.Errorf("lock VM %s for running snapshot: %w", rec.ID, err)
+	}
+	defer lock.Release() //nolint:errcheck
+
+	rec, err = r.store.Inspect(rec.ID)
+	if err != nil {
+		return nil, err
+	}
+	rec = r.applyObservation(rec)
+	if rec.ObservedState != vmstore.ObservedStateRunning {
+		return nil, fmt.Errorf("VM_NOT_RUNNING: VM %s observed state is %s", rec.Name, rec.ObservedState)
+	}
+	controller, ok := r.backend.(backend.StateController)
+	if !ok {
+		return nil, errors.New("BACKEND_OPERATION_UNSUPPORTED: backend does not support pause/resume")
+	}
+	snapshotter, ok := r.backend.(backend.NativeSnapshotter)
+	if !ok {
+		return nil, errors.New("BACKEND_OPERATION_UNSUPPORTED: backend does not support native snapshots")
+	}
+
+	build, err := snapshot.NewStore(r.store.RootDir()).Reserve(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	defer build.Abort() //nolint:errcheck
+	pending := build.Record()
+	nativeDir := filepath.Join(pending.StagingDir, "native")
+	if err := os.MkdirAll(nativeDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create native snapshot staging: %w", err)
+	}
+
+	if err := controller.PauseVM(ctx, rec); err != nil {
+		return nil, fmt.Errorf("pause VM for snapshot: %w", err)
+	}
+	stagedDisks, captureErr := captureNativeWindow(ctx, snapshotter, rec, nativeDir, pending.StagingDir)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), snapshotCleanupTimeout)
+	resumeErr := controller.ResumeVM(cleanupCtx, rec)
+	cancel()
+	if captureErr != nil || resumeErr != nil {
+		if resumeErr != nil {
+			r.persistSnapshotResumeFailure(rec)
+		}
+		return nil, errors.Join(
+			wrapOptional("capture native snapshot", captureErr),
+			wrapOptional("resume VM after snapshot", resumeErr),
+		)
+	}
+	disks, _, err := snapshot.FinalizeWritableDisks(ctx, pending.StagingDir, stagedDisks)
+	if err != nil {
+		return nil, fmt.Errorf("finalize writable disks: %w", err)
+	}
+
+	manifest, totalSize, err := snapshot.WriteNativeManifest(build, rec, disks)
+	if err != nil {
+		return nil, err
+	}
+	ready, err := build.Finalize(totalSize)
+	if err != nil {
+		return nil, err
+	}
+	_ = writeVMEvent(rec, "snapshot.capture.completed", vmstore.Observation{
+		State:     vmstore.ObservedStateRunning,
+		Reason:    fmt.Sprintf("native snapshot %s captured with %s consistency", ready.ID, manifest.Consistency),
+		CheckedAt: time.Now().UTC(),
+	})
+	return ready, nil
+}
+
+func captureNativeWindow(ctx context.Context, snapshotter backend.NativeSnapshotter, rec *vmstore.VMRecord, nativeDir, stagingDir string) ([]snapshot.DiskManifest, error) {
+	if err := snapshotter.SnapshotVM(ctx, rec, nativeDir); err != nil {
+		return nil, fmt.Errorf("capture backend state: %w", err)
+	}
+	disks, err := snapshot.StageWritableDisks(ctx, stagingDir, rec)
+	if err != nil {
+		return nil, fmt.Errorf("capture writable disks: %w", err)
+	}
+	return disks, nil
+}
+
+func (r *Runtime) persistSnapshotResumeFailure(rec *vmstore.VMRecord) {
+	observation := r.backend.ObserveVM(rec)
+	if observation.State == vmstore.ObservedStatePaused {
+		_, _ = r.store.MarkPaused(rec.ID)
+		return
+	}
+	_, _ = r.store.MarkError(rec.ID, "failed to resume VM after running snapshot")
+}
+
+func wrapOptional(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", operation, err)
+}

@@ -31,16 +31,10 @@ func copyPlatform(ctx context.Context, source, destination string) (string, erro
 	}()
 
 	if err := unix.IoctlFileClone(int(dst.Fd()), int(src.Fd())); err == nil {
-		if err := dst.Sync(); err != nil {
-			return "", fmt.Errorf("sync reflink disk: %w", err)
-		}
 		ok = true
 		return "reflink", nil
 	}
 	if err := copySparseExtents(ctx, src, dst); err == nil {
-		if err := dst.Sync(); err != nil {
-			return "", fmt.Errorf("sync sparse disk: %w", err)
-		}
 		ok = true
 		return "sparse", nil
 	} else if !errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.ENOTSUP) && !errors.Is(err, unix.ENOSYS) {

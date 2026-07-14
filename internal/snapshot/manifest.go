@@ -4,15 +4,27 @@ import "time"
 
 // Manifest is the portable description stored beside snapshot disk payloads.
 type Manifest struct {
-	SchemaVersion string         `json:"schemaVersion"`
-	ID            string         `json:"id"`
-	Name          string         `json:"name"`
-	Type          string         `json:"type"`
-	Consistency   string         `json:"consistency"`
-	Source        Source         `json:"source"`
-	Base          *Base          `json:"base,omitempty"`
-	Disks         []DiskManifest `json:"disks"`
-	CreatedAt     time.Time      `json:"createdAt"`
+	SchemaVersion string          `json:"schemaVersion"`
+	ID            string          `json:"id"`
+	Name          string          `json:"name"`
+	Type          string          `json:"type"`
+	Consistency   string          `json:"consistency"`
+	Source        Source          `json:"source"`
+	Base          *Base           `json:"base,omitempty"`
+	Disks         []DiskManifest  `json:"disks"`
+	Native        *NativeManifest `json:"native,omitempty"`
+	CreatedAt     time.Time       `json:"createdAt"`
+}
+
+// NativeManifest inventories backend-owned running snapshot payload.
+type NativeManifest struct {
+	PayloadDir string               `json:"payloadDir"`
+	Files      []NativeFileManifest `json:"files"`
+}
+
+type NativeFileManifest struct {
+	Path      string `json:"path"`
+	SizeBytes int64  `json:"sizeBytes"`
 }
 
 type Source struct {

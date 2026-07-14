@@ -18,6 +18,12 @@ type StateController interface {
 	ResumeVM(context.Context, *vmstore.VMRecord) error
 }
 
+// NativeSnapshotter captures backend-owned memory, device, and VM state into
+// an existing empty directory while the VM is paused.
+type NativeSnapshotter interface {
+	SnapshotVM(context.Context, *vmstore.VMRecord, string) error
+}
+
 // Lifecycle is the backend contract required by runtime.
 //
 // Implementations must make ObserveVM cheap and side-effect free because runtime

@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	apiBaseURL       = "http://localhost/api/v1/"
-	apiErrorBodySize = 64 << 10
+	apiBaseURL            = "http://localhost/api/v1/"
+	apiErrorBodySize      = 64 << 10
+	nativeSnapshotTimeout = 10 * time.Minute
 )
 
 // APIError preserves the backend status and response body for diagnostics.
@@ -165,4 +166,13 @@ func backendAPIConfig(rec *vmstore.VMRecord) (string, time.Duration, error) {
 		timeout = 5 * time.Second
 	}
 	return apiSocket, timeout, nil
+}
+
+func putJSONOnce(ctx context.Context, socketPath string, timeout time.Duration, endpoint string, payload any, successCodes ...int) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("encode %s request: %w", endpoint, err)
+	}
+	_, err = doAPIOnce(ctx, socketPath, timeout, http.MethodPut, endpoint, body, successCodes...)
+	return err
 }

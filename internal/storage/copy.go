@@ -18,37 +18,66 @@ type CopyResult struct {
 	SHA256             string
 }
 
-// CopyFile preserves sparse allocation where supported and fsyncs the result.
+// CopyFile preserves sparse allocation where supported, fsyncs the result, and
+// computes its checksum before returning.
 func CopyFile(ctx context.Context, source, destination string) (CopyResult, error) {
+	staged, err := StageFile(ctx, source, destination)
+	if err != nil {
+		return CopyResult{}, err
+	}
+	return FinalizeStagedFile(ctx, destination, staged)
+}
+
+// StageFile creates a copy without reading it back or forcing it to stable
+// storage. Callers with a latency-sensitive pause window must finalize it
+// after the source workload has resumed.
+func StageFile(ctx context.Context, source, destination string) (CopyResult, error) {
 	strategy, err := copyPlatform(ctx, source, destination)
 	if err != nil {
 		return CopyResult{}, err
 	}
-	file, err := os.Open(destination) //nolint:gosec
+	info, err := os.Stat(destination)
 	if err != nil {
-		return CopyResult{}, fmt.Errorf("open copied disk: %w", err)
+		return CopyResult{}, fmt.Errorf("stat staged disk: %w", err)
+	}
+	return copyResult(strategy, info, ""), nil
+}
+
+// FinalizeStagedFile makes a staged copy durable and computes its checksum.
+func FinalizeStagedFile(ctx context.Context, path string, staged CopyResult) (CopyResult, error) {
+	file, err := os.OpenFile(path, os.O_RDWR, 0) //nolint:gosec
+	if err != nil {
+		return CopyResult{}, fmt.Errorf("open staged disk: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return CopyResult{}, fmt.Errorf("sync staged disk: %w", err)
 	}
 	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
+	if _, err := io.Copy(hash, &contextReader{ctx: ctx, reader: file}); err != nil {
 		_ = file.Close()
-		return CopyResult{}, fmt.Errorf("checksum copied disk: %w", err)
+		return CopyResult{}, fmt.Errorf("checksum staged disk: %w", err)
 	}
 	info, err := file.Stat()
 	closeErr := file.Close()
 	if err != nil {
-		return CopyResult{}, fmt.Errorf("stat copied disk: %w", err)
+		return CopyResult{}, fmt.Errorf("stat staged disk: %w", err)
 	}
 	if closeErr != nil {
-		return CopyResult{}, fmt.Errorf("close copied disk: %w", closeErr)
+		return CopyResult{}, fmt.Errorf("close staged disk: %w", closeErr)
 	}
+	return copyResult(staged.Strategy, info, hex.EncodeToString(hash.Sum(nil))), nil
+}
+
+func copyResult(strategy string, info os.FileInfo, checksum string) CopyResult {
 	allocated := info.Size()
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
 		allocated = stat.Blocks * 512
 	}
 	return CopyResult{
 		Strategy: strategy, LogicalSizeBytes: info.Size(), AllocatedSizeBytes: allocated,
-		SHA256: hex.EncodeToString(hash.Sum(nil)),
-	}, nil
+		SHA256: checksum,
+	}
 }
 
 func bufferedCopy(ctx context.Context, source, destination string) (string, error) {
@@ -70,9 +99,6 @@ func bufferedCopy(ctx context.Context, source, destination string) (string, erro
 	}()
 	if _, err := io.Copy(dst, &contextReader{ctx: ctx, reader: src}); err != nil {
 		return "", fmt.Errorf("copy disk: %w", err)
-	}
-	if err := dst.Sync(); err != nil {
-		return "", fmt.Errorf("sync copied disk: %w", err)
 	}
 	if err := dst.Close(); err != nil {
 		return "", fmt.Errorf("close copied disk: %w", err)
