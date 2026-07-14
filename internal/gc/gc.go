@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/kumabox/kumabox/internal/config"
@@ -65,6 +66,8 @@ func DryRun(cfg config.Config) (*Report, error) {
 	liveRunDirs := map[string]struct{}{}
 	liveLogDirs := map[string]struct{}{}
 	liveImageIDs := map[string]struct{}{}
+	liveOCIPaths := map[string]struct{}{}
+	liveOCIDigests := map[string]struct{}{}
 
 	for _, rec := range records {
 		liveRunDirs[rec.RunDir] = struct{}{}
@@ -72,12 +75,21 @@ func DryRun(cfg config.Config) (*Report, error) {
 		if rec.Image != nil && rec.Image.ID != "" {
 			liveImageIDs[rec.Image.ID] = struct{}{}
 		}
+		addLivePath(liveOCIPaths, rec.Kernel)
+		addLivePath(liveOCIPaths, rec.Initrd)
+		for _, storage := range rec.StorageConfigs {
+			addLivePath(liveOCIPaths, storage.Path)
+		}
 		report.Candidates = append(report.Candidates, staleRuntimeFiles(rec)...)
+	}
+	for _, image := range images {
+		addLiveImageOCI(liveOCIPaths, liveOCIDigests, image)
 	}
 
 	report.Candidates = append(report.Candidates, orphanDirs(filepath.Join(cfg.Runtime.RunDir, "vms"), liveRunDirs, "runtime", "orphan_run_dir")...)
 	report.Candidates = append(report.Candidates, orphanDirs(filepath.Join(cfg.Runtime.LogDir, "vms"), liveLogDirs, "runtime", "orphan_log_dir")...)
 	report.Candidates = append(report.Candidates, imageCandidates(cfg.Runtime.RootDir, images, liveImageIDs)...)
+	report.Candidates = append(report.Candidates, ociCandidates(cfg.Runtime.RootDir, liveOCIPaths, liveOCIDigests)...)
 	report.Candidates = append(report.Candidates, networkCandidates(records, networkRecords, leases)...)
 
 	sort.Slice(report.Candidates, func(i, j int) bool {
@@ -87,6 +99,35 @@ func DryRun(cfg config.Config) (*Report, error) {
 		return report.Candidates[i].Path < report.Candidates[j].Path
 	})
 	return report, nil
+}
+
+func addLivePath(live map[string]struct{}, path string) {
+	if path == "" {
+		return
+	}
+	live[path] = struct{}{}
+}
+
+func addLiveImageOCI(paths map[string]struct{}, digests map[string]struct{}, image *imagestore.ImageRecord) {
+	if image == nil {
+		return
+	}
+	addLivePath(paths, image.Boot.Kernel)
+	addLivePath(paths, image.Boot.Initrd)
+	if image.OCI == nil {
+		return
+	}
+	if image.OCI.Config.Digest != "" {
+		digests[image.OCI.Config.Digest] = struct{}{}
+	}
+	for _, layer := range image.OCI.Layers {
+		if layer.Digest != "" {
+			digests[layer.Digest] = struct{}{}
+		}
+		if layer.EROFS != nil {
+			addLivePath(paths, layer.EROFS.Path)
+		}
+	}
 }
 
 func networkCandidates(
@@ -316,4 +357,100 @@ func imageStagingCandidates(stagingDir string) []Candidate {
 		})
 	}
 	return candidates
+}
+
+func ociCandidates(rootDir string, livePaths map[string]struct{}, liveDigests map[string]struct{}) []Candidate {
+	var candidates []Candidate
+	candidates = append(candidates, ociStagingCandidates(filepath.Join(rootDir, "oci", "content", "staging"), "oci_content_staging")...)
+	candidates = append(candidates, ociStagingCandidates(filepath.Join(rootDir, "oci", "staging"), "oci_build_staging")...)
+	candidates = append(candidates, orphanOCIContentBlobs(rootDir, liveDigests)...)
+	candidates = append(candidates, orphanOCIPathFiles(filepath.Join(rootDir, "oci", "erofs", "blobs"), livePaths, "oci", "orphan_erofs_blob")...)
+	candidates = append(candidates, orphanOCIPathFiles(filepath.Join(rootDir, "oci", "boot", "blobs"), livePaths, "oci", "orphan_boot_asset")...)
+	return candidates
+}
+
+func ociStagingCandidates(stagingDir string, typ string) []Candidate {
+	entries, err := os.ReadDir(stagingDir)
+	if err != nil {
+		return nil
+	}
+	candidates := make([]Candidate, 0, len(entries))
+	for _, entry := range entries {
+		candidates = append(candidates, Candidate{
+			Component: "oci",
+			Path:      filepath.Join(stagingDir, entry.Name()),
+			Type:      typ,
+			Reason:    "OCI staging path is not referenced by committed image state",
+		})
+	}
+	return candidates
+}
+
+func orphanOCIContentBlobs(rootDir string, liveDigests map[string]struct{}) []Candidate {
+	blobsDir := filepath.Join(rootDir, "oci", "content", "blobs")
+	files := listRegularFiles(blobsDir)
+	var candidates []Candidate
+	for _, file := range files {
+		digest := digestFromBlobPath(blobsDir, file)
+		if digest == "" {
+			continue
+		}
+		if _, ok := liveDigests[digest]; ok {
+			continue
+		}
+		candidates = append(candidates, Candidate{
+			Component: "oci",
+			Path:      file,
+			Type:      "orphan_content_blob",
+			Reason:    fmt.Sprintf("OCI content blob %s is not referenced by any image", digest),
+		})
+	}
+	return candidates
+}
+
+func orphanOCIPathFiles(root string, livePaths map[string]struct{}, component string, typ string) []Candidate {
+	files := listRegularFiles(root)
+	var candidates []Candidate
+	for _, file := range files {
+		if _, ok := livePaths[file]; ok {
+			continue
+		}
+		candidates = append(candidates, Candidate{
+			Component: component,
+			Path:      file,
+			Type:      typ,
+			Reason:    "OCI artifact is not referenced by any image or VM",
+		})
+	}
+	return candidates
+}
+
+func listRegularFiles(root string) []string {
+	var files []string
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry == nil || entry.IsDir() {
+			return nil
+		}
+		info, statErr := entry.Info()
+		if statErr != nil || !info.Mode().IsRegular() {
+			return nil
+		}
+		files = append(files, path)
+		return nil
+	})
+	sort.Strings(files)
+	return files
+}
+
+func digestFromBlobPath(root string, file string) string {
+	rel, err := filepath.Rel(root, file)
+	if err != nil {
+		return ""
+	}
+	algo, value := filepath.Split(filepath.ToSlash(rel))
+	algo = strings.TrimSuffix(algo, "/")
+	if algo == "" || value == "" {
+		return ""
+	}
+	return algo + ":" + value
 }

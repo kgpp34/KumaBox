@@ -3,6 +3,7 @@ package gc
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,6 +131,77 @@ func TestDryRunReportsImageCandidates(t *testing.T) {
 	assertCandidate(t, report, orphan, "orphan_image_dir")
 	assertNoCandidate(t, report, filepath.Join(cfg.Runtime.RootDir, "cloudimg", indexed.ID))
 	assertNoCandidate(t, report, vmReferencedMissingFromIndex)
+}
+
+func TestDryRunReportsOCICandidates(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Runtime.RootDir = filepath.Join(dir, "data")
+	cfg.Runtime.RunDir = filepath.Join(dir, "run")
+	cfg.Runtime.LogDir = filepath.Join(dir, "log")
+
+	liveKernel := filepath.Join(cfg.Runtime.RootDir, "oci", "boot", "blobs", "sha256", strings.Repeat("1", 64))
+	liveInitrd := filepath.Join(cfg.Runtime.RootDir, "oci", "boot", "blobs", "sha256", strings.Repeat("2", 64))
+	orphanBoot := filepath.Join(cfg.Runtime.RootDir, "oci", "boot", "blobs", "sha256", strings.Repeat("3", 64))
+	liveEROFS := filepath.Join(cfg.Runtime.RootDir, "oci", "erofs", "blobs", "sha256", strings.Repeat("4", 64)+".erofs")
+	orphanEROFS := filepath.Join(cfg.Runtime.RootDir, "oci", "erofs", "blobs", "sha256", strings.Repeat("5", 64)+".erofs")
+	liveContent := filepath.Join(cfg.Runtime.RootDir, "oci", "content", "blobs", "sha256", strings.Repeat("6", 64))
+	orphanContent := filepath.Join(cfg.Runtime.RootDir, "oci", "content", "blobs", "sha256", strings.Repeat("7", 64))
+	contentStage := filepath.Join(cfg.Runtime.RootDir, "oci", "content", "staging", "blob-deadbeef")
+	buildStage := filepath.Join(cfg.Runtime.RootDir, "oci", "staging", "erofs-deadbeef")
+	for _, path := range []string{
+		liveKernel, liveInitrd, orphanBoot, liveEROFS, orphanEROFS, liveContent, orphanContent, contentStage, filepath.Join(buildStage, "layer.tar"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("artifact"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, err := imagestore.New(cfg.Runtime.RootDir).Create(imagestore.CreateRequest{
+		Name:   "oci-live",
+		Source: imagestore.Source{Type: "oci", URI: "example.com/live@sha256:test"},
+		Boot: imagestore.Boot{
+			Mode:   "direct",
+			Kernel: liveKernel,
+			Initrd: liveInitrd,
+		},
+		OCI: &imagestore.OCI{
+			Ref: "example.com/live:latest",
+			Config: imagestore.OCIDescriptor{
+				Digest: "sha256:" + strings.Repeat("6", 64),
+			},
+			Layers: []imagestore.OCILayer{
+				{
+					Digest: "sha256:" + strings.Repeat("6", 64),
+					EROFS: &imagestore.EROFSLayer{
+						Path:       liveEROFS,
+						Filesystem: "erofs",
+						Digest:     "sha256:" + strings.Repeat("8", 64),
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := DryRun(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCandidate(t, report, orphanBoot, "orphan_boot_asset")
+	assertCandidate(t, report, orphanEROFS, "orphan_erofs_blob")
+	assertCandidate(t, report, orphanContent, "orphan_content_blob")
+	assertCandidate(t, report, contentStage, "oci_content_staging")
+	assertCandidate(t, report, buildStage, "oci_build_staging")
+	assertNoCandidate(t, report, liveKernel)
+	assertNoCandidate(t, report, liveInitrd)
+	assertNoCandidate(t, report, liveEROFS)
+	assertNoCandidate(t, report, liveContent)
 }
 
 func TestDryRunFailsWhenImageIndexIsCorrupt(t *testing.T) {
