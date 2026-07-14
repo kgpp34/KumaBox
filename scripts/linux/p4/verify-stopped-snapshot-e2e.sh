@@ -13,6 +13,7 @@ restored_name=p4-restored
 storage=64M
 package=/tmp/kumabox-p0/p4-restore.kbsnap
 use_sudo=false
+reset_unowned_network=false
 success=false
 
 usage() {
@@ -31,6 +32,7 @@ Usage: verify-stopped-snapshot-e2e.sh [options]
   --storage SIZE
   --package PATH
   --sudo
+  --reset-unowned-network  remove an unowned kumabox0 after operator verification
 EOF
 }
 
@@ -48,6 +50,7 @@ while (($#)); do
     --storage) storage=$2; shift 2 ;;
     --package) package=$2; shift 2 ;;
     --sudo) use_sudo=true; shift ;;
+    --reset-unowned-network) reset_unowned_network=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -80,6 +83,11 @@ reset_unowned_test_bridge() {
   local owner_state=$root_dir/network/host-tap.json
   if file_exists "$owner_state" || ! "${ip_cmd[@]}" link show dev "$bridge" >/dev/null 2>&1; then
     return
+  fi
+  if [[ $reset_unowned_network != true ]]; then
+    echo "unowned bridge $bridge exists; it may still serve VMs from another KumaBox root" >&2
+    echo "inspect it first, then rerun with --reset-unowned-network only when it is safe to remove" >&2
+    exit 1
   fi
 
   local slave
