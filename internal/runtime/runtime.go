@@ -16,6 +16,7 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/lockfile"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
+	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/storage"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -31,6 +32,41 @@ type Runtime struct {
 	cfg     config.Config
 	vmLocks *lockfile.Locker
 	qemuImg *storage.QEMUImg
+}
+
+// CreateStoppedSnapshot captures managed writable disks while holding the VM
+// operation lock for the full consistency boundary.
+func (r *Runtime) CreateStoppedSnapshot(ctx context.Context, ref, name string) (*snapshot.Record, error) {
+	rec, err := r.store.Inspect(ref)
+	if err != nil {
+		return nil, err
+	}
+	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
+	if err != nil {
+		return nil, fmt.Errorf("lock VM %s for snapshot: %w", rec.ID, err)
+	}
+	defer lock.Release() //nolint:errcheck
+	rec, err = r.store.Inspect(rec.ID)
+	if err != nil {
+		return nil, err
+	}
+	observed := r.applyObservation(rec)
+	if observed.ObservedState == vmstore.ObservedStateRunning || observed.State == vmstore.StateRunning {
+		return nil, fmt.Errorf("VM_RUNNING: VM %s must be stopped before snapshot", rec.Name)
+	}
+	if observed.State != vmstore.StateStopped {
+		return nil, fmt.Errorf("VM_NOT_STOPPED: VM %s state is %s", rec.Name, observed.State)
+	}
+	build, err := snapshot.NewStore(r.store.RootDir()).Reserve(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	defer build.Abort() //nolint:errcheck
+	_, sizeBytes, err := snapshot.CaptureStopped(ctx, build, observed)
+	if err != nil {
+		return nil, err
+	}
+	return build.Finalize(sizeBytes)
 }
 
 var deleteHostTap = kbnetwork.DeleteHostTap

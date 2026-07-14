@@ -1197,3 +1197,40 @@ func TestPrepareStorageRejectsMissingLayer(t *testing.T) {
 		t.Fatal("expected missing layer error")
 	}
 }
+
+func TestCreateStoppedSnapshotCapturesManagedCOW(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	store := vmstore.New(rootDir)
+	rec, err := store.Create(vmstore.CreateRequest{
+		Name: "snapshot-source", Kernel: "vmlinuz", Initrd: "initrd", RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
+		Image: &vmstore.ImageRef{ID: "img_oci", Digest: "sha256:manifest"},
+		StorageConfigs: []vmstore.StorageConfig{{
+			ID: "cow", Role: vmstore.StorageRoleCOW, Format: "raw", Filesystem: "ext4", VirtualSizeBytes: 4096,
+			Base: &vmstore.StorageBase{Family: "oci", ImageID: "img_oci", Digest: "sha256:manifest", LayerDigests: []string{"sha256:layer"}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(rec.StorageConfigs[0].Path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rec.StorageConfigs[0].Path, []byte("writable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkStopped(rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	rt := NewWithBackend(store, backendFake{observe: func(*vmstore.VMRecord) vmstore.Observation {
+		return vmstore.Observation{State: vmstore.ObservedStateStopped, Reason: "stopped", CheckedAt: time.Now().UTC()}
+	}})
+	snap, err := rt.CreateStoppedSnapshot(context.Background(), rec.ID, "snap-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.State != "ready" || snap.SizeBytes <= 0 {
+		t.Fatalf("snapshot = %+v", snap)
+	}
+}

@@ -7,14 +7,37 @@ import (
 
 	"github.com/spf13/cobra"
 
+	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/snapshot"
 )
 
 func newSnapshotCommand(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "snapshot", Short: "Manage stopped VM snapshots"}
+	cmd.AddCommand(newSnapshotCreateCommand(opts))
 	cmd.AddCommand(newSnapshotLSCommand(opts))
 	cmd.AddCommand(newSnapshotInspectCommand(opts))
 	cmd.AddCommand(newSnapshotRMCommand(opts))
+	return cmd
+}
+
+func newSnapshotCreateCommand(opts *rootOptions) *cobra.Command {
+	var name string
+	cmd := &cobra.Command{
+		Use: "create VM", Short: "Capture a stopped VM disk snapshot", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			rec, err := kbruntime.New(cfg).CreateStoppedSnapshot(cmd.Context(), args[0], name)
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), rec)
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "", "snapshot name")
+	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }
 
