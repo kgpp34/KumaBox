@@ -115,8 +115,36 @@ func TestRenderConfigSupportsFirmwareBoot(t *testing.T) {
 	if !argsContainPair(rendered.Args, "--firmware", rec.Firmware) {
 		t.Fatalf("firmware arg missing: %v", rendered.Args)
 	}
+	if !argsContainPair(rendered.Args, "--disk", "path="+rec.RootDisk+",image_type=qcow2,backing_files=on") {
+		t.Fatalf("qcow2 backing files arg missing: %v", rendered.Args)
+	}
 	if !argsContainPair(rendered.Args, "--disk", "path="+rec.Metadata.CidataDisk+",readonly=on,image_type=raw") {
 		t.Fatalf("cidata disk arg missing: %v", rendered.Args)
+	}
+}
+
+func TestRenderConfigEnablesBackingFilesOnlyForWritableQcow2(t *testing.T) {
+	rec := &vmstore.VMRecord{
+		ID:       "kb_overlay",
+		Name:     "overlay",
+		Firmware: "/fixtures/CLOUDHV.fd",
+		RunDir:   "/run/kumabox/vms/kb_overlay",
+		LogDir:   "/var/log/kumabox/vms/kb_overlay",
+		StorageConfigs: []vmstore.StorageConfig{
+			{ID: "root", Role: vmstore.StorageRoleCOW, Path: "/data/root.overlay.qcow2", Format: "qcow2"},
+			{ID: "layer", Role: vmstore.StorageRoleLayer, Path: "/data/layer.erofs", Readonly: true, Format: "raw"},
+		},
+	}
+
+	rendered := NewConfig(config.Default(), rec)
+	if !rendered.Disks[0].BackingFiles {
+		t.Fatal("writable qcow2 disk did not enable backing files")
+	}
+	if rendered.Disks[1].BackingFiles {
+		t.Fatal("read-only raw disk unexpectedly enabled backing files")
+	}
+	if !argsContainPair(rendered.Args, "--disk", "path=/data/root.overlay.qcow2,image_type=qcow2,backing_files=on") {
+		t.Fatalf("overlay disk arg missing: %v", rendered.Args)
 	}
 }
 

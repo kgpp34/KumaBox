@@ -67,6 +67,21 @@ cleanup() {
     echo
     echo "==> preserving failed stopped snapshot state"
     echo "state: root_dir=$root_dir run_dir=$run_dir log_dir=$log_dir"
+	if [[ -n $vm_id ]]; then
+	  step "failure context: VM inspect"
+	  inspect=$(kb inspect "$vm_id" --json 2>/dev/null || true)
+	  printf '%s\n' "$inspect"
+	  vm_log_dir=$(jq -r '.logDir // empty' <<<"$inspect" 2>/dev/null || true)
+	  vm_config=$(jq -r '.config // empty' <<<"$inspect" 2>/dev/null || true)
+	  if [[ -n $vm_config ]]; then
+	    step "failure context: rendered config"
+	    cat "$vm_config" 2>/dev/null | jq . || true
+	  fi
+	  if [[ -n $vm_log_dir ]]; then
+	    step "failure context: cloud-hypervisor stderr"
+	    tail -n 120 "$vm_log_dir/cloud-hypervisor.stderr.log" 2>/dev/null || true
+	  fi
+	fi
   fi
 }
 trap cleanup EXIT

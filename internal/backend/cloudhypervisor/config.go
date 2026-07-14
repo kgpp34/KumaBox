@@ -64,10 +64,11 @@ type CPUs struct {
 
 // Disk is one block device passed to Cloud Hypervisor.
 type Disk struct {
-	Path      string `json:"path"`
-	Readonly  bool   `json:"readonly"`
-	ImageType string `json:"imageType,omitempty"`
-	Serial    string `json:"serial,omitempty"`
+	Path         string `json:"path"`
+	Readonly     bool   `json:"readonly"`
+	ImageType    string `json:"imageType,omitempty"`
+	BackingFiles bool   `json:"backingFiles,omitempty"`
+	Serial       string `json:"serial,omitempty"`
 }
 
 // Net is one virtio-net device backed by a host TAP interface.
@@ -305,11 +306,13 @@ func launchDisks(rec *vmstore.VMRecord) []Disk {
 	if len(rec.StorageConfigs) > 0 {
 		disks := make([]Disk, 0, len(rec.StorageConfigs))
 		for _, cfg := range rec.StorageConfigs {
+			imageType := cfg.EffectiveFormat()
 			disks = append(disks, Disk{
-				Path:      cfg.Path,
-				Readonly:  cfg.Readonly,
-				ImageType: cfg.EffectiveFormat(),
-				Serial:    cfg.Serial,
+				Path:         cfg.Path,
+				Readonly:     cfg.Readonly,
+				ImageType:    imageType,
+				BackingFiles: imageType == "qcow2" && !cfg.Readonly,
+				Serial:       cfg.Serial,
 			})
 		}
 		return disks
@@ -324,6 +327,9 @@ func diskArg(disk Disk) string {
 	}
 	if disk.ImageType != "" {
 		arg += ",image_type=" + disk.ImageType
+	}
+	if disk.BackingFiles {
+		arg += ",backing_files=on"
 	}
 	if disk.Serial != "" {
 		arg += ",serial=" + disk.Serial
@@ -429,6 +435,7 @@ func newRootDisk(rec *vmstore.VMRecord) Disk {
 	disk := Disk{Path: rec.RootDisk, Readonly: false}
 	if imageType := rootDiskImageType(rec); imageType != "" {
 		disk.ImageType = imageType
+		disk.BackingFiles = imageType == "qcow2"
 	}
 	return disk
 }

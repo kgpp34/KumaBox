@@ -113,6 +113,8 @@ jq '.disks' "$config_a"
 jq '.disks' "$config_b"
 [[ $(jq -r '.disks[0].path' "$config_a") == "$overlay_a" ]] || { echo "VM A renderer does not use overlay" >&2; exit 1; }
 [[ $(jq -r '.disks[0].path' "$config_b") == "$overlay_b" ]] || { echo "VM B renderer does not use overlay" >&2; exit 1; }
+jq -e --arg disk "path=$overlay_a,image_type=qcow2,backing_files=on" '.args | index($disk) != null' "$config_a" >/dev/null || { echo "VM A did not enable qcow2 backing files" >&2; exit 1; }
+jq -e --arg disk "path=$overlay_b,image_type=qcow2,backing_files=on" '.args | index($disk) != null' "$config_b" >/dev/null || { echo "VM B did not enable qcow2 backing files" >&2; exit 1; }
 
 step "verify image removal is fail-closed"
 if kb image rm "$image" >/tmp/kumabox-p4-image-rm.out 2>&1; then
