@@ -166,17 +166,16 @@ other_output="$(timeout 3s "$kumabox_path" \
   --root-dir "$root_dir" \
   --run-dir "$run_dir" \
   --log-dir "$log_dir" \
-  --cloud-hypervisor-bin /bin/false \
-  start "$name_b" 2>&1)"
+  delete "$name_b" --force 2>&1)"
 other_status=$?
 set -e
 printf '%s\n' "$other_output"
-if [[ "$other_status" -eq 124 ]]; then
-  echo "VM B was incorrectly blocked by VM A operation lock" >&2
+if [[ "$other_status" -ne 0 ]]; then
+  echo "VM B mutation failed or was incorrectly blocked by VM A lock: status=$other_status" >&2
   kill "$holder_pid" >/dev/null 2>&1 || true
   exit 1
 fi
-printf 'pass: VM B reached its backend independently (status=%s)\n' "$other_status"
+printf 'pass: VM B delete completed independently while VM A remained locked\n'
 
 step "terminate lock owner and verify automatic flock release"
 kill -9 "$holder_pid" >/dev/null 2>&1 || true
@@ -208,7 +207,7 @@ fi
 
 step "cleanup verification VM records"
 kb delete "$name_a" --force >/dev/null
-kb delete "$name_b" --force >/dev/null
+kb delete "$name_b" --force >/dev/null 2>&1 || true
 if [[ -n "$image" ]]; then
   kb delete "$name_oci" --force >/dev/null
 fi
