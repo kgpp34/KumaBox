@@ -2,10 +2,12 @@ package guestagent
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 )
@@ -27,6 +29,22 @@ type helloResponse struct {
 	Error    string `json:"error,omitempty"`
 }
 
+type execRequest struct {
+	Type    string   `json:"type"`
+	Args    []string `json:"args"`
+	Env     []string `json:"env,omitempty"`
+	WorkDir string   `json:"workdir,omitempty"`
+	Stdin   []byte   `json:"stdin,omitempty"`
+}
+
+type execResponse struct {
+	OK       bool   `json:"ok"`
+	ExitCode int    `json:"exitCode"`
+	Stdout   []byte `json:"stdout,omitempty"`
+	Stderr   []byte `json:"stderr,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
 func Serve() error {
 	return serveVsock(Port, handleConn)
 }
@@ -43,12 +61,19 @@ func handleConn(rw io.ReadWriter) {
 		writeResponse(rw, helloResponse{OK: false, Error: "invalid request"})
 		return
 	}
-	if strings.ToLower(req.Type) != "hello" {
+	switch strings.ToLower(req.Type) {
+	case "hello":
+		handleHello(rw)
+	case "exec":
+		handleExec(rw, []byte(line))
+	default:
 		writeResponse(rw, helloResponse{OK: false, Error: "unsupported request"})
-		return
 	}
+}
+
+func handleHello(w io.Writer) {
 	hostname, _ := os.Hostname()
-	writeResponse(rw, helloResponse{
+	writeResponse(w, helloResponse{
 		OK:       true,
 		Version:  Version,
 		OS:       runtime.GOOS,
@@ -56,7 +81,42 @@ func handleConn(rw io.ReadWriter) {
 	})
 }
 
-func writeResponse(w io.Writer, resp helloResponse) {
+func handleExec(w io.Writer, raw []byte) {
+	var req execRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		writeResponse(w, execResponse{OK: false, ExitCode: 127, Error: "invalid exec request"})
+		return
+	}
+	if len(req.Args) == 0 || req.Args[0] == "" {
+		writeResponse(w, execResponse{OK: false, ExitCode: 127, Error: "exec args must not be empty"})
+		return
+	}
+
+	cmd := exec.Command(req.Args[0], req.Args[1:]...) //nolint:gosec
+	cmd.Dir = req.WorkDir
+	cmd.Env = append(os.Environ(), req.Env...)
+	cmd.Stdin = bytes.NewReader(req.Stdin)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	resp := execResponse{OK: true}
+	if err := cmd.Run(); err != nil {
+		resp.OK = false
+		resp.Error = err.Error()
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			resp.ExitCode = exitErr.ExitCode()
+		} else {
+			resp.ExitCode = 127
+		}
+	}
+	resp.Stdout = stdout.Bytes()
+	resp.Stderr = stderr.Bytes()
+	writeResponse(w, resp)
+}
+
+func writeResponse(w io.Writer, resp any) {
 	raw, err := json.Marshal(resp)
 	if err != nil {
 		_, _ = fmt.Fprintln(w, `{"ok":false,"error":"encode response"}`)

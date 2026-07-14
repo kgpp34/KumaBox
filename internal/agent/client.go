@@ -29,6 +29,21 @@ type HelloResponse struct {
 	Error    string `json:"error,omitempty"`
 }
 
+type ExecRequest struct {
+	Args    []string `json:"args"`
+	Env     []string `json:"env,omitempty"`
+	WorkDir string   `json:"workdir,omitempty"`
+	Stdin   []byte   `json:"stdin,omitempty"`
+}
+
+type ExecResponse struct {
+	OK       bool   `json:"ok"`
+	ExitCode int    `json:"exitCode"`
+	Stdout   []byte `json:"stdout,omitempty"`
+	Stderr   []byte `json:"stderr,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
 func Ping(ctx context.Context, socketPath string) (*HelloResponse, error) {
 	var lastErr error
 	for {
@@ -46,22 +61,9 @@ func Ping(ctx context.Context, socketPath string) (*HelloResponse, error) {
 }
 
 func pingOnce(ctx context.Context, socketPath string) (*HelloResponse, error) {
-	conn, err := dialHybridVsock(ctx, socketPath, AgentPort)
-	if err != nil {
-		return nil, fmt.Errorf("%w: dial agent: %v", ErrNotReady, err)
-	}
-	defer conn.Close() //nolint:errcheck
-
-	if _, err := io.WriteString(conn, `{"type":"hello"}`+"\n"); err != nil {
-		return nil, fmt.Errorf("%w: write hello: %v", ErrNotReady, err)
-	}
-	line, err := bufio.NewReader(conn).ReadBytes('\n')
-	if err != nil {
-		return nil, fmt.Errorf("%w: read hello: %v", ErrNotReady, err)
-	}
 	var resp HelloResponse
-	if err := json.Unmarshal(line, &resp); err != nil {
-		return nil, fmt.Errorf("%w: decode hello: %v", ErrNotReady, err)
+	if err := roundTrip(ctx, socketPath, map[string]any{"type": "hello"}, &resp); err != nil {
+		return nil, err
 	}
 	if !resp.OK {
 		if resp.Error == "" {
@@ -70,6 +72,51 @@ func pingOnce(ctx context.Context, socketPath string) (*HelloResponse, error) {
 		return &resp, fmt.Errorf("%w: %s", ErrNotReady, resp.Error)
 	}
 	return &resp, nil
+}
+
+func Exec(ctx context.Context, socketPath string, req ExecRequest) (*ExecResponse, error) {
+	if len(req.Args) == 0 || req.Args[0] == "" {
+		return nil, fmt.Errorf("AGENT_EXEC_INVALID: command must not be empty")
+	}
+	wireReq := struct {
+		Type string `json:"type"`
+		ExecRequest
+	}{
+		Type:        "exec",
+		ExecRequest: req,
+	}
+	var resp ExecResponse
+	if err := roundTrip(ctx, socketPath, wireReq, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.OK && resp.Error == "" {
+		resp.Error = "agent exec returned not ok"
+	}
+	return &resp, nil
+}
+
+func roundTrip(ctx context.Context, socketPath string, req any, resp any) error {
+	conn, err := dialHybridVsock(ctx, socketPath, AgentPort)
+	if err != nil {
+		return fmt.Errorf("%w: dial agent: %v", ErrNotReady, err)
+	}
+	defer conn.Close() //nolint:errcheck
+
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("AGENT_REQUEST_INVALID: %w", err)
+	}
+	if _, err := conn.Write(append(raw, '\n')); err != nil {
+		return fmt.Errorf("%w: write request: %v", ErrNotReady, err)
+	}
+	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	if err != nil {
+		return fmt.Errorf("%w: read response: %v", ErrNotReady, err)
+	}
+	if err := json.Unmarshal(line, resp); err != nil {
+		return fmt.Errorf("%w: decode response: %v", ErrNotReady, err)
+	}
+	return nil
 }
 
 func dialHybridVsock(ctx context.Context, socketPath string, port uint32) (io.ReadWriteCloser, error) {
