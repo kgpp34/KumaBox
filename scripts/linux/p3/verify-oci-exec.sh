@@ -228,7 +228,8 @@ tail_pid=$!
 
 step "wait for guest agent"
 agent_start_ms="$(now_ms)"
-kb agent ping "$vm_name" --timeout "$timeout" --json
+agent_json="$(kb agent ping "$vm_name" --timeout "$timeout")"
+printf '%s\n' "$agent_json"
 agent_done_ms="$(now_ms)"
 stop_console_tail
 
