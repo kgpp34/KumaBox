@@ -29,6 +29,12 @@ type Config struct {
 	Runtime RuntimeConfig `toml:"runtime" json:"runtime"`
 	Backend BackendConfig `toml:"backend" json:"backend"`
 	Network NetworkConfig `toml:"network" json:"network"`
+	Storage StorageConfig `toml:"storage" json:"storage"`
+}
+
+// StorageConfig controls host tools used to prepare durable VM disks.
+type StorageConfig struct {
+	QEMUImgBinary string `toml:"qemu_img_binary" json:"qemuImgBinary"`
 }
 
 // RuntimeConfig contains the three host path roots used by KumaBox.
@@ -78,6 +84,7 @@ type Overrides struct {
 	RunDir             string
 	LogDir             string
 	CloudHypervisorBin string
+	QEMUImgBinary      string
 }
 
 // Load reads config from path, applies overrides, and validates the result.
@@ -133,6 +140,7 @@ func Default() Config {
 			CNIConfigDir: "/etc/cni/net.d",
 			CNIBinDir:    "/opt/cni/bin",
 		},
+		Storage: StorageConfig{QEMUImgBinary: "qemu-img"},
 	}
 }
 
@@ -163,6 +171,9 @@ func applyOverrides(cfg *Config, overrides Overrides) {
 	if overrides.CloudHypervisorBin != "" {
 		cfg.Backend.CloudHypervisor.Binary = overrides.CloudHypervisorBin
 	}
+	if overrides.QEMUImgBinary != "" {
+		cfg.Storage.QEMUImgBinary = overrides.QEMUImgBinary
+	}
 }
 
 func validate(cfg Config) error {
@@ -177,6 +188,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.Backend.CloudHypervisor.Binary == "" {
 		return errors.New("backend.cloud_hypervisor.binary must not be empty")
+	}
+	if cfg.Storage.QEMUImgBinary == "" {
+		return errors.New("storage.qemu_img_binary must not be empty")
 	}
 	if cfg.Network.Mode == "" {
 		return errors.New("network.mode must not be empty")

@@ -464,8 +464,10 @@ func TestCreateImageRefCommand(t *testing.T) {
 		Name:   "ubuntu",
 		Source: imagestore.Source{Type: "test", URI: rootDisk},
 		RootDisk: imagestore.RootDisk{
-			Path:   rootDisk,
-			Format: "qcow2",
+			Path:             rootDisk,
+			Format:           "qcow2",
+			VirtualSizeBytes: 1024 * 1024,
+			SHA256:           hex.EncodeToString(sha256.New().Sum(nil)),
 		},
 		Boot: imagestore.Boot{Mode: "uefi", Firmware: firmware},
 		OS:   imagestore.OS{Family: "ubuntu", Profile: "ubuntu-cloudimg"},
@@ -479,6 +481,7 @@ func TestCreateImageRefCommand(t *testing.T) {
 		"--root-dir", rootDir,
 		"--run-dir", runDir,
 		"--log-dir", logDir,
+		"--qemu-img-bin", fakeQEMUImgForOverlay(t, dir, rootDisk),
 		"create", "ubuntu",
 		"--name", "from-image",
 	})
@@ -502,7 +505,7 @@ func TestCreateImageRefCommand(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	if created.RootDisk != rootDisk || created.Firmware != firmware {
+	if created.RootDisk == rootDisk || !strings.HasSuffix(created.RootDisk, "root.overlay.qcow2") || created.Firmware != firmware {
 		t.Fatalf("boot fields = root %s firmware %s", created.RootDisk, created.Firmware)
 	}
 	if created.Image.ID != image.ID || created.Image.Name != "ubuntu" || created.Image.RootDisk != rootDisk {
@@ -524,7 +527,7 @@ func TestCreateImageRefCommand(t *testing.T) {
 	if err := json.Unmarshal(rawConfig, &rendered); err != nil {
 		t.Fatal(err)
 	}
-	if len(rendered.Disks) == 0 || rendered.Disks[0].Path != rootDisk {
+	if len(rendered.Disks) == 0 || rendered.Disks[0].Path != created.RootDisk {
 		t.Fatalf("rendered disks = %+v", rendered.Disks)
 	}
 }
@@ -833,12 +836,21 @@ func TestImageRemoveRejectsReferencedImage(t *testing.T) {
 	rootDir := filepath.Join(dir, "data")
 	runDir := filepath.Join(dir, "run")
 	logDir := filepath.Join(dir, "log")
+	basePath := filepath.Join(rootDir, "cloudimg", "img_test", "base.qcow2")
+	if err := os.MkdirAll(filepath.Dir(basePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(basePath, []byte("base"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	image, err := imagestore.New(rootDir).Create(imagestore.CreateRequest{
 		Name:   "ubuntu",
 		Source: imagestore.Source{Type: "test", URI: "fixtures/ubuntu.img"},
 		RootDisk: imagestore.RootDisk{
-			Path:   filepath.Join(rootDir, "cloudimg", "img_test", "base.qcow2"),
-			Format: "qcow2",
+			Path:             basePath,
+			Format:           "qcow2",
+			VirtualSizeBytes: 1024 * 1024,
+			SHA256:           strings.Repeat("a", 64),
 		},
 		Boot: imagestore.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
 		OS:   imagestore.OS{Family: "ubuntu", Profile: "ubuntu-cloudimg"},
@@ -852,6 +864,7 @@ func TestImageRemoveRejectsReferencedImage(t *testing.T) {
 		"--root-dir", rootDir,
 		"--run-dir", runDir,
 		"--log-dir", logDir,
+		"--qemu-img-bin", fakeQEMUImgForOverlay(t, dir, image.RootDisk.Path),
 		"create", "ubuntu",
 		"--name", "ref",
 	})
@@ -890,6 +903,19 @@ func TestImageRemoveRejectsReferencedImage(t *testing.T) {
 	if removed.ID != image.ID {
 		t.Fatalf("removed id = %s, want %s", removed.ID, image.ID)
 	}
+}
+
+func fakeQEMUImgForOverlay(t *testing.T, dir, backing string) string {
+	t.Helper()
+	path := filepath.Join(dir, "qemu-img-overlay")
+	script := "#!/bin/sh\nset -eu\ncase \"$1\" in\n" +
+		"create) for last do :; done; : > \"$last\" ;;\n" +
+		"info) printf '%s\\n' '{\"format\":\"qcow2\",\"backing-filename\":\"" + backing + "\",\"virtual-size\":1048576}' ;;\n" +
+		"*) exit 2 ;;\nesac\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestImageImportCommand(t *testing.T) {

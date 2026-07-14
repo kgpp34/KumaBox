@@ -215,6 +215,10 @@ func newRecord(id string, req CreateRequest, rootDir string, now time.Time) (*VM
 	}
 	network := primaryNetwork(networks)
 	cpus := normalizeCPUs(req.CPUs)
+	storageConfigs := normalizeStorageConfigs(req.StorageConfigs, rootDir, id)
+	if overlay := cloudImageRootOverlay(storageConfigs); overlay != "" {
+		rootDisk = overlay
+	}
 	rec := &VMRecord{
 		ID:             id,
 		Name:           req.Name,
@@ -227,7 +231,7 @@ func newRecord(id string, req CreateRequest, rootDir string, now time.Time) (*VM
 		Firmware:       firmware,
 		Image:          cloneImageRef(req.Image),
 		CPUs:           cpus,
-		StorageConfigs: normalizeStorageConfigs(req.StorageConfigs, rootDir, id),
+		StorageConfigs: storageConfigs,
 		Network:        network,
 		Networks:       cloneStrings(networks),
 		RunDir:         runDir,
@@ -305,7 +309,11 @@ func normalizeStorageConfigs(configs []StorageConfig, rootDir, vmID string) []St
 			cfg.ID = fmt.Sprintf("storage%d", i)
 		}
 		if cfg.Role == StorageRoleCOW && cfg.Path == "" {
-			cfg.Path = filepath.Join(rootDir, "storage", "vms", vmID, "cow.ext4")
+			name := "cow.ext4"
+			if cfg.Base != nil && cfg.Base.Family == "cloudimg" {
+				name = "root.overlay.qcow2"
+			}
+			cfg.Path = filepath.Join(rootDir, "storage", "vms", vmID, name)
 		}
 		if abs, err := normalizePath(cfg.Path); err == nil {
 			cfg.Path = abs
@@ -313,6 +321,15 @@ func normalizeStorageConfigs(configs []StorageConfig, rootDir, vmID string) []St
 		normalized = append(normalized, cfg)
 	}
 	return normalized
+}
+
+func cloudImageRootOverlay(configs []StorageConfig) string {
+	for _, cfg := range configs {
+		if cfg.EffectiveRole() == StorageRoleCOW && cfg.Base != nil && cfg.Base.Family == "cloudimg" {
+			return cfg.Path
+		}
+	}
+	return ""
 }
 
 func cloneStorageConfigs(configs []StorageConfig) []StorageConfig {

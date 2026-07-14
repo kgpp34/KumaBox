@@ -16,6 +16,7 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/lockfile"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
+	"github.com/kumabox/kumabox/internal/storage"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -29,6 +30,7 @@ type Runtime struct {
 	backend backend.Lifecycle
 	cfg     config.Config
 	vmLocks *lockfile.Locker
+	qemuImg *storage.QEMUImg
 }
 
 var deleteHostTap = kbnetwork.DeleteHostTap
@@ -43,6 +45,7 @@ var mkfsExt4 = func(path string) ([]byte, error) {
 func New(cfg config.Config) *Runtime {
 	rt := NewWithBackend(vmstore.New(cfg.Runtime.RootDir), cloudhypervisor.NewBackend(cfg))
 	rt.cfg = cfg
+	rt.qemuImg = storage.NewQEMUImg(cfg.Storage.QEMUImgBinary)
 	return rt
 }
 
@@ -52,6 +55,7 @@ func NewWithBackend(store *vmstore.Store, vmBackend backend.Lifecycle) *Runtime 
 		store:   store,
 		backend: vmBackend,
 		vmLocks: lockfile.New(filepath.Join(store.RootDir(), "locks", "vms")),
+		qemuImg: storage.NewQEMUImg("qemu-img"),
 	}
 }
 
@@ -72,7 +76,7 @@ func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error)
 	if updated, err := r.store.Inspect(rec.ID); err == nil {
 		rec = updated
 	}
-	if err := prepareStorage(rec, r.store.RootDir()); err != nil {
+	if err := prepareStorageWithQEMUImg(context.Background(), rec, r.store.RootDir(), r.qemuImg); err != nil {
 		r.rollbackNetwork(rec)
 		_ = removeManagedDirs(rec, r.store.RootDir())
 		_ = r.store.Delete(rec.ID)
@@ -119,7 +123,7 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string) (*vmstore.VMRec
 	if err != nil {
 		return nil, err
 	}
-	if err := prepareStorage(rec, r.store.RootDir()); err != nil {
+	if err := prepareStorageWithQEMUImg(ctx, rec, r.store.RootDir(), r.qemuImg); err != nil {
 		if _, markErr := r.store.MarkError(rec.ID, err.Error()); markErr != nil {
 			return nil, markErr
 		}
@@ -407,6 +411,10 @@ func removeManagedDirs(rec *vmstore.VMRecord, rootDir string) error {
 }
 
 func prepareStorage(rec *vmstore.VMRecord, rootDir string) error {
+	return prepareStorageWithQEMUImg(context.Background(), rec, rootDir, storage.NewQEMUImg("qemu-img"))
+}
+
+func prepareStorageWithQEMUImg(ctx context.Context, rec *vmstore.VMRecord, rootDir string, qemuImg *storage.QEMUImg) error {
 	if err := vmstore.ValidateStorageContract(rec, rootDir); err != nil {
 		return err
 	}
@@ -424,6 +432,16 @@ func prepareStorage(rec *vmstore.VMRecord, rootDir string) error {
 				return fmt.Errorf("storage layer %s must be a file: %s", cfg.ID, cfg.Path)
 			}
 		case vmstore.StorageRoleCOW:
+			if cfg.Base != nil && cfg.Base.Family == "cloudimg" {
+				if err := qemuImg.EnsureOverlay(ctx, storage.OverlaySpec{
+					Path:       cfg.Path,
+					BasePath:   cfg.Base.Path,
+					BaseFormat: cfg.Base.Format,
+				}); err != nil {
+					return fmt.Errorf("prepare cloud image COW %s: %w", cfg.ID, err)
+				}
+				continue
+			}
 			if err := prepareCOW(cfg); err != nil {
 				return err
 			}

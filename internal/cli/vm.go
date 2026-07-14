@@ -290,6 +290,16 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 	if image.OCI != nil {
 		return newOCIImageCreateRequest(flags, image, cfg)
 	}
+	if image.RootDisk.Format != "qcow2" {
+		return vmstore.CreateRequest{}, fmt.Errorf("image %q root disk format %q cannot use a qcow2 overlay", image.Name, image.RootDisk.Format)
+	}
+	if image.RootDisk.SHA256 == "" {
+		return vmstore.CreateRequest{}, fmt.Errorf("image %q root disk has no pinned sha256 digest", image.Name)
+	}
+	digest := image.RootDisk.SHA256
+	if !strings.HasPrefix(digest, "sha256:") {
+		digest = "sha256:" + digest
+	}
 	req := vmstore.CreateRequest{
 		Name:     flags.name,
 		RootDisk: image.RootDisk.Path,
@@ -303,7 +313,21 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 			Name:     image.Name,
 			RootDisk: image.RootDisk.Path,
 			BootMode: image.Boot.Mode,
+			Digest:   digest,
 		},
+		StorageConfigs: []vmstore.StorageConfig{{
+			ID:               "root",
+			Role:             vmstore.StorageRoleCOW,
+			Format:           "qcow2",
+			VirtualSizeBytes: image.RootDisk.VirtualSizeBytes,
+			Base: &vmstore.StorageBase{
+				Family:  "cloudimg",
+				ImageID: image.ID,
+				Digest:  digest,
+				Format:  image.RootDisk.Format,
+				Path:    image.RootDisk.Path,
+			},
+		}},
 		RunDir: cfg.Runtime.RunDir,
 		LogDir: cfg.Runtime.LogDir,
 	}

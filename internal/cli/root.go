@@ -12,6 +12,7 @@ type rootOptions struct {
 	runDir             string
 	logDir             string
 	cloudHypervisorBin string
+	qemuImgBin         string
 }
 
 func NewRootCommand() *cobra.Command {
@@ -29,6 +30,7 @@ func NewRootCommand() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&opts.runDir, "run-dir", "", "runtime directory for pid and sockets")
 	cmd.PersistentFlags().StringVar(&opts.logDir, "log-dir", "", "log directory")
 	cmd.PersistentFlags().StringVar(&opts.cloudHypervisorBin, "cloud-hypervisor-bin", "", "cloud-hypervisor binary path")
+	cmd.PersistentFlags().StringVar(&opts.qemuImgBin, "qemu-img-bin", "", "qemu-img binary path")
 
 	cmd.AddCommand(newVersionCommand())
 	cmd.AddCommand(newDoctorCommand(opts))
@@ -54,6 +56,7 @@ func loadConfig(opts *rootOptions) (config.Config, error) {
 		RunDir:             opts.runDir,
 		LogDir:             opts.logDir,
 		CloudHypervisorBin: opts.cloudHypervisorBin,
+		QEMUImgBinary:      opts.qemuImgBin,
 	}
 	return config.Load(opts.configPath, overrides)
 }
