@@ -45,6 +45,28 @@ type execResponse struct {
 	Error    string `json:"error,omitempty"`
 }
 
+type identityRequest struct {
+	Type       string              `json:"type"`
+	Hostname   string              `json:"hostname"`
+	Interfaces []interfaceIdentity `json:"interfaces,omitempty"`
+}
+
+type interfaceIdentity struct {
+	Name    string   `json:"name"`
+	MAC     string   `json:"mac"`
+	IP      string   `json:"ip,omitempty"`
+	Prefix  int      `json:"prefix,omitempty"`
+	Gateway string   `json:"gateway,omitempty"`
+	DNS     []string `json:"dns,omitempty"`
+}
+
+type identityResponse struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+var configureIdentity = applyIdentity
+
 func Serve() error {
 	return serveVsock(Port, handleConn)
 }
@@ -66,9 +88,24 @@ func handleConn(rw io.ReadWriter) {
 		handleHello(rw)
 	case "exec":
 		handleExec(rw, []byte(line))
+	case "identity":
+		handleIdentity(rw, []byte(line))
 	default:
 		writeResponse(rw, helloResponse{OK: false, Error: "unsupported request"})
 	}
+}
+
+func handleIdentity(w io.Writer, raw []byte) {
+	var req identityRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		writeResponse(w, identityResponse{OK: false, Error: "invalid identity request"})
+		return
+	}
+	if err := configureIdentity(req); err != nil {
+		writeResponse(w, identityResponse{OK: false, Error: err.Error()})
+		return
+	}
+	writeResponse(w, identityResponse{OK: true})
 }
 
 func handleHello(w io.Writer) {

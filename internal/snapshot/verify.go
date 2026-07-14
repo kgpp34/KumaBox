@@ -61,6 +61,23 @@ func (s *Store) VerifyNativeRecord(ctx context.Context, rec *Record, target Nati
 	if target.VM == nil {
 		return nil, errors.New("SNAPSHOT_INCOMPATIBLE: target VM is required")
 	}
+	manifest, err := s.VerifyNativePayloadRecord(ctx, rec, target.Host)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyNativeVM(ctx, manifest, target.VM); err != nil {
+		return nil, err
+	}
+	return manifest, nil
+}
+
+// VerifyNativePayloadRecord validates immutable payload and host compatibility
+// without requiring the source VM to still exist. Clone uses this before it
+// allocates any new VM or provider resources.
+func (s *Store) VerifyNativePayloadRecord(ctx context.Context, rec *Record, host backend.NativeHost) (*Manifest, error) {
+	if rec == nil {
+		return nil, errors.New("SNAPSHOT_NOT_FOUND: snapshot record is required")
+	}
 	manifest, err := loadNativeManifest(rec)
 	if err != nil {
 		return nil, err
@@ -71,13 +88,25 @@ func (s *Store) VerifyNativeRecord(ctx context.Context, rec *Record, target Nati
 	if err := verifyNativeConfig(rec.DataDir, manifest); err != nil {
 		return nil, err
 	}
-	if err := verifyNativeHost(manifest, target); err != nil {
-		return nil, err
-	}
-	if err := verifyNativeVM(ctx, manifest, target.VM); err != nil {
+	if err := verifyNativeHost(manifest, NativeVerifyTarget{Host: host}); err != nil {
 		return nil, err
 	}
 	return manifest, nil
+}
+
+// VerifyNativeCloneTarget checks the newly allocated clone shape while
+// intentionally allowing new VM paths and network identities.
+func VerifyNativeCloneTarget(ctx context.Context, manifest *Manifest, target *vmstore.VMRecord) error {
+	if manifest == nil || target == nil {
+		return errors.New("SNAPSHOT_INCOMPATIBLE: clone target is required")
+	}
+	if manifest.Machine.VCPUs != target.CPUs || manifest.Machine.MemoryBytes != target.EffectiveMemoryBytes() {
+		return errors.New("SNAPSHOT_INCOMPATIBLE: clone vCPU or memory shape mismatch")
+	}
+	if !cloneDevicesMatch(manifest.Devices, target) {
+		return errors.New("SNAPSHOT_INCOMPATIBLE: clone device topology mismatch")
+	}
+	return verifyNativeVMAssets(ctx, manifest, target)
 }
 
 func loadNativeManifest(rec *Record) (*Manifest, error) {
@@ -299,6 +328,10 @@ func verifyNativeVM(ctx context.Context, manifest *Manifest, target *vmstore.VMR
 	if !targetDevicesMatch(manifest.Devices, target) {
 		return errors.New("SNAPSHOT_INCOMPATIBLE: device topology mismatch")
 	}
+	return verifyNativeVMAssets(ctx, manifest, target)
+}
+
+func verifyNativeVMAssets(ctx context.Context, manifest *Manifest, target *vmstore.VMRecord) error {
 	boot, err := buildBootManifest(ctx, target)
 	if err != nil {
 		return fmt.Errorf("SNAPSHOT_INCOMPATIBLE: resolve boot assets: %w", err)
@@ -324,6 +357,31 @@ func verifyNativeVM(ctx context.Context, manifest *Manifest, target *vmstore.VMR
 		}
 	}
 	return nil
+}
+
+func cloneDevicesMatch(devices *DeviceManifest, target *vmstore.VMRecord) bool {
+	if devices == nil || devices.NICs != len(target.NetworkConfigs) || devices.Vsock != (target.VsockSocket != "") {
+		return false
+	}
+	storageByID := make(map[string]vmstore.StorageConfig, len(target.StorageConfigs))
+	for _, disk := range target.StorageConfigs {
+		storageByID[disk.ID] = disk
+	}
+	matched := 0
+	for _, device := range devices.Disks {
+		if device.Role == string(vmstore.StorageRoleCidata) {
+			if target.Metadata == nil || target.Metadata.CidataDisk == "" || !device.Readonly {
+				return false
+			}
+			continue
+		}
+		disk, ok := storageByID[device.ID]
+		if !ok || string(disk.EffectiveRole()) != device.Role || disk.Readonly != device.Readonly || disk.EffectiveFormat() != device.Format {
+			return false
+		}
+		matched++
+	}
+	return matched == len(target.StorageConfigs)
 }
 
 func targetDevicesMatch(devices *DeviceManifest, target *vmstore.VMRecord) bool {

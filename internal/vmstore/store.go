@@ -263,6 +263,9 @@ func (s *Store) MarkRestored(ref string, pid int, apiSocket string) (*VMRecord, 
 		rec.Restore = nil
 		rec.StartedAt = &now
 		rec.StoppedAt = nil
+		if rec.Metadata != nil {
+			rec.FirstBooted = true
+		}
 		rec.UpdatedAt = now
 		updated = cloneRecord(rec)
 		return nil

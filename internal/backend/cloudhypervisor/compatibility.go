@@ -16,15 +16,17 @@ import (
 
 const nativeSnapshotFormat = "cloud-hypervisor-native-v1"
 
-func (Backend) InspectNativeHost(ctx context.Context, rec *vmstore.VMRecord) (backend.NativeHost, error) {
-	if rec == nil {
-		return backend.NativeHost{}, fmt.Errorf("VM record is nil")
+func (b Backend) InspectNativeHost(ctx context.Context, rec *vmstore.VMRecord) (backend.NativeHost, error) {
+	binary := b.renderer.cfg.Backend.CloudHypervisor.Binary
+	if rec != nil && rec.Config != "" {
+		if cfg, err := readRenderedConfig(rec.Config); err == nil {
+			binary = cfg.Binary
+		}
 	}
-	cfg, err := readRenderedConfig(rec.Config)
-	if err != nil {
-		return backend.NativeHost{}, fmt.Errorf("read backend config: %w", err)
+	if binary == "" {
+		return backend.NativeHost{}, fmt.Errorf("Cloud Hypervisor binary is empty")
 	}
-	output, err := exec.CommandContext(ctx, cfg.Binary, "--version").CombinedOutput() //nolint:gosec
+	output, err := exec.CommandContext(ctx, binary, "--version").CombinedOutput() //nolint:gosec
 	if err != nil {
 		return backend.NativeHost{}, fmt.Errorf("inspect cloud-hypervisor version: %w: %s", err, strings.TrimSpace(string(output)))
 	}

@@ -41,6 +41,7 @@ func NewRootCommand() *cobra.Command {
 	cmd.AddCommand(newPauseCommand(opts))
 	cmd.AddCommand(newResumeCommand(opts))
 	cmd.AddCommand(newRestoreCommand(opts))
+	cmd.AddCommand(newCloneCommand(opts))
 	cmd.AddCommand(newInspectCommand(opts))
 	cmd.AddCommand(newLogsCommand(opts))
 	cmd.AddCommand(newDeleteCommand(opts))

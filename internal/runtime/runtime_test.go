@@ -25,7 +25,15 @@ type backendFake struct {
 	snapshot   func(context.Context, *vmstore.VMRecord, string) error
 	nativeHost func(context.Context, *vmstore.VMRecord) (backend.NativeHost, error)
 	restore    func(context.Context, *vmstore.VMRecord, string, string) (*backend.StartResult, error)
+	clone      func(context.Context, *vmstore.VMRecord, string, string) (*backend.StartResult, error)
 	observe    func(*vmstore.VMRecord) vmstore.Observation
+}
+
+func (b backendFake) CloneVM(ctx context.Context, rec *vmstore.VMRecord, sourceDir, mode string) (*backend.StartResult, error) {
+	if b.clone != nil {
+		return b.clone(ctx, rec, sourceDir, mode)
+	}
+	return nil, errors.New("clone is not configured")
 }
 
 func (b backendFake) RestoreVM(ctx context.Context, rec *vmstore.VMRecord, sourceDir, mode string) (*backend.StartResult, error) {

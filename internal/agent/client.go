@@ -44,6 +44,27 @@ type ExecResponse struct {
 	Error    string `json:"error,omitempty"`
 }
 
+// IdentityRequest describes the host-assigned identity a restored clone must
+// apply after snapshot NICs have been replaced.
+type IdentityRequest struct {
+	Hostname   string              `json:"hostname"`
+	Interfaces []InterfaceIdentity `json:"interfaces,omitempty"`
+}
+
+type InterfaceIdentity struct {
+	Name    string   `json:"name"`
+	MAC     string   `json:"mac"`
+	IP      string   `json:"ip,omitempty"`
+	Prefix  int      `json:"prefix,omitempty"`
+	Gateway string   `json:"gateway,omitempty"`
+	DNS     []string `json:"dns,omitempty"`
+}
+
+type IdentityResponse struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
 func Ping(ctx context.Context, socketPath string) (*HelloResponse, error) {
 	var lastErr error
 	for {
@@ -91,6 +112,25 @@ func Exec(ctx context.Context, socketPath string, req ExecRequest) (*ExecRespons
 	}
 	if !resp.OK && resp.Error == "" {
 		resp.Error = "agent exec returned not ok"
+	}
+	return &resp, nil
+}
+
+// ConfigureIdentity applies clone-specific guest hostname and network state.
+func ConfigureIdentity(ctx context.Context, socketPath string, req IdentityRequest) (*IdentityResponse, error) {
+	wireReq := struct {
+		Type string `json:"type"`
+		IdentityRequest
+	}{Type: "identity", IdentityRequest: req}
+	var resp IdentityResponse
+	if err := roundTrip(ctx, socketPath, wireReq, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		if resp.Error == "" {
+			resp.Error = "agent identity update returned not ok"
+		}
+		return &resp, fmt.Errorf("AGENT_IDENTITY_FAILED: %s", resp.Error)
 	}
 	return &resp, nil
 }

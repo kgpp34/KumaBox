@@ -17,9 +17,10 @@ import (
 
 // RestoreOptions defines the new VM identity and runtime attachments.
 type RestoreOptions struct {
-	Name     string
-	CPUs     int
-	Networks []string
+	Name        string
+	CPUs        int
+	MemoryBytes int64
+	Networks    []string
 }
 
 // RestoreSnapshot creates a new CREATED VM from portable writable disk state.
@@ -103,7 +104,7 @@ func restoreCreateRequest(opts RestoreOptions, image *imagestore.ImageRecord, ma
 		digest = "sha256:" + digest
 	}
 	imageRef := &vmstore.ImageRef{ID: image.ID, Name: image.Name, RootDisk: image.RootDisk.Path, BootMode: image.Boot.Mode, Digest: manifest.Base.Digest}
-	req := vmstore.CreateRequest{Name: opts.Name, CPUs: opts.CPUs, Networks: opts.Networks, Image: imageRef, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}
+	req := vmstore.CreateRequest{Name: opts.Name, CPUs: opts.CPUs, MemoryBytes: opts.MemoryBytes, Networks: opts.Networks, Image: imageRef, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}
 	var configs []vmstore.StorageConfig
 	switch manifest.Base.Family {
 	case "cloudimg":

@@ -32,6 +32,12 @@ type NativeRestorer interface {
 	RestoreVM(context.Context, *vmstore.VMRecord, string, string) (*StartResult, error)
 }
 
+// NativeCloner restores native state into a newly allocated VM identity and
+// replaces snapshot network devices before vCPUs resume.
+type NativeCloner interface {
+	CloneVM(context.Context, *vmstore.VMRecord, string, string) (*StartResult, error)
+}
+
 // NativeHost describes host and backend properties that constrain whether a
 // native snapshot can be restored safely.
 type NativeHost struct {

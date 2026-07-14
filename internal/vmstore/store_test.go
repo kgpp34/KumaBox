@@ -325,6 +325,32 @@ func TestMarkRunningMarksFirmwareVMFirstBooted(t *testing.T) {
 	}
 }
 
+func TestMarkRestoredMarksFirmwareVMFirstBooted(t *testing.T) {
+	dir := t.TempDir()
+	store := New(filepath.Join(dir, "data"))
+
+	rec, err := store.Create(CreateRequest{
+		Name:     "restored-uefi",
+		RootDisk: "ubuntu.img",
+		Firmware: "CLOUDHV.fd",
+		RunDir:   filepath.Join(dir, "run"),
+		LogDir:   filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BeginRestore(rec.ID, "snap_test", "copy"); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := store.MarkRestored(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !restored.FirstBooted {
+		t.Fatal("restored firmware VM should not regenerate first-boot metadata")
+	}
+}
+
 func TestCreateRejectsMixedFirmwareAndDirectBoot(t *testing.T) {
 	dir := t.TempDir()
 	store := New(filepath.Join(dir, "data"))
