@@ -16,9 +16,35 @@ func newSnapshotCommand(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "snapshot", Short: "Manage stopped VM snapshots"}
 	cmd.AddCommand(newSnapshotCreateCommand(opts))
 	cmd.AddCommand(newSnapshotExportCommand(opts))
+	cmd.AddCommand(newSnapshotImportCommand(opts))
 	cmd.AddCommand(newSnapshotLSCommand(opts))
 	cmd.AddCommand(newSnapshotInspectCommand(opts))
 	cmd.AddCommand(newSnapshotRMCommand(opts))
+	return cmd
+}
+
+func newSnapshotImportCommand(opts *rootOptions) *cobra.Command {
+	var name string
+	cmd := &cobra.Command{
+		Use: "import PACKAGE", Short: "Import an untrusted snapshot package", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			input, err := filepath.Abs(args[0])
+			if err != nil {
+				return err
+			}
+			rec, err := snapshot.NewStore(cfg.Runtime.RootDir).Import(cmd.Context(), snapshot.ImportOptions{Input: input, Name: name, QEMUImgBinary: cfg.Storage.QEMUImgBinary})
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), rec)
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "", "imported snapshot name")
+	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }
 
