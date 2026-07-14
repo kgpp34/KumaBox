@@ -61,6 +61,10 @@ step() {
   printf '\n==> %s\n' "$1"
 }
 
+now_ms() {
+  date +%s%3N
+}
+
 print_failure_context() {
   set +e
   step "failure context: VM inspect"
@@ -206,10 +210,12 @@ image_json="$(kb image build "$ref" \
 printf '%s\n' "$image_json"
 
 step "run OCI VM with vsock"
+run_start_ms="$(now_ms)"
 run_json="$(kb run "$image_name" \
   --name "$vm_name" \
   --storage "$storage_size" \
   --network none)"
+run_done_ms="$(now_ms)"
 printf '%s\n' "$run_json"
 
 state="$(printf '%s' "$run_json" | jq -r '.state')"
@@ -247,10 +253,12 @@ printf 'state: console=%s\n' "$console_log"
 tail_pid=$!
 
 step "ping guest agent"
+agent_start_ms="$(now_ms)"
 set +e
 agent_output="$(kb agent ping "$vm_name" --timeout "$timeout" 2>&1)"
 agent_status=$?
 set -e
+agent_done_ms="$(now_ms)"
 stop_console_tail
 if [[ "$agent_status" -ne 0 ]]; then
   printf '%s\n' "$agent_output" >&2
@@ -264,6 +272,11 @@ if [[ "$agent_ok" != "true" || "$agent_os" != "linux" ]]; then
   echo "agent ping failed readiness checks" >&2
   exit 1
 fi
+run_elapsed_ms=$((run_done_ms - run_start_ms))
+agent_wait_ms=$((agent_done_ms - agent_start_ms))
+boot_exec_ms=$((agent_done_ms - run_start_ms))
+printf 'metrics: runReturnMs=%d agentPingWaitMs=%d bootExecMs=%d\n' \
+  "$run_elapsed_ms" "$agent_wait_ms" "$boot_exec_ms"
 
 step "delete VM and cleanup image"
 delete_json="$(kb delete "$vm_name" --force)"
