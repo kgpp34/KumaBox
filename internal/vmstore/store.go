@@ -171,6 +171,7 @@ func (s *Store) MarkRunning(ref string, pid int, apiSocket string) (*VMRecord, e
 		rec.APISocket = apiSocket
 		rec.Error = ""
 		rec.SnapshotDependency = nil
+		rec.Hibernate = nil
 		rec.StartedAt = &now
 		if rec.Metadata != nil {
 			rec.FirstBooted = true
@@ -277,11 +278,37 @@ func (s *Store) MarkRestored(ref string, pid int, apiSocket string, duration tim
 			rec.SnapshotDependency = nil
 		}
 		rec.Restore = nil
+		rec.Hibernate = nil
 		rec.StartedAt = &now
 		rec.StoppedAt = nil
 		if rec.Metadata != nil {
 			rec.FirstBooted = true
 		}
+		rec.UpdatedAt = now
+		updated = cloneRecord(rec)
+		return nil
+	})
+	return updated, err
+}
+
+// MarkHibernated publishes the durable snapshot linkage only after the VMM
+// has terminated. Network and storage identity remain allocated for wake.
+func (s *Store) MarkHibernated(ref, snapshotID string) (*VMRecord, error) {
+	var updated *VMRecord
+	err := s.update(func(idx *vmIndex) error {
+		id, err := idx.resolve(ref)
+		if err != nil {
+			return err
+		}
+		rec := idx.VMs[id]
+		now := time.Now().UTC()
+		rec.State = StateStopped
+		rec.PID = 0
+		rec.APISocket = ""
+		rec.Error = ""
+		rec.SnapshotDependency = nil
+		rec.Hibernate = &HibernateStatus{SnapshotID: snapshotID, CreatedAt: now}
+		rec.StoppedAt = &now
 		rec.UpdatedAt = now
 		updated = cloneRecord(rec)
 		return nil

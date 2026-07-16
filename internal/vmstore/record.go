@@ -79,6 +79,7 @@ type VMRecord struct {
 	Restore            *RestoreStatus           `json:"restore,omitempty"`
 	LastRestore        *RestoreResult           `json:"lastRestore,omitempty"`
 	SnapshotDependency *SnapshotDependency      `json:"snapshotDependency,omitempty"`
+	Hibernate          *HibernateStatus         `json:"hibernate,omitempty"`
 	RootDisk           string                   `json:"rootDisk"`
 	Kernel             string                   `json:"kernel,omitempty"`
 	Initrd             string                   `json:"initrd,omitempty"`
@@ -131,6 +132,13 @@ type SnapshotDependency struct {
 	SnapshotID string    `json:"snapshotId"`
 	Mode       string    `json:"mode"`
 	Since      time.Time `json:"since"`
+}
+
+// HibernateStatus prevents a cold start from discarding a resumable native
+// memory state. Restore clears it only after the VM has resumed successfully.
+type HibernateStatus struct {
+	SnapshotID string    `json:"snapshotId"`
+	CreatedAt  time.Time `json:"createdAt"`
 }
 
 func (r *VMRecord) EffectiveMemoryBytes() int64 {
@@ -333,6 +341,10 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 	if rec.SnapshotDependency != nil {
 		dependency := *rec.SnapshotDependency
 		copied.SnapshotDependency = &dependency
+	}
+	if rec.Hibernate != nil {
+		hibernate := *rec.Hibernate
+		copied.Hibernate = &hibernate
 	}
 	copied.Image = cloneImageRef(rec.Image)
 	copied.StorageConfigs = cloneStorageConfigs(rec.StorageConfigs)

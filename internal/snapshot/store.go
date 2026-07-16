@@ -331,6 +331,9 @@ func (s *Store) snapshotDependency(snapshotID string) (bool, string, error) {
 		if rec.SnapshotDependency != nil && rec.SnapshotDependency.SnapshotID == snapshotID {
 			return true, rec.Name, nil
 		}
+		if rec.Hibernate != nil && rec.Hibernate.SnapshotID == snapshotID {
+			return true, rec.Name, nil
+		}
 	}
 	return false, "", nil
 }

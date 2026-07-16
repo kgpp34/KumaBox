@@ -162,6 +162,9 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string) (*vmstore.VMRec
 	if rec.Restore != nil {
 		return nil, fmt.Errorf("VM_RESTORE_DIRTY: VM %s has an incomplete restore from snapshot %s; retry restore or delete the VM", rec.Name, rec.Restore.SnapshotID)
 	}
+	if rec.Hibernate != nil {
+		return nil, fmt.Errorf("VM_HIBERNATED: VM %s must be restored from snapshot %s", rec.Name, rec.Hibernate.SnapshotID)
+	}
 	if err := prepareStorageWithQEMUImg(ctx, rec, r.store.RootDir(), r.qemuImg); err != nil {
 		if _, markErr := r.store.MarkError(rec.ID, err.Error()); markErr != nil {
 			return nil, markErr

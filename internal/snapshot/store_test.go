@@ -119,6 +119,26 @@ func TestStoreRemoveRejectsDurableVMDependency(t *testing.T) {
 	}
 }
 
+func TestStoreRemoveRejectsHibernateSnapshot(t *testing.T) {
+	t.Parallel()
+	rootDir := t.TempDir()
+	store := NewStore(rootDir)
+	ready := createReadySnapshot(t, store, "hibernate-pinned")
+	vmStore := vmstore.New(rootDir)
+	rec, err := vmStore.Create(vmstore.CreateRequest{
+		Name: "hibernated", RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd", RunDir: filepath.Join(rootDir, "run"), LogDir: filepath.Join(rootDir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vmStore.MarkHibernated(rec.ID, ready.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Remove(ready.ID); !errors.Is(err, ErrInUse) {
+		t.Fatalf("remove hibernate snapshot error = %v", err)
+	}
+}
+
 func TestBuildFinalizeRequiresManifest(t *testing.T) {
 	t.Parallel()
 	store := NewStore(t.TempDir())
