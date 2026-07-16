@@ -170,6 +170,7 @@ func (s *Store) MarkRunning(ref string, pid int, apiSocket string) (*VMRecord, e
 		rec.PID = pid
 		rec.APISocket = apiSocket
 		rec.Error = ""
+		rec.SnapshotDependency = nil
 		rec.StartedAt = &now
 		if rec.Metadata != nil {
 			rec.FirstBooted = true
@@ -244,7 +245,7 @@ func (s *Store) MarkRestoreFailed(ref, message string) (*VMRecord, error) {
 
 // MarkRestored atomically publishes restored process identity and clears the
 // recovery marker only after the backend has restored and resumed the VM.
-func (s *Store) MarkRestored(ref string, pid int, apiSocket string) (*VMRecord, error) {
+func (s *Store) MarkRestored(ref string, pid int, apiSocket string, duration time.Duration) (*VMRecord, error) {
 	var updated *VMRecord
 	err := s.update(func(idx *vmIndex) error {
 		id, err := idx.resolve(ref)
@@ -260,6 +261,21 @@ func (s *Store) MarkRestored(ref string, pid int, apiSocket string) (*VMRecord, 
 		rec.PID = pid
 		rec.APISocket = apiSocket
 		rec.Error = ""
+		rec.LastRestore = &RestoreResult{
+			SnapshotID:  rec.Restore.SnapshotID,
+			Mode:        rec.Restore.Mode,
+			DurationMs:  duration.Milliseconds(),
+			CompletedAt: now,
+		}
+		if rec.Restore.Mode == "ondemand" || rec.Restore.Mode == "mmap" {
+			rec.SnapshotDependency = &SnapshotDependency{
+				SnapshotID: rec.Restore.SnapshotID,
+				Mode:       rec.Restore.Mode,
+				Since:      now,
+			}
+		} else {
+			rec.SnapshotDependency = nil
+		}
 		rec.Restore = nil
 		rec.StartedAt = &now
 		rec.StoppedAt = nil
@@ -347,6 +363,7 @@ func (s *Store) MarkStopped(ref string) (*VMRecord, error) {
 		rec.PID = 0
 		rec.APISocket = ""
 		rec.Error = ""
+		rec.SnapshotDependency = nil
 		rec.StoppedAt = &now
 		rec.UpdatedAt = now
 		updated = cloneRecord(rec)

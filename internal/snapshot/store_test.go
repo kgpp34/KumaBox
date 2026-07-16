@@ -6,6 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
 func TestStoreReserveFinalizeAndList(t *testing.T) {
@@ -81,6 +84,38 @@ func TestStoreRemoveRejectsActiveReadLease(t *testing.T) {
 	}
 	if _, err := os.Stat(ready.DataDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("snapshot payload still exists: %v", err)
+	}
+}
+
+func TestStoreRemoveRejectsDurableVMDependency(t *testing.T) {
+	t.Parallel()
+	rootDir := t.TempDir()
+	store := NewStore(rootDir)
+	ready := createReadySnapshot(t, store, "runtime-pinned")
+	vmStore := vmstore.New(rootDir)
+	rec, err := vmStore.Create(vmstore.CreateRequest{
+		Name: "dependent", RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd", RunDir: filepath.Join(rootDir, "run"), LogDir: filepath.Join(rootDir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vmStore.BeginRestore(rec.ID, ready.ID, "ondemand"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := vmStore.MarkRestored(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"), time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Remove(ready.ID); !errors.Is(err, ErrInUse) {
+		t.Fatalf("remove error = %v, want ErrInUse", err)
+	}
+	if leased, err := store.IsLeased(ready.ID); err != nil || !leased {
+		t.Fatalf("durable lease = %t, err = %v", leased, err)
+	}
+	if _, err := vmStore.MarkStopped(rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Remove(ready.ID); err != nil {
+		t.Fatal(err)
 	}
 }
 

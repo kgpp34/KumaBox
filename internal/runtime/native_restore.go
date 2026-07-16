@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kumabox/kumabox/internal/backend"
@@ -14,8 +15,6 @@ import (
 	"github.com/kumabox/kumabox/internal/storage"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
-
-const restoreModeCopy = "copy"
 
 // NativeRestoreOptions controls in-place restoration of a running snapshot.
 type NativeRestoreOptions struct {
@@ -37,12 +36,12 @@ type stagedRestoreDisk struct {
 // into the original VM identity. Snapshot and VM operation locks are held for
 // the complete transaction.
 func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string, opts NativeRestoreOptions) (*vmstore.VMRecord, error) {
-	if opts.Mode == "" {
-		opts.Mode = restoreModeCopy
+	mode, err := normalizeRestoreMode(opts.Mode)
+	if err != nil {
+		return nil, err
 	}
-	if opts.Mode != restoreModeCopy {
-		return nil, fmt.Errorf("RESTORE_MODE_UNSUPPORTED: %s", opts.Mode)
-	}
+	opts.Mode = mode
+	restoreStarted := time.Now()
 	rec, err := r.store.Inspect(vmRef)
 	if err != nil {
 		return nil, err
@@ -79,6 +78,9 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	if err != nil {
 		return nil, fmt.Errorf("inspect native compatibility: %w", err)
 	}
+	if err := requireRestoreMode(host, opts.Mode); err != nil {
+		return nil, err
+	}
 	manifest, err := snapshotStore.VerifyNativeRecord(ctx, snapshotRec, snapshot.NativeVerifyTarget{VM: rec, Host: host})
 	if err != nil {
 		return nil, fmt.Errorf("snapshot preflight: %w", err)
@@ -89,7 +91,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	if err := r.backend.RenderConfig(rec); err != nil {
 		return nil, fmt.Errorf("render restore launch config: %w", err)
 	}
-	staged, err := stageNativeRestore(ctx, snapshotRec, manifest, rec)
+	staged, err := stageNativeRestore(ctx, snapshotRec, manifest, rec, opts.Mode)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +118,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	if err != nil {
 		return fail(fmt.Errorf("restore backend state: %w", err))
 	}
-	restored, err := r.store.MarkRestored(rec.ID, result.PID, result.APISocket)
+	restored, err := r.store.MarkRestored(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted))
 	if err != nil {
 		cleanupRec := *dirty
 		cleanupRec.PID = result.PID
@@ -130,7 +132,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	return r.applyObservation(restored), nil
 }
 
-func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manifest *snapshot.Manifest, rec *vmstore.VMRecord) (*stagedRestore, error) {
+func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manifest *snapshot.Manifest, rec *vmstore.VMRecord, mode string) (*stagedRestore, error) {
 	root := filepath.Join(rec.RunDir, ".restore-staging")
 	if err := os.RemoveAll(root); err != nil {
 		return nil, fmt.Errorf("clear restore staging: %w", err)
@@ -152,6 +154,12 @@ func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manif
 		}
 		source := filepath.Join(snapshotRec.DataDir, filepath.FromSlash(file.Path))
 		destination := filepath.Join(nativeDir, filepath.Base(file.Path))
+		if restoreModePinsSnapshot(mode) && strings.HasPrefix(filepath.Base(file.Path), "memory-range-") {
+			if err := linkNativeMemory(source, destination); err != nil {
+				return nil, fmt.Errorf("link native memory payload %s: %w", file.Path, err)
+			}
+			continue
+		}
 		result, err := storage.CopyFile(ctx, source, destination)
 		if err != nil {
 			return nil, fmt.Errorf("stage native payload %s: %w", file.Path, err)
@@ -193,6 +201,18 @@ func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manif
 	}
 	ok = true
 	return staged, nil
+}
+
+func linkNativeMemory(source, destination string) error {
+	if err := os.Link(source, destination); err == nil {
+		return nil
+	} else if !errors.Is(err, syscall.EXDEV) {
+		return err
+	}
+	if err := os.Symlink(source, destination); err != nil {
+		return fmt.Errorf("cross-filesystem symlink: %w", err)
+	}
+	return nil
 }
 
 func (s *stagedRestore) commitDisks() error {

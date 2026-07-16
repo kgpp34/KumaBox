@@ -28,6 +28,6 @@ func newRestoreCommand(opts *rootOptions) *cobra.Command {
 			return writeJSON(cmd.OutOrStdout(), rec)
 		},
 	}
-	cmd.Flags().StringVar(&mode, "restore-mode", "copy", "memory restore mode: copy")
+	cmd.Flags().StringVar(&mode, "restore-mode", "copy", "memory restore mode: copy, ondemand, or mmap")
 	return cmd
 }

@@ -31,12 +31,12 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if opts.Name == "" {
 		return nil, errors.New("clone VM name must not be empty")
 	}
-	if opts.Mode == "" {
-		opts.Mode = restoreModeCopy
+	mode, err := normalizeRestoreMode(opts.Mode)
+	if err != nil {
+		return nil, err
 	}
-	if opts.Mode != restoreModeCopy {
-		return nil, fmt.Errorf("RESTORE_MODE_UNSUPPORTED: %s", opts.Mode)
-	}
+	opts.Mode = mode
+	restoreStarted := time.Now()
 	cloner, ok := r.backend.(backend.NativeCloner)
 	if !ok {
 		return nil, errors.New("BACKEND_OPERATION_UNSUPPORTED: backend does not support native clone")
@@ -55,6 +55,9 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	host, err := inspector.InspectNativeHost(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("inspect native compatibility: %w", err)
+	}
+	if err := requireRestoreMode(host, opts.Mode); err != nil {
+		return nil, err
 	}
 	manifest, err := snapshotStore.VerifyNativePayloadRecord(ctx, snapshotRec, host)
 	if err != nil {
@@ -115,7 +118,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err := r.backend.RenderConfig(rec); err != nil {
 		return nil, fmt.Errorf("render clone launch config: %w", err)
 	}
-	staged, err := stageNativeRestore(ctx, snapshotRec, manifest, rec)
+	staged, err := stageNativeRestore(ctx, snapshotRec, manifest, rec, opts.Mode)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +137,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err := configureGuestIdentity(ctx, rec.VsockSocket, rec); err != nil {
 		return nil, err
 	}
-	cloned, err := r.store.MarkRestored(rec.ID, result.PID, result.APISocket)
+	cloned, err := r.store.MarkRestored(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted))
 	if err != nil {
 		return nil, err
 	}

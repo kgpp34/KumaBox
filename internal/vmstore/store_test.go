@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestCreateInspectList(t *testing.T) {
@@ -342,12 +343,43 @@ func TestMarkRestoredMarksFirmwareVMFirstBooted(t *testing.T) {
 	if _, err := store.BeginRestore(rec.ID, "snap_test", "copy"); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := store.MarkRestored(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"))
+	restored, err := store.MarkRestored(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"), 250*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !restored.FirstBooted {
 		t.Fatal("restored firmware VM should not regenerate first-boot metadata")
+	}
+}
+
+func TestMarkRestoredPinsDelayedMemoryUntilStop(t *testing.T) {
+	dir := t.TempDir()
+	store := New(filepath.Join(dir, "data"))
+	rec, err := store.Create(CreateRequest{
+		Name: "delayed", RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd", RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BeginRestore(rec.ID, "snap_delayed", "mmap"); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := store.MarkRestored(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"), 250*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.SnapshotDependency == nil || restored.SnapshotDependency.SnapshotID != "snap_delayed" {
+		t.Fatalf("snapshot dependency = %+v", restored.SnapshotDependency)
+	}
+	if restored.LastRestore == nil || restored.LastRestore.Mode != "mmap" || restored.LastRestore.DurationMs != 250 {
+		t.Fatalf("last restore = %+v", restored.LastRestore)
+	}
+	stopped, err := store.MarkStopped(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped.SnapshotDependency != nil {
+		t.Fatalf("stopped VM retained dependency = %+v", stopped.SnapshotDependency)
 	}
 }
 

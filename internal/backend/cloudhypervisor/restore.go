@@ -35,9 +35,6 @@ func (b Backend) restoreNativeVM(ctx context.Context, rec *vmstore.VMRecord, sou
 	if rec == nil {
 		return nil, errors.New("VM record is nil")
 	}
-	if mode != "copy" {
-		return nil, fmt.Errorf("RESTORE_MODE_UNSUPPORTED: %s", mode)
-	}
 	rendered, err := readRenderedConfig(rec.Config)
 	if err != nil {
 		return nil, fmt.Errorf("read backend launch config: %w", err)
@@ -64,10 +61,11 @@ func (b Backend) restoreNativeVM(ctx context.Context, rec *vmstore.VMRecord, sou
 		cleanupRuntimeFiles(rec.RunDir)
 	}()
 
-	sourceURL := (&url.URL{Scheme: "file", Path: sourceDir}).String()
-	if err = putJSONOnce(ctx, rendered.APISocket, nativeSnapshotTimeout, "vm.restore", map[string]string{
-		"source_url": sourceURL,
-	}, http.StatusNoContent); err != nil {
+	request, requestErr := nativeRestoreRequest(sourceDir, mode)
+	if requestErr != nil {
+		return nil, requestErr
+	}
+	if err = putJSONOnce(ctx, rendered.APISocket, nativeSnapshotTimeout, "vm.restore", request, http.StatusNoContent); err != nil {
 		return nil, fmt.Errorf("vm.restore: %w", err)
 	}
 	client := socketHTTPClient(rendered.APISocket, nativeSnapshotTimeout)
@@ -81,6 +79,25 @@ func (b Backend) restoreNativeVM(ctx context.Context, rec *vmstore.VMRecord, sou
 		return nil, fmt.Errorf("vm.resume: %w", err)
 	}
 	return result, nil
+}
+
+type restoreRequest struct {
+	SourceURL         string `json:"source_url"`
+	MemoryRestoreMode string `json:"memory_restore_mode,omitempty"`
+}
+
+func nativeRestoreRequest(sourceDir, mode string) (restoreRequest, error) {
+	request := restoreRequest{SourceURL: (&url.URL{Scheme: "file", Path: sourceDir}).String()}
+	switch mode {
+	case "copy":
+	case "ondemand":
+		request.MemoryRestoreMode = "OnDemand"
+	case "mmap":
+		request.MemoryRestoreMode = "Mmap"
+	default:
+		return restoreRequest{}, fmt.Errorf("RESTORE_MODE_UNSUPPORTED: %s", mode)
+	}
+	return request, nil
 }
 
 func reapInterruptedRestore(cfg Config) error {

@@ -65,40 +65,42 @@ type Observation struct {
 // indexes, such as host-tap leases, remain outside the VM index and are linked
 // by NetworkConfigs.
 type VMRecord struct {
-	ID             string                   `json:"id"`
-	Name           string                   `json:"name"`
-	Backend        string                   `json:"backend"`
-	State          VMState                  `json:"state"`
-	ObservedState  ObservedState            `json:"observedState,omitempty"`
-	ObservedReason string                   `json:"observedReason,omitempty"`
-	ObservedAt     *time.Time               `json:"observedAt,omitempty"`
-	PID            int                      `json:"pid,omitempty"`
-	APISocket      string                   `json:"apiSocket,omitempty"`
-	VsockSocket    string                   `json:"vsockSocket,omitempty"`
-	Error          string                   `json:"error,omitempty"`
-	Restore        *RestoreStatus           `json:"restore,omitempty"`
-	RootDisk       string                   `json:"rootDisk"`
-	Kernel         string                   `json:"kernel,omitempty"`
-	Initrd         string                   `json:"initrd,omitempty"`
-	KernelCmdline  string                   `json:"kernelCmdline,omitempty"`
-	Firmware       string                   `json:"firmware,omitempty"`
-	Image          *ImageRef                `json:"image,omitempty"`
-	CPUs           int                      `json:"cpus"`
-	MemoryBytes    int64                    `json:"memoryBytes"`
-	Metadata       *Metadata                `json:"metadata,omitempty"`
-	StorageConfigs []StorageConfig          `json:"storageConfigs,omitempty"`
-	NetworkConfigs []kbnetwork.Config       `json:"networkConfigs,omitempty"`
-	Network        string                   `json:"network,omitempty"`
-	Networks       []string                 `json:"networks,omitempty"`
-	NetworkStatus  *kbnetwork.InspectResult `json:"networkStatus,omitempty"`
-	RunDir         string                   `json:"runDir"`
-	LogDir         string                   `json:"logDir"`
-	Config         string                   `json:"config"`
-	CreatedAt      time.Time                `json:"createdAt"`
-	UpdatedAt      time.Time                `json:"updatedAt"`
-	StartedAt      *time.Time               `json:"startedAt,omitempty"`
-	StoppedAt      *time.Time               `json:"stoppedAt,omitempty"`
-	FirstBooted    bool                     `json:"firstBooted,omitempty"`
+	ID                 string                   `json:"id"`
+	Name               string                   `json:"name"`
+	Backend            string                   `json:"backend"`
+	State              VMState                  `json:"state"`
+	ObservedState      ObservedState            `json:"observedState,omitempty"`
+	ObservedReason     string                   `json:"observedReason,omitempty"`
+	ObservedAt         *time.Time               `json:"observedAt,omitempty"`
+	PID                int                      `json:"pid,omitempty"`
+	APISocket          string                   `json:"apiSocket,omitempty"`
+	VsockSocket        string                   `json:"vsockSocket,omitempty"`
+	Error              string                   `json:"error,omitempty"`
+	Restore            *RestoreStatus           `json:"restore,omitempty"`
+	LastRestore        *RestoreResult           `json:"lastRestore,omitempty"`
+	SnapshotDependency *SnapshotDependency      `json:"snapshotDependency,omitempty"`
+	RootDisk           string                   `json:"rootDisk"`
+	Kernel             string                   `json:"kernel,omitempty"`
+	Initrd             string                   `json:"initrd,omitempty"`
+	KernelCmdline      string                   `json:"kernelCmdline,omitempty"`
+	Firmware           string                   `json:"firmware,omitempty"`
+	Image              *ImageRef                `json:"image,omitempty"`
+	CPUs               int                      `json:"cpus"`
+	MemoryBytes        int64                    `json:"memoryBytes"`
+	Metadata           *Metadata                `json:"metadata,omitempty"`
+	StorageConfigs     []StorageConfig          `json:"storageConfigs,omitempty"`
+	NetworkConfigs     []kbnetwork.Config       `json:"networkConfigs,omitempty"`
+	Network            string                   `json:"network,omitempty"`
+	Networks           []string                 `json:"networks,omitempty"`
+	NetworkStatus      *kbnetwork.InspectResult `json:"networkStatus,omitempty"`
+	RunDir             string                   `json:"runDir"`
+	LogDir             string                   `json:"logDir"`
+	Config             string                   `json:"config"`
+	CreatedAt          time.Time                `json:"createdAt"`
+	UpdatedAt          time.Time                `json:"updatedAt"`
+	StartedAt          *time.Time               `json:"startedAt,omitempty"`
+	StoppedAt          *time.Time               `json:"stoppedAt,omitempty"`
+	FirstBooted        bool                     `json:"firstBooted,omitempty"`
 }
 
 // RestoreStatus is the durable recovery marker for an in-place native
@@ -112,6 +114,23 @@ type RestoreStatus struct {
 	Error      string    `json:"error,omitempty"`
 	StartedAt  time.Time `json:"startedAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
+// RestoreResult records the latest completed native restore for operational
+// latency inspection without retaining the transient dirty marker.
+type RestoreResult struct {
+	SnapshotID  string    `json:"snapshotId"`
+	Mode        string    `json:"mode"`
+	DurationMs  int64     `json:"durationMs"`
+	CompletedAt time.Time `json:"completedAt"`
+}
+
+// SnapshotDependency pins native memory payload while a delayed restore mode
+// may still fault pages from the source snapshot.
+type SnapshotDependency struct {
+	SnapshotID string    `json:"snapshotId"`
+	Mode       string    `json:"mode"`
+	Since      time.Time `json:"since"`
 }
 
 func (r *VMRecord) EffectiveMemoryBytes() int64 {
@@ -306,6 +325,14 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 	if rec.Restore != nil {
 		restore := *rec.Restore
 		copied.Restore = &restore
+	}
+	if rec.LastRestore != nil {
+		lastRestore := *rec.LastRestore
+		copied.LastRestore = &lastRestore
+	}
+	if rec.SnapshotDependency != nil {
+		dependency := *rec.SnapshotDependency
+		copied.SnapshotDependency = &dependency
 	}
 	copied.Image = cloneImageRef(rec.Image)
 	copied.StorageConfigs = cloneStorageConfigs(rec.StorageConfigs)

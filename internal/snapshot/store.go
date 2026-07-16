@@ -15,10 +15,12 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/fileutil"
+	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
 // Store owns the snapshot index, payload directories, staging, and leases.
 type Store struct {
+	dataRoot  string
 	rootDir   string
 	indexPath string
 	lockPath  string
@@ -29,6 +31,7 @@ type Store struct {
 func NewStore(rootDir string) *Store {
 	dir := filepath.Join(rootDir, "snapshot")
 	return &Store{
+		dataRoot:  rootDir,
 		rootDir:   dir,
 		indexPath: filepath.Join(dir, "index.json"),
 		lockPath:  filepath.Join(dir, "index.lock"),
@@ -181,6 +184,13 @@ func (s *Store) Scan() ([]*Record, error) {
 
 // IsLeased reports whether a build, reader, restore, or delete owns id.
 func (s *Store) IsLeased(id string) (bool, error) {
+	dependent, _, err := s.snapshotDependency(id)
+	if err != nil {
+		return false, err
+	}
+	if dependent {
+		return true, nil
+	}
 	lease, err := s.leaser.acquire(context.Background(), id, leaseExclusive, false)
 	if errors.Is(err, ErrInUse) {
 		return true, nil
@@ -262,6 +272,11 @@ func (s *Store) Remove(ref string) (*Record, error) {
 		return nil, err
 	}
 	defer lease.Release() //nolint:errcheck
+	if dependent, vmName, err := s.snapshotDependency(rec.ID); err != nil {
+		return nil, err
+	} else if dependent {
+		return nil, fmt.Errorf("SNAPSHOT_IN_USE: %w: %s is required by VM %s", ErrInUse, rec.Name, vmName)
+	}
 
 	var removing *Record
 	err = s.update(func(idx *snapshotIndex) error {
@@ -305,6 +320,19 @@ func (s *Store) Remove(ref string) (*Record, error) {
 	}
 	removing.State = StateReady
 	return removing, nil
+}
+
+func (s *Store) snapshotDependency(snapshotID string) (bool, string, error) {
+	records, err := vmstore.New(s.dataRoot).List()
+	if err != nil {
+		return false, "", fmt.Errorf("inspect snapshot dependencies: %w", err)
+	}
+	for _, rec := range records {
+		if rec.SnapshotDependency != nil && rec.SnapshotDependency.SnapshotID == snapshotID {
+			return true, rec.Name, nil
+		}
+	}
+	return false, "", nil
 }
 
 func (s *Store) read(fn func(*snapshotIndex) error) error {

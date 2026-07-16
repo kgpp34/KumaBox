@@ -14,6 +14,29 @@ import (
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
+func TestLinkNativeMemorySharesSourceInode(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "memory-range-0")
+	destination := filepath.Join(dir, "linked-memory-range-0")
+	if err := os.WriteFile(source, []byte("memory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := linkNativeMemory(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	sourceInfo, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destinationInfo, err := os.Stat(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(sourceInfo, destinationInfo) {
+		t.Fatal("linked memory does not share the source inode")
+	}
+}
+
 func TestRestoreNativeVMReplacesWritableStateAndResumesIdentity(t *testing.T) {
 	rt, store, rec, sourceDisk := newRunningSnapshotRuntime(t)
 	backendState := vmstore.ObservedStateRunning

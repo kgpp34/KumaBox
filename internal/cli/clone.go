@@ -33,7 +33,7 @@ func newCloneCommand(opts *rootOptions) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&name, "name", "", "new VM name")
 	cmd.Flags().StringArrayVar(&networks, "network", nil, "new network attachment, repeatable")
-	cmd.Flags().StringVar(&mode, "restore-mode", "copy", "memory restore mode: copy")
+	cmd.Flags().StringVar(&mode, "restore-mode", "copy", "memory restore mode: copy, ondemand, or mmap")
 	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }

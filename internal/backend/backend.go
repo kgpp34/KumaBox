@@ -47,6 +47,7 @@ type NativeHost struct {
 	Architecture   string
 	CPUVendor      string
 	CPUFeatures    []string
+	RestoreModes   []string
 }
 
 // NativeHostInspector reports the compatibility boundary for native backend

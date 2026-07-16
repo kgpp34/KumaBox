@@ -90,3 +90,35 @@ func TestHotSwapCloneNetworksRemovesOldBeforeAddingNew(t *testing.T) {
 		t.Fatalf("add call = %s", got)
 	}
 }
+
+func TestNativeRestoreRequestMapsMemoryModes(t *testing.T) {
+	tests := []struct {
+		mode string
+		want string
+	}{
+		{mode: "copy", want: ""},
+		{mode: "ondemand", want: "OnDemand"},
+		{mode: "mmap", want: "Mmap"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			request, err := nativeRestoreRequest("/tmp/snapshot with space", tt.mode)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if request.MemoryRestoreMode != tt.want || request.SourceURL != "file:///tmp/snapshot%20with%20space" {
+				t.Fatalf("request = %+v", request)
+			}
+			raw, err := json.Marshal(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.mode == "copy" && strings.Contains(string(raw), "memory_restore_mode") {
+				t.Fatalf("copy request contains extension: %s", raw)
+			}
+		})
+	}
+	if _, err := nativeRestoreRequest("/tmp/snapshot", "invalid"); err == nil {
+		t.Fatal("expected unsupported mode error")
+	}
+}
