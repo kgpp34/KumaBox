@@ -65,7 +65,15 @@ type identityResponse struct {
 	Error string `json:"error,omitempty"`
 }
 
+type filesystemResponse struct {
+	OK     bool     `json:"ok"`
+	Mounts []string `json:"mounts,omitempty"`
+	Error  string   `json:"error,omitempty"`
+}
+
 var configureIdentity = applyIdentity
+var freezeFilesystems = freezeGuestFilesystems
+var thawFilesystems = thawGuestFilesystems
 
 func Serve() error {
 	return serveVsock(Port, handleConn)
@@ -90,9 +98,22 @@ func handleConn(rw io.ReadWriter) {
 		handleExec(rw, []byte(line))
 	case "identity":
 		handleIdentity(rw, []byte(line))
+	case "freeze":
+		handleFilesystem(rw, freezeFilesystems)
+	case "thaw":
+		handleFilesystem(rw, thawFilesystems)
 	default:
 		writeResponse(rw, helloResponse{OK: false, Error: "unsupported request"})
 	}
+}
+
+func handleFilesystem(w io.Writer, operation func() ([]string, error)) {
+	mounts, err := operation()
+	if err != nil {
+		writeResponse(w, filesystemResponse{OK: false, Mounts: mounts, Error: err.Error()})
+		return
+	}
+	writeResponse(w, filesystemResponse{OK: true, Mounts: mounts})
 }
 
 func handleIdentity(w io.Writer, raw []byte) {

@@ -17,7 +17,7 @@ import (
 
 // WriteNativeManifest validates the minimum Cloud Hypervisor payload and
 // writes the publication manifest after the source VM has resumed.
-func WriteNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecord, disks []DiskManifest, host backend.NativeHost) (*Manifest, int64, error) {
+func WriteNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecord, disks []DiskManifest, host backend.NativeHost, consistency string) (*Manifest, int64, error) {
 	if build == nil || rec == nil {
 		return nil, 0, errors.New("snapshot build and VM record are required")
 	}
@@ -66,7 +66,10 @@ func WriteNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecor
 	manifest := newDiskManifest(pending, rec, disks, writableDisks(rec))
 	manifest.SchemaVersion = "kumabox.snapshot.v2"
 	manifest.Type = "native"
-	manifest.Consistency = "crash"
+	if consistency != "crash" && consistency != "fs" {
+		return nil, 0, fmt.Errorf("unsupported native snapshot consistency %q", consistency)
+	}
+	manifest.Consistency = consistency
 	manifest.Native = &NativeManifest{PayloadDir: "native", Files: files}
 	manifest.Backend = &BackendManifest{Name: host.BackendName, Version: host.BackendVersion, SnapshotFormat: host.SnapshotFormat}
 	manifest.Machine = &MachineManifest{

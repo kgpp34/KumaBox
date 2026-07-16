@@ -32,6 +32,7 @@ RUN if [ -n "$APT_MIRROR" ]; then \
         systemd-timesyncd \
         tcpdump \
         udev \
+        util-linux \
     && install -m 0755 /usr/local/share/kumabox/initramfs/kumabox-overlay /etc/initramfs-tools/scripts/kumabox-overlay \
     && install -m 0755 /usr/local/share/kumabox/initramfs/kumabox-network /etc/initramfs-tools/scripts/init-bottom/kumabox-network \
     && chmod 0755 /usr/local/bin/kumabox-agent \

@@ -65,6 +65,12 @@ type IdentityResponse struct {
 	Error string `json:"error,omitempty"`
 }
 
+type FilesystemResponse struct {
+	OK     bool     `json:"ok"`
+	Mounts []string `json:"mounts,omitempty"`
+	Error  string   `json:"error,omitempty"`
+}
+
 func Ping(ctx context.Context, socketPath string) (*HelloResponse, error) {
 	var lastErr error
 	for {
@@ -131,6 +137,28 @@ func ConfigureIdentity(ctx context.Context, socketPath string, req IdentityReque
 			resp.Error = "agent identity update returned not ok"
 		}
 		return &resp, fmt.Errorf("AGENT_IDENTITY_FAILED: %s", resp.Error)
+	}
+	return &resp, nil
+}
+
+func FreezeFilesystems(ctx context.Context, socketPath string) (*FilesystemResponse, error) {
+	return filesystemOperation(ctx, socketPath, "freeze")
+}
+
+func ThawFilesystems(ctx context.Context, socketPath string) (*FilesystemResponse, error) {
+	return filesystemOperation(ctx, socketPath, "thaw")
+}
+
+func filesystemOperation(ctx context.Context, socketPath, operation string) (*FilesystemResponse, error) {
+	var resp FilesystemResponse
+	if err := roundTrip(ctx, socketPath, map[string]string{"type": operation}, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		if resp.Error == "" {
+			resp.Error = "guest filesystem operation returned not ok"
+		}
+		return &resp, fmt.Errorf("AGENT_FILESYSTEM_FAILED: %s: %s", operation, resp.Error)
 	}
 	return &resp, nil
 }

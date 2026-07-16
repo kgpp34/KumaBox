@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/kumabox/kumabox/internal/agent"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -105,6 +107,103 @@ func TestCreateRunningSnapshotResumesAfterCaptureFailure(t *testing.T) {
 	if records, err := snapshot.NewStore(store.RootDir()).Scan(); err != nil || len(records) != 0 {
 		t.Fatalf("failed capture leaked snapshot records: %+v, %v", records, err)
 	}
+}
+
+func TestCreateFSConsistentSnapshotOrdersGuestAndVMMBarriers(t *testing.T) {
+	rt, store, rec, _ := newRunningSnapshotRuntime(t)
+	originalFreeze := freezeSnapshotFilesystems
+	originalThaw := thawSnapshotFilesystems
+	defer func() {
+		freezeSnapshotFilesystems = originalFreeze
+		thawSnapshotFilesystems = originalThaw
+	}()
+	steps := make([]string, 0, 5)
+	freezeSnapshotFilesystems = func(context.Context, string) (*agent.FilesystemResponse, error) {
+		steps = append(steps, "freeze")
+		return &agent.FilesystemResponse{OK: true}, nil
+	}
+	thawSnapshotFilesystems = func(context.Context, string) (*agent.FilesystemResponse, error) {
+		steps = append(steps, "thaw")
+		return &agent.FilesystemResponse{OK: true}, nil
+	}
+	backendState := vmstore.ObservedStateRunning
+	rt.backend = backendFake{
+		observe: func(*vmstore.VMRecord) vmstore.Observation {
+			return vmstore.Observation{State: backendState, CheckedAt: time.Now().UTC()}
+		},
+		pause: func(context.Context, *vmstore.VMRecord) error {
+			steps = append(steps, "pause")
+			backendState = vmstore.ObservedStatePaused
+			return nil
+		},
+		snapshot: func(_ context.Context, _ *vmstore.VMRecord, destination string) error {
+			steps = append(steps, "snapshot")
+			return writeNativeSnapshotFixture(destination, rec)
+		},
+		resume: func(context.Context, *vmstore.VMRecord) error {
+			steps = append(steps, "resume")
+			backendState = vmstore.ObservedStateRunning
+			return nil
+		},
+	}
+
+	ready, err := rt.CreateRunningSnapshotWithOptions(context.Background(), rec.ID, "fs-consistent", RunningSnapshotOptions{Consistency: "fs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"freeze", "pause", "snapshot", "resume", "thaw"}
+	if !slices.Equal(steps, want) {
+		t.Fatalf("steps = %v, want %v", steps, want)
+	}
+	manifest, err := snapshot.NewStore(store.RootDir()).LoadManifest(context.Background(), ready.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Consistency != "fs" {
+		t.Fatalf("consistency = %q", manifest.Consistency)
+	}
+}
+
+func TestCreateFSConsistentSnapshotThawsAfterCaptureFailure(t *testing.T) {
+	rt, _, rec, _ := newRunningSnapshotRuntime(t)
+	originalFreeze := freezeSnapshotFilesystems
+	originalThaw := thawSnapshotFilesystems
+	defer func() {
+		freezeSnapshotFilesystems = originalFreeze
+		thawSnapshotFilesystems = originalThaw
+	}()
+	thawed := false
+	freezeSnapshotFilesystems = func(context.Context, string) (*agent.FilesystemResponse, error) {
+		return &agent.FilesystemResponse{OK: true}, nil
+	}
+	thawSnapshotFilesystems = func(context.Context, string) (*agent.FilesystemResponse, error) {
+		thawed = true
+		return &agent.FilesystemResponse{OK: true}, nil
+	}
+	rt.backend = backendFake{
+		observe: func(*vmstore.VMRecord) vmstore.Observation {
+			return vmstore.Observation{State: vmstore.ObservedStateRunning, CheckedAt: time.Now().UTC()}
+		},
+		snapshot: func(context.Context, *vmstore.VMRecord, string) error { return errors.New("capture failed") },
+	}
+	if _, err := rt.CreateRunningSnapshotWithOptions(context.Background(), rec.ID, "fs-failed", RunningSnapshotOptions{Consistency: "fs"}); err == nil {
+		t.Fatal("expected capture failure")
+	}
+	if !thawed {
+		t.Fatal("guest filesystems were not thawed")
+	}
+}
+
+func writeNativeSnapshotFixture(destination string, rec *vmstore.VMRecord) error {
+	for name, content := range map[string]string{
+		"config.json": fmt.Sprintf(`{"cpus":{"boot_vcpus":1},"memory":{"size":536870912},"disks":[{"path":%q,"readonly":false}],"vsock":{}}`, rec.StorageConfigs[0].Path),
+		"state.json":  "{}", "memory-range-0": "memory",
+	} {
+		if err := os.WriteFile(filepath.Join(destination, name), []byte(content), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func newRunningSnapshotRuntime(t *testing.T) (*Runtime, *vmstore.Store, *vmstore.VMRecord, string) {

@@ -154,10 +154,10 @@ func newSnapshotCreateCommand(opts *rootOptions) *cobra.Command {
 				}
 				rec, err = rt.CreateStoppedSnapshot(cmd.Context(), args[0], name)
 			case "running":
-				if consistency != "crash" {
-					return fmt.Errorf("--consistent must be crash for running snapshots")
+				if consistency != "crash" && consistency != "fs" {
+					return fmt.Errorf("--consistent must be crash or fs for running snapshots")
 				}
-				rec, err = rt.CreateRunningSnapshot(cmd.Context(), args[0], name)
+				rec, err = rt.CreateRunningSnapshotWithOptions(cmd.Context(), args[0], name, kbruntime.RunningSnapshotOptions{Consistency: consistency})
 			default:
 				return fmt.Errorf("--type must be disk or running")
 			}
@@ -169,7 +169,7 @@ func newSnapshotCreateCommand(opts *rootOptions) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&name, "name", "", "snapshot name")
 	cmd.Flags().StringVar(&snapshotType, "type", "disk", "snapshot type: disk or running")
-	cmd.Flags().StringVar(&consistency, "consistent", "stopped-disk", "consistency: stopped-disk or crash")
+	cmd.Flags().StringVar(&consistency, "consistent", "stopped-disk", "consistency: stopped-disk, crash, or fs")
 	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }

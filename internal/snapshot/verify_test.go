@@ -101,7 +101,7 @@ func buildNativeVerificationFixture(t *testing.T) (*Store, *Record, *vmstore.VMR
 		ID: "data", Role: "data", Path: "disks/data.raw", Format: "raw",
 		VirtualSizeBytes: int64(len("writable")), AllocatedSizeBytes: int64(len("writable")), SHA256: digest, CopyStrategy: "stream",
 	}}
-	_, size, err := WriteNativeManifest(context.Background(), build, target, disks, host)
+	_, size, err := WriteNativeManifest(context.Background(), build, target, disks, host, "crash")
 	if err != nil {
 		t.Fatal(err)
 	}
