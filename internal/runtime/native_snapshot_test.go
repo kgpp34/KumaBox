@@ -194,6 +194,26 @@ func TestCreateFSConsistentSnapshotThawsAfterCaptureFailure(t *testing.T) {
 	}
 }
 
+func TestThawRestoredSnapshotOnlyForFSConsistency(t *testing.T) {
+	originalThaw := thawSnapshotFilesystems
+	defer func() { thawSnapshotFilesystems = originalThaw }()
+	calls := 0
+	thawSnapshotFilesystems = func(context.Context, string) (*agent.FilesystemResponse, error) {
+		calls++
+		return &agent.FilesystemResponse{OK: true}, nil
+	}
+	rec := &vmstore.VMRecord{VsockSocket: "/tmp/vsock.uds"}
+	if err := thawRestoredSnapshot(context.Background(), rec, &snapshot.Manifest{Consistency: "crash"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := thawRestoredSnapshot(context.Background(), rec, &snapshot.Manifest{Consistency: "fs"}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("thaw calls = %d", calls)
+	}
+}
+
 func writeNativeSnapshotFixture(destination string, rec *vmstore.VMRecord) error {
 	for name, content := range map[string]string{
 		"config.json": fmt.Sprintf(`{"cpus":{"boot_vcpus":1},"memory":{"size":536870912},"disks":[{"path":%q,"readonly":false}],"vsock":{}}`, rec.StorageConfigs[0].Path),

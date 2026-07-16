@@ -148,6 +148,18 @@ func (r *Runtime) thawSnapshotGuest(ctx context.Context, rec *vmstore.VMRecord, 
 	return err
 }
 
+func thawRestoredSnapshot(ctx context.Context, rec *vmstore.VMRecord, manifest *snapshot.Manifest) error {
+	if manifest == nil || manifest.Consistency != "fs" {
+		return nil
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), snapshotCleanupTimeout)
+	defer cancel()
+	if _, err := thawSnapshotFilesystems(cleanupCtx, rec.VsockSocket); err != nil {
+		return fmt.Errorf("GUEST_THAW_FAILED: thaw restored filesystem state: %w", err)
+	}
+	return nil
+}
+
 func captureNativeWindow(ctx context.Context, snapshotter backend.NativeSnapshotter, rec *vmstore.VMRecord, nativeDir, stagingDir string) ([]snapshot.DiskManifest, error) {
 	if err := snapshotter.SnapshotVM(ctx, rec, nativeDir); err != nil {
 		return nil, fmt.Errorf("capture backend state: %w", err)

@@ -134,6 +134,9 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err != nil {
 		return nil, fmt.Errorf("restore clone backend state: %w", err)
 	}
+	if err := thawRestoredSnapshot(ctx, rec, manifest); err != nil {
+		return nil, err
+	}
 	if err := configureGuestIdentity(ctx, rec.VsockSocket, rec); err != nil {
 		return nil, err
 	}
