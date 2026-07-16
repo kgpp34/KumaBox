@@ -6,6 +6,8 @@
 package gc
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -89,6 +91,19 @@ func DryRun(cfg config.Config) (*Report, error) {
 			addLivePath(liveOCIPaths, storage.Path)
 		}
 		report.Candidates = append(report.Candidates, staleRuntimeFiles(rec)...)
+		report.Candidates = append(report.Candidates, staleRestoreStaging(rec, report.CheckedAt)...)
+	}
+	snapshotCandidates, err := snapshotGCCandidates(
+		snapshotStore,
+		cfg.Runtime.RootDir,
+		snapshots,
+		report.CheckedAt,
+		liveImageIDs,
+		liveOCIPaths,
+		liveOCIDigests,
+	)
+	if err != nil {
+		return nil, err
 	}
 	for _, image := range images {
 		addLiveImageOCI(liveOCIPaths, liveOCIDigests, image)
@@ -97,10 +112,6 @@ func DryRun(cfg config.Config) (*Report, error) {
 	report.Candidates = append(report.Candidates, orphanDirs(filepath.Join(cfg.Runtime.RunDir, "vms"), liveRunDirs, "runtime", "orphan_run_dir")...)
 	report.Candidates = append(report.Candidates, orphanDirs(filepath.Join(cfg.Runtime.LogDir, "vms"), liveLogDirs, "runtime", "orphan_log_dir")...)
 	report.Candidates = append(report.Candidates, orphanDirs(filepath.Join(cfg.Runtime.RootDir, "storage", "vms"), liveStorageDirs, "storage", "orphan_vm_storage")...)
-	snapshotCandidates, err := snapshotGCCandidates(snapshotStore, cfg.Runtime.RootDir, snapshots, report.CheckedAt)
-	if err != nil {
-		return nil, err
-	}
 	report.Candidates = append(report.Candidates, snapshotCandidates...)
 	report.Candidates = append(report.Candidates, imageCandidates(cfg.Runtime.RootDir, images, liveImageIDs)...)
 	report.Candidates = append(report.Candidates, ociCandidates(cfg.Runtime.RootDir, liveOCIPaths, liveOCIDigests)...)
@@ -115,7 +126,15 @@ func DryRun(cfg config.Config) (*Report, error) {
 	return report, nil
 }
 
-func snapshotGCCandidates(store *snapshot.Store, rootDir string, records []*snapshot.Record, now time.Time) ([]Candidate, error) {
+func snapshotGCCandidates(
+	store *snapshot.Store,
+	rootDir string,
+	records []*snapshot.Record,
+	now time.Time,
+	liveImageIDs map[string]struct{},
+	liveOCIPaths map[string]struct{},
+	liveOCIDigests map[string]struct{},
+) ([]Candidate, error) {
 	const pendingGrace = time.Hour
 	snapshotDir := filepath.Join(rootDir, "snapshot")
 	liveStaging := make(map[string]struct{}, len(records))
@@ -126,27 +145,54 @@ func snapshotGCCandidates(store *snapshot.Store, rootDir string, records []*snap
 		if rec.StagingDir != "" {
 			liveStaging[rec.StagingDir] = struct{}{}
 		}
-		if rec.State != snapshot.StatePending || now.Sub(rec.UpdatedAt) < pendingGrace {
-			continue
-		}
-		leased, err := store.IsLeased(rec.ID)
-		if err != nil {
-			return nil, fmt.Errorf("inspect snapshot lease %s: %w", rec.ID, err)
-		}
-		if !leased && rec.StagingDir != "" {
-			candidates = append(candidates, Candidate{Component: "snapshot", Path: rec.StagingDir, Type: "stale_pending_snapshot", Reason: "pending snapshot exceeded the one hour grace period"})
+		switch rec.State {
+		case snapshot.StateReady:
+			if _, err := os.Stat(rec.DataDir); errors.Is(err, os.ErrNotExist) {
+				candidates = append(candidates, Candidate{Component: "snapshot", Path: rec.DataDir, Type: "missing_snapshot_payload", Reason: "ready snapshot index record has no payload directory"})
+				continue
+			} else if err != nil {
+				return nil, fmt.Errorf("stat ready snapshot %s: %w", rec.ID, err)
+			}
+			manifest, err := store.LoadManifest(context.Background(), rec.ID)
+			if err != nil {
+				return nil, fmt.Errorf("read ready snapshot %s: %w", rec.ID, err)
+			}
+			if err := addSnapshotLiveSet(rootDir, manifest, liveImageIDs, liveOCIPaths, liveOCIDigests); err != nil {
+				return nil, fmt.Errorf("read ready snapshot %s references: %w", rec.ID, err)
+			}
+		case snapshot.StatePending:
+			if now.Sub(rec.UpdatedAt) < pendingGrace {
+				continue
+			}
+			leased, err := store.IsLeased(rec.ID)
+			if err != nil {
+				return nil, fmt.Errorf("inspect snapshot lease %s: %w", rec.ID, err)
+			}
+			if !leased && rec.StagingDir != "" {
+				candidates = append(candidates, Candidate{Component: "snapshot", Path: rec.StagingDir, Type: "stale_pending_snapshot", Reason: "pending snapshot exceeded the one hour grace period"})
+			}
+		case snapshot.StateDeleting:
+			if now.Sub(rec.UpdatedAt) >= pendingGrace {
+				candidates = append(candidates, Candidate{Component: "snapshot", Path: rec.DataDir, Type: "stale_deleting_snapshot", Reason: "snapshot delete transaction exceeded the one hour grace period"})
+			}
 		}
 	}
-	entries, _ := os.ReadDir(filepath.Join(snapshotDir, "staging"))
+	entries, err := readDirIfExists(filepath.Join(snapshotDir, "staging"))
+	if err != nil {
+		return nil, fmt.Errorf("read snapshot staging directory: %w", err)
+	}
 	for _, entry := range entries {
 		path := filepath.Join(snapshotDir, "staging", entry.Name())
-		if entry.IsDir() {
+		if entry.IsDir() && pathOlderThan(path, now.Add(-pendingGrace)) {
 			if _, ok := liveStaging[path]; !ok {
 				candidates = append(candidates, Candidate{Component: "snapshot", Path: path, Type: "orphan_snapshot_staging", Reason: "staging directory has no snapshot index record"})
 			}
 		}
 	}
-	entries, _ = os.ReadDir(snapshotDir)
+	entries, err = readDirIfExists(snapshotDir)
+	if err != nil {
+		return nil, fmt.Errorf("read snapshot payload directory: %w", err)
+	}
 	for _, entry := range entries {
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "snap_") {
 			continue
@@ -157,6 +203,111 @@ func snapshotGCCandidates(store *snapshot.Store, rootDir string, records []*snap
 		}
 	}
 	return candidates, nil
+}
+
+func addSnapshotLiveSet(rootDir string, manifest *snapshot.Manifest, imageIDs map[string]struct{}, paths map[string]struct{}, digests map[string]struct{}) error {
+	if manifest == nil {
+		return nil
+	}
+	if manifest.Source.ImageID != "" {
+		imageIDs[manifest.Source.ImageID] = struct{}{}
+	}
+	if err := addSnapshotContentDigest(manifest.Source.ImageDigest, digests); err != nil {
+		return fmt.Errorf("source image digest: %w", err)
+	}
+	if manifest.Base != nil {
+		if manifest.Base.ImageID != "" {
+			imageIDs[manifest.Base.ImageID] = struct{}{}
+		}
+		if err := addSnapshotContentDigest(manifest.Base.Digest, digests); err != nil {
+			return fmt.Errorf("base digest: %w", err)
+		}
+		for _, digest := range manifest.Base.LayerDigests {
+			if err := addSnapshotDigestAssets(rootDir, digest, paths, digests); err != nil {
+				return fmt.Errorf("base layer digest: %w", err)
+			}
+		}
+	}
+	if manifest.Boot != nil {
+		if err := addSnapshotBootAsset(rootDir, manifest.Boot.KernelDigest, paths); err != nil {
+			return fmt.Errorf("kernel digest: %w", err)
+		}
+		if err := addSnapshotBootAsset(rootDir, manifest.Boot.InitrdDigest, paths); err != nil {
+			return fmt.Errorf("initrd digest: %w", err)
+		}
+	}
+	return nil
+}
+
+func addSnapshotDigestAssets(rootDir, digest string, paths map[string]struct{}, digests map[string]struct{}) error {
+	algorithm, value, err := parseSnapshotDigest(digest)
+	if err != nil || digest == "" {
+		return err
+	}
+	digests[digest] = struct{}{}
+	paths[filepath.Join(rootDir, "oci", "erofs", "blobs", algorithm, value+".erofs")] = struct{}{}
+	return nil
+}
+
+func addSnapshotContentDigest(digest string, digests map[string]struct{}) error {
+	_, _, err := parseSnapshotDigest(digest)
+	if err != nil || digest == "" {
+		return err
+	}
+	digests[digest] = struct{}{}
+	return nil
+}
+
+func addSnapshotBootAsset(rootDir, digest string, paths map[string]struct{}) error {
+	algorithm, value, err := parseSnapshotDigest(digest)
+	if err != nil || digest == "" {
+		return err
+	}
+	paths[filepath.Join(rootDir, "oci", "boot", "blobs", algorithm, value)] = struct{}{}
+	return nil
+}
+
+func parseSnapshotDigest(digest string) (string, string, error) {
+	if digest == "" {
+		return "", "", nil
+	}
+	algorithm, value, ok := strings.Cut(digest, ":")
+	if !ok || algorithm != "sha256" || len(value) != 64 {
+		return "", "", fmt.Errorf("invalid digest %q", digest)
+	}
+	for _, char := range value {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
+			return "", "", fmt.Errorf("invalid digest %q", digest)
+		}
+	}
+	return algorithm, value, nil
+}
+
+func staleRestoreStaging(rec *vmstore.VMRecord, now time.Time) []Candidate {
+	if rec == nil {
+		return nil
+	}
+	path := filepath.Join(rec.RunDir, ".restore-staging")
+	if !pathOlderThan(path, now.Add(-time.Hour)) {
+		return nil
+	}
+	return []Candidate{{
+		Component: "snapshot", Path: path, Type: "stale_restore_staging",
+		Reason: "restore staging directory exceeded the one hour grace period",
+	}}
+}
+
+func pathOlderThan(path string, cutoff time.Time) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.ModTime().Before(cutoff)
+}
+
+func readDirIfExists(path string) ([]os.DirEntry, error) {
+	entries, err := os.ReadDir(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	return entries, err
 }
 
 func addLivePath(live map[string]struct{}, path string) {

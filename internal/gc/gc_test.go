@@ -31,6 +31,10 @@ func TestDryRunReportsSnapshotAndStorageOrphansButProtectsLeasedPending(t *testi
 			t.Fatal(err)
 		}
 	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(orphanStaging, old, old); err != nil {
+		t.Fatal(err)
+	}
 	build, err := snapshot.NewStore(cfg.Runtime.RootDir).Reserve(context.Background(), "active-build")
 	if err != nil {
 		t.Fatal(err)
@@ -63,6 +67,134 @@ func TestDryRunReportsSnapshotAndStorageOrphansButProtectsLeasedPending(t *testi
 	assertCandidate(t, report, orphanStorage, "orphan_vm_storage")
 	assertCandidate(t, report, orphanStaging, "orphan_snapshot_staging")
 	assertNoCandidate(t, report, build.Record().StagingDir)
+}
+
+func TestDryRunProtectsNativeSnapshotAssetsAndExplainsStaleStaging(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Runtime.RootDir = filepath.Join(dir, "data")
+	cfg.Runtime.RunDir = filepath.Join(dir, "run")
+	cfg.Runtime.LogDir = filepath.Join(dir, "log")
+
+	const imageID = "img_snapshot_only"
+	manifestDigest := "sha256:" + strings.Repeat("d", 64)
+	layerDigest := "sha256:" + strings.Repeat("a", 64)
+	kernelDigest := "sha256:" + strings.Repeat("b", 64)
+	initrdDigest := "sha256:" + strings.Repeat("c", 64)
+	manifest := snapshot.Manifest{
+		SchemaVersion: "kumabox.snapshot.v2", Type: "native", Consistency: "crash",
+		Source: snapshot.Source{VMID: "kb_deleted", ImageID: imageID},
+		Base:   &snapshot.Base{Family: "oci", ImageID: imageID, Digest: manifestDigest, LayerDigests: []string{layerDigest}},
+		Boot:   &snapshot.BootManifest{KernelDigest: kernelDigest, InitrdDigest: initrdDigest},
+	}
+	ready := createGCReadySnapshot(t, cfg.Runtime.RootDir, "native-live", manifest)
+
+	imageDir := filepath.Join(cfg.Runtime.RootDir, "cloudimg", imageID)
+	layerPath := filepath.Join(cfg.Runtime.RootDir, "oci", "erofs", "blobs", "sha256", strings.TrimPrefix(layerDigest, "sha256:")+".erofs")
+	kernelPath := filepath.Join(cfg.Runtime.RootDir, "oci", "boot", "blobs", "sha256", strings.TrimPrefix(kernelDigest, "sha256:"))
+	initrdPath := filepath.Join(cfg.Runtime.RootDir, "oci", "boot", "blobs", "sha256", strings.TrimPrefix(initrdDigest, "sha256:"))
+	contentPath := filepath.Join(cfg.Runtime.RootDir, "oci", "content", "blobs", "sha256", strings.TrimPrefix(layerDigest, "sha256:"))
+	manifestContentPath := filepath.Join(cfg.Runtime.RootDir, "oci", "content", "blobs", "sha256", strings.TrimPrefix(manifestDigest, "sha256:"))
+	for _, path := range []string{filepath.Join(imageDir, "base.qcow2"), layerPath, kernelPath, initrdPath, contentPath, manifestContentPath} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("asset"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	vmStore := vmstore.New(cfg.Runtime.RootDir)
+	vm, err := vmStore.Create(vmstore.CreateRequest{
+		Name: "restore-staging", RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd", RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleRestore := filepath.Join(vm.RunDir, ".restore-staging")
+	staleOrphan := filepath.Join(cfg.Runtime.RootDir, "snapshot", "staging", "orphan-old")
+	freshOrphan := filepath.Join(cfg.Runtime.RootDir, "snapshot", "staging", "orphan-fresh")
+	for _, path := range []string{staleRestore, staleOrphan, freshOrphan} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	for _, path := range []string{staleRestore, staleOrphan} {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	report, err := DryRun(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCandidate(t, report, staleRestore, "stale_restore_staging")
+	assertCandidate(t, report, staleOrphan, "orphan_snapshot_staging")
+	assertNoCandidate(t, report, freshOrphan)
+	for _, protected := range []string{ready.DataDir, imageDir, layerPath, kernelPath, initrdPath, contentPath, manifestContentPath} {
+		assertNoCandidate(t, report, protected)
+	}
+}
+
+func TestDryRunFailsClosedForCorruptReadyNativeManifest(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Runtime.RootDir = filepath.Join(dir, "data")
+	cfg.Runtime.RunDir = filepath.Join(dir, "run")
+	cfg.Runtime.LogDir = filepath.Join(dir, "log")
+	ready := createGCReadySnapshot(t, cfg.Runtime.RootDir, "corrupt-native", snapshot.Manifest{
+		SchemaVersion: "kumabox.snapshot.v2", Type: "native", Consistency: "crash",
+	})
+	if err := os.WriteFile(filepath.Join(ready.DataDir, "snapshot.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DryRun(cfg); err == nil || !strings.Contains(err.Error(), "read ready snapshot") {
+		t.Fatalf("dry-run error = %v", err)
+	}
+}
+
+func TestDryRunFailsClosedForInvalidNativeSnapshotReference(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Runtime.RootDir = filepath.Join(dir, "data")
+	cfg.Runtime.RunDir = filepath.Join(dir, "run")
+	cfg.Runtime.LogDir = filepath.Join(dir, "log")
+	createGCReadySnapshot(t, cfg.Runtime.RootDir, "invalid-reference", snapshot.Manifest{
+		SchemaVersion: "kumabox.snapshot.v2", Type: "native", Consistency: "crash",
+		Base: &snapshot.Base{Family: "oci", LayerDigests: []string{"sha256:not-a-digest"}},
+	})
+	if _, err := DryRun(cfg); err == nil || !strings.Contains(err.Error(), "base layer digest") {
+		t.Fatalf("dry-run error = %v", err)
+	}
+}
+
+func createGCReadySnapshot(t *testing.T, rootDir, name string, manifest snapshot.Manifest) *snapshot.Record {
+	t.Helper()
+	store := snapshot.NewStore(rootDir)
+	build, err := store.Reserve(context.Background(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := build.Record()
+	manifest.ID = rec.ID
+	manifest.Name = rec.Name
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rec.StagingDir, "snapshot.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := build.Finalize(int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ready
 }
 
 func TestDryRunReportsOnlyManagedCandidates(t *testing.T) {
