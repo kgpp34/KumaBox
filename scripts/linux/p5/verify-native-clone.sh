@@ -13,11 +13,17 @@ clone_name=p5-clone-target
 snapshot_name=p5-clone-native
 storage=64M
 agent_timeout=180s
+ping_timeout=60
+ping_interval=2
 use_sudo=false
 success=false
 source_id=
 clone_id=
 snapshot_id=
+source_ip=
+clone_ip=
+source_tap=
+clone_tap=
 active_step="initialization"
 failure_status=
 failure_line=
@@ -40,6 +46,7 @@ Usage: verify-native-clone.sh [options]
   --snapshot NAME
   --storage SIZE
   --agent-timeout DURATION
+  --ping-timeout SECONDS
   --sudo
 
 Verifies native clone memory/disk continuity and proves that VM, hostname,
@@ -61,6 +68,7 @@ while (($#)); do
     --snapshot) snapshot_name=$2; shift 2 ;;
     --storage) storage=$2; shift 2 ;;
     --agent-timeout) agent_timeout=$2; shift 2 ;;
+    --ping-timeout) ping_timeout=$2; shift 2 ;;
     --sudo) use_sudo=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -68,7 +76,8 @@ while (($#)); do
 done
 
 [[ $(uname -s) == Linux ]] || { echo "native clone verification must run on Linux" >&2; exit 1; }
-for command in jq ping; do
+[[ $ping_timeout =~ ^[1-9][0-9]*$ ]] || { echo "--ping-timeout must be a positive integer" >&2; exit 2; }
+for command in ip jq ping timeout; do
   command -v "$command" >/dev/null 2>&1 || { echo "$command is required" >&2; exit 1; }
 done
 if [[ $use_sudo == true ]]; then
@@ -97,6 +106,49 @@ kb() {
     --root-dir "$root_dir" --run-dir "$run_dir" --log-dir "$log_dir" \
     --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" "$@"
 }
+wait_for_ping() {
+  local guest=$1
+  local address=$2
+  local started now elapsed attempt
+
+  started=$(date +%s)
+  attempt=1
+  while true; do
+    if ping -n -c 1 -W 2 "$address" >/dev/null 2>&1; then
+      now=$(date +%s)
+      elapsed=$((now - started))
+      printf 'pass: host can ping %s guest at %s after %ss\n' "$guest" "$address" "$elapsed"
+      return 0
+    fi
+
+    now=$(date +%s)
+    elapsed=$((now - started))
+    if ((elapsed >= ping_timeout)); then
+      printf 'host could not ping %s guest at %s after %ss\n' "$guest" "$address" "$elapsed" >&2
+      return 1
+    fi
+    printf 'state: %s ping attempt %s failed after %ss; waiting %ss\n' \
+      "$guest" "$attempt" "$elapsed" "$ping_interval"
+    sleep "$ping_interval"
+    attempt=$((attempt + 1))
+  done
+}
+print_host_network_context() {
+  local guest=$1
+  local tap=$2
+  local address=$3
+
+  [[ -n $tap ]] || return 0
+  step "failure context: $guest host TAP"
+  ip -d link show "$tap" 2>/dev/null || true
+  if command -v bridge >/dev/null 2>&1; then
+    bridge link show dev "$tap" 2>/dev/null || true
+  fi
+  if [[ -n $address ]]; then
+    printf '%s\n' "neighbor lookup for $address"
+    ip neigh show "$address" 2>/dev/null || true
+  fi
+}
 clean_named_state() {
   kb delete "$clone_name" --force >/dev/null 2>&1 || true
   kb delete "$source_name" --force >/dev/null 2>&1 || true
@@ -116,12 +168,35 @@ on_exit() {
   [[ -z $source_id ]] || kb inspect "$source_id" --json 2>/dev/null || true
   [[ -z $clone_id ]] || kb inspect "$clone_id" --json 2>/dev/null || true
   [[ -z $snapshot_id ]] || kb snapshot inspect "$snapshot_id" --json 2>/dev/null || true
+  if [[ -n $clone_id ]]; then
+    step "failure context: clone guest agent"
+    kb agent ping "$clone_id" --timeout 5s 2>/dev/null | jq . || true
+
+    step "failure context: clone network"
+    kb network inspect "$clone_id" --json 2>/dev/null | jq . || true
+
+    step "failure context: clone guest link, address, and route"
+    timeout 10s "${kb_prefix[@]}" "$kumabox" \
+      --root-dir "$root_dir" --run-dir "$run_dir" --log-dir "$log_dir" \
+      --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" \
+      exec "$clone_id" -- sh -c 'ip -brief link; ip -brief address; ip route' 2>/dev/null || true
+
+    print_host_network_context clone "$clone_tap" "$clone_ip"
+
+    step "failure context: clone console tail"
+    kb logs "$clone_id" --source console --tail 120 2>/dev/null || true
+
+    step "failure context: clone VMM stderr"
+    kb logs "$clone_id" --source stderr --tail 80 2>/dev/null || true
+  fi
   if [[ -n $source_id ]]; then
     step "failure context: source guest agent"
     kb agent ping "$source_id" --timeout 5s 2>/dev/null | jq . || true
 
     step "failure context: source network"
     kb network inspect "$source_id" --json 2>/dev/null | jq . || true
+
+    print_host_network_context source "$source_tap" "$source_ip"
 
     step "failure context: source console tail"
     kb logs "$source_id" --source console --tail 120 2>/dev/null || true
@@ -184,6 +259,10 @@ printf 'state: clone_process_pid=%s marker=%s hostname=%s\n' "$process_pid" "$ma
 step "compare source and clone identities"
 source_after=$(kb inspect "$source_id" --json)
 clone_after=$(kb inspect "$clone_id" --json)
+source_ip=$(jq -r '.networkConfigs[0].network.ip' <<<"$source_after")
+clone_ip=$(jq -r '.networkConfigs[0].network.ip' <<<"$clone_after")
+source_tap=$(jq -r '.networkConfigs[0].tap' <<<"$source_after")
+clone_tap=$(jq -r '.networkConfigs[0].tap' <<<"$clone_after")
 jq -n -e --argjson source "$source_after" --argjson clone "$clone_after" '
   ($source.id != $clone.id) and
   ($source.name != $clone.name) and
@@ -197,11 +276,15 @@ jq -n -e --argjson source "$source_after" --argjson clone "$clone_after" '
 printf '%s\n' "$source_after" | jq '{id,name,state,observedState,vsockSocket,networkConfigs}'
 printf '%s\n' "$clone_after" | jq '{id,name,state,observedState,vsockSocket,networkConfigs}'
 
+step "inspect source and clone guest network state"
+printf '%s\n' "source guest ($source_ip):"
+kb exec "$source_id" -- sh -c 'ip -brief link; ip -brief address; ip route'
+printf '%s\n' "clone guest ($clone_ip):"
+kb exec "$clone_id" -- sh -c 'ip -brief link; ip -brief address; ip route'
+
 step "prove both guests are independently reachable"
-source_ip=$(jq -r '.networkConfigs[0].network.ip' <<<"$source_after")
-clone_ip=$(jq -r '.networkConfigs[0].network.ip' <<<"$clone_after")
-ping -c 1 -W 2 "$source_ip"
-ping -c 1 -W 2 "$clone_ip"
+wait_for_ping source "$source_ip"
+wait_for_ping clone "$clone_ip"
 kb exec "$source_id" -- sh -c "kill -0 $process_pid"
 
 step "remove verification resources"
