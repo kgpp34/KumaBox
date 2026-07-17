@@ -45,7 +45,7 @@ func WriteNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecor
 			hasConfig = true
 		case entry.Name() == "state.json":
 			hasState = true
-		case strings.HasPrefix(entry.Name(), "memory-range-"):
+		case IsNativeMemoryFile(entry.Name()):
 			hasMemory = true
 		}
 		digest, err := syncAndHashFile(ctx, filepath.Join(nativeDir, entry.Name()))
@@ -101,6 +101,12 @@ func WriteNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecor
 		nativeSize += disk.AllocatedSizeBytes
 	}
 	return manifest, nativeSize, nil
+}
+
+// IsNativeMemoryFile reports whether name is a Cloud Hypervisor memory
+// payload. Released versions use both memory-ranges and memory-range-* names.
+func IsNativeMemoryFile(name string) bool {
+	return strings.HasPrefix(filepath.Base(name), "memory-range")
 }
 
 func syncAndHashFile(ctx context.Context, path string) (string, error) {

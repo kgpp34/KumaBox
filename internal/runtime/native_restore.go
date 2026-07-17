@@ -161,7 +161,7 @@ func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manif
 		}
 		source := filepath.Join(snapshotRec.DataDir, filepath.FromSlash(file.Path))
 		destination := filepath.Join(nativeDir, filepath.Base(file.Path))
-		if restoreModePinsSnapshot(mode) && strings.HasPrefix(filepath.Base(file.Path), "memory-range-") {
+		if restoreModePinsSnapshot(mode) && snapshot.IsNativeMemoryFile(file.Path) {
 			if err := linkNativeMemory(source, destination); err != nil {
 				return nil, fmt.Errorf("link native memory payload %s: %w", file.Path, err)
 			}

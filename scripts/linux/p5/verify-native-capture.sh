@@ -126,7 +126,7 @@ step "show native backend payload"
 "${file_prefix[@]}" find "$data_dir/native" -maxdepth 1 -type f -printf '%f\t%s bytes\n' | sort
 "${file_prefix[@]}" test -f "$data_dir/native/config.json"
 "${file_prefix[@]}" test -f "$data_dir/native/state.json"
-"${file_prefix[@]}" find "$data_dir/native" -maxdepth 1 -type f -name 'memory-range-*' -print -quit | grep -q .
+"${file_prefix[@]}" find "$data_dir/native" -maxdepth 1 -type f -name 'memory-range*' -print -quit | grep -q .
 
 step "show published manifest"
 manifest_json=$("${file_prefix[@]}" cat "$data_dir/snapshot.json")

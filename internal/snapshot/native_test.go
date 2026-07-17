@@ -30,3 +30,20 @@ func TestWriteNativeManifestRejectsIncompletePayload(t *testing.T) {
 		t.Fatal("expected incomplete native payload error")
 	}
 }
+
+func TestIsNativeMemoryFileSupportsBackendNamingVariants(t *testing.T) {
+	t.Parallel()
+	tests := map[string]bool{
+		"memory-ranges":        true,
+		"memory-range-0":       true,
+		"native/memory-ranges": true,
+		"memory":               false,
+		"state.json":           false,
+		"memory_range_0":       false,
+	}
+	for name, want := range tests {
+		if got := IsNativeMemoryFile(name); got != want {
+			t.Errorf("IsNativeMemoryFile(%q) = %t, want %t", name, got, want)
+		}
+	}
+}
