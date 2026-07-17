@@ -31,7 +31,7 @@ func TestPatchRestoreConfigPreservesBackendFields(t *testing.T) {
 		LogDir: "/new/log", VsockSocket: "/new/vsock.sock",
 		StorageConfigs: []vmstore.StorageConfig{{ID: "cow", Path: "/new/cow.raw"}},
 	}
-	if _, err := patchRestoreConfig(path, rec); err != nil {
+	if _, err := patchRestoreConfig(path, rec, false); err != nil {
 		t.Fatal(err)
 	}
 	var got map[string]json.RawMessage
@@ -58,6 +58,36 @@ func TestPatchRestoreConfigPreservesBackendFields(t *testing.T) {
 	}
 	if vsock["socket"] != rec.VsockSocket || vsock["id"] != "vsock0" {
 		t.Fatalf("patched vsock = %#v", vsock)
+	}
+}
+
+func TestPatchRestoreConfigRebindsCloneTapWithoutChangingGuestIdentity(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	raw := `{
+  "disks":[{"path":"/old/cow.raw"}],
+  "net":[{"id":"snapshot-net0","tap":"kbtapsource","mac":"02:00:00:00:00:01","num_queues":2,"queue_size":256}]
+}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec := &vmstore.VMRecord{
+		StorageConfigs: []vmstore.StorageConfig{{ID: "cow", Path: "/new/cow.raw"}},
+		NetworkConfigs: []kbnetwork.Config{{TAP: "kbtapclone", MAC: "02:00:00:00:00:02"}},
+	}
+	patched, err := patchRestoreConfig(path, rec, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nets []map[string]any
+	if err := json.Unmarshal(patched["net"], &nets); err != nil {
+		t.Fatal(err)
+	}
+	if len(nets) != 1 || nets[0]["tap"] != "kbtapclone" {
+		t.Fatalf("patched networks = %#v", nets)
+	}
+	if nets[0]["id"] != "snapshot-net0" || nets[0]["mac"] != "02:00:00:00:00:01" {
+		t.Fatalf("snapshot guest identity changed before restore: %#v", nets[0])
 	}
 }
 
