@@ -11,12 +11,23 @@ root_dir=/tmp/kumabox-p0/data
 run_dir=/tmp/kumabox-p0/run
 log_dir=/tmp/kumabox-p0/logs
 image=p3-agent-image
+ref=kumabox/ubuntu:24.04-p3
+platform=linux/amd64
+source=auto
+mkfs_erofs=mkfs.erofs
+build_missing=true
 memory=512M
 storage=64M
 agent_timeout=180s
 use_sudo=false
 suite_started=$SECONDS
 completed=0
+inspect_error=
+
+cleanup_suite() {
+  [[ -z $inspect_error ]] || rm -f "$inspect_error"
+}
+trap cleanup_suite EXIT
 
 usage() {
   cat <<'EOF'
@@ -28,7 +39,12 @@ Usage: scripts/linux/p5/verify-e2e.sh [options]
   --root-dir PATH
   --run-dir PATH
   --log-dir PATH
-  --image REF              managed OCI image containing the current guest agent
+  --image NAME             managed image name, defaults to p3-agent-image
+  --ref REF                source OCI ref, defaults to kumabox/ubuntu:24.04-p3
+  --platform PLATFORM      OCI platform, defaults to linux/amd64
+  --source SOURCE          OCI source: auto, daemon, or registry
+  --mkfs-erofs PATH        mkfs.erofs executable, defaults to mkfs.erofs
+  --no-build               fail instead of building a missing managed image
   --memory SIZE            compatibility-test guest memory, defaults to 512M
   --storage SIZE           per-VM writable storage, defaults to 64M
   --agent-timeout DURATION guest-agent timeout, defaults to 180s
@@ -56,6 +72,11 @@ while (($#)); do
     --run-dir) require_value "$1" "${2:-}"; run_dir=$2; shift 2 ;;
     --log-dir) require_value "$1" "${2:-}"; log_dir=$2; shift 2 ;;
     --image) require_value "$1" "${2:-}"; image=$2; shift 2 ;;
+    --ref) require_value "$1" "${2:-}"; ref=$2; shift 2 ;;
+    --platform) require_value "$1" "${2:-}"; platform=$2; shift 2 ;;
+    --source) require_value "$1" "${2:-}"; source=$2; shift 2 ;;
+    --mkfs-erofs) require_value "$1" "${2:-}"; mkfs_erofs=$2; shift 2 ;;
+    --no-build) build_missing=false; shift ;;
     --memory) require_value "$1" "${2:-}"; memory=$2; shift 2 ;;
     --storage) require_value "$1" "${2:-}"; storage=$2; shift 2 ;;
     --agent-timeout) require_value "$1" "${2:-}"; agent_timeout=$2; shift 2 ;;
@@ -114,6 +135,9 @@ run_case() {
 
 printf 'P5 E2E configuration:\n'
 printf '  image:    %s\n' "$image"
+printf '  OCI ref:  %s\n' "$ref"
+printf '  platform: %s\n' "$platform"
+printf '  source:   %s\n' "$source"
 printf '  rootDir:  %s\n' "$root_dir"
 printf '  runDir:   %s\n' "$run_dir"
 printf '  logDir:   %s\n' "$log_dir"
@@ -122,10 +146,28 @@ printf '  storage:  %s\n' "$storage"
 printf '  sudo:     %s\n' "$use_sudo"
 
 printf '\n==> preflight managed OCI agent image\n'
-image_json=$("${kb_prefix[@]}" "$kumabox" \
+inspect_error=$(mktemp)
+if image_json=$("${kb_prefix[@]}" "$kumabox" \
   --root-dir "$root_dir" --run-dir "$run_dir" --log-dir "$log_dir" \
   --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" \
-  image inspect "$image" --json)
+  image inspect "$image" --json 2>"$inspect_error"); then
+  printf 'state: using existing managed image %s\n' "$image"
+elif grep -qi 'image not found' "$inspect_error" && [[ $build_missing == true ]]; then
+  printf 'state: managed image %s not found; building from %s\n' "$image" "$ref"
+  image_json=$("${kb_prefix[@]}" "$kumabox" \
+    --root-dir "$root_dir" --run-dir "$run_dir" --log-dir "$log_dir" \
+    --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" \
+    image build "$ref" --name "$image" --platform "$platform" \
+    --source "$source" --mkfs-erofs "$mkfs_erofs" --json)
+else
+  cat "$inspect_error" >&2
+  if [[ $build_missing == false ]]; then
+    printf 'managed image %s is required because --no-build was set\n' "$image" >&2
+  fi
+  exit 1
+fi
+rm -f "$inspect_error"
+inspect_error=
 printf '%s\n' "$image_json" | jq '{id,name,source,boot,os,agentInjection:.oci.agentInjection}'
 jq -e '.boot.mode == "direct" and .oci != null' <<<"$image_json" >/dev/null || {
   echo "P5 E2E requires a managed direct-boot OCI image with the current guest agent" >&2
