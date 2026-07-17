@@ -58,18 +58,21 @@ func inspectRestoreModes(binary string) []string {
 	const overlap = 64
 	buffer := make([]byte, 64<<10)
 	window := make([]byte, 0, len(buffer)+overlap)
-	var hasField, hasOnDemand, hasMmap bool
+	var hasField, hasOnDemand, hasMmapSyntax bool
 	for {
 		n, readErr := file.Read(buffer)
 		if n > 0 {
 			window = append(window, buffer[:n]...)
 			hasField = hasField || bytes.Contains(window, []byte("memory_restore_mode"))
 			hasOnDemand = hasOnDemand || bytes.Contains(window, []byte("OnDemand"))
-			hasMmap = hasMmap || bytes.Contains(window, []byte("Mmap"))
+			// "Mmap" appears in unrelated memory and device code in builds that
+			// only accept Copy and OnDemand. Require the restore parser's exact
+			// mode-list marker before advertising the optional mmap protocol.
+			hasMmapSyntax = hasMmapSyntax || bytes.Contains(window, []byte("memory_restore_mode=copy|ondemand|mmap"))
 			if len(window) > overlap {
 				window = append(window[:0], window[len(window)-overlap:]...)
 			}
-			if hasField && hasOnDemand && hasMmap {
+			if hasField && hasOnDemand && hasMmapSyntax {
 				break
 			}
 		}
@@ -83,7 +86,7 @@ func inspectRestoreModes(binary string) []string {
 	if hasField && hasOnDemand {
 		modes = append(modes, "ondemand")
 	}
-	if hasField && hasMmap {
+	if hasField && hasMmapSyntax {
 		modes = append(modes, "mmap")
 	}
 	return modes

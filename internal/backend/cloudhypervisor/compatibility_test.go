@@ -14,7 +14,8 @@ func TestInspectRestoreModesRequiresBinarySchemaMarkers(t *testing.T) {
 		want    []string
 	}{
 		{name: "copy only", content: "cloud-hypervisor", want: []string{"copy"}},
-		{name: "all modes", content: "memory_restore_mode OnDemand Mmap", want: []string{"copy", "ondemand", "mmap"}},
+		{name: "all modes", content: "memory_restore_mode OnDemand memory_restore_mode=copy|ondemand|mmap", want: []string{"copy", "ondemand", "mmap"}},
+		{name: "unrelated mmap marker", content: "memory_restore_mode OnDemand InvalidDeviceExcludeMmapBar", want: []string{"copy", "ondemand"}},
 		{name: "enum without field", content: "OnDemand Mmap", want: []string{"copy"}},
 	}
 	for _, tt := range tests {
