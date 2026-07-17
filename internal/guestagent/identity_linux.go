@@ -22,10 +22,20 @@ func applyIdentity(req identityRequest) error {
 	if err := os.WriteFile("/etc/hostname", []byte(req.Hostname+"\n"), 0o644); err != nil {
 		return fmt.Errorf("persist hostname: %w", err)
 	}
+	interfaceNames, err := persistNetworkdIdentity(req.Interfaces)
+	if err != nil {
+		return fmt.Errorf("persist network identity: %w", err)
+	}
+	if err := reloadNetworkd(); err != nil {
+		return fmt.Errorf("reload network identity: %w", err)
+	}
 	for index, identity := range req.Interfaces {
 		if err := configureInterface(index, identity); err != nil {
 			return err
 		}
+	}
+	if err := reconfigureNetworkd(interfaceNames); err != nil {
+		return fmt.Errorf("reconfigure network identity: %w", err)
 	}
 	return nil
 }
