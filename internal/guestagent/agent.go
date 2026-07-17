@@ -13,20 +13,23 @@ import (
 )
 
 const (
-	Version = "0.1.0"
+	Version = "0.2.0"
 	Port    = 1024
 )
+
+var capabilities = []string{"hello", "exec", "identity", "freeze", "thaw"}
 
 type helloRequest struct {
 	Type string `json:"type"`
 }
 
 type helloResponse struct {
-	OK       bool   `json:"ok"`
-	Version  string `json:"version,omitempty"`
-	OS       string `json:"os,omitempty"`
-	Hostname string `json:"hostname,omitempty"`
-	Error    string `json:"error,omitempty"`
+	OK           bool     `json:"ok"`
+	Version      string   `json:"version,omitempty"`
+	OS           string   `json:"os,omitempty"`
+	Hostname     string   `json:"hostname,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	Error        string   `json:"error,omitempty"`
 }
 
 type execRequest struct {
@@ -132,10 +135,11 @@ func handleIdentity(w io.Writer, raw []byte) {
 func handleHello(w io.Writer) {
 	hostname, _ := os.Hostname()
 	writeResponse(w, helloResponse{
-		OK:       true,
-		Version:  Version,
-		OS:       runtime.GOOS,
-		Hostname: hostname,
+		OK:           true,
+		Version:      Version,
+		OS:           runtime.GOOS,
+		Hostname:     hostname,
+		Capabilities: append([]string(nil), capabilities...),
 	})
 }
 

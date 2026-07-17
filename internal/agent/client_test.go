@@ -54,7 +54,7 @@ func TestPingUsesHybridVsockHandshake(t *testing.T) {
 			errCh <- errors.New("unexpected hello line: " + line)
 			return
 		}
-		_, err = conn.Write([]byte(`{"ok":true,"version":"test","os":"linux","hostname":"guest"}` + "\n"))
+		_, err = conn.Write([]byte(`{"ok":true,"version":"test","os":"linux","hostname":"guest","capabilities":["exec","identity"]}` + "\n"))
 		errCh <- err
 	}()
 
@@ -65,8 +65,23 @@ func TestPingUsesHybridVsockHandshake(t *testing.T) {
 	if resp.Version != "test" || resp.OS != "linux" || resp.Hostname != "guest" {
 		t.Fatalf("response = %+v", resp)
 	}
+	if !resp.Supports(CapabilityIdentity) {
+		t.Fatalf("capabilities = %v, want identity", resp.Capabilities)
+	}
 	if err := <-errCh; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHelloResponseSupportsRejectsMissingCapability(t *testing.T) {
+	t.Parallel()
+
+	if (*HelloResponse)(nil).Supports(CapabilityIdentity) {
+		t.Fatal("nil response reported identity support")
+	}
+	resp := &HelloResponse{Capabilities: []string{"exec"}}
+	if resp.Supports(CapabilityIdentity) {
+		t.Fatalf("capabilities = %v, unexpectedly support identity", resp.Capabilities)
 	}
 }
 

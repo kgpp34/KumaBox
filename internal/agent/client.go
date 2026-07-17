@@ -17,16 +17,30 @@ const (
 	AgentPort           uint32 = 1024
 	hybridVsockReplyMax        = 256
 	DefaultPingTimeout         = 60 * time.Second
+	CapabilityIdentity         = "identity"
 )
 
 var ErrNotReady = errors.New("AGENT_NOT_READY")
 
 type HelloResponse struct {
-	OK       bool   `json:"ok"`
-	Version  string `json:"version,omitempty"`
-	OS       string `json:"os,omitempty"`
-	Hostname string `json:"hostname,omitempty"`
-	Error    string `json:"error,omitempty"`
+	OK           bool     `json:"ok"`
+	Version      string   `json:"version,omitempty"`
+	OS           string   `json:"os,omitempty"`
+	Hostname     string   `json:"hostname,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	Error        string   `json:"error,omitempty"`
+}
+
+func (r *HelloResponse) Supports(capability string) bool {
+	if r == nil {
+		return false
+	}
+	for _, candidate := range r.Capabilities {
+		if candidate == capability {
+			return true
+		}
+	}
+	return false
 }
 
 type ExecRequest struct {

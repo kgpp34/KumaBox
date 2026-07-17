@@ -196,8 +196,19 @@ func configureCloneIdentity(ctx context.Context, socket string, rec *vmstore.VMR
 	}
 	identityCtx, cancel := context.WithTimeout(ctx, cloneIdentityTimeout)
 	defer cancel()
-	if _, err := kbagent.Ping(identityCtx, socket); err != nil {
+	hello, err := kbagent.Ping(identityCtx, socket)
+	if err != nil {
 		return fmt.Errorf("wait for clone guest agent: %w", err)
+	}
+	if !hello.Supports(kbagent.CapabilityIdentity) {
+		version := hello.Version
+		if version == "" {
+			version = "unknown"
+		}
+		return fmt.Errorf(
+			"AGENT_CAPABILITY_MISSING: guest agent %s does not advertise %q (capabilities=%v); rebuild the managed image with the current kumabox-agent",
+			version, kbagent.CapabilityIdentity, hello.Capabilities,
+		)
 	}
 	var lastErr error
 	for {

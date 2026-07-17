@@ -93,6 +93,19 @@ on_exit() {
   [[ -z $source_id ]] || kb inspect "$source_id" --json 2>/dev/null || true
   [[ -z $clone_id ]] || kb inspect "$clone_id" --json 2>/dev/null || true
   [[ -z $snapshot_id ]] || kb snapshot inspect "$snapshot_id" --json 2>/dev/null || true
+  if [[ -n $source_id ]]; then
+    step "failure context: source guest agent"
+    kb agent ping "$source_id" --timeout 5s 2>/dev/null | jq . || true
+
+    step "failure context: source network"
+    kb network inspect "$source_id" --json 2>/dev/null | jq . || true
+
+    step "failure context: source console tail"
+    kb logs "$source_id" --source console --tail 120 2>/dev/null || true
+
+    step "failure context: source VMM stderr"
+    kb logs "$source_id" --source stderr --tail 80 2>/dev/null || true
+  fi
   printf 'state: root_dir=%s run_dir=%s log_dir=%s\n' "$root_dir" "$run_dir" "$log_dir"
 }
 trap on_exit EXIT
@@ -108,7 +121,16 @@ step "run source VM with one independent network identity"
 source_json=$(kb run "$image" --name "$source_name" --network default --storage "$storage")
 printf '%s\n' "$source_json" | jq '{id,name,state,vsockSocket,networkConfigs}'
 source_id=$(jq -r '.id' <<<"$source_json")
-kb agent ping "$source_id" --timeout "$agent_timeout" | jq .
+source_agent=$(kb agent ping "$source_id" --timeout "$agent_timeout")
+printf '%s\n' "$source_agent" | jq .
+if ! jq -e '(.agent.capabilities // []) | index("identity") != null' >/dev/null <<<"$source_agent"; then
+  agent_version=$(jq -r '.agent.version // "unknown"' <<<"$source_agent")
+  agent_capabilities=$(jq -c '.agent.capabilities // []' <<<"$source_agent")
+  echo "guest agent $agent_version does not support native clone identity (capabilities=$agent_capabilities)" >&2
+  echo "rebuild p3-agent-image with scripts/linux/p3/verify-oci-agent-transport.sh before running this verification" >&2
+  exit 1
+fi
+echo "pass: guest agent advertises identity capability"
 
 step "create state that must appear in the clone"
 process_pid=$(kb exec "$source_id" -- sh -c 'nohup sh -c '\''while :; do date +%s%N > /run/kumabox-clone-heartbeat; sleep 1; done'\'' >/dev/null 2>&1 & echo $!')

@@ -3,6 +3,7 @@ package guestagent
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -32,6 +33,9 @@ func TestHandleConnRespondsToHello(t *testing.T) {
 	}
 	if !resp.OK || resp.Version != Version || resp.OS == "" || resp.Hostname == "" {
 		t.Fatalf("response = %+v", resp)
+	}
+	if !slices.Contains(resp.Capabilities, "identity") {
+		t.Fatalf("capabilities = %v, want identity", resp.Capabilities)
 	}
 }
 
