@@ -12,7 +12,7 @@ Usage:
 Checks:
   p0 start | reconcile | stop | logs | delete | gc
   p1 image | image-ref | image-rm-gc | cidata-firstboot
-  p2 config | allocator | hosttap | render | inspect | e2e | cleanup | gc | cni | multinic | queues | parity
+  p2 config | allocator | hosttap | render | inspect | e2e | cleanup | gc | cni | real-cni | multinic | queues | parity
   p3 base-image | resolver | content-store | erofs-builder | boot-profile | cow-runtime | direct-boot-network | metadata | agent | exec | gc | performance
   p4 storage-contract
 
@@ -85,6 +85,7 @@ case "$phase:$check" in
   p2:cleanup) target="$script_dir/p2/verify-network-cleanup.sh" ;;
   p2:gc) target="$script_dir/p2/verify-network-gc.sh" ;;
   p2:cni) target="$script_dir/p2/verify-cni-provider.sh" ;;
+  p2:real-cni|p2:cni-e2e) target="$script_dir/p2/verify-real-cni-e2e.sh" ;;
   p2:multinic|p2:multi-nic) target="$script_dir/p2/verify-multinic-model.sh" ;;
   p2:cni-multinic) target="$script_dir/p2/verify-multinic-model.sh"; set -- --mode cni "$@" ;;
   p2:hosttap-multinic|p2:host-tap-multinic) target="$script_dir/p2/verify-multinic-model.sh"; set -- --mode host-tap "$@" ;;
