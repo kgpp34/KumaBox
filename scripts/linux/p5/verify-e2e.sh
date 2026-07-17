@@ -19,9 +19,11 @@ build_missing=true
 memory=512M
 storage=64M
 agent_timeout=180s
+start_at=1
 use_sudo=false
 suite_started=$SECONDS
 completed=0
+selected=9
 inspect_error=
 
 cleanup_suite() {
@@ -48,6 +50,7 @@ Usage: scripts/linux/p5/verify-e2e.sh [options]
   --memory SIZE            compatibility-test guest memory, defaults to 512M
   --storage SIZE           per-VM writable storage, defaults to 64M
   --agent-timeout DURATION guest-agent timeout, defaults to 180s
+  --start-at NUMBER        start at scenario 1-9, defaults to 1
   --sudo                   run KumaBox and privileged checks through sudo
 
 Runs the complete P5 acceptance suite in dependency order. Each scenario
@@ -80,12 +83,17 @@ while (($#)); do
     --memory) require_value "$1" "${2:-}"; memory=$2; shift 2 ;;
     --storage) require_value "$1" "${2:-}"; storage=$2; shift 2 ;;
     --agent-timeout) require_value "$1" "${2:-}"; agent_timeout=$2; shift 2 ;;
+    --start-at) require_value "$1" "${2:-}"; start_at=$2; shift 2 ;;
     --sudo) use_sudo=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
+start_at=${start_at#P5-}
+[[ $start_at =~ ^0*[1-9]$ ]] || { echo "--start-at must be a scenario number from 1 to 9" >&2; exit 2; }
+start_at=$((10#$start_at))
+selected=$((10 - start_at))
 [[ $(uname -s) == Linux ]] || {
   echo "P5 E2E verification must run on Linux" >&2
   exit 1
@@ -116,6 +124,13 @@ common_args=(
 run_case() {
   local label=$1 script=$2
   shift 2
+  local case_number=${label#P5-}
+  case_number=${case_number%% *}
+  case_number=$((10#$case_number))
+  if ((case_number < start_at)); then
+    printf 'skip: %s (--start-at %s)\n' "$label" "$start_at"
+    return 0
+  fi
   local started=$SECONDS status
   printf '\n================================================================\n'
   printf '==> %s\n' "$label"
@@ -127,8 +142,8 @@ run_case() {
   else
     status=$?
     printf '\nFAIL: %s exited with status %s after %ss\n' "$label" "$status" "$((SECONDS - started))" >&2
-    printf 'state: completed=%s/9 root_dir=%s run_dir=%s log_dir=%s\n' \
-      "$completed" "$root_dir" "$run_dir" "$log_dir" >&2
+    printf 'state: completed=%s/%s start_at=%s root_dir=%s run_dir=%s log_dir=%s\n' \
+      "$completed" "$selected" "$start_at" "$root_dir" "$run_dir" "$log_dir" >&2
     return "$status"
   fi
 }
@@ -143,6 +158,7 @@ printf '  runDir:   %s\n' "$run_dir"
 printf '  logDir:   %s\n' "$log_dir"
 printf '  memory:   %s\n' "$memory"
 printf '  storage:  %s\n' "$storage"
+printf '  startAt:  P5-%02d\n' "$start_at"
 printf '  sudo:     %s\n' "$use_sudo"
 
 printf '\n==> preflight managed OCI agent image\n'
@@ -212,5 +228,6 @@ run_case "P5-09 Native Snapshot GC" verify-native-snapshot-gc.sh \
   --storage "$storage" "${sudo_args[@]}"
 
 printf '\n================================================================\n'
-printf 'P5 E2E verification passed: %s/9 scenarios in %ss\n' "$completed" "$((SECONDS - suite_started))"
+printf 'P5 E2E verification passed: %s/%s selected scenarios in %ss\n' \
+  "$completed" "$selected" "$((SECONDS - suite_started))"
 printf '================================================================\n'
