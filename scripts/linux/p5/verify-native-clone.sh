@@ -18,6 +18,11 @@ success=false
 source_id=
 clone_id=
 snapshot_id=
+active_step="initialization"
+failure_status=
+failure_line=
+failure_command=
+failure_stage=
 
 usage() {
   cat <<'EOF'
@@ -73,7 +78,20 @@ else
   kb_prefix=()
 fi
 
-step() { printf '\n==> %s\n' "$1"; }
+step() {
+  active_step=$1
+  printf '\n==> %s\n' "$1"
+}
+record_error() {
+  failure_status=$1
+  failure_line=$2
+  failure_command=$3
+  failure_stage=$active_step
+}
+print_failure_summary() {
+  printf 'failure: stage=%q status=%s line=%s command=%q\n' \
+    "${failure_stage:-$active_step}" "${failure_status:-unknown}" "${failure_line:-unknown}" "${failure_command:-unknown}"
+}
 kb() {
   "${kb_prefix[@]}" "$kumabox" \
     --root-dir "$root_dir" --run-dir "$run_dir" --log-dir "$log_dir" \
@@ -85,10 +103,15 @@ clean_named_state() {
   kb snapshot rm "$snapshot_name" >/dev/null 2>&1 || true
 }
 on_exit() {
+  local exit_status=$?
   if [[ $success == true ]]; then
     clean_named_state
     return
   fi
+  if [[ -z $failure_status ]]; then
+    failure_status=$exit_status
+  fi
+  print_failure_summary >&2
   step "preserving failed native clone state"
   [[ -z $source_id ]] || kb inspect "$source_id" --json 2>/dev/null || true
   [[ -z $clone_id ]] || kb inspect "$clone_id" --json 2>/dev/null || true
@@ -106,8 +129,10 @@ on_exit() {
     step "failure context: source VMM stderr"
     kb logs "$source_id" --source stderr --tail 80 2>/dev/null || true
   fi
+  print_failure_summary >&2
   printf 'state: root_dir=%s run_dir=%s log_dir=%s\n' "$root_dir" "$run_dir" "$log_dir"
 }
+trap 'record_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
 trap on_exit EXIT
 
 step "clean previous named verification resources"
