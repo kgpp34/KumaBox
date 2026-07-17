@@ -200,14 +200,19 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 			"--cmdline", cmdline,
 		)
 	}
-	for _, disk := range launchDisks(rec) {
-		args = append(args, "--disk", diskArg(disk))
+	disks := newDisks(rec)
+	if len(disks) > 0 {
+		args = append(args, "--disk")
+		for _, disk := range disks {
+			args = append(args, diskArg(disk))
+		}
 	}
 	args = append(args, "--serial", "file="+serialLog, "--console", "off")
-	if meta := activeMetadata(rec); meta != nil && meta.CidataDisk != "" {
-		args = append(args, "--disk", "path="+meta.CidataDisk+",readonly=on,image_type=raw")
+	nets := newNets(rec)
+	if len(nets) > 0 {
+		args = append(args, "--net")
 	}
-	for _, net := range newNets(rec) {
+	for _, net := range nets {
 		netArg := fmt.Sprintf("tap=%s,mac=%s", net.TAP, net.MAC)
 		if net.NumQueues > 0 {
 			netArg += fmt.Sprintf(",num_queues=%d", net.NumQueues)
@@ -215,7 +220,7 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		if net.QueueSize > 0 {
 			netArg += fmt.Sprintf(",queue_size=%d", net.QueueSize)
 		}
-		args = append(args, "--net", netArg)
+		args = append(args, netArg)
 	}
 	vsock := newVsock(rec)
 	if vsock != nil {
@@ -232,8 +237,8 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		NetnsPath:    netnsPath(rec),
 		CPUs:         CPUs{Boot: cpus},
 		Memory:       Memory{Size: vmMemoryBytes(rec)},
-		Disks:        newDisks(rec),
-		Nets:         newNets(rec),
+		Disks:        disks,
+		Nets:         nets,
 		Vsock:        vsock,
 		Serial:       Serial{Path: serialLog},
 		Console:      Console{Mode: "off"},

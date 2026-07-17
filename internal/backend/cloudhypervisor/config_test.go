@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kumabox/kumabox/internal/config"
@@ -120,6 +121,9 @@ func TestRenderConfigSupportsFirmwareBoot(t *testing.T) {
 	}
 	if !argsContainPair(rendered.Args, "--disk", "path="+rec.Metadata.CidataDisk+",readonly=on,image_type=raw") {
 		t.Fatalf("cidata disk arg missing: %v", rendered.Args)
+	}
+	if countArg(rendered.Args, "--disk") != 1 {
+		t.Fatalf("disk option must be grouped: %v", rendered.Args)
 	}
 }
 
@@ -305,6 +309,34 @@ func TestRenderConfigIncludesNetworkDevice(t *testing.T) {
 	}
 }
 
+func TestConfigGroupsMultipleNetworkValuesUnderOneOption(t *testing.T) {
+	rec := &vmstore.VMRecord{
+		ID:       "kb_multi_net",
+		Name:     "multi-net",
+		RootDisk: "/fixtures/ubuntu.img",
+		Firmware: "/fixtures/CLOUDHV.fd",
+		RunDir:   "/run/kumabox/vms/kb_multi_net",
+		LogDir:   "/var/log/kumabox/vms/kb_multi_net",
+		NetworkConfigs: []kbnetwork.Config{
+			{TAP: "kbtap0", MAC: "02:00:00:00:00:10", NumQueues: 2, QueueSize: 256},
+			{TAP: "kbtap1", MAC: "02:00:00:00:00:11", NumQueues: 2, QueueSize: 256},
+		},
+	}
+
+	rendered := NewConfig(config.Default(), rec)
+	if countArg(rendered.Args, "--net") != 1 {
+		t.Fatalf("network option must be grouped: %v", rendered.Args)
+	}
+	for _, value := range []string{
+		"tap=kbtap0,mac=02:00:00:00:00:10,num_queues=2,queue_size=256",
+		"tap=kbtap1,mac=02:00:00:00:00:11,num_queues=2,queue_size=256",
+	} {
+		if !argsContainPair(rendered.Args, "--net", value) {
+			t.Fatalf("network value %q missing: %v", value, rendered.Args)
+		}
+	}
+}
+
 func TestRenderConfigRejectsInvalidNetworkQueues(t *testing.T) {
 	dir := t.TempDir()
 	rec := &vmstore.VMRecord{
@@ -372,10 +404,25 @@ func TestRenderConfigSkipsCidataAfterFirstBoot(t *testing.T) {
 }
 
 func argsContainPair(args []string, key, value string) bool {
-	for i, arg := range args {
-		if arg == key && i+1 < len(args) && args[i+1] == value {
-			return true
+	for i := 0; i < len(args); i++ {
+		if args[i] != key {
+			continue
+		}
+		for i++; i < len(args) && !strings.HasPrefix(args[i], "--"); i++ {
+			if args[i] == value {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func countArg(args []string, value string) int {
+	count := 0
+	for _, arg := range args {
+		if arg == value {
+			count++
+		}
+	}
+	return count
 }
