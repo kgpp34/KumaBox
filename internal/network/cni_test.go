@@ -167,6 +167,10 @@ func writeTestCNIConfig(t *testing.T, dir string, failDel bool) (config.NetworkC
 	plugin := `#!/bin/sh
 set -eu
 cat >/dev/null
+case ";${CNI_ARGS:-};" in
+  *";IgnoreUnknown=1;"*) ;;
+  *) echo "ARGS: unknown KumaBox args without IgnoreUnknown=1" >&2; exit 2 ;;
+esac
 printf '%s %s %s %s\n' "$CNI_COMMAND" "$CNI_CONTAINERID" "$CNI_IFNAME" "$CNI_NETNS" >> "` + logPath + `"
 if [ "$CNI_COMMAND" = "ADD" ]; then
   printf '{"cniVersion":"1.0.0","interfaces":[{"name":"%s","mac":"5a:00:00:00:00:44","sandbox":"%s"}],"ips":[{"address":"10.244.0.2/24","gateway":"10.244.0.1","interface":0}],"dns":{"nameservers":["1.1.1.1"]}}\n' "$CNI_IFNAME" "$CNI_NETNS"

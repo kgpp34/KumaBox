@@ -108,10 +108,7 @@ func (p *CNIProvider) Add(ctx context.Context, req CNIAddRequest) (_ *Allocation
 		ContainerID: req.VMID,
 		NetNS:       netnsPath,
 		IfName:      ifName,
-		Args: [][2]string{
-			{"KUMABOX_VM_ID", req.VMID},
-			{"KUMABOX_NETWORK", networkName},
-		},
+		Args:        cniRuntimeArgs(req.VMID, networkName),
 	}
 	cni := libcni.NewCNIConfigWithCacheDir(
 		[]string{p.cfg.CNIBinDir},
@@ -196,10 +193,7 @@ func (p *CNIProvider) Delete(ctx context.Context, req CNIDeleteRequest) error {
 		ContainerID: req.VMID,
 		NetNS:       netnsPath,
 		IfName:      req.IfName,
-		Args: [][2]string{
-			{"KUMABOX_VM_ID", req.VMID},
-			{"KUMABOX_NETWORK", networkName},
-		},
+		Args:        cniRuntimeArgs(req.VMID, networkName),
 	}
 	cni := libcni.NewCNIConfigWithCacheDir(
 		[]string{p.cfg.CNIBinDir},
@@ -222,6 +216,14 @@ func (p *CNIProvider) Delete(ctx context.Context, req CNIDeleteRequest) error {
 		}
 	}
 	return nil
+}
+
+func cniRuntimeArgs(vmID, networkName string) [][2]string {
+	return [][2]string{
+		{"IgnoreUnknown", "1"},
+		{"KUMABOX_VM_ID", vmID},
+		{"KUMABOX_NETWORK", networkName},
+	}
 }
 
 func CNIName(network, fallback string) string {
