@@ -77,6 +77,17 @@ on_exit() {
   kb inspect "$source_name" --json 2>/dev/null || true
   kb inspect "$clone_name" --json 2>/dev/null || true
   kb snapshot inspect "$snapshot_name" --json 2>/dev/null || true
+  if [[ -n ${source_id:-} ]]; then
+    step "failure context: guest writable filesystem mounts"
+    kb exec "$source_id" -- sh -c '
+      printf "%s\n" "mountinfo (ext4, xfs, btrfs, and overlay):"
+      grep -E " - (ext[234]|xfs|btrfs|overlay) " /proc/self/mountinfo || true
+      printf "%s\n" "findmnt:"
+      findmnt -rn -o TARGET,SOURCE,FSTYPE,OPTIONS || true
+      printf "%s\n" "reserved COW mount:"
+      findmnt -T /.kumabox/cow -o TARGET,SOURCE,FSTYPE,OPTIONS || true
+    ' 2>&1 || true
+  fi
   printf 'state: root_dir=%s run_dir=%s log_dir=%s\n' "$root_dir" "$run_dir" "$log_dir"
 }
 trap on_exit EXIT

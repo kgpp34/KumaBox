@@ -156,12 +156,16 @@ mountroot() {
     cow_dev="$(resolve_disk "$COW")" || panic "COW device ${COW} not found"
     mkdir -p "${internal}/cow"
     mount -t ext4 -o noatime "$cow_dev" "${internal}/cow" || panic "mount COW failed"
-    mkdir -p "${internal}/cow/upper" "${internal}/cow/work"
+    mkdir -p "${internal}/cow/upper" "${internal}/cow/work" "${internal}/cow/control"
+    chmod 0700 "${internal}/cow/control"
 
     overlay_opts="lowerdir=${lower},upperdir=${internal}/cow/upper,workdir=${internal}/cow/work,index=on,redirect_dir=on,metacopy=on,xino=on"
     mount -t overlay overlay -o "$overlay_opts" "$rootmnt" || panic "overlay rootfs failed"
 
     mkdir -p "${rootmnt}/dev" "${rootmnt}/proc" "${rootmnt}/sys" "${rootmnt}/run"
+    mkdir -p "${rootmnt}/.kumabox/cow"
+    mount --bind "${internal}/cow/control" "${rootmnt}/.kumabox/cow" || panic "expose COW freeze mount failed"
+    mount -o remount,bind,rw,nosuid,nodev,noexec "${rootmnt}/.kumabox/cow" || panic "secure COW freeze mount failed"
 
     for dev in $layer_devs; do
         blk="${dev##*/}"

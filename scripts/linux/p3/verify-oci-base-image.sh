@@ -200,6 +200,7 @@ run_check "overlay hook installed" 'test -x /etc/initramfs-tools/scripts/kumabox
 run_check "network hook installed" 'test -x /etc/initramfs-tools/scripts/init-bottom/kumabox-network'
 run_check "overlay hook reads kumabox.layers" 'grep -q "kumabox.layers=" /etc/initramfs-tools/scripts/kumabox-overlay'
 run_check "overlay hook reads kumabox.cow" 'grep -q "kumabox.cow=" /etc/initramfs-tools/scripts/kumabox-overlay'
+run_check "overlay hook preserves COW freeze mount" 'grep -q "expose COW freeze mount" /etc/initramfs-tools/scripts/kumabox-overlay'
 run_check "network hook reads kumabox.hostname" 'grep -q "kumabox.hostname=" /etc/initramfs-tools/scripts/init-bottom/kumabox-network'
 run_check "initramfs includes overlay hook" 'initrd="$(ls /boot/initrd.img-* | head -n 1)"; lsinitramfs "$initrd" | grep -q "scripts/kumabox-overlay"'
 run_check "initramfs includes network hook" 'initrd="$(ls /boot/initrd.img-* | head -n 1)"; lsinitramfs "$initrd" | grep -q "scripts/init-bottom/kumabox-network"'
