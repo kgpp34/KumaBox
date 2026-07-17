@@ -37,7 +37,8 @@ func (e *APIError) Error() string {
 }
 
 type vmInfo struct {
-	State string `json:"state"`
+	State      string                     `json:"state"`
+	DeviceTree map[string]json.RawMessage `json:"device_tree"`
 }
 
 func socketHTTPClient(socketPath string, timeout time.Duration) *http.Client {
