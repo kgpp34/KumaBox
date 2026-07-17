@@ -169,6 +169,8 @@ func roundTrip(ctx context.Context, socketPath string, req any, resp any) error 
 		return fmt.Errorf("%w: dial agent: %v", ErrNotReady, err)
 	}
 	defer conn.Close() //nolint:errcheck
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 
 	raw, err := json.Marshal(req)
 	if err != nil {

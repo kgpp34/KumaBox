@@ -153,6 +153,54 @@ func TestPingMissingSocketReportsNotReady(t *testing.T) {
 	}
 }
 
+func TestConfigureIdentityCancelsStalledResponse(t *testing.T) {
+	t.Parallel()
+
+	socketPath := testSocketPath(t)
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close() //nolint:errcheck
+
+	requestReceived := make(chan struct{})
+	go func() {
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer conn.Close() //nolint:errcheck
+		reader := bufio.NewReader(conn)
+		if _, readErr := reader.ReadString('\n'); readErr != nil {
+			return
+		}
+		if _, writeErr := conn.Write([]byte("OK 1024\n")); writeErr != nil {
+			return
+		}
+		if _, readErr := reader.ReadString('\n'); readErr != nil {
+			return
+		}
+		close(requestReceived)
+		_, _ = reader.ReadByte()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err = ConfigureIdentity(ctx, socketPath, IdentityRequest{Hostname: "clone"})
+	if err == nil || !errors.Is(err, ErrNotReady) {
+		t.Fatalf("error = %v, want ErrNotReady", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("stalled request ignored context for %s", elapsed)
+	}
+	select {
+	case <-requestReceived:
+	default:
+		t.Fatal("identity request was not received")
+	}
+}
+
 func testSocketPath(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "kb-agent-test-*")

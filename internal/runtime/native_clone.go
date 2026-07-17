@@ -13,7 +13,11 @@ import (
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
-const cloneIdentityTimeout = 90 * time.Second
+const (
+	cloneIdentityTimeout        = 90 * time.Second
+	cloneIdentityAttemptTimeout = 5 * time.Second
+	cloneIdentityRetryInterval  = 500 * time.Millisecond
+)
 
 var configureGuestIdentity = configureCloneIdentity
 
@@ -195,16 +199,30 @@ func configureCloneIdentity(ctx context.Context, socket string, rec *vmstore.VMR
 	if _, err := kbagent.Ping(identityCtx, socket); err != nil {
 		return fmt.Errorf("wait for clone guest agent: %w", err)
 	}
+	var lastErr error
 	for {
-		if _, err := kbagent.ConfigureIdentity(identityCtx, socket, request); err == nil {
+		attemptCtx, attemptCancel := context.WithTimeout(identityCtx, cloneIdentityAttemptTimeout)
+		_, err := kbagent.ConfigureIdentity(attemptCtx, socket, request)
+		attemptCancel()
+		if err == nil {
 			return nil
-		} else if identityCtx.Err() != nil {
-			return fmt.Errorf("configure clone guest identity: %w", err)
 		}
+		lastErr = err
+		if identityCtx.Err() != nil {
+			return fmt.Errorf("configure clone guest identity: last attempt: %v: %w", lastErr, identityCtx.Err())
+		}
+
+		retry := time.NewTimer(cloneIdentityRetryInterval)
 		select {
 		case <-identityCtx.Done():
-			return fmt.Errorf("configure clone guest identity: %w", identityCtx.Err())
-		case <-time.After(500 * time.Millisecond):
+			if !retry.Stop() {
+				select {
+				case <-retry.C:
+				default:
+				}
+			}
+			return fmt.Errorf("configure clone guest identity: last attempt: %v: %w", lastErr, identityCtx.Err())
+		case <-retry.C:
 		}
 	}
 }
