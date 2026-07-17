@@ -123,8 +123,20 @@ install_text() {
   rm -f "$temporary"
 }
 
+hydrate_failure_context() {
+  local inspect_json
+  inspect_json=$(kb inspect "$name" --json 2>/dev/null) || return 0
+  vm_id=${vm_id:-$(jq -r '.id // empty' <<<"$inspect_json")}
+  vm_log_dir=${vm_log_dir:-$(jq -r '.logDir // empty' <<<"$inspect_json")}
+  vm_config=${vm_config:-$(jq -r '.config // empty' <<<"$inspect_json")}
+  vm_pid=${vm_pid:-$(jq -r '.pid // empty' <<<"$inspect_json")}
+  tap=${tap:-$(jq -r '.networkConfigs[0].tap // empty' <<<"$inspect_json")}
+  netns_path=${netns_path:-$(jq -r '.networkConfigs[0].netnsPath // empty' <<<"$inspect_json")}
+}
+
 print_failure_context() {
   set +e
+  hydrate_failure_context
   section "failure context: VM"
   kb inspect "$name" --json 2>/dev/null | jq . || true
   section "failure context: KumaBox network"
@@ -132,10 +144,19 @@ print_failure_context() {
   section "failure context: host bridge"
   "${privileged[@]}" ip -d link show "$bridge" 2>/dev/null || true
   "${privileged[@]}" ip -4 address show "$bridge" 2>/dev/null || true
+  if [[ -n ${vm_config:-} ]]; then
+    section "failure context: rendered VMM config"
+    "${privileged[@]}" jq . "$vm_config" 2>/dev/null || true
+  fi
+  if [[ -n ${vm_pid:-} ]]; then
+    section "failure context: VMM process"
+    "${privileged[@]}" ps -o pid,ppid,state,etimes,args -p "$vm_pid" 2>/dev/null || true
+  fi
   if [[ -n ${netns_path:-} ]]; then
     section "failure context: CNI namespace"
     "${privileged[@]}" ip netns exec "$(basename "$netns_path")" ip -d link 2>/dev/null || true
     "${privileged[@]}" ip netns exec "$(basename "$netns_path")" ip address 2>/dev/null || true
+    "${privileged[@]}" ip netns exec "$(basename "$netns_path")" ip tuntap show 2>/dev/null || true
     "${privileged[@]}" ip netns exec "$(basename "$netns_path")" tc filter show dev eth0 ingress 2>/dev/null || true
     [[ -z ${tap:-} ]] || "${privileged[@]}" ip netns exec "$(basename "$netns_path")" tc filter show dev "$tap" ingress 2>/dev/null || true
   fi
@@ -144,6 +165,8 @@ print_failure_context() {
     "${privileged[@]}" tail -n 120 "$vm_log_dir/console.log" 2>/dev/null || true
     section "failure context: VMM stderr"
     "${privileged[@]}" tail -n 120 "$vm_log_dir/cloud-hypervisor.stderr.log" 2>/dev/null || true
+    section "failure context: VMM stdout"
+    "${privileged[@]}" tail -n 120 "$vm_log_dir/cloud-hypervisor.stdout.log" 2>/dev/null || true
   fi
 }
 

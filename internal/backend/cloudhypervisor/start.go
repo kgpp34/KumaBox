@@ -76,19 +76,21 @@ func startProcess(cfg Config) (*backend.StartResult, error) {
 		_ = cmd.Wait()
 		return nil, err
 	}
+	exited := make(chan error, 1)
+	go func() {
+		exited <- cmd.Wait()
+	}()
 
 	timeout := time.Duration(cfg.APITimeoutMs) * time.Millisecond
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	if err := waitForUnixSocket(cfg.APISocket, pid, timeout); err != nil {
+	if err := waitForUnixSocket(cfg.APISocket, exited, timeout); err != nil {
 		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
 		_ = os.Remove(cfg.PIDFile)
 		return nil, err
 	}
 
-	go cmd.Wait() //nolint:errcheck
 	return &backend.StartResult{PID: pid, APISocket: cfg.APISocket}, nil
 }
 
@@ -131,16 +133,21 @@ func readPIDFile(path string) (int, error) {
 	return pid, nil
 }
 
-func waitForUnixSocket(path string, pid int, timeout time.Duration) error {
+func waitForUnixSocket(path string, exited <-chan error, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
+		select {
+		case err := <-exited:
+			if err == nil {
+				return fmt.Errorf("Cloud Hypervisor exited before API socket became ready")
+			}
+			return fmt.Errorf("Cloud Hypervisor exited before API socket became ready: %w", err)
+		default:
+		}
 		conn, err := net.DialTimeout("unix", path, 100*time.Millisecond)
 		if err == nil {
 			_ = conn.Close()
 			return nil
-		}
-		if !processAlive(pid) {
-			return fmt.Errorf("Cloud Hypervisor exited before API socket became ready")
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("timed out waiting for Cloud Hypervisor API socket %s", path)
