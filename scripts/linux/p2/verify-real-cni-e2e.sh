@@ -106,6 +106,7 @@ work_dir=$run_dir/cni-e2e-$name
 config_file=$work_dir/kumabox.toml
 cni_conf_dir=$work_dir/net.d
 cni_conf=$cni_conf_dir/10-$network_name.conflist
+ipam_data_dir=$work_dir/ipam
 
 kb() {
   "${kb_prefix[@]}" "$kumabox" --config "$config_file" "$@"
@@ -135,12 +136,14 @@ hydrate_failure_context() {
 }
 
 print_failure_context() {
+  local network_ref
   set +e
   hydrate_failure_context
+  network_ref=${vm_id:-$name}
   section "failure context: VM"
   kb inspect "$name" --json 2>/dev/null | jq . || true
   section "failure context: KumaBox network"
-  kb network inspect "$name" --json 2>/dev/null | jq . || true
+  kb network inspect "$network_ref" --json 2>/dev/null | jq . || true
   section "failure context: host bridge"
   "${privileged[@]}" ip -d link show "$bridge" 2>/dev/null || true
   "${privileged[@]}" ip -4 address show "$bridge" 2>/dev/null || true
@@ -232,6 +235,7 @@ install_text "$cni_conf" "{
       \"hairpinMode\": true,
       \"ipam\": {
         \"type\": \"host-local\",
+        \"dataDir\": \"$ipam_data_dir\",
         \"ranges\": [[{\"subnet\": \"$subnet\", \"gateway\": \"$gateway\"}]],
         \"routes\": [{\"dst\": \"0.0.0.0/0\"}]
       },
@@ -297,8 +301,19 @@ fi
 section "delete VM and verify CNI DEL cleanup"
 kb delete "$name" --force | jq .
 [[ ! -e $netns_path ]] || { echo "CNI namespace remains after delete: $netns_path" >&2; exit 1; }
-if kb network inspect "$name" --json >/dev/null 2>&1; then
-  echo "KumaBox network record remains after delete" >&2
+if "${privileged[@]}" ip link show "$tap" >/dev/null 2>&1; then
+  echo "CNI TAP remains after delete: $tap" >&2
+  exit 1
+fi
+network_records=$(kb network ls --json)
+if jq -e --arg vm_id "$vm_id" 'any(.[]; .vmId == $vm_id)' <<<"$network_records" >/dev/null; then
+  echo "KumaBox network provider record remains after delete for VM $vm_id" >&2
+  printf '%s\n' "$network_records" | jq . >&2
+  exit 1
+fi
+lease_file=$ipam_data_dir/$network_name/$guest_ip
+if "${privileged[@]}" test -e "$lease_file"; then
+  echo "host-local IPAM lease remains after delete: $lease_file" >&2
   exit 1
 fi
 
