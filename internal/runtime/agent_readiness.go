@@ -5,7 +5,12 @@ import (
 	"fmt"
 
 	agentclient "github.com/kumabox/kumabox/internal/agent/client"
+	"github.com/kumabox/kumabox/internal/vmstore"
 )
+
+func requiresAgentReadiness(rec *vmstore.VMRecord) bool {
+	return rec != nil && rec.Image != nil && rec.Image.BootMode == "direct"
+}
 
 // verifyGuestExecReadiness is the final guest-side gate for restore and clone.
 // A VMM process and a responding agent are not sufficient: the restored guest

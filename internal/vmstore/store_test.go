@@ -326,6 +326,39 @@ func TestMarkRunningMarksFirmwareVMFirstBooted(t *testing.T) {
 	}
 }
 
+func TestMarkPerformancePersistsDefensivePhaseMetrics(t *testing.T) {
+	dir := t.TempDir()
+	store := New(filepath.Join(dir, "data"))
+	rec, err := store.Create(CreateRequest{
+		Name:     "performance",
+		RootDisk: "base.qcow2", Kernel: "vmlinuz", Initrd: "initrd.img",
+		RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	phase := time.Now().UTC()
+	metrics := PerformanceMetrics{
+		Operation: "run", CommandStartedAt: phase,
+		ImageResolvedAt: &phase, ReadyDurationMs: 42,
+	}
+	updated, err := store.MarkPerformance(rec.ID, metrics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	*updated.Performance.ImageResolvedAt = updated.Performance.ImageResolvedAt.Add(time.Hour)
+	inspected, err := store.Inspect(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspected.Performance == nil || inspected.Performance.ReadyDurationMs != 42 {
+		t.Fatalf("performance = %+v", inspected.Performance)
+	}
+	if inspected.Performance.ImageResolvedAt.Equal(*updated.Performance.ImageResolvedAt) {
+		t.Fatal("inspect returned mutable performance timestamp")
+	}
+}
+
 func TestMarkRestoredMarksFirmwareVMFirstBooted(t *testing.T) {
 	dir := t.TempDir()
 	store := New(filepath.Join(dir, "data"))

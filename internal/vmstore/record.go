@@ -99,6 +99,7 @@ type VMRecord struct {
 	Error              string                   `json:"error,omitempty"`
 	Restore            *RestoreStatus           `json:"restore,omitempty"`
 	LastRestore        *RestoreResult           `json:"lastRestore,omitempty"`
+	Performance        *PerformanceMetrics      `json:"performance,omitempty"`
 	SnapshotDependency *SnapshotDependency      `json:"snapshotDependency,omitempty"`
 	Hibernate          *HibernateStatus         `json:"hibernate,omitempty"`
 	RootDisk           string                   `json:"rootDisk"`
@@ -145,6 +146,25 @@ type RestoreResult struct {
 	Mode        string    `json:"mode"`
 	DurationMs  int64     `json:"durationMs"`
 	CompletedAt time.Time `json:"completedAt"`
+}
+
+// PerformanceMetrics records the user-visible lifecycle milestones for the
+// latest create-and-start or start operation. Phase times are wall-clock
+// timestamps for inspection; duration fields are calculated from a monotonic
+// clock before persistence.
+type PerformanceMetrics struct {
+	Operation              string     `json:"operation"`
+	ImageDigest            string     `json:"imageDigest,omitempty"`
+	EnvironmentFingerprint string     `json:"environmentFingerprint,omitempty"`
+	CommandStartedAt       time.Time  `json:"commandStartedAt"`
+	ImageResolvedAt        *time.Time `json:"imageResolvedAt,omitempty"`
+	StorageReadyAt         *time.Time `json:"storageReadyAt,omitempty"`
+	NetworkReadyAt         *time.Time `json:"networkReadyAt,omitempty"`
+	VMMSpawnedAt           *time.Time `json:"vmmSpawnedAt,omitempty"`
+	VMMAPIReadyAt          *time.Time `json:"vmmAPIReadyAt,omitempty"`
+	AgentConnectedAt       *time.Time `json:"agentConnectedAt,omitempty"`
+	FirstExecCompletedAt   *time.Time `json:"firstExecCompletedAt,omitempty"`
+	ReadyDurationMs        int64      `json:"readyDurationMs,omitempty"`
 }
 
 // SnapshotDependency pins native memory payload while a delayed restore mode
@@ -359,6 +379,17 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 		lastRestore := *rec.LastRestore
 		copied.LastRestore = &lastRestore
 	}
+	if rec.Performance != nil {
+		performance := *rec.Performance
+		performance.ImageResolvedAt = cloneTime(rec.Performance.ImageResolvedAt)
+		performance.StorageReadyAt = cloneTime(rec.Performance.StorageReadyAt)
+		performance.NetworkReadyAt = cloneTime(rec.Performance.NetworkReadyAt)
+		performance.VMMSpawnedAt = cloneTime(rec.Performance.VMMSpawnedAt)
+		performance.VMMAPIReadyAt = cloneTime(rec.Performance.VMMAPIReadyAt)
+		performance.AgentConnectedAt = cloneTime(rec.Performance.AgentConnectedAt)
+		performance.FirstExecCompletedAt = cloneTime(rec.Performance.FirstExecCompletedAt)
+		copied.Performance = &performance
+	}
 	if rec.SnapshotDependency != nil {
 		dependency := *rec.SnapshotDependency
 		copied.SnapshotDependency = &dependency
@@ -380,6 +411,14 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 		stoppedAt := *rec.StoppedAt
 		copied.StoppedAt = &stoppedAt
 	}
+	return &copied
+}
+
+func cloneTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	copied := *value
 	return &copied
 }
 

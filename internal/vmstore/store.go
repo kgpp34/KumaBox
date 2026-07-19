@@ -186,6 +186,27 @@ func (s *Store) MarkRunning(ref string, pid int, apiSocket string) (*VMRecord, e
 	return updated, nil
 }
 
+// MarkPerformance persists the latest lifecycle timing after the VM has
+// reached the product readiness boundary.
+func (s *Store) MarkPerformance(ref string, metrics PerformanceMetrics) (*VMRecord, error) {
+	var updated *VMRecord
+	err := s.update(func(idx *vmIndex) error {
+		id, err := idx.resolve(ref)
+		if err != nil {
+			return err
+		}
+		rec := idx.VMs[id]
+		rec.Performance = &metrics
+		rec.UpdatedAt = time.Now().UTC()
+		updated = cloneRecord(rec)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
 // BeginRestore writes the recovery marker before any writable disk is
 // replaced. Repeated calls deliberately refresh the marker so restore is the
 // recovery path for an interrupted prior attempt.

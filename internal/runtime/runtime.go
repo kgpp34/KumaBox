@@ -105,9 +105,17 @@ func NewWithBackend(store *vmstore.Store, vmBackend backend.Lifecycle) *Runtime 
 // stable tap/MAC/IP values. If rendering fails, runtime rolls back any provider
 // resources before removing the VM record.
 func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
+	return r.createVMContext(context.Background(), req, nil)
+}
+
+func (r *Runtime) createVMContext(ctx context.Context, req vmstore.CreateRequest, metrics *lifecycleMetrics) (*vmstore.VMRecord, error) {
 	rec, err := r.store.Create(req)
 	if err != nil {
 		return nil, err
+	}
+	if metrics != nil {
+		metrics.bindRecord(rec)
+		metrics.markImageResolved(time.Now())
 	}
 	if err := r.attachNetwork(rec); err != nil {
 		_ = r.store.Delete(rec.ID)
@@ -116,11 +124,18 @@ func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error)
 	if updated, err := r.store.Inspect(rec.ID); err == nil {
 		rec = updated
 	}
-	if err := prepareStorageWithQEMUImg(context.Background(), rec, r.store.RootDir(), r.qemuImg); err != nil {
+	if metrics != nil {
+		metrics.bindRecord(rec)
+		metrics.markNetworkReady(time.Now())
+	}
+	if err := prepareStorageWithQEMUImg(ctx, rec, r.store.RootDir(), r.qemuImg); err != nil {
 		r.rollbackNetwork(rec)
 		_ = removeManagedDirs(rec, r.store.RootDir())
 		_ = r.store.Delete(rec.ID)
 		return nil, err
+	}
+	if metrics != nil {
+		metrics.markStorageReady(time.Now())
 	}
 	if err := r.backend.RenderConfig(rec); err != nil {
 		r.rollbackNetwork(rec)
@@ -143,6 +158,7 @@ func (r *Runtime) StartVM(ref string) (*vmstore.VMRecord, error) {
 // StartVMContext starts an existing VM while holding its cross-process
 // operation lock. Waiting for the lock observes ctx cancellation.
 func (r *Runtime) StartVMContext(ctx context.Context, ref string) (*vmstore.VMRecord, error) {
+	commandStarted := time.Now()
 	rec, err := r.store.Inspect(ref)
 	if err != nil {
 		return nil, err
@@ -152,10 +168,12 @@ func (r *Runtime) StartVMContext(ctx context.Context, ref string) (*vmstore.VMRe
 		return nil, fmt.Errorf("lock VM %s for start: %w", rec.ID, err)
 	}
 	defer lock.Release() //nolint:errcheck
-	return r.startVMLocked(ctx, rec.ID)
+	metrics := newLifecycleMetrics("start", commandStarted, rec)
+	metrics.markImageResolved(commandStarted)
+	return r.startVMLocked(ctx, rec.ID, metrics)
 }
 
-func (r *Runtime) startVMLocked(ctx context.Context, ref string) (*vmstore.VMRecord, error) {
+func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecycleMetrics) (*vmstore.VMRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("start VM: %w", err)
 	}
@@ -169,12 +187,18 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string) (*vmstore.VMRec
 	if rec.Hibernate != nil {
 		return nil, fmt.Errorf("VM_HIBERNATED: VM %s must be restored from snapshot %s", rec.Name, rec.Hibernate.SnapshotID)
 	}
+	if metrics == nil {
+		metrics = newLifecycleMetrics("start", time.Now(), rec)
+	}
+	metrics.bindRecord(rec)
+	metrics.markNetworkReady(time.Now())
 	if err := prepareStorageWithQEMUImg(ctx, rec, r.store.RootDir(), r.qemuImg); err != nil {
 		if _, markErr := r.store.MarkError(rec.ID, err.Error()); markErr != nil {
 			return nil, markErr
 		}
 		return nil, err
 	}
+	metrics.markStorageReady(time.Now())
 
 	if err := r.backend.RenderConfig(rec); err != nil {
 		if _, markErr := r.store.MarkError(rec.ID, err.Error()); markErr != nil {
@@ -186,6 +210,7 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string) (*vmstore.VMRec
 		return nil, fmt.Errorf("start VM: %w", err)
 	}
 
+	metrics.markVMMSpawned(time.Now())
 	result, err := r.backend.StartVM(rec)
 	if err != nil {
 		if _, markErr := r.store.MarkError(rec.ID, err.Error()); markErr != nil {
@@ -193,11 +218,28 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string) (*vmstore.VMRec
 		}
 		return nil, err
 	}
+	metrics.markVMMAPIReady(time.Now())
 	started, err := r.store.MarkRunning(rec.ID, result.PID, result.APISocket)
 	if err != nil {
 		return nil, err
 	}
-	return r.applyObservation(started), nil
+	if requiresAgentReadiness(started) {
+		if err := r.guestReadiness(ctx, started.VsockSocket); err != nil {
+			_, _ = r.backend.StopVM(started, backend.StopOptions{Force: true})
+			if _, markErr := r.store.MarkError(started.ID, err.Error()); markErr != nil {
+				return nil, markErr
+			}
+			return nil, err
+		}
+		readyAt := time.Now()
+		metrics.markAgentConnected(readyAt)
+		metrics.markFirstExecCompleted(readyAt)
+	}
+	updated, err := r.store.MarkPerformance(started.ID, metrics.snapshot())
+	if err != nil {
+		return nil, err
+	}
+	return r.applyObservation(updated), nil
 }
 
 // RunVM creates and starts a VM.
@@ -207,15 +249,29 @@ func (r *Runtime) RunVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
 
 // RunVMContext creates and starts a VM with cancellation propagated to start.
 func (r *Runtime) RunVMContext(ctx context.Context, req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
-	rec, err := r.CreateVM(req)
+	metrics := newLifecycleMetrics("run", time.Now(), nil)
+	rec, err := r.createVMContext(ctx, req, metrics)
 	if err != nil {
 		return nil, err
 	}
-	started, err := r.StartVMContext(ctx, rec.ID)
+	started, err := r.startVMWithMetrics(ctx, rec.ID, metrics)
 	if err != nil {
 		return nil, err
 	}
 	return started, nil
+}
+
+func (r *Runtime) startVMWithMetrics(ctx context.Context, ref string, metrics *lifecycleMetrics) (*vmstore.VMRecord, error) {
+	rec, err := r.store.Inspect(ref)
+	if err != nil {
+		return nil, err
+	}
+	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
+	if err != nil {
+		return nil, fmt.Errorf("lock VM %s for start: %w", rec.ID, err)
+	}
+	defer lock.Release() //nolint:errcheck
+	return r.startVMLocked(ctx, rec.ID, metrics)
 }
 
 // StopVM stops a running VM and updates its persisted state.
