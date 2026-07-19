@@ -250,10 +250,7 @@ func IsCNISelection(network string) bool {
 }
 
 func guestIfName(index int) string {
-	if index <= 0 {
-		return "eth0"
-	}
-	return fmt.Sprintf("eth%d", index)
+	return GuestInterfaceName(index)
 }
 
 func loadCNIConfig(configDir, name string) (*cniNetworkConfig, error) {

@@ -14,6 +14,7 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/kumabox/kumabox/internal/metadata"
+	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -415,7 +416,7 @@ func guestNICName(ifName string, index int) string {
 	if ifName != "" {
 		return ifName
 	}
-	return fmt.Sprintf("eth%d", index)
+	return kbnetwork.GuestInterfaceName(index)
 }
 
 func prefixNetmask(prefix int) string {

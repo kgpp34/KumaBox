@@ -100,7 +100,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 
 	observed := r.applyObservation(rec)
 	if observed.ObservedState == vmstore.ObservedStateRunning || observed.ObservedState == vmstore.ObservedStatePaused {
-		if _, err := r.stopVMLocked(ctx, rec.ID, backend.StopOptions{Force: true, Timeout: 5 * time.Second}); err != nil {
+		if _, err := r.stopVMLocked(ctx, rec.ID, backend.StopOptions{Force: true, Timeout: forcedStopTimeout}); err != nil {
 			return nil, fmt.Errorf("stop VM for restore: %w", err)
 		}
 	}
@@ -177,7 +177,7 @@ func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manif
 	}
 	staged.disks = make([]stagedRestoreDisk, len(manifest.Disks))
 	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(2)
+	group.SetLimit(storage.MaxConcurrentFileCopies)
 	for index, disk := range manifest.Disks {
 		index, disk := index, disk
 		group.Go(func() error {

@@ -21,6 +21,8 @@ import (
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
+const forcedStopTimeout = 5 * time.Second
+
 // Runtime coordinates VM lifecycle operations across the store, backend, and
 // host-side providers.
 //

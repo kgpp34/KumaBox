@@ -6,7 +6,10 @@
 // cleanup.
 package network
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 const (
 	// ProviderHostTap is KumaBox's built-in Linux bridge + TAP provider.
@@ -20,6 +23,15 @@ const (
 )
 
 const maxInterfaceNameLength = 15
+
+const DefaultGuestInterfaceName = "eth0"
+
+func GuestInterfaceName(index int) string {
+	if index <= 0 {
+		return DefaultGuestInterfaceName
+	}
+	return fmt.Sprintf("eth%d", index)
+}
 
 type AddSpec struct {
 	Index    int

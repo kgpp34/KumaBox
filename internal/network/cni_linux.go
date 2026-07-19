@@ -18,6 +18,8 @@ import (
 	"github.com/vishvananda/netns"
 )
 
+const cniPollInterval = 100 * time.Millisecond
+
 const netnsDir = "/var/run/netns"
 
 func NetNSPath(vmID string) string {
@@ -78,7 +80,7 @@ func deleteCNINetnsLinux(vmID, nsPath string) error {
 		if time.Now().After(deadline) {
 			return err
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(cniPollInterval)
 	}
 }
 

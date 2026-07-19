@@ -15,6 +15,11 @@ import (
 	"github.com/kumabox/kumabox/internal/backend"
 )
 
+const (
+	defaultAPISocketWaitTimeout = 5 * time.Second
+	apiSocketPollInterval       = 50 * time.Millisecond
+)
+
 type Starter struct{}
 
 func NewStarter() Starter {
@@ -83,7 +88,7 @@ func startProcess(cfg Config) (*backend.StartResult, error) {
 
 	timeout := time.Duration(cfg.APITimeoutMs) * time.Millisecond
 	if timeout <= 0 {
-		timeout = 5 * time.Second
+		timeout = defaultAPISocketWaitTimeout
 	}
 	if err := waitForUnixSocket(cfg.APISocket, exited, timeout); err != nil {
 		_ = cmd.Process.Kill()
@@ -152,6 +157,6 @@ func waitForUnixSocket(path string, exited <-chan error, timeout time.Duration) 
 		if time.Now().After(deadline) {
 			return fmt.Errorf("timed out waiting for Cloud Hypervisor API socket %s", path)
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(apiSocketPollInterval)
 	}
 }

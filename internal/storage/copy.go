@@ -10,6 +10,10 @@ import (
 	"syscall"
 )
 
+// MaxConcurrentFileCopies bounds simultaneous large file copies so snapshot
+// and restore operations use parallel IO without saturating the host disk.
+const MaxConcurrentFileCopies = 2
+
 // CopyResult describes the durable copy created for one snapshot disk.
 type CopyResult struct {
 	Strategy           string

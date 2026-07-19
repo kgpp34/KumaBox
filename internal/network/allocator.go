@@ -113,7 +113,7 @@ func (a *Allocator) Allocate(req AllocateRequest) (*Allocation, error) {
 		VMID:      req.VMID,
 		Network:   networkName,
 		Provider:  ProviderHostTap,
-		IfName:    fmt.Sprintf("eth%d", req.Index),
+		IfName:    GuestInterfaceName(req.Index),
 		TAP:       tap,
 		MAC:       mac,
 		NumQueues: netNumQueues(req.CPU),

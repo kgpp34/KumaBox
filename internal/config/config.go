@@ -15,10 +15,25 @@ import (
 )
 
 const (
-	defaultRootDir = "/var/lib/kumabox"
-	defaultRunDir  = "/run/kumabox"
-	defaultLogDir  = "/var/log/kumabox"
+	defaultRootDir               = "/var/lib/kumabox"
+	defaultRunDir                = "/run/kumabox"
+	defaultLogDir                = "/var/log/kumabox"
+	defaultCloudHypervisorBinary = "cloud-hypervisor"
+	defaultQEMUImgBinary         = "qemu-img"
+	defaultAPISocketTimeoutMS    = 5000
+	defaultStopTimeoutMS         = 10000
+	defaultNetworkMode           = "cni"
+	defaultNetworkName           = "default"
+	defaultBridge                = "kumabox0"
+	defaultCIDR                  = "10.88.0.0/16"
+	defaultGateway               = "10.88.0.1"
+	defaultTapPrefix             = "kbtap"
+	defaultNATBackend            = "auto"
+	defaultCNIConfigDir          = "/etc/cni/net.d"
+	defaultCNIBinDir             = "/opt/cni/bin"
 )
+
+var defaultDNS = []string{"1.1.1.1", "8.8.8.8"}
 
 // Config is the complete configuration snapshot used by a KumaBox command.
 //
@@ -123,24 +138,24 @@ func Default() Config {
 		},
 		Backend: BackendConfig{
 			CloudHypervisor: CloudHypervisorConfig{
-				Binary:             "cloud-hypervisor",
-				APISocketTimeoutMS: 5000,
-				StopTimeoutMS:      10000,
+				Binary:             defaultCloudHypervisorBinary,
+				APISocketTimeoutMS: defaultAPISocketTimeoutMS,
+				StopTimeoutMS:      defaultStopTimeoutMS,
 			},
 		},
 		Network: NetworkConfig{
-			Mode:         "cni",
-			Default:      "default",
-			Bridge:       "kumabox0",
-			CIDR:         "10.88.0.0/16",
-			Gateway:      "10.88.0.1",
-			DNS:          []string{"1.1.1.1", "8.8.8.8"},
-			TapPrefix:    "kbtap",
-			NATBackend:   "auto",
-			CNIConfigDir: "/etc/cni/net.d",
-			CNIBinDir:    "/opt/cni/bin",
+			Mode:         defaultNetworkMode,
+			Default:      defaultNetworkName,
+			Bridge:       defaultBridge,
+			CIDR:         defaultCIDR,
+			Gateway:      defaultGateway,
+			DNS:          append([]string(nil), defaultDNS...),
+			TapPrefix:    defaultTapPrefix,
+			NATBackend:   defaultNATBackend,
+			CNIConfigDir: defaultCNIConfigDir,
+			CNIBinDir:    defaultCNIBinDir,
 		},
-		Storage: StorageConfig{QEMUImgBinary: "qemu-img"},
+		Storage: StorageConfig{QEMUImgBinary: defaultQEMUImgBinary},
 	}
 }
 

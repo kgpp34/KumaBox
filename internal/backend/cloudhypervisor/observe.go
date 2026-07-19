@@ -14,6 +14,8 @@ import (
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
+const backendObserveTimeout = 500 * time.Millisecond
+
 func ObserveVM(rec *vmstore.VMRecord) vmstore.Observation {
 	now := time.Now().UTC()
 	if rec == nil {
@@ -62,9 +64,9 @@ func ObserveVM(rec *vmstore.VMRecord) vmstore.Observation {
 	if apiSocket == "" {
 		return observation(vmstore.ObservedStateUnknown, "running record has no API socket", now)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), backendObserveTimeout)
 	defer cancel()
-	info, err := queryVMInfo(ctx, apiSocket, 500*time.Millisecond)
+	info, err := queryVMInfo(ctx, apiSocket, backendObserveTimeout)
 	if err != nil {
 		return observation(vmstore.ObservedStateUnknown, fmt.Sprintf("API state check failed: %v", err), now)
 	}

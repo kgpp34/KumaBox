@@ -17,6 +17,11 @@ import (
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
+const (
+	defaultOCIStorageSize = "4G"
+	defaultOCIMemorySize  = "512M"
+)
+
 func errInvalidLogSource(source string) error {
 	return fmt.Errorf("invalid log source %q: expected console, stdout, stderr, vmm, or all", source)
 }
@@ -351,11 +356,11 @@ func newOCIImageCreateRequest(flags createVMFlags, image *imagestore.ImageRecord
 	if image.Boot.Mode != "direct" || image.Boot.Kernel == "" || image.Boot.Initrd == "" {
 		return vmstore.CreateRequest{}, fmt.Errorf("image %q has no OCI direct boot profile", image.Name)
 	}
-	cowSize, err := parseByteSize(defaultString(flags.storage, "4G"))
+	cowSize, err := parseByteSize(defaultString(flags.storage, defaultOCIStorageSize))
 	if err != nil {
 		return vmstore.CreateRequest{}, err
 	}
-	memoryBytes, err := parseMemorySize(defaultString(flags.memory, "512M"))
+	memoryBytes, err := parseMemorySize(defaultString(flags.memory, defaultOCIMemorySize))
 	if err != nil {
 		return vmstore.CreateRequest{}, err
 	}

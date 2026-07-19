@@ -78,7 +78,7 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 	if persistErr != nil {
 		return nil, errors.Join(persistErr, r.recoverHibernateGuest(ctx, controller, rec, true))
 	}
-	if _, err := r.backend.StopVM(rec, backend.StopOptions{Force: true, Timeout: 5 * time.Second}); err != nil {
+	if _, err := r.backend.StopVM(rec, backend.StopOptions{Force: true, Timeout: forcedStopTimeout}); err != nil {
 		recoverErr := r.recoverHibernateGuest(ctx, controller, rec, true)
 		removeErr := error(nil)
 		if recoverErr == nil {

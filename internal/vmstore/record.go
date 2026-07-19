@@ -16,6 +16,8 @@ import (
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 )
 
+const defaultMemoryBytes int64 = 512 << 20
+
 // VMState is KumaBox's persisted lifecycle state.
 //
 // It is updated by lifecycle operations such as start, stop, and delete. It is
@@ -143,7 +145,7 @@ type HibernateStatus struct {
 
 func (r *VMRecord) EffectiveMemoryBytes() int64 {
 	if r == nil || r.MemoryBytes <= 0 {
-		return 512 << 20
+		return defaultMemoryBytes
 	}
 	return r.MemoryBytes
 }
@@ -312,7 +314,7 @@ func normalizeCPUs(cpus int) int {
 
 func normalizeMemoryBytes(memoryBytes int64) int64 {
 	if memoryBytes <= 0 {
-		return 512 << 20
+		return defaultMemoryBytes
 	}
 	return memoryBytes
 }

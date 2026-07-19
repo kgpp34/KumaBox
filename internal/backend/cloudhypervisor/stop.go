@@ -15,7 +15,12 @@ import (
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
-const terminateGrace = 2 * time.Second
+const (
+	terminateGrace           = 2 * time.Second
+	defaultStopTimeout       = 10 * time.Second
+	backendAPIRequestTimeout = 2 * time.Second
+	processPollInterval      = 100 * time.Millisecond
+)
 
 func (b Backend) StopVM(rec *vmstore.VMRecord, opts backend.StopOptions) (*backend.StopResult, error) {
 	return b.stopper.StopVM(rec, opts)
@@ -65,7 +70,7 @@ func (Stopper) StopVM(rec *vmstore.VMRecord, opts backend.StopOptions) (*backend
 
 	timeout := opts.Timeout
 	if timeout <= 0 {
-		timeout = 10 * time.Second
+		timeout = defaultStopTimeout
 	}
 	if !opts.Force {
 		_ = resumeIfPaused(context.Background(), apiSocket)
@@ -84,16 +89,16 @@ func (Stopper) StopVM(rec *vmstore.VMRecord, opts backend.StopOptions) (*backend
 }
 
 func shutdownVM(ctx context.Context, apiSocket string) error {
-	_, err := doAPIOnce(ctx, apiSocket, 2*time.Second, http.MethodPut, "vm.shutdown", nil, http.StatusNoContent)
+	_, err := doAPIOnce(ctx, apiSocket, backendAPIRequestTimeout, http.MethodPut, "vm.shutdown", nil, http.StatusNoContent)
 	return err
 }
 
 func resumeIfPaused(ctx context.Context, apiSocket string) error {
-	info, err := queryVMInfo(ctx, apiSocket, 2*time.Second)
+	info, err := queryVMInfo(ctx, apiSocket, backendAPIRequestTimeout)
 	if err != nil || !strings.EqualFold(info.State, "Paused") {
 		return err
 	}
-	_, err = doAPIOnce(ctx, apiSocket, 2*time.Second, http.MethodPut, "vm.resume", nil, http.StatusNoContent)
+	_, err = doAPIOnce(ctx, apiSocket, backendAPIRequestTimeout, http.MethodPut, "vm.resume", nil, http.StatusNoContent)
 	return err
 }
 
@@ -106,7 +111,7 @@ func waitForExit(pid int, timeout time.Duration) bool {
 		if time.Now().After(deadline) {
 			return false
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(processPollInterval)
 	}
 }
 

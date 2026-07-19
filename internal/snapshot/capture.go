@@ -58,7 +58,7 @@ func StageWritableDisks(ctx context.Context, stagingDir string, rec *vmstore.VMR
 func FinalizeWritableDisks(ctx context.Context, stagingDir string, disks []DiskManifest) ([]DiskManifest, int64, error) {
 	finalized := append([]DiskManifest(nil), disks...)
 	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(2)
+	group.SetLimit(storage.MaxConcurrentFileCopies)
 	for i := range finalized {
 		i := i
 		group.Go(func() error {
@@ -95,7 +95,7 @@ func copyWritableDisks(ctx context.Context, stagingDir string, rec *vmstore.VMRe
 	}
 	manifestDisks := make([]DiskManifest, len(writable))
 	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(2)
+	group.SetLimit(storage.MaxConcurrentFileCopies)
 	for i := range writable {
 		i := i
 		group.Go(func() error {

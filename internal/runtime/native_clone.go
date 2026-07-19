@@ -9,6 +9,7 @@ import (
 	agentclient "github.com/kumabox/kumabox/internal/agent/client"
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/imagestore"
+	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -181,7 +182,7 @@ func configureCloneIdentity(ctx context.Context, socket string, rec *vmstore.VMR
 	for i, config := range rec.NetworkConfigs {
 		identity := agentclient.InterfaceIdentity{Name: config.IfName, MAC: config.MAC}
 		if identity.Name == "" {
-			identity.Name = fmt.Sprintf("eth%d", i)
+			identity.Name = kbnetwork.GuestInterfaceName(i)
 		}
 		if config.Network != nil {
 			identity.IP = config.Network.IP
