@@ -192,6 +192,24 @@ verify_native() {
   clone_vsock=$(jq -r '.vsockSocket' <<<"$clone_json")
   clone_disk=$(jq -r '[.storageConfigs[] | select(.role == "cow")][0].path' <<<"$clone_json")
   [[ $clone_id != "$source_id" && $clone_vsock != "$source_vsock" && $clone_disk != "$source_disk" ]]
+  clone_inspect=$(kb inspect "$clone_id" --json)
+  jq -e '
+    .state == "running" and
+    (.lastRestore != null) and
+    (.lastRestore.mode == "copy") and
+    (.lastRestore.nativeStageDurationMs >= 0) and
+    (.lastRestore.diskStageDurationMs >= 0) and
+    (.lastRestore.diskCommitDurationMs >= 0) and
+    (.lastRestore.backendRestoreDurationMs >= 0) and
+    (.lastRestore.identityDurationMs >= 0) and
+    (.lastRestore.readinessDurationMs >= 0) and
+    (.lastRestore.durationMs >= .lastRestore.readinessDurationMs)
+  ' <<<"$clone_inspect" >/dev/null || {
+    echo "native clone restore metrics are incomplete" >&2
+    jq '{id,name,state,lastRestore}' <<<"$clone_inspect" >&2
+    return 1
+  }
+  jq '{id,name,state,lastRestore}' <<<"$clone_inspect"
   kb agent ping "$clone_id" --timeout "$agent_timeout" >/dev/null
   kb exec "$clone_id" -- sh -c "kill -0 $guest_pid; test \"\$(cat /run/kumabox-native-marker)\" = native-memory; test \"\$(cat /var/tmp/kumabox-native-marker)\" = native-disk"
   [[ $(kb exec "$clone_id" -- uname -n) == "$clone" ]]

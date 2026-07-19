@@ -72,6 +72,9 @@ func TestCloneNativeSnapshotCreatesIndependentRunningVM(t *testing.T) {
 	if persistedSource.State != vmstore.StateRunning || persistedSource.PID != source.PID {
 		t.Fatalf("source changed = %+v", persistedSource)
 	}
+	if cloned.LastRestore == nil || cloned.LastRestore.DiskStageDurationMs < 0 || cloned.LastRestore.IdentityDurationMs < 0 || cloned.LastRestore.ReadinessDurationMs < 0 {
+		t.Fatalf("clone metrics = %+v", cloned.LastRestore)
+	}
 }
 
 func TestCloneNativeSnapshotRollsBackFailedBackend(t *testing.T) {

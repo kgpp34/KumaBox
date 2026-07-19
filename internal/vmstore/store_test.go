@@ -416,6 +416,38 @@ func TestMarkRestoredPinsDelayedMemoryUntilStop(t *testing.T) {
 	}
 }
 
+func TestMarkRestoredPersistsPhaseMetrics(t *testing.T) {
+	dir := t.TempDir()
+	store := New(filepath.Join(dir, "data"))
+	rec, err := store.Create(CreateRequest{
+		Name: "timed-restore", RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd",
+		RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BeginRestore(rec.ID, "snap_timed", "copy"); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := store.MarkRestoredWithMetrics(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"), time.Second, &RestoreResult{
+		NativeStageDurationMs: 11, DiskStageDurationMs: 22, DiskCommitDurationMs: 3,
+		BackendRestoreDurationMs: 44, IdentityDurationMs: 55, ReadinessDurationMs: 66,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.LastRestore == nil || restored.LastRestore.DiskStageDurationMs != 22 || restored.LastRestore.ReadinessDurationMs != 66 {
+		t.Fatalf("last restore metrics = %+v", restored.LastRestore)
+	}
+	persisted, err := store.Inspect(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.LastRestore == nil || persisted.LastRestore.BackendRestoreDurationMs != 44 {
+		t.Fatalf("persisted restore metrics = %+v", persisted.LastRestore)
+	}
+}
+
 func TestCreateRejectsMixedFirmwareAndDirectBoot(t *testing.T) {
 	dir := t.TempDir()
 	store := New(filepath.Join(dir, "data"))

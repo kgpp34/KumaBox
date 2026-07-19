@@ -142,10 +142,16 @@ type RestoreStatus struct {
 // RestoreResult records the latest completed native restore for operational
 // latency inspection without retaining the transient dirty marker.
 type RestoreResult struct {
-	SnapshotID  string    `json:"snapshotId"`
-	Mode        string    `json:"mode"`
-	DurationMs  int64     `json:"durationMs"`
-	CompletedAt time.Time `json:"completedAt"`
+	SnapshotID               string    `json:"snapshotId"`
+	Mode                     string    `json:"mode"`
+	DurationMs               int64     `json:"durationMs"`
+	NativeStageDurationMs    int64     `json:"nativeStageDurationMs"`
+	DiskStageDurationMs      int64     `json:"diskStageDurationMs"`
+	DiskCommitDurationMs     int64     `json:"diskCommitDurationMs"`
+	BackendRestoreDurationMs int64     `json:"backendRestoreDurationMs"`
+	IdentityDurationMs       int64     `json:"identityDurationMs"`
+	ReadinessDurationMs      int64     `json:"readinessDurationMs"`
+	CompletedAt              time.Time `json:"completedAt"`
 }
 
 // PerformanceMetrics records the user-visible lifecycle milestones for the

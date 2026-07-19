@@ -123,7 +123,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err := r.backend.RenderConfig(rec); err != nil {
 		return nil, fmt.Errorf("render clone launch config: %w", err)
 	}
-	staged, err := stageNativeRestore(ctx, snapshotRec, manifest, rec, string(opts.Mode))
+	staged, stageMetrics, err := stageNativeRestore(ctx, snapshotRec, manifest, rec, string(opts.Mode))
 	if err != nil {
 		return nil, err
 	}
@@ -132,20 +132,35 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err != nil {
 		return nil, err
 	}
+	diskCommitStarted := time.Now()
 	if err := staged.commitDisks(); err != nil {
 		return nil, fmt.Errorf("replace clone writable disks: %w", err)
 	}
+	diskCommitDuration := time.Since(diskCommitStarted)
+	backendRestoreStarted := time.Now()
 	result, err = cloner.CloneVM(ctx, dirty, staged.nativeDir, string(opts.Mode))
 	if err != nil {
 		return nil, fmt.Errorf("restore clone backend state: %w", err)
 	}
+	backendRestoreDuration := time.Since(backendRestoreStarted)
+	identityStarted := time.Now()
 	if err := configureGuestIdentity(ctx, rec.VsockSocket, rec); err != nil {
 		return nil, err
 	}
+	identityDuration := time.Since(identityStarted)
+	readinessStarted := time.Now()
 	if err := r.guestReadiness(ctx, rec.VsockSocket); err != nil {
 		return nil, fmt.Errorf("verify clone guest readiness: %w", err)
 	}
-	cloned, err := r.store.MarkRestored(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted))
+	readinessDuration := time.Since(readinessStarted)
+	cloned, err := r.store.MarkRestoredWithMetrics(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
+		NativeStageDurationMs:    stageMetrics.nativeStageDuration.Milliseconds(),
+		DiskStageDurationMs:      stageMetrics.diskStageDuration.Milliseconds(),
+		DiskCommitDurationMs:     diskCommitDuration.Milliseconds(),
+		BackendRestoreDurationMs: backendRestoreDuration.Milliseconds(),
+		IdentityDurationMs:       identityDuration.Milliseconds(),
+		ReadinessDurationMs:      readinessDuration.Milliseconds(),
+	})
 	if err != nil {
 		return nil, err
 	}

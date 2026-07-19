@@ -33,6 +33,11 @@ type stagedRestoreDisk struct {
 	staged string
 }
 
+type restoreStageMetrics struct {
+	nativeStageDuration time.Duration
+	diskStageDuration   time.Duration
+}
+
 // RestoreNativeVM restores native memory, device state, and writable disks
 // into the original VM identity. Snapshot and VM operation locks are held for
 // the complete transaction.
@@ -92,7 +97,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	if err := r.backend.RenderConfig(rec); err != nil {
 		return nil, fmt.Errorf("render restore launch config: %w", err)
 	}
-	staged, err := stageNativeRestore(ctx, snapshotRec, manifest, rec, string(opts.Mode))
+	staged, stageMetrics, err := stageNativeRestore(ctx, snapshotRec, manifest, rec, string(opts.Mode))
 	if err != nil {
 		return nil, err
 	}
@@ -112,13 +117,18 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 		_, markErr := r.store.MarkRestoreFailed(rec.ID, cause.Error())
 		return nil, errors.Join(cause, markErr)
 	}
+	diskCommitStarted := time.Now()
 	if err := staged.commitDisks(); err != nil {
 		return fail(fmt.Errorf("replace writable disks: %w", err))
 	}
+	diskCommitDuration := time.Since(diskCommitStarted)
+	backendRestoreStarted := time.Now()
 	result, err := restorer.RestoreVM(ctx, dirty, staged.nativeDir, string(opts.Mode))
 	if err != nil {
 		return fail(fmt.Errorf("restore backend state: %w", err))
 	}
+	backendRestoreDuration := time.Since(backendRestoreStarted)
+	readinessStarted := time.Now()
 	if err := r.guestReadiness(ctx, rec.VsockSocket); err != nil {
 		cleanupRec := *dirty
 		cleanupRec.PID = result.PID
@@ -126,7 +136,14 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 		_, _ = r.backend.StopVM(&cleanupRec, backend.StopOptions{Force: true})
 		return fail(fmt.Errorf("verify restored guest readiness: %w", err))
 	}
-	restored, err := r.store.MarkRestored(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted))
+	readinessDuration := time.Since(readinessStarted)
+	restored, err := r.store.MarkRestoredWithMetrics(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
+		NativeStageDurationMs:    stageMetrics.nativeStageDuration.Milliseconds(),
+		DiskStageDurationMs:      stageMetrics.diskStageDuration.Milliseconds(),
+		DiskCommitDurationMs:     diskCommitDuration.Milliseconds(),
+		BackendRestoreDurationMs: backendRestoreDuration.Milliseconds(),
+		ReadinessDurationMs:      readinessDuration.Milliseconds(),
+	})
 	if err != nil {
 		cleanupRec := *dirty
 		cleanupRec.PID = result.PID
@@ -140,14 +157,16 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	return r.applyObservation(restored), nil
 }
 
-func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manifest *snapshot.Manifest, rec *vmstore.VMRecord, mode string) (*stagedRestore, error) {
+func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manifest *snapshot.Manifest, rec *vmstore.VMRecord, mode string) (*stagedRestore, restoreStageMetrics, error) {
+	var metrics restoreStageMetrics
+	nativeStageStarted := time.Now()
 	root := filepath.Join(rec.RunDir, ".restore-staging")
 	if err := os.RemoveAll(root); err != nil {
-		return nil, fmt.Errorf("clear restore staging: %w", err)
+		return nil, metrics, fmt.Errorf("clear restore staging: %w", err)
 	}
 	nativeDir := filepath.Join(root, snapshot.NativePayloadDir)
 	if err := os.MkdirAll(nativeDir, 0o700); err != nil {
-		return nil, fmt.Errorf("create native restore staging: %w", err)
+		return nil, metrics, fmt.Errorf("create native restore staging: %w", err)
 	}
 	staged := &stagedRestore{nativeDir: nativeDir}
 	ok := false
@@ -158,24 +177,26 @@ func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manif
 	}()
 	for _, file := range manifest.Native.Files {
 		if !strings.HasPrefix(file.Path, snapshot.NativePathPrefix) || filepath.Base(file.Path) != strings.TrimPrefix(file.Path, snapshot.NativePathPrefix) {
-			return nil, fmt.Errorf("SNAPSHOT_CORRUPT: invalid native payload path %s", file.Path)
+			return nil, metrics, fmt.Errorf("SNAPSHOT_CORRUPT: invalid native payload path %s", file.Path)
 		}
 		source := filepath.Join(snapshotRec.DataDir, filepath.FromSlash(file.Path))
 		destination := filepath.Join(nativeDir, filepath.Base(file.Path))
 		if restoreModePinsSnapshot(RestoreMode(mode)) && snapshot.IsNativeMemoryFile(file.Path) {
 			if err := linkNativeMemory(source, destination); err != nil {
-				return nil, fmt.Errorf("link native memory payload %s: %w", file.Path, err)
+				return nil, metrics, fmt.Errorf("link native memory payload %s: %w", file.Path, err)
 			}
 			continue
 		}
 		result, err := storage.CopyFile(ctx, source, destination)
 		if err != nil {
-			return nil, fmt.Errorf("stage native payload %s: %w", file.Path, err)
+			return nil, metrics, fmt.Errorf("stage native payload %s: %w", file.Path, err)
 		}
 		if result.SHA256 != file.SHA256 {
-			return nil, fmt.Errorf("CHECKSUM_MISMATCH: staged %s", file.Path)
+			return nil, metrics, fmt.Errorf("CHECKSUM_MISMATCH: staged %s", file.Path)
 		}
 	}
+	metrics.nativeStageDuration = time.Since(nativeStageStarted)
+	diskStageStarted := time.Now()
 	targets := make(map[string]vmstore.StorageConfig, len(rec.StorageConfigs))
 	for _, disk := range rec.StorageConfigs {
 		if disk.EffectiveRole() == vmstore.StorageRoleCOW || disk.EffectiveRole() == vmstore.StorageRoleData {
@@ -212,13 +233,14 @@ func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manif
 		})
 	}
 	if err := group.Wait(); err != nil {
-		return nil, err
+		return nil, metrics, err
 	}
 	if len(staged.disks) != len(targets) {
-		return nil, errors.New("SNAPSHOT_INCOMPATIBLE: writable disk set is incomplete")
+		return nil, metrics, errors.New("SNAPSHOT_INCOMPATIBLE: writable disk set is incomplete")
 	}
+	metrics.diskStageDuration = time.Since(diskStageStarted)
 	ok = true
-	return staged, nil
+	return staged, metrics, nil
 }
 
 func linkNativeMemory(source, destination string) error {

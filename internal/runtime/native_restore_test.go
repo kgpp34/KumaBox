@@ -72,6 +72,9 @@ func TestRestoreNativeVMReplacesWritableStateAndResumesIdentity(t *testing.T) {
 	if persisted.Restore != nil || persisted.PID != 4321 {
 		t.Fatalf("persisted record = %+v", persisted)
 	}
+	if persisted.LastRestore == nil || persisted.LastRestore.BackendRestoreDurationMs < 0 || persisted.LastRestore.ReadinessDurationMs < 0 {
+		t.Fatalf("restore metrics = %+v", persisted.LastRestore)
+	}
 }
 
 func TestRestoreNativeVMFailureQuarantinesColdStart(t *testing.T) {

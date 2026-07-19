@@ -268,6 +268,12 @@ func (s *Store) MarkRestoreFailed(ref, message string) (*VMRecord, error) {
 // MarkRestored atomically publishes restored process identity and clears the
 // recovery marker only after the backend has restored and resumed the VM.
 func (s *Store) MarkRestored(ref string, pid int, apiSocket string, duration time.Duration) (*VMRecord, error) {
+	return s.MarkRestoredWithMetrics(ref, pid, apiSocket, duration, nil)
+}
+
+// MarkRestoredWithMetrics atomically publishes restored process identity and
+// the phase timings collected during the restore or clone transaction.
+func (s *Store) MarkRestoredWithMetrics(ref string, pid int, apiSocket string, duration time.Duration, metrics *RestoreResult) (*VMRecord, error) {
 	var updated *VMRecord
 	err := s.update(func(idx *vmIndex) error {
 		id, err := idx.resolve(ref)
@@ -283,12 +289,21 @@ func (s *Store) MarkRestored(ref string, pid int, apiSocket string, duration tim
 		rec.PID = pid
 		rec.APISocket = apiSocket
 		rec.Error = ""
-		rec.LastRestore = &RestoreResult{
+		lastRestore := &RestoreResult{
 			SnapshotID:  rec.Restore.SnapshotID,
 			Mode:        rec.Restore.Mode,
 			DurationMs:  duration.Milliseconds(),
 			CompletedAt: now,
 		}
+		if metrics != nil {
+			lastRestore.NativeStageDurationMs = metrics.NativeStageDurationMs
+			lastRestore.DiskStageDurationMs = metrics.DiskStageDurationMs
+			lastRestore.DiskCommitDurationMs = metrics.DiskCommitDurationMs
+			lastRestore.BackendRestoreDurationMs = metrics.BackendRestoreDurationMs
+			lastRestore.IdentityDurationMs = metrics.IdentityDurationMs
+			lastRestore.ReadinessDurationMs = metrics.ReadinessDurationMs
+		}
+		rec.LastRestore = lastRestore
 		if rec.Restore.Mode == "ondemand" || rec.Restore.Mode == "mmap" {
 			rec.SnapshotDependency = &SnapshotDependency{
 				SnapshotID: rec.Restore.SnapshotID,
