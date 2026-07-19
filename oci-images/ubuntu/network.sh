@@ -4,6 +4,8 @@ PREREQ=""
 prereqs() { echo "$PREREQ"; }
 case "$1" in prereqs) prereqs; exit 0 ;; esac
 
+. /scripts/functions
+
 [ -n "${rootmnt:-}" ] || exit 0
 
 for arg in $(cat /proc/cmdline); do
@@ -75,7 +77,7 @@ if [ "$has_static" = false ]; then
     done
 fi
 
-[ -n "$dns_servers" ] || dns_servers="1.1.1.1 8.8.8.8"
+[ -n "$dns_servers" ] || dns_servers="8.8.8.8 8.8.4.4"
 : >"${rootmnt}/etc/resolv.conf"
 for ns in $dns_servers; do
     printf "nameserver %s\n" "$ns" >>"${rootmnt}/etc/resolv.conf"
