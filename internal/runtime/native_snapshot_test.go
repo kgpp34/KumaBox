@@ -64,6 +64,9 @@ func TestCreateRunningSnapshotCapturesOnePauseWindow(t *testing.T) {
 	if manifest.Backend == nil || manifest.Machine == nil || manifest.Machine.MemoryBytes != 512<<20 || manifest.Native.Files[0].SHA256 == "" {
 		t.Fatalf("compatibility metadata = %+v", manifest)
 	}
+	if ready.Performance == nil || ready.Performance.TotalDurationMs < ready.Performance.PauseDurationMs {
+		t.Fatalf("capture performance = %+v", ready.Performance)
+	}
 	if _, err := os.Stat(filepath.Join(ready.DataDir, "disks", "cow.raw")); err != nil {
 		t.Fatal(err)
 	}

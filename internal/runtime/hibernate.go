@@ -99,7 +99,7 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 
 func (r *Runtime) persistHibernationSnapshot(ctx context.Context, build *snapshot.Build, rec *vmstore.VMRecord, snapshotter backend.NativeSnapshotter, inspector backend.NativeHostInspector, nativeDir string) (*snapshot.Record, error) {
 	pending := build.Record()
-	stagedDisks, err := captureNativeWindow(ctx, snapshotter, rec, nativeDir, pending.StagingDir)
+	stagedDisks, _, _, err := captureNativeWindow(ctx, snapshotter, rec, nativeDir, pending.StagingDir)
 	if err != nil {
 		return nil, err
 	}

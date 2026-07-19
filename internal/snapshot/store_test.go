@@ -28,12 +28,18 @@ func TestStoreReserveFinalizeAndList(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(build.Record().StagingDir, "snapshot.json"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := build.SetPerformance(CaptureMetrics{PauseDurationMs: 12, PublicationDurationMs: 34}); err != nil {
+		t.Fatal(err)
+	}
 	ready, err := build.Finalize(4096)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ready.State != StateReady || ready.StagingDir != "" || ready.SizeBytes != 4096 {
 		t.Fatalf("finalized record = %+v", ready)
+	}
+	if ready.Performance == nil || ready.Performance.PauseDurationMs != 12 || ready.Performance.PublicationDurationMs != 34 {
+		t.Fatalf("capture performance = %+v", ready.Performance)
 	}
 	if _, err := os.Stat(filepath.Join(ready.DataDir, "snapshot.json")); err != nil {
 		t.Fatal(err)

@@ -18,6 +18,7 @@ const snapshotCleanupTimeout = 30 * time.Second
 // CreateRunningSnapshot captures native backend state and writable disks from
 // one pause window, then publishes the snapshot after the source VM resumes.
 func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (*snapshot.Record, error) {
+	captureStarted := time.Now()
 	rec, err := r.store.Inspect(ref)
 	if err != nil {
 		return nil, err
@@ -63,9 +64,11 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 	if err := controller.PauseVM(ctx, rec); err != nil {
 		return nil, fmt.Errorf("pause VM for snapshot: %w", err)
 	}
-	stagedDisks, captureErr := captureNativeWindow(ctx, snapshotter, rec, nativeDir, pending.StagingDir)
+	pausedAt := time.Now()
+	stagedDisks, nativeCaptureMs, diskStageMs, captureErr := captureNativeWindow(ctx, snapshotter, rec, nativeDir, pending.StagingDir)
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), snapshotCleanupTimeout)
 	resumeErr := controller.ResumeVM(cleanupCtx, rec)
+	resumedAt := time.Now()
 	cancel()
 	if captureErr != nil || resumeErr != nil {
 		if resumeErr != nil {
@@ -79,6 +82,15 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 	disks, _, err := snapshot.FinalizeWritableDisks(ctx, pending.StagingDir, stagedDisks)
 	if err != nil {
 		return nil, fmt.Errorf("finalize writable disks: %w", err)
+	}
+	if err := build.SetPerformance(snapshot.CaptureMetrics{
+		PauseDurationMs:       resumedAt.Sub(pausedAt).Milliseconds(),
+		NativeCaptureMs:       nativeCaptureMs,
+		WritableDiskStageMs:   diskStageMs,
+		PublicationDurationMs: time.Since(resumedAt).Milliseconds(),
+		TotalDurationMs:       time.Since(captureStarted).Milliseconds(),
+	}); err != nil {
+		return nil, err
 	}
 
 	host, err := hostInspector.InspectNativeHost(ctx, rec)
@@ -101,15 +113,18 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 	return ready, nil
 }
 
-func captureNativeWindow(ctx context.Context, snapshotter backend.NativeSnapshotter, rec *vmstore.VMRecord, nativeDir, stagingDir string) ([]snapshot.DiskManifest, error) {
+func captureNativeWindow(ctx context.Context, snapshotter backend.NativeSnapshotter, rec *vmstore.VMRecord, nativeDir, stagingDir string) ([]snapshot.DiskManifest, int64, int64, error) {
+	nativeStarted := time.Now()
 	if err := snapshotter.SnapshotVM(ctx, rec, nativeDir); err != nil {
-		return nil, fmt.Errorf("capture backend state: %w", err)
+		return nil, 0, 0, fmt.Errorf("capture backend state: %w", err)
 	}
+	nativeDuration := time.Since(nativeStarted).Milliseconds()
+	diskStarted := time.Now()
 	disks, err := snapshot.StageWritableDisks(ctx, stagingDir, rec)
 	if err != nil {
-		return nil, fmt.Errorf("capture writable disks: %w", err)
+		return nil, nativeDuration, time.Since(diskStarted).Milliseconds(), fmt.Errorf("capture writable disks: %w", err)
 	}
-	return disks, nil
+	return disks, nativeDuration, time.Since(diskStarted).Milliseconds(), nil
 }
 
 func (r *Runtime) persistSnapshotResumeFailure(rec *vmstore.VMRecord) {

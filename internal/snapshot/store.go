@@ -41,14 +41,25 @@ func NewStore(rootDir string) *Store {
 
 // Build is an exclusive pending snapshot transaction.
 type Build struct {
-	store    *Store
-	record   *Record
-	lease    *Lease
-	finished bool
+	store       *Store
+	record      *Record
+	lease       *Lease
+	performance *CaptureMetrics
+	finished    bool
 }
 
 // Record returns a defensive copy of the pending record.
 func (b *Build) Record() *Record { return cloneRecord(b.record) }
+
+// SetPerformance records capture timing for the pending snapshot. It is
+// published atomically with the ready record by Finalize.
+func (b *Build) SetPerformance(metrics CaptureMetrics) error {
+	if b == nil || b.finished {
+		return errors.New("snapshot build is already finished")
+	}
+	b.performance = &metrics
+	return nil
+}
 
 // Reserve creates a pending record and staging directory while holding the
 // snapshot's exclusive build lease until Finalize or Abort.
@@ -121,6 +132,10 @@ func (b *Build) Finalize(sizeBytes int64) (*Record, error) {
 		rec.State = StateReady
 		rec.StagingDir = ""
 		rec.SizeBytes = sizeBytes
+		if b.performance != nil {
+			metrics := *b.performance
+			rec.Performance = &metrics
+		}
 		rec.UpdatedAt = now
 		rec.LastAccessedAt = now
 		finalized = cloneRecord(rec)
