@@ -22,7 +22,7 @@ passed=false
 
 usage() {
   cat <<'EOF'
-Usage: scripts/linux/p2/verify-real-cni-e2e.sh [options]
+Usage: scripts/linux/verify-cni.sh [options]
 
 Runs a managed OCI VM through KumaBox's real CNI provider. The test invokes
 the installed bridge and host-local plugins, validates the CNI allocation,

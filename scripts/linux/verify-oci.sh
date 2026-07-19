@@ -9,7 +9,7 @@ run_dir="/tmp/kumabox-p0/run"
 log_dir="/tmp/kumabox-p0/logs"
 ref="kumabox/ubuntu:24.04-p3"
 platform="linux/amd64"
-image_name="p3-exec-image"
+image_name="p3-agent-image-v3"
 vm_name="p3-exec"
 storage_size="64M"
 source="auto"
@@ -22,7 +22,7 @@ tail_pid=""
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/linux/p3/verify-oci-exec.sh [options]
+Usage: scripts/linux/verify-oci.sh [options]
 
 Options:
   --kumabox PATH             kumabox binary path, defaults to ./bin/kumabox
@@ -33,7 +33,7 @@ Options:
   --log-dir PATH             log directory, defaults to /tmp/kumabox-p0/logs
   --ref REF                  OCI image ref, defaults to kumabox/ubuntu:24.04-p3
   --platform VALUE           OCI platform, defaults to linux/amd64
-  --image-name NAME          built image name, defaults to p3-exec-image
+  --image-name NAME          managed image name, defaults to p3-agent-image-v3
   --name NAME                VM name, defaults to p3-exec
   --storage SIZE             per-VM COW size, defaults to 64M
   --source VALUE             OCI source: auto, registry, or daemon. Defaults to auto
@@ -44,7 +44,8 @@ Options:
 
 Verifies OCI exec MVP:
 build OCI image -> run VM -> wait for agent -> execute hostname/stdin/env/failing
-commands through kumabox exec -> delete VM and image record.
+commands through kumabox exec -> delete VM while preserving the managed image
+for the CNI and snapshot E2E suites.
 USAGE
 }
 
@@ -120,7 +121,7 @@ while [[ $# -gt 0 ]]; do
     --timeout) require_value "$1" "${2:-}"; timeout="$2"; shift 2 ;;
     --skip-base-build) skip_base_build=1; shift ;;
     --sudo) use_sudo=true; shift ;;
-    -h|--help) usage; exit 0 ;;
+    -h|--help) script_status=0; usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
@@ -177,9 +178,32 @@ cleanup() {
   kb image rm "$image_name" >/dev/null 2>&1 || true
 }
 
+build_base_image() {
+  local context_dir=oci-images/ubuntu
+  local dockerfile=$context_dir/24.04/Dockerfile
+  local agent_binary=$context_dir/kumabox-agent-linux-amd64
+
+  for binary in docker go; do
+    command -v "$binary" >/dev/null 2>&1 || {
+      echo "$binary is required to build the KumaBox OCI base image" >&2
+      return 1
+    }
+  done
+  [[ -f $dockerfile ]] || { echo "OCI base Dockerfile is missing: $dockerfile" >&2; return 1; }
+
+  step "build Linux guest agent"
+  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$agent_binary" ./cmd/kumabox-agent
+
+  step "build KumaBox-compatible OCI base image"
+  if ! docker build --platform "$platform" -f "$dockerfile" -t "$ref" "$context_dir"; then
+    rm -f "$agent_binary"
+    return 1
+  fi
+  rm -f "$agent_binary"
+}
+
 if [[ "$skip_base_build" -eq 0 ]]; then
-  step "build OCI base image with guest agent"
-  scripts/linux/verify.sh p3 base-image --tag "$ref" --platform "$platform" --keep-fixture
+  build_base_image
 fi
 
 step "clean previous OCI exec state"
@@ -276,10 +300,9 @@ boot_exec_ms=$((agent_done_ms - run_start_ms))
 printf 'metrics: runReturnMs=%d agentWaitMs=%d bootExecReadyMs=%d\n' \
   "$run_elapsed_ms" "$agent_wait_ms" "$boot_exec_ms"
 
-step "delete VM and cleanup image"
+step "delete VM and preserve managed image"
 delete_json="$(kb delete "$vm_name" --force)"
 printf '%s\n' "$delete_json"
-kb image rm "$image_name" >/dev/null
 
 script_status=0
-echo "P3-09 OCI exec verification passed"
+echo "KumaBox OCI E2E verification passed"
