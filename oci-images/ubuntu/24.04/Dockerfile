@@ -30,13 +30,12 @@ RUN if [ -n "$APT_MIRROR" ]; then \
         systemd-resolved \
         systemd-sysv \
         systemd-timesyncd \
-        tcpdump \
         udev \
         util-linux \
     && install -m 0755 /usr/local/share/kumabox/initramfs/kumabox-overlay /etc/initramfs-tools/scripts/kumabox-overlay \
     && install -m 0755 /usr/local/share/kumabox/initramfs/kumabox-network /etc/initramfs-tools/scripts/init-bottom/kumabox-network \
     && chmod 0755 /usr/local/bin/kumabox-agent \
-    && printf "erofs\noverlay\next4\nvirtio_blk\nvirtio_pci\nvirtio_ring\nvirtio_net\nvsock\nvhost_vsock\nvmw_vsock_virtio_transport\n" >> /etc/initramfs-tools/modules \
+    && printf "erofs\noverlay\next4\nvirtio_blk\nvirtio_pci\nvirtio_ring\nvirtio_net\nvsock\nvmw_vsock_virtio_transport\n" >> /etc/initramfs-tools/modules \
     && sed -i 's/^COMPRESS=.*/COMPRESS=gzip/' /etc/initramfs-tools/initramfs.conf \
     && sed -i '/^IP=/d' /etc/initramfs-tools/initramfs.conf \
     && echo 'IP=off' >> /etc/initramfs-tools/initramfs.conf \
