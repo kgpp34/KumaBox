@@ -27,8 +27,8 @@ Agents and automation routinely execute generated code, install packages, access
 - **Hardware-backed isolation** — each workload runs in a Cloud Hypervisor microVM on KVM.
 - **Daemonless control plane** — persisted state is reconciled with the observed VMM process state.
 - **Reproducible storage** — images, VM metadata, logs, snapshots, leases, and content are stored under explicit roots.
-- **Multiple image paths** — import cloud images or resolve and build OCI images.
-- **Managed networking** — use host TAP networking, CNI networks, or an explicitly isolated VM.
+- **OCI-first images** — resolve and build digest-pinned OCI images into shared EROFS layers with per-VM COW; cloud images remain a compatibility path.
+- **CNI-first networking** — per-VM netns, multiqueue TAP and tc redirect by default; host TAP and no-network modes remain explicit alternatives.
 - **Snapshot lifecycle** — capture, verify, export, import, restore, and clone snapshots.
 - **Automation-friendly output** — operational commands expose structured JSON where applicable.
 
@@ -67,7 +67,7 @@ The CLI is the control plane. Durable records allow later commands to inspect an
 | VMM | `cloud-hypervisor` available on `PATH` or supplied by flag/config |
 | Disk tooling | `qemu-img` available on `PATH` or supplied by flag/config |
 | Host networking | `/dev/net/tun`, `ip`, root privileges, and `iptables` or `nft` |
-| CNI networking | CNI configuration and plugins when using the CNI provider |
+| CNI networking | CNI configuration under `/etc/cni/net.d` and plugins under `/opt/cni/bin` for the default network path |
 
 Run the built-in preflight check before creating a VM:
 
@@ -94,31 +94,30 @@ make build
 
 The binary is written to `bin/kumabox`.
 
-### 2. Import a cloud image
+### 2. Build an OCI VM image
 
-Import a bootable Linux cloud image and its UEFI firmware:
+Resolve an OCI image and publish a managed direct-boot image:
 
 ```bash
-sudo ./bin/kumabox image import ./ubuntu.img \
-  --name ubuntu \
-  --firmware ./CLOUDHV.fd
+sudo ./bin/kumabox image build docker.io/library/ubuntu:24.04 \
+  --name ubuntu-oci \
+  --platform linux/amd64
 ```
 
 Verify the registered image:
 
 ```bash
 sudo ./bin/kumabox image ls
-sudo ./bin/kumabox image inspect ubuntu --json
+sudo ./bin/kumabox image inspect ubuntu-oci --json
 ```
 
 ### 3. Run a sandbox
 
 ```bash
-sudo ./bin/kumabox run ubuntu \
+sudo ./bin/kumabox run ubuntu-oci \
   --name devbox \
   --cpus 2 \
-  --memory 1G \
-  --network default
+  --memory 1G
 ```
 
 Inspect the runtime and read its logs:
@@ -151,9 +150,9 @@ Use `kumabox <command> --help` for the complete flags and examples supported by 
 | Area | Capabilities |
 | --- | --- |
 | VM lifecycle | Create, run, start, stop, pause, resume, inspect, list, delete |
-| Images | Import/pull cloud images; pull, resolve, and build OCI images; inspect and remove |
+| Images | Pull, resolve, and build OCI images by default; import/pull cloud images as compatibility assets |
 | Guest operations | Agent readiness checks and command execution over vsock |
-| Networking | No network, managed host TAP, or CNI attachments; inspect/setup/teardown |
+| Networking | CNI netns/TAP/tc by default; explicit no-network or managed host TAP; inspect/setup/teardown |
 | Snapshots | Stopped-disk and native running snapshots; verify, export, import, restore, clone |
 | Operations | Doctor checks, logs, state reconciliation, garbage-collection inspection |
 | Automation | JSON output on inspection and other machine-oriented command paths |
@@ -197,8 +196,8 @@ stop_timeout_ms = 10000
 qemu_img_binary = "qemu-img"
 
 [network]
-mode = "host-tap"
-default = "default"
+mode = "cni"
+default = "cni"
 bridge = "kumabox0"
 cidr = "10.88.0.0/16"
 gateway = "10.88.0.1"
@@ -245,7 +244,7 @@ The Linux verification suite exercises the runtime in phased scenarios:
 sudo scripts/linux/verify.sh
 ```
 
-Individual checks under `scripts/linux/p0` through `scripts/linux/p5` cover VM lifecycle, cloud images, networking, OCI images, snapshots, and native snapshot/clone behavior. Most runtime verification requires Linux, KVM, Cloud Hypervisor, and prepared boot fixtures.
+The consolidated scripts cover environment, OCI, CNI and snapshot/runtime behavior. Most runtime verification requires Linux, KVM, Cloud Hypervisor, CNI plugins and prepared boot assets.
 
 ## Security Model
 
