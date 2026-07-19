@@ -137,7 +137,6 @@ func newSnapshotExportCommand(opts *rootOptions) *cobra.Command {
 func newSnapshotCreateCommand(opts *rootOptions) *cobra.Command {
 	var name string
 	var snapshotType string
-	var consistency string
 	cmd := &cobra.Command{
 		Use: "create VM", Short: "Capture a stopped disk or running native snapshot", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -149,15 +148,9 @@ func newSnapshotCreateCommand(opts *rootOptions) *cobra.Command {
 			var rec *snapshot.Record
 			switch snapshotType {
 			case "disk":
-				if consistency != "stopped-disk" {
-					return fmt.Errorf("--consistent must be stopped-disk for disk snapshots")
-				}
 				rec, err = rt.CreateStoppedSnapshot(cmd.Context(), args[0], name)
 			case "running":
-				if consistency != "crash" && consistency != "fs" {
-					return fmt.Errorf("--consistent must be crash or fs for running snapshots")
-				}
-				rec, err = rt.CreateRunningSnapshotWithOptions(cmd.Context(), args[0], name, kbruntime.RunningSnapshotOptions{Consistency: consistency})
+				rec, err = rt.CreateRunningSnapshot(cmd.Context(), args[0], name)
 			default:
 				return fmt.Errorf("--type must be disk or running")
 			}
@@ -169,7 +162,6 @@ func newSnapshotCreateCommand(opts *rootOptions) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&name, "name", "", "snapshot name")
 	cmd.Flags().StringVar(&snapshotType, "type", "disk", "snapshot type: disk or running")
-	cmd.Flags().StringVar(&consistency, "consistent", "stopped-disk", "consistency: stopped-disk, crash, or fs")
 	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }

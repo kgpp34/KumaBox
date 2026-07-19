@@ -11,7 +11,7 @@ Usage: scripts/linux/verify.sh unit|cni|oci|snapshot|all [options]
   unit      run deterministic Go tests
   cni       run the real bridge + host-local CNI datapath E2E
   oci       build, boot, ping, and exec through a managed OCI microVM
-  snapshot  run stopped, native, fs-consistent, and hibernate E2E scenarios
+  snapshot  run stopped, native, and hibernate E2E scenarios
   all       run all four suites in dependency order
 
 Options after the suite name are forwarded to its script. The all suite accepts

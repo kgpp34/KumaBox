@@ -27,7 +27,7 @@ Usage: scripts/linux/verify-snapshot.sh [options]
   --run-dir PATH
   --log-dir PATH
   --image NAME
-  --scenario all|stopped|native|fs|hibernate
+  --scenario all|stopped|native|hibernate
   --storage SIZE
   --agent-timeout DURATION
   --package PATH
@@ -62,7 +62,7 @@ while (($#)); do
   esac
 done
 
-case $scenario in all|stopped|native|fs|hibernate) ;; *) echo "invalid --scenario: $scenario" >&2; exit 2 ;; esac
+case $scenario in all|stopped|native|hibernate) ;; *) echo "invalid --scenario: $scenario" >&2; exit 2 ;; esac
 [[ $(uname -s) == Linux ]] || { echo "snapshot E2E requires Linux" >&2; exit 1; }
 for binary in jq "$cloud_hypervisor" "$qemu_img"; do
   command -v "$binary" >/dev/null 2>&1 || { echo "required command not found: $binary" >&2; exit 1; }
@@ -87,8 +87,8 @@ kb() {
 step() { printf '\n==> %s\n' "$1"; }
 remove_file() { "${file_prefix[@]}" rm -f "$1"; }
 
-vm_names=(snapshot-stopped-source snapshot-stopped-restored snapshot-native-source snapshot-native-clone snapshot-fs-source snapshot-fs-clone snapshot-hibernate)
-snapshot_names=(snapshot-stopped-disk snapshot-stopped-imported snapshot-native-running snapshot-fs-consistent snapshot-hibernate-running)
+vm_names=(snapshot-stopped-source snapshot-stopped-restored snapshot-native-source snapshot-native-clone snapshot-hibernate)
+snapshot_names=(snapshot-stopped-disk snapshot-stopped-imported snapshot-native-running snapshot-hibernate-running)
 
 cleanup_all() {
   local ref
@@ -170,7 +170,7 @@ verify_native() {
   kb exec "$source_id" -- sh -c 'printf native-memory > /run/kumabox-native-marker; printf native-disk > /var/tmp/kumabox-native-marker; sync'
 
   step "native: capture and clone running state"
-  snapshot_json=$(kb snapshot create "$source_id" --name "$snapshot" --type running --consistent crash)
+  snapshot_json=$(kb snapshot create "$source_id" --name "$snapshot" --type running)
   snapshot_id=$(jq -r '.id' <<<"$snapshot_json")
   clone_json=$(kb clone "$snapshot_id" --name "$clone" --network none --restore-mode copy)
   clone_id=$(jq -r '.id' <<<"$clone_json")
@@ -187,31 +187,6 @@ verify_native() {
   echo "pass: native snapshot clone continuity and identity"
 }
 
-verify_fs() {
-  local source=snapshot-fs-source clone=snapshot-fs-clone snapshot=snapshot-fs-consistent
-  active_case=fs
-  step "fs: capture strict filesystem-consistent state"
-  source_json=$(kb run "$image" --name "$source" --network none --storage "$storage")
-  source_id=$(jq -r '.id' <<<"$source_json")
-  kb agent ping "$source_id" --timeout "$agent_timeout" >/dev/null
-  kb exec "$source_id" -- sh -c 'printf before-freeze > /var/tmp/kumabox-fs-marker; sync'
-  snapshot_json=$(kb snapshot create "$source_id" --name "$snapshot" --type running --consistent fs)
-  snapshot_id=$(jq -r '.id' <<<"$snapshot_json")
-  kb exec "$source_id" -- sh -c 'printf after-thaw >> /var/tmp/kumabox-fs-marker; sync'
-
-  step "fs: clone captured point and prove source thawed"
-  clone_json=$(kb clone "$snapshot_id" --name "$clone" --network none --restore-mode copy)
-  clone_id=$(jq -r '.id' <<<"$clone_json")
-  kb agent ping "$source_id" --timeout "$agent_timeout" >/dev/null
-  kb agent ping "$clone_id" --timeout "$agent_timeout" >/dev/null
-  [[ $(kb exec "$clone_id" -- cat /var/tmp/kumabox-fs-marker) == before-freeze ]]
-
-  kb delete "$clone_id" --force >/dev/null
-  kb delete "$source_id" --force >/dev/null
-  kb snapshot rm "$snapshot_id" >/dev/null
-  echo "pass: filesystem-consistent snapshot freeze/thaw"
-}
-
 verify_hibernate() {
   local name=snapshot-hibernate snapshot=snapshot-hibernate-running
   active_case=hibernate
@@ -223,7 +198,7 @@ verify_hibernate() {
   kb exec "$vm_id" -- sh -c 'printf hibernate-memory > /run/kumabox-hibernate-marker; printf hibernate-disk > /var/tmp/kumabox-hibernate-marker; sync'
 
   step "hibernate: stop without resume gap and wake original identity"
-  hibernate_json=$(kb hibernate "$vm_id" --name "$snapshot" --consistent crash)
+  hibernate_json=$(kb hibernate "$vm_id" --name "$snapshot")
   snapshot_id=$(jq -r '.snapshot.id' <<<"$hibernate_json")
   jq -e '.vm.state == "stopped" and .vm.hibernate != null' <<<"$hibernate_json" >/dev/null
   restore_json=$(kb restore "$vm_id" "$snapshot_id" --restore-mode copy)
@@ -247,7 +222,7 @@ case $scenario in
   native) verify_native ;;
   fs) verify_fs ;;
   hibernate) verify_hibernate ;;
-  all) verify_stopped; verify_native; verify_fs; verify_hibernate ;;
+  all) verify_stopped; verify_native; verify_hibernate ;;
 esac
 
 success=true

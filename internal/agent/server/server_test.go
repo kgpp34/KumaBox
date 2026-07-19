@@ -37,6 +37,9 @@ func TestHandleConnRespondsToHello(t *testing.T) {
 	if !slices.Contains(resp.Capabilities, "identity") {
 		t.Fatalf("capabilities = %v, want identity", resp.Capabilities)
 	}
+	if slices.Contains(resp.Capabilities, "freeze") || slices.Contains(resp.Capabilities, "thaw") {
+		t.Fatalf("capabilities = %v, freeze/thaw must not be advertised", resp.Capabilities)
+	}
 }
 
 func TestHandleConnRejectsUnsupportedRequest(t *testing.T) {
@@ -104,28 +107,5 @@ func TestHandleConnConfiguresIdentity(t *testing.T) {
 	}
 	if !decoded.OK {
 		t.Fatalf("identity response = %+v", decoded)
-	}
-}
-
-func TestHandleConnFreezesAndThawsFilesystems(t *testing.T) {
-	originalFreeze := freezeFilesystems
-	originalThaw := thawFilesystems
-	defer func() {
-		freezeFilesystems = originalFreeze
-		thawFilesystems = originalThaw
-	}()
-	freezeFilesystems = func() ([]string, error) { return []string{"/.kumabox/cow"}, nil }
-	thawFilesystems = func() ([]string, error) { return []string{"/.kumabox/cow"}, nil }
-
-	for _, operation := range []string{"freeze", "thaw"} {
-		conn := &memoryConn{reader: strings.NewReader(`{"type":"` + operation + `"}` + "\n")}
-		handleConn(conn)
-		var resp filesystemResponse
-		if err := json.Unmarshal(conn.writer.Bytes(), &resp); err != nil {
-			t.Fatal(err)
-		}
-		if !resp.OK || len(resp.Mounts) != 1 || resp.Mounts[0] != "/.kumabox/cow" {
-			t.Fatalf("%s response = %+v", operation, resp)
-		}
 	}
 }

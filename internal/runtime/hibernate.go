@@ -8,15 +8,13 @@ import (
 	"path/filepath"
 	"time"
 
-	agentclient "github.com/kumabox/kumabox/internal/agent/client"
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
 type HibernateOptions struct {
-	Name        string
-	Consistency string
+	Name string
 }
 
 type HibernateResult struct {
@@ -29,12 +27,6 @@ type HibernateResult struct {
 func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOptions) (*HibernateResult, error) {
 	if opts.Name == "" {
 		return nil, errors.New("hibernate snapshot name must not be empty")
-	}
-	if opts.Consistency == "" {
-		opts.Consistency = "crash"
-	}
-	if opts.Consistency != "crash" && opts.Consistency != "fs" {
-		return nil, fmt.Errorf("SNAPSHOT_CONSISTENCY_UNSUPPORTED: %s", opts.Consistency)
 	}
 	rec, err := r.store.Inspect(ref)
 	if err != nil {
@@ -78,20 +70,16 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 		return nil, fmt.Errorf("create hibernate staging: %w", err)
 	}
 
-	frozen, err := r.freezeForHibernate(ctx, rec, opts.Consistency)
-	if err != nil {
-		return nil, err
-	}
 	if err := controller.PauseVM(ctx, rec); err != nil {
-		return nil, errors.Join(fmt.Errorf("pause VM for hibernate: %w", err), r.recoverHibernateGuest(ctx, controller, rec, false, frozen))
+		return nil, fmt.Errorf("pause VM for hibernate: %w", err)
 	}
 
-	ready, persistErr := r.persistHibernationSnapshot(ctx, build, rec, snapshotter, inspector, nativeDir, opts.Consistency)
+	ready, persistErr := r.persistHibernationSnapshot(ctx, build, rec, snapshotter, inspector, nativeDir)
 	if persistErr != nil {
-		return nil, errors.Join(persistErr, r.recoverHibernateGuest(ctx, controller, rec, true, frozen))
+		return nil, errors.Join(persistErr, r.recoverHibernateGuest(ctx, controller, rec, true))
 	}
 	if _, err := r.backend.StopVM(rec, backend.StopOptions{Force: true, Timeout: 5 * time.Second}); err != nil {
-		recoverErr := r.recoverHibernateGuest(ctx, controller, rec, true, frozen)
+		recoverErr := r.recoverHibernateGuest(ctx, controller, rec, true)
 		removeErr := error(nil)
 		if recoverErr == nil {
 			_, removeErr = snapshotStore.Remove(ready.ID)
@@ -109,26 +97,7 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 	return &HibernateResult{VM: r.applyObservation(hibernated), Snapshot: ready}, nil
 }
 
-func (r *Runtime) freezeForHibernate(ctx context.Context, rec *vmstore.VMRecord, consistency string) (bool, error) {
-	if consistency != "fs" {
-		return false, nil
-	}
-	freezeCtx, cancel := context.WithTimeout(ctx, snapshotCleanupTimeout)
-	_, err := freezeSnapshotFilesystems(freezeCtx, rec.VsockSocket)
-	cancel()
-	if err == nil {
-		return true, nil
-	}
-	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), snapshotCleanupTimeout)
-	_, thawErr := thawSnapshotFilesystems(cleanupCtx, rec.VsockSocket)
-	cleanupCancel()
-	if errors.Is(err, agentclient.ErrNotReady) {
-		return false, errors.Join(fmt.Errorf("GUEST_AGENT_UNAVAILABLE: freeze filesystems: %w", err), thawErr)
-	}
-	return false, errors.Join(fmt.Errorf("GUEST_FREEZE_FAILED: %w", err), thawErr)
-}
-
-func (r *Runtime) persistHibernationSnapshot(ctx context.Context, build *snapshot.Build, rec *vmstore.VMRecord, snapshotter backend.NativeSnapshotter, inspector backend.NativeHostInspector, nativeDir, consistency string) (*snapshot.Record, error) {
+func (r *Runtime) persistHibernationSnapshot(ctx context.Context, build *snapshot.Build, rec *vmstore.VMRecord, snapshotter backend.NativeSnapshotter, inspector backend.NativeHostInspector, nativeDir string) (*snapshot.Record, error) {
 	pending := build.Record()
 	stagedDisks, err := captureNativeWindow(ctx, snapshotter, rec, nativeDir, pending.StagingDir)
 	if err != nil {
@@ -142,7 +111,7 @@ func (r *Runtime) persistHibernationSnapshot(ctx context.Context, build *snapsho
 	if err != nil {
 		return nil, fmt.Errorf("inspect native compatibility: %w", err)
 	}
-	_, totalSize, err := snapshot.WriteNativeManifest(ctx, build, rec, disks, host, consistency)
+	_, totalSize, err := snapshot.WriteNativeManifest(ctx, build, rec, disks, host)
 	if err != nil {
 		return nil, err
 	}
@@ -153,20 +122,15 @@ func (r *Runtime) persistHibernationSnapshot(ctx context.Context, build *snapsho
 	return ready, nil
 }
 
-func (r *Runtime) recoverHibernateGuest(ctx context.Context, controller backend.StateController, rec *vmstore.VMRecord, paused, frozen bool) error {
+func (r *Runtime) recoverHibernateGuest(ctx context.Context, controller backend.StateController, rec *vmstore.VMRecord, paused bool) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), snapshotCleanupTimeout)
 	defer cancel()
-	errs := make([]error, 0, 2)
+	var resumeErr error
 	if paused {
 		if err := controller.ResumeVM(cleanupCtx, rec); err != nil {
 			r.persistSnapshotResumeFailure(rec)
-			errs = append(errs, fmt.Errorf("resume VM after failed hibernate: %w", err))
+			resumeErr = fmt.Errorf("resume VM after failed hibernate: %w", err)
 		}
 	}
-	if frozen {
-		if _, err := thawSnapshotFilesystems(cleanupCtx, rec.VsockSocket); err != nil {
-			errs = append(errs, fmt.Errorf("thaw VM after failed hibernate: %w", err))
-		}
-	}
-	return errors.Join(errs...)
+	return resumeErr
 }

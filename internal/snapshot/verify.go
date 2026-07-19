@@ -121,6 +121,9 @@ func loadNativeManifest(rec *Record) (*Manifest, error) {
 	if manifest.SchemaVersion != "kumabox.snapshot.v2" || manifest.ID != rec.ID || manifest.Type != "native" {
 		return nil, errors.New("SNAPSHOT_INCOMPATIBLE: snapshot is not a native v2 snapshot")
 	}
+	if manifest.Consistency != "crash" {
+		return nil, fmt.Errorf("SNAPSHOT_INCOMPATIBLE: native snapshot consistency %q is unsupported", manifest.Consistency)
+	}
 	if manifest.Native == nil || manifest.Backend == nil || manifest.Machine == nil || manifest.Boot == nil || manifest.Devices == nil {
 		return nil, errors.New("SNAPSHOT_CORRUPT: native compatibility metadata is incomplete")
 	}

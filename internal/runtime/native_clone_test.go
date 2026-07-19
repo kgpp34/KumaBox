@@ -198,7 +198,7 @@ func newNativeCloneRuntime(t *testing.T) (*Runtime, *vmstore.Store, *vmstore.VMR
 	}
 	_, size, err := snapshot.WriteNativeManifest(context.Background(), build, source, disks, backend.NativeHost{
 		BackendName: "cloud-hypervisor", BackendVersion: "test", SnapshotFormat: "cloud-hypervisor-native-v1", Architecture: "test", CPUVendor: "test",
-	}, "crash")
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

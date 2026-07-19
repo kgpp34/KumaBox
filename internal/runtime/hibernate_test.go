@@ -44,7 +44,7 @@ func TestHibernateVMPersistsBeforeStopping(t *testing.T) {
 		},
 	}
 
-	result, err := rt.HibernateVM(context.Background(), rec.ID, HibernateOptions{Name: "nap", Consistency: "crash"})
+	result, err := rt.HibernateVM(context.Background(), rec.ID, HibernateOptions{Name: "nap"})
 	if err != nil {
 		t.Fatal(err)
 	}
