@@ -2,7 +2,7 @@
   <img src="assets/logo.png" alt="KumaBox logo" width="180">
 </p>
 
-<h1 align="center">KumaBox</h1>
+<!-- <h1 align="center">KumaBox</h1> -->
 
 <p align="center">
   A daemonless microVM sandbox runtime for agents, automation, and untrusted workloads.
