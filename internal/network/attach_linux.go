@@ -8,6 +8,11 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
+const (
+	tapTxQueueLength = 10000
+	tapGROMaxSize    = 65536
+)
+
 // AttachHostTap creates a TAP device and enslaves it to the configured bridge.
 //
 // The TAP is created with IFF_NO_PI and vnet_hdr support because Cloud
@@ -63,6 +68,7 @@ func DeleteHostTap(tapName string) error {
 
 func ensureTap(rec Record) (netlink.Link, bool, error) {
 	if link, err := netlink.LinkByName(rec.TAP); err == nil {
+		tuneTap(link)
 		return link, false, nil
 	} else if !isLinkNotFound(err) {
 		return nil, false, err
@@ -88,7 +94,17 @@ func ensureTap(rec Record) (netlink.Link, bool, error) {
 		_ = netlink.LinkDel(tap)
 		return nil, false, fmt.Errorf("find created tap %s: %w", rec.TAP, err)
 	}
+	tuneTap(link)
 	return link, true, nil
+}
+
+func tuneTap(link netlink.Link) {
+	if link == nil {
+		return
+	}
+	// Host tuning is best-effort because Cloud Hypervisor owns the TAP FDs.
+	_ = netlink.LinkSetTxQLen(link, tapTxQueueLength)
+	_ = netlink.LinkSetGROMaxSize(link, tapGROMaxSize)
 }
 
 func tapQueuePairs(numQueues int) int {

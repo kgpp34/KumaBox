@@ -89,10 +89,13 @@ type QueueAffinity struct {
 
 // Net is one virtio-net device backed by a host TAP interface.
 type Net struct {
-	TAP       string `json:"tap"`
-	MAC       string `json:"mac"`
-	NumQueues int    `json:"numQueues"`
-	QueueSize int    `json:"queueSize"`
+	TAP         string `json:"tap"`
+	MAC         string `json:"mac"`
+	NumQueues   int    `json:"numQueues"`
+	QueueSize   int    `json:"queueSize"`
+	OffloadTSO  bool   `json:"offloadTSO"`
+	OffloadUFO  bool   `json:"offloadUFO"`
+	OffloadCsum bool   `json:"offloadCsum"`
 }
 
 type Vsock struct {
@@ -231,6 +234,15 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		if net.QueueSize > 0 {
 			netArg += fmt.Sprintf(",queue_size=%d", net.QueueSize)
 		}
+		if net.OffloadTSO {
+			netArg += ",offload_tso=on"
+		}
+		if net.OffloadUFO {
+			netArg += ",offload_ufo=on"
+		}
+		if net.OffloadCsum {
+			netArg += ",offload_csum=on"
+		}
 		args = append(args, netArg)
 	}
 	vsock := newVsock(rec)
@@ -308,10 +320,13 @@ func newNets(rec *vmstore.VMRecord) []Net {
 			continue
 		}
 		nets = append(nets, Net{
-			TAP:       nc.TAP,
-			MAC:       nc.MAC,
-			NumQueues: nc.NumQueues,
-			QueueSize: nc.QueueSize,
+			TAP:         nc.TAP,
+			MAC:         nc.MAC,
+			NumQueues:   nc.NumQueues,
+			QueueSize:   nc.QueueSize,
+			OffloadTSO:  true,
+			OffloadUFO:  true,
+			OffloadCsum: true,
 		})
 	}
 	return nets

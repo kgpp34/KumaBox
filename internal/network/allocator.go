@@ -13,7 +13,7 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 )
 
-const defaultQueueSize = 256
+const defaultQueueSize = 512
 
 var ErrLeaseConflict = errors.New("network lease conflict")
 

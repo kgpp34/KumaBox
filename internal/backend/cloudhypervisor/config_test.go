@@ -325,7 +325,7 @@ func TestRenderConfigIncludesNetworkDevice(t *testing.T) {
 	if !argsContainPair(rendered.Args, "--memory", "size=536870912") {
 		t.Fatalf("memory arg missing: %v", rendered.Args)
 	}
-	if !argsContainPair(rendered.Args, "--net", "tap=kbtaptest,mac=02:00:00:00:00:11,num_queues=2,queue_size=256") {
+	if !argsContainPair(rendered.Args, "--net", "tap=kbtaptest,mac=02:00:00:00:00:11,num_queues=2,queue_size=256,offload_tso=on,offload_ufo=on,offload_csum=on") {
 		t.Fatalf("net arg missing: %v", rendered.Args)
 	}
 	networkConfig, err := os.ReadFile(filepath.Join(rec.Metadata.CidataDir, "network-config"))
@@ -358,8 +358,8 @@ func TestConfigGroupsMultipleNetworkValuesUnderOneOption(t *testing.T) {
 		t.Fatalf("network option must be grouped: %v", rendered.Args)
 	}
 	for _, value := range []string{
-		"tap=kbtap0,mac=02:00:00:00:00:10,num_queues=2,queue_size=256",
-		"tap=kbtap1,mac=02:00:00:00:00:11,num_queues=2,queue_size=256",
+		"tap=kbtap0,mac=02:00:00:00:00:10,num_queues=2,queue_size=256,offload_tso=on,offload_ufo=on,offload_csum=on",
+		"tap=kbtap1,mac=02:00:00:00:00:11,num_queues=2,queue_size=256,offload_tso=on,offload_ufo=on,offload_csum=on",
 	} {
 		if !argsContainPair(rendered.Args, "--net", value) {
 			t.Fatalf("network value %q missing: %v", value, rendered.Args)
