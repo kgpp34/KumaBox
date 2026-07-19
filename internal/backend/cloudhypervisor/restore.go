@@ -259,11 +259,14 @@ func hotSwapCloneNetworks(ctx context.Context, client *http.Client, config map[s
 	}
 	for i, nc := range rec.NetworkConfigs {
 		payload := map[string]any{
-			"id":         cloneNetworkDeviceID(nc.MAC),
-			"tap":        nc.TAP,
-			"mac":        nc.MAC,
-			"num_queues": nc.NumQueues,
-			"queue_size": nc.QueueSize,
+			"id":           cloneNetworkDeviceID(nc.MAC),
+			"tap":          nc.TAP,
+			"mac":          nc.MAC,
+			"num_queues":   nc.NumQueues,
+			"queue_size":   nc.QueueSize,
+			"offload_tso":  true,
+			"offload_ufo":  true,
+			"offload_csum": true,
 		}
 		body, err := json.Marshal(payload)
 		if err != nil {
