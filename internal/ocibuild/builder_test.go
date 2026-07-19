@@ -106,6 +106,9 @@ func TestResolveBootProfileExtractsKernelAndInitrd(t *testing.T) {
 	if !strings.Contains(boot.Cmdline, "boot=kumabox-overlay") || strings.Contains(boot.Cmdline, "root=/dev/ram0") {
 		t.Fatalf("cmdline template does not select KumaBox overlay boot: %s", boot.Cmdline)
 	}
+	if !strings.Contains(boot.Cmdline, "loglevel=3") || !strings.Contains(boot.Cmdline, "clocksource=kvm-clock") {
+		t.Fatalf("cmdline template is missing fast-boot parameters: %s", boot.Cmdline)
+	}
 }
 
 func TestResolveBootProfileRejectsMissingAssets(t *testing.T) {
