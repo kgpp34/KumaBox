@@ -192,7 +192,7 @@ build_base_image() {
   [[ -f $dockerfile ]] || { echo "OCI base Dockerfile is missing: $dockerfile" >&2; return 1; }
 
   step "build Linux guest agent"
-  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$agent_binary" ./cmd/kumabox-agent
+  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$agent_binary" ./cmd/agent
 
   step "build KumaBox-compatible OCI base image"
   if ! docker build --platform "$platform" -f "$dockerfile" -t "$ref" "$context_dir"; then

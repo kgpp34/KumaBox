@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	kbagent "github.com/kumabox/kumabox/internal/agent"
+	agentclient "github.com/kumabox/kumabox/internal/agent/client"
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -16,8 +16,8 @@ import (
 
 const snapshotCleanupTimeout = 30 * time.Second
 
-var freezeSnapshotFilesystems = kbagent.FreezeFilesystems
-var thawSnapshotFilesystems = kbagent.ThawFilesystems
+var freezeSnapshotFilesystems = agentclient.FreezeFilesystems
+var thawSnapshotFilesystems = agentclient.ThawFilesystems
 
 type RunningSnapshotOptions struct {
 	Consistency string
@@ -87,7 +87,7 @@ func (r *Runtime) CreateRunningSnapshotWithOptions(ctx context.Context, ref, nam
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), snapshotCleanupTimeout)
 			_, thawErr := thawSnapshotFilesystems(cleanupCtx, rec.VsockSocket)
 			cleanupCancel()
-			if errors.Is(freezeErr, kbagent.ErrNotReady) {
+			if errors.Is(freezeErr, agentclient.ErrNotReady) {
 				return nil, errors.Join(fmt.Errorf("GUEST_AGENT_UNAVAILABLE: freeze filesystems: %w", freezeErr), wrapOptional("cleanup thaw", thawErr))
 			}
 			return nil, errors.Join(fmt.Errorf("GUEST_FREEZE_FAILED: %w", freezeErr), wrapOptional("cleanup thaw", thawErr))

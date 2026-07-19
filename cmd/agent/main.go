@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/kumabox/kumabox/internal/guestagent"
+	"github.com/kumabox/kumabox/internal/agent/server"
 )
 
 func main() {
@@ -14,12 +14,12 @@ func main() {
 	}
 	switch os.Args[1] {
 	case "serve":
-		if err := guestagent.Serve(); err != nil {
+		if err := server.Serve(); err != nil {
 			fmt.Fprintf(os.Stderr, "kumabox-agent: %v\n", err)
 			os.Exit(1)
 		}
 	case "version", "--version":
-		fmt.Println(guestagent.Version)
+		fmt.Println(server.Version)
 	default:
 		usage()
 		os.Exit(2)

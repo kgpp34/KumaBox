@@ -1,4 +1,4 @@
-package agent
+package client
 
 import (
 	"bufio"
@@ -163,7 +163,7 @@ func TestPingMissingSocketReportsNotReady(t *testing.T) {
 	if !errors.Is(err, ErrNotReady) {
 		t.Fatalf("error = %v, want ErrNotReady", err)
 	}
-	if !os.IsNotExist(errors.Unwrap(err)) && !strings.Contains(err.Error(), "dial agent") {
+	if !os.IsNotExist(errors.Unwrap(err)) && !strings.Contains(err.Error(), "dial guest agent") {
 		t.Fatalf("unexpected error detail: %v", err)
 	}
 }

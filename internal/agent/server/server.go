@@ -1,4 +1,5 @@
-package guestagent
+// Package server implements the guest-side KumaBox agent service.
+package server
 
 import (
 	"bufio"

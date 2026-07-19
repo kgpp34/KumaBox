@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	kbagent "github.com/kumabox/kumabox/internal/agent"
+	agentclient "github.com/kumabox/kumabox/internal/agent/client"
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/snapshot"
@@ -180,9 +180,9 @@ func cloneNetworkSelections(requested []string, nicCount int) ([]string, error) 
 }
 
 func configureCloneIdentity(ctx context.Context, socket string, rec *vmstore.VMRecord) error {
-	request := kbagent.IdentityRequest{Hostname: rec.Name, Interfaces: make([]kbagent.InterfaceIdentity, 0, len(rec.NetworkConfigs))}
+	request := agentclient.IdentityRequest{Hostname: rec.Name, Interfaces: make([]agentclient.InterfaceIdentity, 0, len(rec.NetworkConfigs))}
 	for i, config := range rec.NetworkConfigs {
-		identity := kbagent.InterfaceIdentity{Name: config.IfName, MAC: config.MAC}
+		identity := agentclient.InterfaceIdentity{Name: config.IfName, MAC: config.MAC}
 		if identity.Name == "" {
 			identity.Name = fmt.Sprintf("eth%d", i)
 		}
@@ -196,24 +196,24 @@ func configureCloneIdentity(ctx context.Context, socket string, rec *vmstore.VMR
 	}
 	identityCtx, cancel := context.WithTimeout(ctx, cloneIdentityTimeout)
 	defer cancel()
-	hello, err := kbagent.Ping(identityCtx, socket)
+	hello, err := agentclient.Ping(identityCtx, socket)
 	if err != nil {
 		return fmt.Errorf("wait for clone guest agent: %w", err)
 	}
-	if !hello.Supports(kbagent.CapabilityIdentity) {
+	if !hello.Supports(agentclient.CapabilityIdentity) {
 		version := hello.Version
 		if version == "" {
 			version = "unknown"
 		}
 		return fmt.Errorf(
 			"AGENT_CAPABILITY_MISSING: guest agent %s does not advertise %q (capabilities=%v); rebuild the managed image with the current kumabox-agent",
-			version, kbagent.CapabilityIdentity, hello.Capabilities,
+			version, agentclient.CapabilityIdentity, hello.Capabilities,
 		)
 	}
 	var lastErr error
 	for {
 		attemptCtx, attemptCancel := context.WithTimeout(identityCtx, cloneIdentityAttemptTimeout)
-		_, err := kbagent.ConfigureIdentity(attemptCtx, socket, request)
+		_, err := agentclient.ConfigureIdentity(attemptCtx, socket, request)
 		attemptCancel()
 		if err == nil {
 			return nil

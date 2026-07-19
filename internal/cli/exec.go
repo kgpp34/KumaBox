@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	kbagent "github.com/kumabox/kumabox/internal/agent"
+	agentclient "github.com/kumabox/kumabox/internal/agent/client"
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -41,7 +41,7 @@ func newExecCommand(opts *rootOptions) *cobra.Command {
 				return fmt.Errorf("AGENT_NOT_READY: VM %s has no vsock socket", rec.Name)
 			}
 			if timeout <= 0 {
-				timeout = kbagent.DefaultPingTimeout
+				timeout = agentclient.DefaultPingTimeout
 			}
 			stdin, err := readOptionalStdin(cmd.InOrStdin())
 			if err != nil {
@@ -49,7 +49,7 @@ func newExecCommand(opts *rootOptions) *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
-			resp, err := kbagent.Exec(ctx, rec.VsockSocket, kbagent.ExecRequest{
+			resp, err := agentclient.Exec(ctx, rec.VsockSocket, agentclient.ExecRequest{
 				Args:    args[1:],
 				Env:     env,
 				WorkDir: workdir,
@@ -81,7 +81,7 @@ func newExecCommand(opts *rootOptions) *cobra.Command {
 	}
 	cmd.Flags().StringArrayVarP(&env, "env", "e", nil, "environment variable in KEY=VALUE form")
 	cmd.Flags().StringVarP(&workdir, "workdir", "w", "", "working directory inside the guest")
-	cmd.Flags().DurationVar(&timeout, "timeout", kbagent.DefaultPingTimeout, "agent exec timeout")
+	cmd.Flags().DurationVar(&timeout, "timeout", agentclient.DefaultPingTimeout, "agent exec timeout")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "print exec result as JSON")
 	return cmd
 }

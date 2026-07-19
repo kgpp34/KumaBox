@@ -1,6 +1,6 @@
 //go:build linux
 
-package guestagent
+package server
 
 import (
 	"os"

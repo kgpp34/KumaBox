@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/agent"
+	agentclient "github.com/kumabox/kumabox/internal/agent/client"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -118,13 +118,13 @@ func TestCreateFSConsistentSnapshotOrdersGuestAndVMMBarriers(t *testing.T) {
 		thawSnapshotFilesystems = originalThaw
 	}()
 	steps := make([]string, 0, 5)
-	freezeSnapshotFilesystems = func(context.Context, string) (*agent.FilesystemResponse, error) {
+	freezeSnapshotFilesystems = func(context.Context, string) (*agentclient.FilesystemResponse, error) {
 		steps = append(steps, "freeze")
-		return &agent.FilesystemResponse{OK: true}, nil
+		return &agentclient.FilesystemResponse{OK: true}, nil
 	}
-	thawSnapshotFilesystems = func(context.Context, string) (*agent.FilesystemResponse, error) {
+	thawSnapshotFilesystems = func(context.Context, string) (*agentclient.FilesystemResponse, error) {
 		steps = append(steps, "thaw")
-		return &agent.FilesystemResponse{OK: true}, nil
+		return &agentclient.FilesystemResponse{OK: true}, nil
 	}
 	backendState := vmstore.ObservedStateRunning
 	rt.backend = backendFake{
@@ -173,12 +173,12 @@ func TestCreateFSConsistentSnapshotThawsAfterCaptureFailure(t *testing.T) {
 		thawSnapshotFilesystems = originalThaw
 	}()
 	thawed := false
-	freezeSnapshotFilesystems = func(context.Context, string) (*agent.FilesystemResponse, error) {
-		return &agent.FilesystemResponse{OK: true}, nil
+	freezeSnapshotFilesystems = func(context.Context, string) (*agentclient.FilesystemResponse, error) {
+		return &agentclient.FilesystemResponse{OK: true}, nil
 	}
-	thawSnapshotFilesystems = func(context.Context, string) (*agent.FilesystemResponse, error) {
+	thawSnapshotFilesystems = func(context.Context, string) (*agentclient.FilesystemResponse, error) {
 		thawed = true
-		return &agent.FilesystemResponse{OK: true}, nil
+		return &agentclient.FilesystemResponse{OK: true}, nil
 	}
 	rt.backend = backendFake{
 		observe: func(*vmstore.VMRecord) vmstore.Observation {
@@ -198,9 +198,9 @@ func TestThawRestoredSnapshotOnlyForFSConsistency(t *testing.T) {
 	originalThaw := thawSnapshotFilesystems
 	defer func() { thawSnapshotFilesystems = originalThaw }()
 	calls := 0
-	thawSnapshotFilesystems = func(context.Context, string) (*agent.FilesystemResponse, error) {
+	thawSnapshotFilesystems = func(context.Context, string) (*agentclient.FilesystemResponse, error) {
 		calls++
-		return &agent.FilesystemResponse{OK: true}, nil
+		return &agentclient.FilesystemResponse{OK: true}, nil
 	}
 	rec := &vmstore.VMRecord{VsockSocket: "/tmp/vsock.uds"}
 	if err := thawRestoredSnapshot(context.Background(), rec, &snapshot.Manifest{Consistency: "crash"}); err != nil {

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	kbagent "github.com/kumabox/kumabox/internal/agent"
+	agentclient "github.com/kumabox/kumabox/internal/agent/client"
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -122,7 +122,7 @@ func (r *Runtime) freezeForHibernate(ctx context.Context, rec *vmstore.VMRecord,
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), snapshotCleanupTimeout)
 	_, thawErr := thawSnapshotFilesystems(cleanupCtx, rec.VsockSocket)
 	cleanupCancel()
-	if errors.Is(err, kbagent.ErrNotReady) {
+	if errors.Is(err, agentclient.ErrNotReady) {
 		return false, errors.Join(fmt.Errorf("GUEST_AGENT_UNAVAILABLE: freeze filesystems: %w", err), thawErr)
 	}
 	return false, errors.Join(fmt.Errorf("GUEST_FREEZE_FAILED: %w", err), thawErr)

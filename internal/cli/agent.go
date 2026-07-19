@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	kbagent "github.com/kumabox/kumabox/internal/agent"
+	agentclient "github.com/kumabox/kumabox/internal/agent/client"
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -45,20 +45,20 @@ func newAgentPingCommand(opts *rootOptions) *cobra.Command {
 				return fmt.Errorf("AGENT_NOT_READY: VM %s has no vsock socket", rec.Name)
 			}
 			if timeout <= 0 {
-				timeout = kbagent.DefaultPingTimeout
+				timeout = agentclient.DefaultPingTimeout
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
-			resp, err := kbagent.Ping(ctx, rec.VsockSocket)
+			resp, err := agentclient.Ping(ctx, rec.VsockSocket)
 			if err != nil {
 				return err
 			}
 			return writeJSON(cmd.OutOrStdout(), struct {
-				VMID        string                 `json:"vmId"`
-				VMName      string                 `json:"vmName"`
-				VsockSocket string                 `json:"vsockSocket"`
-				Agent       *kbagent.HelloResponse `json:"agent"`
-				CheckedAt   time.Time              `json:"checkedAt"`
+				VMID        string                     `json:"vmId"`
+				VMName      string                     `json:"vmName"`
+				VsockSocket string                     `json:"vsockSocket"`
+				Agent       *agentclient.HelloResponse `json:"agent"`
+				CheckedAt   time.Time                  `json:"checkedAt"`
 			}{
 				VMID:        rec.ID,
 				VMName:      rec.Name,
@@ -68,6 +68,6 @@ func newAgentPingCommand(opts *rootOptions) *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().DurationVar(&timeout, "timeout", kbagent.DefaultPingTimeout, "agent readiness timeout")
+	cmd.Flags().DurationVar(&timeout, "timeout", agentclient.DefaultPingTimeout, "agent readiness timeout")
 	return cmd
 }

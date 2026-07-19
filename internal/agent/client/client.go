@@ -1,5 +1,5 @@
-// Package agent implements the host-side KumaBox guest-agent client.
-package agent
+// Package client implements the host-side KumaBox guest agent protocol.
+package client
 
 import (
 	"bufio"
@@ -108,7 +108,7 @@ func pingOnce(ctx context.Context, socketPath string) (*HelloResponse, error) {
 	}
 	if !resp.OK {
 		if resp.Error == "" {
-			resp.Error = "agent returned not ok"
+			resp.Error = "guest agent returned not ok"
 		}
 		return &resp, fmt.Errorf("%w: %s", ErrNotReady, resp.Error)
 	}
@@ -131,7 +131,7 @@ func Exec(ctx context.Context, socketPath string, req ExecRequest) (*ExecRespons
 		return nil, err
 	}
 	if !resp.OK && resp.Error == "" {
-		resp.Error = "agent exec returned not ok"
+		resp.Error = "guest agent exec returned not ok"
 	}
 	return &resp, nil
 }
@@ -148,7 +148,7 @@ func ConfigureIdentity(ctx context.Context, socketPath string, req IdentityReque
 	}
 	if !resp.OK {
 		if resp.Error == "" {
-			resp.Error = "agent identity update returned not ok"
+			resp.Error = "guest agent identity update returned not ok"
 		}
 		return &resp, fmt.Errorf("AGENT_IDENTITY_FAILED: %s", resp.Error)
 	}
@@ -180,7 +180,7 @@ func filesystemOperation(ctx context.Context, socketPath, operation string) (*Fi
 func roundTrip(ctx context.Context, socketPath string, req any, resp any) error {
 	conn, err := dialHybridVsock(ctx, socketPath, AgentPort)
 	if err != nil {
-		return fmt.Errorf("%w: dial agent: %v", ErrNotReady, err)
+		return fmt.Errorf("%w: dial guest agent: %v", ErrNotReady, err)
 	}
 	defer conn.Close() //nolint:errcheck
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
