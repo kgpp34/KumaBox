@@ -66,7 +66,7 @@ cni_bin_dir = "/tmp/cni/bin"
 
 func TestDefaultNetworkConfig(t *testing.T) {
 	cfg := Default()
-	if cfg.Network.Mode != "host-tap" {
+	if cfg.Network.Mode != "cni" {
 		t.Fatalf("network mode = %q", cfg.Network.Mode)
 	}
 	if cfg.Network.Bridge != "kumabox0" {

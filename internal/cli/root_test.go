@@ -583,6 +583,9 @@ func TestNewCreateRequestSupportsOCIImageStorage(t *testing.T) {
 	if req.StorageConfigs[1].Base.Digest != "sha256:"+strings.Repeat("b", 64) {
 		t.Fatalf("base digest = %q", req.StorageConfigs[1].Base.Digest)
 	}
+	if len(req.Networks) != 1 || req.Networks[0] != "cni:default" {
+		t.Fatalf("OCI default network = %#v", req.Networks)
+	}
 }
 
 func TestLogsCommandTailsVMLogs(t *testing.T) {

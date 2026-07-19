@@ -12,7 +12,7 @@ const (
 	// ProviderHostTap is KumaBox's built-in Linux bridge + TAP provider.
 	ProviderHostTap = "host-tap"
 
-	// ProviderCNI is reserved for a future CNI-backed provider.
+	// ProviderCNI delegates network setup to the configured CNI conflist.
 	ProviderCNI = "cni"
 
 	// ProviderNone disables VM network attachment.

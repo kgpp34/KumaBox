@@ -12,6 +12,7 @@ import (
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
+	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -406,7 +407,7 @@ func newOCIImageCreateRequest(flags createVMFlags, image *imagestore.ImageRecord
 		KernelCmdline:  image.Boot.Cmdline,
 		CPUs:           flags.cpus,
 		MemoryBytes:    memoryBytes,
-		Networks:       normalizedNetworkFlags(flags.networks),
+		Networks:       normalizedOCIImageNetworkFlags(flags.networks, cfg),
 		StorageConfigs: storageConfigs,
 		Image: &vmstore.ImageRef{
 			ID:           image.ID,
@@ -469,6 +470,16 @@ func normalizedNetworkFlags(values []string) []string {
 		return []string{"none"}
 	}
 	return append([]string(nil), values...)
+}
+
+func normalizedOCIImageNetworkFlags(values []string, cfg config.Config) []string {
+	if len(values) > 0 {
+		return append([]string(nil), values...)
+	}
+	if cfg.Network.Mode == kbnetwork.ProviderCNI {
+		return []string{"cni:" + cfg.Network.Default}
+	}
+	return []string{"none"}
 }
 
 func newPSCommand(opts *rootOptions) *cobra.Command {

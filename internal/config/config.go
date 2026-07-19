@@ -112,8 +112,8 @@ func Load(path string, overrides Overrides) (Config, error) {
 
 // Default returns the built-in KumaBox configuration.
 //
-// The default network intentionally mirrors Docker-style host networking: a
-// stable bridge device, a private RFC1918 subnet, and NAT enabled by default.
+// The default network uses the host's CNI configuration. The built-in
+// host-tap values remain available for the explicit compatibility provider.
 func Default() Config {
 	return Config{
 		Runtime: RuntimeConfig{
@@ -129,7 +129,7 @@ func Default() Config {
 			},
 		},
 		Network: NetworkConfig{
-			Mode:         "host-tap",
+			Mode:         "cni",
 			Default:      "default",
 			Bridge:       "kumabox0",
 			CIDR:         "10.88.0.0/16",
