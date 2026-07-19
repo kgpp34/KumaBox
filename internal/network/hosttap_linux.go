@@ -326,11 +326,11 @@ func ensureNAT(ctx context.Context, runner commandRunner, cfg config.NetworkConf
 		return "", false, err
 	}
 	switch backend {
-	case "none":
+	case NATBackendNone:
 		return backend, false, nil
-	case "iptables":
+	case NATBackendIPTables:
 		return ensureIptablesNAT(ctx, runner, cfg.CIDR)
-	case "nft":
+	case NATBackendNFT:
 		return ensureNftNAT(ctx, runner, cfg.CIDR)
 	default:
 		return "", false, fmt.Errorf("unsupported NAT backend %q", backend)
@@ -339,15 +339,15 @@ func ensureNAT(ctx context.Context, runner commandRunner, cfg config.NetworkConf
 
 func resolveNATBackend(configured string) (string, error) {
 	switch configured {
-	case "", "auto":
+	case "", NATBackendAuto:
 		if _, err := exec.LookPath("iptables"); err == nil {
-			return "iptables", nil
+			return NATBackendIPTables, nil
 		}
 		if _, err := exec.LookPath("nft"); err == nil {
-			return "nft", nil
+			return NATBackendNFT, nil
 		}
 		return "", fmt.Errorf("neither iptables nor nft is available")
-	case "iptables", "nft", "none":
+	case NATBackendIPTables, NATBackendNFT, NATBackendNone:
 		return configured, nil
 	default:
 		return "", fmt.Errorf("unsupported NAT backend %q", configured)
@@ -357,32 +357,32 @@ func resolveNATBackend(configured string) (string, error) {
 func ensureIptablesNAT(ctx context.Context, runner commandRunner, cidr string) (string, bool, error) {
 	_, err := runner.Run(ctx, "iptables", "-t", "nat", "-C", "POSTROUTING", "-s", cidr, "-j", "MASQUERADE")
 	if err == nil {
-		return "iptables", false, nil
+		return NATBackendIPTables, false, nil
 	}
 	if _, err := runner.Run(ctx, "iptables", "-t", "nat", "-A", "POSTROUTING", "-s", cidr, "-j", "MASQUERADE"); err != nil {
 		return "", false, err
 	}
-	return "iptables", true, nil
+	return NATBackendIPTables, true, nil
 }
 
 func ensureNftNAT(ctx context.Context, runner commandRunner, cidr string) (string, bool, error) {
 	out, _ := runner.Run(ctx, "nft", "list", "ruleset")
 	if bytes.Contains(out, []byte("ip saddr "+cidr+" masquerade")) {
-		return "nft", false, nil
+		return NATBackendNFT, false, nil
 	}
 	_, _ = runner.Run(ctx, "nft", "add", "table", "inet", "kumabox")
 	_, _ = runner.Run(ctx, "nft", "add", "chain", "inet", "kumabox", "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}")
 	if _, err := runner.Run(ctx, "nft", "add", "rule", "inet", "kumabox", "postrouting", "ip", "saddr", cidr, "masquerade"); err != nil {
 		return "", false, err
 	}
-	return "nft", true, nil
+	return NATBackendNFT, true, nil
 }
 
 func removeNAT(ctx context.Context, runner commandRunner, backend, cidr string) error {
 	switch backend {
-	case "", "none":
+	case "", NATBackendNone:
 		return nil
-	case "iptables":
+	case NATBackendIPTables:
 		for {
 			if _, err := runner.Run(ctx, "iptables", "-t", "nat", "-C", "POSTROUTING", "-s", cidr, "-j", "MASQUERADE"); err != nil {
 				return nil
@@ -391,7 +391,7 @@ func removeNAT(ctx context.Context, runner commandRunner, backend, cidr string) 
 				return err
 			}
 		}
-	case "nft":
+	case NATBackendNFT:
 		_, _ = runner.Run(ctx, "nft", "delete", "table", "inet", "kumabox")
 		return nil
 	default:

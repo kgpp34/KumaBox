@@ -313,7 +313,7 @@ func newDisks(rec *vmstore.VMRecord) []Disk {
 		disks = append(disks, Disk{
 			Path:      meta.CidataDisk,
 			Readonly:  true,
-			ImageType: "raw",
+			ImageType: vmstore.FormatRaw,
 		})
 	}
 	return disks
@@ -328,7 +328,7 @@ func launchDisks(rec *vmstore.VMRecord) []Disk {
 				Path:         cfg.Path,
 				Readonly:     cfg.Readonly,
 				ImageType:    imageType,
-				BackingFiles: imageType == "qcow2" && !cfg.Readonly,
+				BackingFiles: imageType == vmstore.FormatQCOW2 && !cfg.Readonly,
 				Serial:       cfg.Serial,
 			})
 		}
@@ -452,17 +452,17 @@ func newRootDisk(rec *vmstore.VMRecord) Disk {
 	disk := Disk{Path: rec.RootDisk, Readonly: false}
 	if imageType := rootDiskImageType(rec); imageType != "" {
 		disk.ImageType = imageType
-		disk.BackingFiles = imageType == "qcow2"
+		disk.BackingFiles = imageType == vmstore.FormatQCOW2
 	}
 	return disk
 }
 
 func rootDiskImageType(rec *vmstore.VMRecord) string {
 	if rec.Firmware != "" {
-		return "qcow2"
+		return vmstore.FormatQCOW2
 	}
 	if filepath.Ext(rec.RootDisk) == ".qcow2" {
-		return "qcow2"
+		return vmstore.FormatQCOW2
 	}
 	return ""
 }

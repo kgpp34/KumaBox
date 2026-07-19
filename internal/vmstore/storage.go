@@ -95,27 +95,27 @@ func validateStorageShape(storage StorageConfig, role StorageRole) error {
 	format := storage.EffectiveFormat()
 	switch role {
 	case StorageRoleLayer:
-		if format != "raw" || storage.Filesystem != "erofs" {
+		if format != FormatRaw || storage.Filesystem != FilesystemEROFS {
 			return storageError("layer %q must use raw EROFS", storage.ID)
 		}
 	case StorageRoleCOW:
-		if format == "raw" && storage.Filesystem == "ext4" {
+		if format == FormatRaw && storage.Filesystem == FilesystemEXT4 {
 			break
 		}
-		if format == "qcow2" && storage.Filesystem == "" {
+		if format == FormatQCOW2 && storage.Filesystem == "" {
 			break
 		}
 		return storageError("COW storage %q must use raw ext4 or qcow2", storage.ID)
 	case StorageRoleData:
-		if format != "raw" && format != "qcow2" {
+		if format != FormatRaw && format != FormatQCOW2 {
 			return storageError("data storage %q must use raw or qcow2 format", storage.ID)
 		}
 	case StorageRoleCidata:
-		if format != "raw" {
+		if format != FormatRaw {
 			return storageError("cidata storage %q must use raw format", storage.ID)
 		}
 	case StorageRoleBase:
-		if format != "qcow2" && format != "raw" {
+		if format != FormatQCOW2 && format != FormatRaw {
 			return storageError("base storage %q must use raw or qcow2 format", storage.ID)
 		}
 	}
@@ -144,12 +144,12 @@ func validateCOWBase(rec *VMRecord, storage StorageConfig) error {
 	}
 	format := storage.EffectiveFormat()
 	if base.Family == "cloudimg" {
-		if format != "qcow2" || base.Format != "qcow2" || base.Path == "" {
+		if format != FormatQCOW2 || base.Format != FormatQCOW2 || base.Path == "" {
 			return storageError("cloudimg COW storage %q requires a qcow2 base path", storage.ID)
 		}
 		return nil
 	}
-	if format != "raw" || storage.Filesystem != "ext4" || len(base.LayerDigests) == 0 {
+	if format != FormatRaw || storage.Filesystem != FilesystemEXT4 || len(base.LayerDigests) == 0 {
 		return storageError("OCI COW storage %q requires raw ext4 and layer digests", storage.ID)
 	}
 	return nil

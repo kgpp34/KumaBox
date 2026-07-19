@@ -47,7 +47,7 @@ func CheckCapabilities(natBackend string) CapabilityReport {
 	if report.IPCommand == "" {
 		report.Unavailable = append(report.Unavailable, "ip")
 	}
-	if natBackend != "none" && report.Iptables == "" && report.Nft == "" {
+	if natBackend != NATBackendNone && report.Iptables == "" && report.Nft == "" {
 		report.Unavailable = append(report.Unavailable, "nat")
 	}
 	if !report.RootUser {

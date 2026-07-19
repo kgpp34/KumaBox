@@ -110,7 +110,7 @@ func VerifyNativeCloneTarget(ctx context.Context, manifest *Manifest, target *vm
 }
 
 func loadNativeManifest(rec *Record) (*Manifest, error) {
-	raw, err := os.ReadFile(filepath.Join(rec.DataDir, "snapshot.json")) //nolint:gosec
+	raw, err := os.ReadFile(filepath.Join(rec.DataDir, ManifestFile)) //nolint:gosec
 	if err != nil {
 		return nil, fmt.Errorf("SNAPSHOT_CORRUPT: read manifest: %w", err)
 	}
@@ -118,7 +118,7 @@ func loadNativeManifest(rec *Record) (*Manifest, error) {
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return nil, fmt.Errorf("SNAPSHOT_CORRUPT: decode manifest: %w", err)
 	}
-	if manifest.SchemaVersion != "kumabox.snapshot.v2" || manifest.ID != rec.ID || manifest.Type != "native" {
+	if manifest.SchemaVersion != NativeSchemaV2 || manifest.ID != rec.ID || manifest.Type != NativeType {
 		return nil, errors.New("SNAPSHOT_INCOMPATIBLE: snapshot is not a native v2 snapshot")
 	}
 	if manifest.Consistency != "crash" {
@@ -174,7 +174,7 @@ func verifyNativeFiles(ctx context.Context, dataDir string, manifest *Manifest) 
 
 func verifyPayloadInventory(dataDir string, declared map[string]string) error {
 	seen := make(map[string]struct{}, len(declared))
-	for _, dir := range []string{"native", "disks"} {
+	for _, dir := range []string{NativePayloadDir, DiskPayloadDir} {
 		entries, err := os.ReadDir(filepath.Join(dataDir, dir))
 		if err != nil {
 			return fmt.Errorf("SNAPSHOT_CORRUPT: read payload directory %s: %w", dir, err)
@@ -220,7 +220,7 @@ func verifyPayloadFile(ctx context.Context, dataDir, relative string, size int64
 }
 
 func verifyNativeConfig(dataDir string, manifest *Manifest) error {
-	cfg, err := readNativeConfig(filepath.Join(dataDir, "native", "config.json"))
+	cfg, err := readNativeConfig(filepath.Join(dataDir, NativePayloadDir, NativeConfigFile))
 	if err != nil {
 		return err
 	}
@@ -251,7 +251,7 @@ func readNativeConfig(path string) (*nativeConfig, error) {
 }
 
 func buildNativeDeviceManifest(rec *vmstore.VMRecord, nativeDir string) (*nativeDeviceManifest, error) {
-	cfg, err := readNativeConfig(filepath.Join(nativeDir, "config.json"))
+	cfg, err := readNativeConfig(filepath.Join(nativeDir, NativeConfigFile))
 	if err != nil {
 		return nil, err
 	}
@@ -285,8 +285,8 @@ func buildNativeDeviceManifest(rec *vmstore.VMRecord, nativeDir string) (*native
 				return nil, errors.New("NATIVE_SNAPSHOT_INCOMPATIBLE: cidata disk is writable")
 			}
 			result.Disks = append(result.Disks, StorageDeviceManifest{
-				ID: "cidata", Role: string(vmstore.StorageRoleCidata), Path: nativeDisk.Path,
-				Readonly: nativeDisk.Readonly, Format: "raw",
+				ID: vmstore.StorageIDCidata, Role: string(vmstore.StorageRoleCidata), Path: nativeDisk.Path,
+				Readonly: nativeDisk.Readonly, Format: vmstore.FormatRaw,
 			})
 			matched = true
 		}

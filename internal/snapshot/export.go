@@ -39,8 +39,8 @@ func (s *Store) Export(ctx context.Context, ref string, opts ExportOptions) erro
 	if err != nil {
 		return err
 	}
-	defer lease.Release()                                                        //nolint:errcheck
-	manifestRaw, err := os.ReadFile(filepath.Join(rec.DataDir, "snapshot.json")) //nolint:gosec
+	defer lease.Release()                                                     //nolint:errcheck
+	manifestRaw, err := os.ReadFile(filepath.Join(rec.DataDir, ManifestFile)) //nolint:gosec
 	if err != nil {
 		return fmt.Errorf("read snapshot manifest: %w", err)
 	}

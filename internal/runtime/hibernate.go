@@ -65,7 +65,7 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 	}
 	defer build.Abort() //nolint:errcheck
 	pending := build.Record()
-	nativeDir := filepath.Join(pending.StagingDir, "native")
+	nativeDir := filepath.Join(pending.StagingDir, snapshot.NativePayloadDir)
 	if err := os.MkdirAll(nativeDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create hibernate staging: %w", err)
 	}

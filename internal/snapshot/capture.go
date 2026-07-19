@@ -29,7 +29,7 @@ func CaptureStopped(ctx context.Context, build *Build, rec *vmstore.VMRecord) (*
 	writable := writableDisks(rec)
 
 	manifest := newDiskManifest(pending, rec, manifestDisks, writable)
-	if err := fileutil.WriteJSONAtomic(filepath.Join(pending.StagingDir, "snapshot.json"), manifest, ".snapshot-manifest-*.tmp"); err != nil {
+	if err := fileutil.WriteJSONAtomic(filepath.Join(pending.StagingDir, ManifestFile), manifest, ".snapshot-manifest-*.tmp"); err != nil {
 		return nil, 0, fmt.Errorf("write snapshot manifest: %w", err)
 	}
 	return manifest, allocated, nil
@@ -89,7 +89,7 @@ func copyWritableDisks(ctx context.Context, stagingDir string, rec *vmstore.VMRe
 	if len(writable) == 0 {
 		return nil, 0, errors.New("DISK_CONFIG_MISSING: VM has no managed writable disks")
 	}
-	disksDir := filepath.Join(stagingDir, "disks")
+	disksDir := filepath.Join(stagingDir, DiskPayloadDir)
 	if err := os.MkdirAll(disksDir, 0o700); err != nil {
 		return nil, 0, fmt.Errorf("create snapshot disks directory: %w", err)
 	}
@@ -114,7 +114,7 @@ func copyWritableDisks(ctx context.Context, stagingDir string, rec *vmstore.VMRe
 			if ext == "" {
 				ext = ".img"
 			}
-			relPath := filepath.Join("disks", disk.ID+ext)
+			relPath := filepath.Join(DiskPayloadDir, disk.ID+ext)
 			result, err := copyDisk(groupCtx, disk.Path, filepath.Join(stagingDir, relPath))
 			if err != nil {
 				return fmt.Errorf("capture writable disk %s: %w", disk.ID, err)

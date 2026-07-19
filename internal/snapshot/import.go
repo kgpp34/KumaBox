@@ -20,6 +20,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/kumabox/kumabox/internal/storage"
+	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
 const (
@@ -64,7 +65,7 @@ func (s *Store) Import(ctx context.Context, opts ImportOptions) (*Record, error)
 	}
 	manifest.ID = build.Record().ID
 	manifest.Name = opts.Name
-	if err := fileutil.WriteJSONAtomic(filepath.Join(build.Record().StagingDir, "snapshot.json"), manifest, ".snapshot-manifest-*.tmp"); err != nil {
+	if err := fileutil.WriteJSONAtomic(filepath.Join(build.Record().StagingDir, ManifestFile), manifest, ".snapshot-manifest-*.tmp"); err != nil {
 		return nil, err
 	}
 	var size int64
@@ -130,7 +131,7 @@ func extractPackage(ctx context.Context, tr *tar.Reader, staging string) (*Manif
 			if err != nil {
 				return nil, nil, err
 			}
-		case strings.HasPrefix(name, "disks/"):
+		case strings.HasPrefix(name, DiskPathPrefix):
 			if manifest == nil || !manifestDeclares(manifest, name) {
 				return nil, nil, fmt.Errorf("SNAPSHOT_CORRUPT: undeclared payload %q", name)
 			}
@@ -245,13 +246,13 @@ func validateImportedPayload(qemuBinary, staging string, manifest *Manifest, che
 			return fmt.Errorf("CHECKSUM_MISMATCH: disk %s", disk.ID)
 		}
 		switch disk.Format {
-		case "qcow2":
+		case vmstore.FormatQCOW2:
 			info, err := storage.NewQEMUImg(qemuBinary).Info(context.Background(), path)
 			if err != nil || info.Format != "qcow2" {
 				return fmt.Errorf("SNAPSHOT_CORRUPT: disk %s is not qcow2", disk.ID)
 			}
-		case "raw":
-			if disk.Filesystem == "ext4" {
+		case vmstore.FormatRaw:
+			if disk.Filesystem == vmstore.FilesystemEXT4 {
 				if err := validateExt4(path); err != nil {
 					return err
 				}
@@ -270,7 +271,7 @@ func validateManifest(m *Manifest) error {
 	seen := map[string]struct{}{}
 	for _, d := range m.Disks {
 		path, err := safeArchivePath(d.Path)
-		if err != nil || !strings.HasPrefix(path, "disks/") {
+		if err != nil || !strings.HasPrefix(path, DiskPathPrefix) {
 			return errors.New("SNAPSHOT_CORRUPT: invalid disk path")
 		}
 		if _, ok := seen[path]; ok {

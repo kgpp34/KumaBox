@@ -25,7 +25,7 @@ func (Backend) SnapshotVM(ctx context.Context, rec *vmstore.VMRecord, destinatio
 		return err
 	}
 	destinationURL := (&url.URL{Scheme: "file", Path: abs}).String()
-	return putJSONOnce(ctx, apiSocket, nativeSnapshotTimeout, "vm.snapshot", map[string]string{
+	return putJSONOnce(ctx, apiSocket, nativeSnapshotTimeout, apiVMSnapshot, map[string]string{
 		"destination_url": destinationURL,
 	}, http.StatusNoContent)
 }

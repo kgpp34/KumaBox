@@ -138,7 +138,7 @@ func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manif
 	if err := os.RemoveAll(root); err != nil {
 		return nil, fmt.Errorf("clear restore staging: %w", err)
 	}
-	nativeDir := filepath.Join(root, "native")
+	nativeDir := filepath.Join(root, snapshot.NativePayloadDir)
 	if err := os.MkdirAll(nativeDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create native restore staging: %w", err)
 	}
@@ -150,7 +150,7 @@ func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manif
 		}
 	}()
 	for _, file := range manifest.Native.Files {
-		if !strings.HasPrefix(file.Path, "native/") || filepath.Base(file.Path) != strings.TrimPrefix(file.Path, "native/") {
+		if !strings.HasPrefix(file.Path, snapshot.NativePathPrefix) || filepath.Base(file.Path) != strings.TrimPrefix(file.Path, snapshot.NativePathPrefix) {
 			return nil, fmt.Errorf("SNAPSHOT_CORRUPT: invalid native payload path %s", file.Path)
 		}
 		source := filepath.Join(snapshotRec.DataDir, filepath.FromSlash(file.Path))

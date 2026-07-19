@@ -22,7 +22,7 @@ func WriteNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecor
 		return nil, 0, errors.New("snapshot build and VM record are required")
 	}
 	pending := build.Record()
-	nativeDir := filepath.Join(pending.StagingDir, "native")
+	nativeDir := filepath.Join(pending.StagingDir, NativePayloadDir)
 	entries, err := os.ReadDir(nativeDir)
 	if err != nil {
 		return nil, 0, fmt.Errorf("read native snapshot payload: %w", err)
@@ -41,9 +41,9 @@ func WriteNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecor
 			return nil, 0, fmt.Errorf("stat native payload %s: %w", entry.Name(), err)
 		}
 		switch {
-		case entry.Name() == "config.json":
+		case entry.Name() == NativeConfigFile:
 			hasConfig = true
-		case entry.Name() == "state.json":
+		case entry.Name() == NativeStateFile:
 			hasState = true
 		case IsNativeMemoryFile(entry.Name()):
 			hasMemory = true
@@ -53,7 +53,7 @@ func WriteNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecor
 			return nil, 0, fmt.Errorf("checksum native payload %s: %w", entry.Name(), err)
 		}
 		files = append(files, NativeFileManifest{
-			Path:      filepath.ToSlash(filepath.Join("native", entry.Name())),
+			Path:      filepath.ToSlash(filepath.Join(NativePayloadDir, entry.Name())),
 			SizeBytes: info.Size(),
 			SHA256:    digest,
 		})
@@ -64,10 +64,10 @@ func WriteNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecor
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	manifest := newDiskManifest(pending, rec, disks, writableDisks(rec))
-	manifest.SchemaVersion = "kumabox.snapshot.v2"
-	manifest.Type = "native"
+	manifest.SchemaVersion = NativeSchemaV2
+	manifest.Type = NativeType
 	manifest.Consistency = "crash"
-	manifest.Native = &NativeManifest{PayloadDir: "native", Files: files}
+	manifest.Native = &NativeManifest{PayloadDir: NativePayloadDir, Files: files}
 	manifest.Backend = &BackendManifest{Name: host.BackendName, Version: host.BackendVersion, SnapshotFormat: host.SnapshotFormat}
 	manifest.Machine = &MachineManifest{
 		Architecture: host.Architecture, CPUVendor: host.CPUVendor,
@@ -88,7 +88,7 @@ func WriteNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecor
 	manifest.Devices = &devices.DeviceManifest
 	manifest.Network = &NetworkManifest{RestorePolicy: "preserve", ClonePolicy: "new"}
 	manifest.CreatedAt = time.Now().UTC()
-	if err := fileutil.WriteJSONAtomic(filepath.Join(pending.StagingDir, "snapshot.json"), manifest, ".snapshot-manifest-*.tmp"); err != nil {
+	if err := fileutil.WriteJSONAtomic(filepath.Join(pending.StagingDir, ManifestFile), manifest, ".snapshot-manifest-*.tmp"); err != nil {
 		return nil, 0, fmt.Errorf("write native snapshot manifest: %w", err)
 	}
 	if err := writeChecksums(pending.StagingDir, manifest); err != nil {
@@ -103,7 +103,7 @@ func WriteNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecor
 // IsNativeMemoryFile reports whether name is a Cloud Hypervisor memory
 // payload. Released versions use both memory-ranges and memory-range-* names.
 func IsNativeMemoryFile(name string) bool {
-	return strings.HasPrefix(filepath.Base(name), "memory-range")
+	return strings.HasPrefix(filepath.Base(name), NativeMemoryPrefix)
 }
 
 func syncAndHashFile(ctx context.Context, path string) (string, error) {

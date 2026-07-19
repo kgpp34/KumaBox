@@ -18,6 +18,25 @@ import (
 
 const defaultMemoryBytes int64 = 512 << 20
 
+const (
+	FormatRaw        = "raw"
+	FormatQCOW2      = "qcow2"
+	FilesystemEXT4   = "ext4"
+	FilesystemEROFS  = "erofs"
+	StorageIDCOW     = "cow"
+	StorageIDCidata  = "cidata"
+	StorageSerialCOW = "kumabox-cow"
+	BaseFamilyOCI    = "oci"
+)
+
+func LayerID(index int) string {
+	return fmt.Sprintf("layer%d", index)
+}
+
+func LayerSerial(index int) string {
+	return fmt.Sprintf("kumabox-layer%d", index)
+}
+
 // VMState is KumaBox's persisted lifecycle state.
 //
 // It is updated by lifecycle operations such as start, stop, and delete. It is
@@ -394,7 +413,7 @@ func normalizeStorageConfigs(configs []StorageConfig, rootDir, vmID string) []St
 		}
 		if cfg.Role == StorageRoleData && cfg.Path == "" {
 			ext := ".raw"
-			if cfg.Format == "qcow2" {
+			if cfg.Format == FormatQCOW2 {
 				ext = ".qcow2"
 			}
 			cfg.Path = filepath.Join(rootDir, "storage", "vms", vmID, "data-"+cfg.ID+ext)

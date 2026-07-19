@@ -20,6 +20,11 @@ const (
 
 	// ProviderNone disables VM network attachment.
 	ProviderNone = "none"
+
+	NATBackendAuto     = "auto"
+	NATBackendIPTables = "iptables"
+	NATBackendNFT      = "nft"
+	NATBackendNone     = "none"
 )
 
 const maxInterfaceNameLength = 15

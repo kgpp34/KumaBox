@@ -119,13 +119,13 @@ func checkNetworkIPCommand(cfg config.Config) Check {
 }
 
 func checkNetworkNAT(cfg config.Config) Check {
-	if cfg.Network.Mode == kbnetwork.ProviderNone || cfg.Network.NATBackend == "none" {
+	if cfg.Network.Mode == kbnetwork.ProviderNone || cfg.Network.NATBackend == kbnetwork.NATBackendNone {
 		return Check{Name: "networkNAT", Status: StatusPass, Message: "NAT disabled"}
 	}
 	iptablesPath, iptablesErr := exec.LookPath("iptables")
 	nftPath, nftErr := exec.LookPath("nft")
 	switch cfg.Network.NATBackend {
-	case "iptables":
+	case kbnetwork.NATBackendIPTables:
 		if iptablesErr != nil {
 			return Check{
 				Name:            "networkNAT",
@@ -136,7 +136,7 @@ func checkNetworkNAT(cfg config.Config) Check {
 			}
 		}
 		return Check{Name: "networkNAT", Status: StatusPass, Message: "found " + iptablesPath}
-	case "nft":
+	case kbnetwork.NATBackendNFT:
 		if nftErr != nil {
 			return Check{
 				Name:            "networkNAT",

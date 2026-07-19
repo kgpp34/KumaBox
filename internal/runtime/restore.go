@@ -108,7 +108,7 @@ func restoreCreateRequest(opts RestoreOptions, image *imagestore.ImageRecord, ma
 	var configs []vmstore.StorageConfig
 	switch manifest.Base.Family {
 	case "cloudimg":
-		if digest != manifest.Base.Digest || image.RootDisk.Format != "qcow2" {
+		if digest != manifest.Base.Digest || image.RootDisk.Format != vmstore.FormatQCOW2 {
 			return vmstore.CreateRequest{}, errors.New("BASE_IMAGE_MISMATCH: local cloud image digest or format differs")
 		}
 		req.RootDisk = image.RootDisk.Path
@@ -135,7 +135,7 @@ func restoreCreateRequest(opts RestoreOptions, image *imagestore.ImageRecord, ma
 			if layer.Digest != manifest.Base.LayerDigests[i] || layer.EROFS == nil {
 				return vmstore.CreateRequest{}, errors.New("BASE_IMAGE_MISMATCH: OCI layer digest differs")
 			}
-			configs = append(configs, vmstore.StorageConfig{ID: fmt.Sprintf("layer%d", i), Role: vmstore.StorageRoleLayer, Path: layer.EROFS.Path, Readonly: true, Format: "raw", Filesystem: "erofs", Serial: fmt.Sprintf("kumabox-layer%d", i), SourceLayer: layer.Digest, VirtualSizeBytes: layer.EROFS.SizeBytes})
+			configs = append(configs, vmstore.StorageConfig{ID: vmstore.LayerID(i), Role: vmstore.StorageRoleLayer, Path: layer.EROFS.Path, Readonly: true, Format: vmstore.FormatRaw, Filesystem: vmstore.FilesystemEROFS, Serial: vmstore.LayerSerial(i), SourceLayer: layer.Digest, VirtualSizeBytes: layer.EROFS.SizeBytes})
 		}
 	default:
 		return vmstore.CreateRequest{}, fmt.Errorf("unsupported snapshot base family %q", manifest.Base.Family)
@@ -159,8 +159,8 @@ func restoreCreateRequest(opts RestoreOptions, image *imagestore.ImageRecord, ma
 		if role == vmstore.StorageRoleCOW {
 			cowCount++
 			storageConfig.Base = &vmstore.StorageBase{Family: manifest.Base.Family, ImageID: image.ID, Digest: manifest.Base.Digest, Format: manifest.Base.Format, Path: image.RootDisk.Path, LayerDigests: append([]string(nil), manifest.Base.LayerDigests...)}
-			if manifest.Base.Family == "oci" {
-				storageConfig.Serial = "kumabox-cow"
+			if manifest.Base.Family == vmstore.BaseFamilyOCI {
+				storageConfig.Serial = vmstore.StorageSerialCOW
 			}
 		}
 		configs = append(configs, storageConfig)

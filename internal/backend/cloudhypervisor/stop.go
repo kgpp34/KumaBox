@@ -89,16 +89,16 @@ func (Stopper) StopVM(rec *vmstore.VMRecord, opts backend.StopOptions) (*backend
 }
 
 func shutdownVM(ctx context.Context, apiSocket string) error {
-	_, err := doAPIOnce(ctx, apiSocket, backendAPIRequestTimeout, http.MethodPut, "vm.shutdown", nil, http.StatusNoContent)
+	_, err := doAPIOnce(ctx, apiSocket, backendAPIRequestTimeout, http.MethodPut, apiVMShutdown, nil, http.StatusNoContent)
 	return err
 }
 
 func resumeIfPaused(ctx context.Context, apiSocket string) error {
 	info, err := queryVMInfo(ctx, apiSocket, backendAPIRequestTimeout)
-	if err != nil || !strings.EqualFold(info.State, "Paused") {
+	if err != nil || !strings.EqualFold(info.State, backendStatePaused) {
 		return err
 	}
-	_, err = doAPIOnce(ctx, apiSocket, backendAPIRequestTimeout, http.MethodPut, "vm.resume", nil, http.StatusNoContent)
+	_, err = doAPIOnce(ctx, apiSocket, backendAPIRequestTimeout, http.MethodPut, apiVMResume, nil, http.StatusNoContent)
 	return err
 }
 

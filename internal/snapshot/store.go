@@ -94,7 +94,7 @@ func (b *Build) Finalize(sizeBytes int64) (*Record, error) {
 	if b == nil || b.finished {
 		return nil, errors.New("snapshot build is already finished")
 	}
-	manifest := filepath.Join(b.record.StagingDir, "snapshot.json")
+	manifest := filepath.Join(b.record.StagingDir, ManifestFile)
 	info, err := os.Stat(manifest)
 	if err != nil {
 		return nil, fmt.Errorf("validate snapshot manifest: %w", err)
@@ -243,8 +243,8 @@ func (s *Store) LoadManifest(ctx context.Context, ref string) (*Manifest, error)
 	if err != nil {
 		return nil, err
 	}
-	defer lease.Release()                                                //nolint:errcheck
-	raw, err := os.ReadFile(filepath.Join(rec.DataDir, "snapshot.json")) //nolint:gosec
+	defer lease.Release()                                             //nolint:errcheck
+	raw, err := os.ReadFile(filepath.Join(rec.DataDir, ManifestFile)) //nolint:gosec
 	if err != nil {
 		return nil, fmt.Errorf("read snapshot manifest: %w", err)
 	}

@@ -99,7 +99,7 @@ func queryVMInfo(ctx context.Context, socketPath string, timeout time.Duration) 
 }
 
 func queryVMInfoWithClient(ctx context.Context, client *http.Client) (*vmInfo, error) {
-	raw, err := doAPIOnceWithClient(ctx, client, http.MethodGet, "vm.info", nil, http.StatusOK)
+	raw, err := doAPIOnceWithClient(ctx, client, http.MethodGet, apiVMInfo, nil, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}

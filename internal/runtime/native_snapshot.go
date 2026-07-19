@@ -55,7 +55,7 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 	}
 	defer build.Abort() //nolint:errcheck
 	pending := build.Record()
-	nativeDir := filepath.Join(pending.StagingDir, "native")
+	nativeDir := filepath.Join(pending.StagingDir, snapshot.NativePayloadDir)
 	if err := os.MkdirAll(nativeDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create native snapshot staging: %w", err)
 	}

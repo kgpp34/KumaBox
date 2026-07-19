@@ -304,7 +304,7 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 	if image.OCI != nil {
 		return newOCIImageCreateRequest(flags, image, cfg)
 	}
-	if image.RootDisk.Format != "qcow2" {
+	if image.RootDisk.Format != vmstore.FormatQCOW2 {
 		return vmstore.CreateRequest{}, fmt.Errorf("image %q root disk format %q cannot use a qcow2 overlay", image.Name, image.RootDisk.Format)
 	}
 	if image.RootDisk.SHA256 == "" {
@@ -333,7 +333,7 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 		StorageConfigs: []vmstore.StorageConfig{{
 			ID:               "root",
 			Role:             vmstore.StorageRoleCOW,
-			Format:           "qcow2",
+			Format:           vmstore.FormatQCOW2,
 			VirtualSizeBytes: image.RootDisk.VirtualSizeBytes,
 			Base: &vmstore.StorageBase{
 				Family:  "cloudimg",
@@ -378,28 +378,28 @@ func newOCIImageCreateRequest(flags createVMFlags, image *imagestore.ImageRecord
 			return vmstore.CreateRequest{}, fmt.Errorf("image %q layer %d has no EROFS blob", image.Name, i)
 		}
 		storageConfigs = append(storageConfigs, vmstore.StorageConfig{
-			ID:               fmt.Sprintf("layer%d", i),
+			ID:               vmstore.LayerID(i),
 			Role:             vmstore.StorageRoleLayer,
 			Path:             layer.EROFS.Path,
 			Readonly:         true,
-			Format:           "raw",
-			Serial:           fmt.Sprintf("kumabox-layer%d", i),
-			Filesystem:       "erofs",
+			Format:           vmstore.FormatRaw,
+			Serial:           vmstore.LayerSerial(i),
+			Filesystem:       vmstore.FilesystemEROFS,
 			SourceLayer:      layer.Digest,
 			VirtualSizeBytes: layer.EROFS.SizeBytes,
 		})
 		layerDigests = append(layerDigests, layer.Digest)
 	}
 	storageConfigs = append(storageConfigs, vmstore.StorageConfig{
-		ID:               "cow",
+		ID:               vmstore.StorageIDCOW,
 		Role:             vmstore.StorageRoleCOW,
 		Readonly:         false,
-		Format:           "raw",
-		Serial:           "kumabox-cow",
-		Filesystem:       "ext4",
+		Format:           vmstore.FormatRaw,
+		Serial:           vmstore.StorageSerialCOW,
+		Filesystem:       vmstore.FilesystemEXT4,
 		VirtualSizeBytes: cowSize,
 		Base: &vmstore.StorageBase{
-			Family:       "oci",
+			Family:       vmstore.BaseFamilyOCI,
 			ImageID:      image.ID,
 			Digest:       manifestDigest,
 			LayerDigests: append([]string(nil), layerDigests...),

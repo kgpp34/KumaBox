@@ -15,6 +15,7 @@ import (
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/fileutil"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
+	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -54,7 +55,7 @@ func (b Backend) restoreNativeVM(ctx context.Context, rec *vmstore.VMRecord, sou
 	if err != nil {
 		return nil, fmt.Errorf("read backend launch config: %w", err)
 	}
-	nativeConfig, err := patchRestoreConfig(filepath.Join(sourceDir, "config.json"), rec, plan.rebindNetworkTaps)
+	nativeConfig, err := patchRestoreConfig(filepath.Join(sourceDir, snapshot.NativeConfigFile), rec, plan.rebindNetworkTaps)
 	if err != nil {
 		return nil, fmt.Errorf("patch native restore config: %w", err)
 	}
@@ -80,7 +81,7 @@ func (b Backend) restoreNativeVM(ctx context.Context, rec *vmstore.VMRecord, sou
 	if requestErr != nil {
 		return nil, requestErr
 	}
-	if err = putJSONOnce(ctx, rendered.APISocket, nativeSnapshotTimeout, "vm.restore", request, http.StatusNoContent); err != nil {
+	if err = putJSONOnce(ctx, rendered.APISocket, nativeSnapshotTimeout, apiVMRestore, request, http.StatusNoContent); err != nil {
 		return nil, fmt.Errorf("vm.restore: %w", err)
 	}
 	client := socketHTTPClient(rendered.APISocket, nativeSnapshotTimeout)
@@ -90,7 +91,7 @@ func (b Backend) restoreNativeVM(ctx context.Context, rec *vmstore.VMRecord, sou
 			return nil, err
 		}
 	}
-	if err = stateTransition(ctx, &vmstore.VMRecord{Config: rec.Config, APISocket: rendered.APISocket}, "vm.resume", "Running"); err != nil {
+	if err = stateTransition(ctx, &vmstore.VMRecord{Config: rec.Config, APISocket: rendered.APISocket}, apiVMResume, backendStateRunning); err != nil {
 		return nil, fmt.Errorf("vm.resume: %w", err)
 	}
 	return result, nil
@@ -238,7 +239,7 @@ func hotSwapCloneNetworks(ctx context.Context, client *http.Client, config map[s
 		if err != nil {
 			return err
 		}
-		if _, err := doAPIOnceWithClient(ctx, client, http.MethodPut, "vm.remove-device", body, http.StatusNoContent); err != nil {
+		if _, err := doAPIOnceWithClient(ctx, client, http.MethodPut, apiVMRemoveDevice, body, http.StatusNoContent); err != nil {
 			return fmt.Errorf("remove snapshot NIC %s: %w", oldNet.ID, err)
 		}
 		oldIDs = append(oldIDs, oldNet.ID)
@@ -246,13 +247,13 @@ func hotSwapCloneNetworks(ctx context.Context, client *http.Client, config map[s
 	if len(oldIDs) > 0 {
 		// vm.remove-device only requests ACPI eject. The guest must run before
 		// Cloud Hypervisor drops the old virtio-net device and closes its TAP.
-		if err := stateTransitionWithClient(ctx, client, "vm.resume", "Running"); err != nil {
+		if err := stateTransitionWithClient(ctx, client, apiVMResume, backendStateRunning); err != nil {
 			return fmt.Errorf("resume clone for NIC eject: %w", err)
 		}
 		if err := waitCloneDevicesEjected(ctx, client, oldIDs); err != nil {
 			return err
 		}
-		if err := stateTransitionWithClient(ctx, client, "vm.pause", "Paused"); err != nil {
+		if err := stateTransitionWithClient(ctx, client, apiVMPause, backendStatePaused); err != nil {
 			return fmt.Errorf("pause clone after NIC eject: %w", err)
 		}
 	}
@@ -268,7 +269,7 @@ func hotSwapCloneNetworks(ctx context.Context, client *http.Client, config map[s
 		if err != nil {
 			return err
 		}
-		if _, err := doAPIOnceWithClient(ctx, client, http.MethodPut, "vm.add-net", body, http.StatusOK, http.StatusNoContent); err != nil {
+		if _, err := doAPIOnceWithClient(ctx, client, http.MethodPut, apiVMAddNet, body, http.StatusOK, http.StatusNoContent); err != nil {
 			return fmt.Errorf("add clone NIC %d: %w", i, err)
 		}
 	}
