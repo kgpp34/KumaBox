@@ -8,7 +8,7 @@ LDFLAGS := -X github.com/kumabox/kumabox/internal/version.Version=$(VERSION) \
 	-X github.com/kumabox/kumabox/internal/version.Commit=$(COMMIT) \
 	-X github.com/kumabox/kumabox/internal/version.BuildTime=$(BUILD_TIME)
 
-.PHONY: build test clean
+.PHONY: build test install-doctor clean
 
 build:
 	mkdir -p $(BIN_DIR)
@@ -16,6 +16,9 @@ build:
 
 test:
 	go test ./...
+
+install-doctor:
+	install -m 0755 scripts/linux/kumabox-doctor.sh /usr/local/bin/kumabox-doctor
 
 clean:
 	rm -rf $(BIN_DIR)

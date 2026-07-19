@@ -81,6 +81,20 @@ For a stricter development-host check, including networking:
 sudo scripts/linux/env-check.sh --strict --network
 ```
 
+For a standalone check on a fresh Linux host, download the KumaBox doctor:
+
+```bash
+curl -fsSL -o kumabox-doctor https://raw.githubusercontent.com/kgpp34/KumaBox/master/scripts/linux/kumabox-doctor.sh
+install -m 0755 kumabox-doctor /usr/local/bin/
+sudo kumabox-doctor --upgrade
+kumabox-doctor
+```
+
+`--upgrade` installs the host packages, Cloud Hypervisor, UEFI firmware, and
+the CNI plugins required by the default networking path. Use `--json` for
+automation and set `KUMABOX_*` environment variables to pin versions or
+override installation paths.
+
 ## Getting Started
 
 ### 1. Build
