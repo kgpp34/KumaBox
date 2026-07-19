@@ -172,6 +172,21 @@ verify_native() {
   step "native: capture and clone running state"
   snapshot_json=$(kb snapshot create "$source_id" --name "$snapshot" --type running)
   snapshot_id=$(jq -r '.id' <<<"$snapshot_json")
+  snapshot_inspect=$(kb snapshot inspect "$snapshot_id" --json)
+  jq -e '
+    .state == "ready" and
+    (.performance != null) and
+    (.performance.pauseDurationMs >= 0) and
+    (.performance.nativeCaptureMs >= 0) and
+    (.performance.writableDiskStageMs >= 0) and
+    (.performance.publicationDurationMs >= 0) and
+    (.performance.totalDurationMs >= .performance.pauseDurationMs)
+  ' <<<"$snapshot_inspect" >/dev/null || {
+    echo "native snapshot performance metrics are incomplete" >&2
+    jq '{id,name,state,performance}' <<<"$snapshot_inspect" >&2
+    return 1
+  }
+  jq '{id,name,state,performance}' <<<"$snapshot_inspect"
   clone_json=$(kb clone "$snapshot_id" --name "$clone" --network none --restore-mode copy)
   clone_id=$(jq -r '.id' <<<"$clone_json")
   clone_vsock=$(jq -r '.vsockSocket' <<<"$clone_json")
@@ -180,6 +195,8 @@ verify_native() {
   kb agent ping "$clone_id" --timeout "$agent_timeout" >/dev/null
   kb exec "$clone_id" -- sh -c "kill -0 $guest_pid; test \"\$(cat /run/kumabox-native-marker)\" = native-memory; test \"\$(cat /var/tmp/kumabox-native-marker)\" = native-disk"
   [[ $(kb exec "$clone_id" -- uname -n) == "$clone" ]]
+  kb agent ping "$source_id" --timeout "$agent_timeout" >/dev/null
+  [[ $(kb exec "$source_id" -- cat /var/tmp/kumabox-native-marker) == native-disk ]]
 
   kb delete "$clone_id" --force >/dev/null
   kb delete "$source_id" --force >/dev/null
