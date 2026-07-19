@@ -248,8 +248,11 @@ func TestRenderConfigUsesConfiguredDiskIOPolicy(t *testing.T) {
 	if got := rendered.Disks[0]; got.NumQueues != 4 || got.QueueSize != 128 || got.DirectIO || !got.Sparse {
 		t.Fatalf("disk policy = %+v", got)
 	}
-	if !argsContainPair(rendered.Args, "--disk", "path=/data/data.raw,sparse=on,image_type=raw,num_queues=4,queue_size=128") {
-		t.Fatalf("configured disk policy missing: %v", rendered.Args)
+	if len(rendered.Disks[0].QueueAffinity) != 4 || rendered.Disks[0].QueueAffinity[2].QueueIndex != 2 {
+		t.Fatalf("disk queue affinity = %+v", rendered.Disks[0].QueueAffinity)
+	}
+	if !argsContainPair(rendered.Args, "--disk", "path=/data/data.raw,sparse=on,image_type=raw,num_queues=4,queue_size=128,queue_affinity=[0@[0],1@[1],2@[2],3@[3]]") {
+		t.Fatalf("configured disk affinity missing: %v", rendered.Args)
 	}
 }
 

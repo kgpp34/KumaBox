@@ -70,15 +70,21 @@ type Memory struct {
 
 // Disk is one block device passed to Cloud Hypervisor.
 type Disk struct {
-	Path         string `json:"path"`
-	Readonly     bool   `json:"readonly"`
-	DirectIO     bool   `json:"direct,omitempty"`
-	Sparse       bool   `json:"sparse,omitempty"`
-	ImageType    string `json:"imageType,omitempty"`
-	BackingFiles bool   `json:"backingFiles,omitempty"`
-	NumQueues    int    `json:"numQueues,omitempty"`
-	QueueSize    int    `json:"queueSize,omitempty"`
-	Serial       string `json:"serial,omitempty"`
+	Path          string          `json:"path"`
+	Readonly      bool            `json:"readonly"`
+	DirectIO      bool            `json:"direct,omitempty"`
+	Sparse        bool            `json:"sparse,omitempty"`
+	ImageType     string          `json:"imageType,omitempty"`
+	BackingFiles  bool            `json:"backingFiles,omitempty"`
+	NumQueues     int             `json:"numQueues,omitempty"`
+	QueueSize     int             `json:"queueSize,omitempty"`
+	QueueAffinity []QueueAffinity `json:"queueAffinity,omitempty"`
+	Serial        string          `json:"serial,omitempty"`
+}
+
+type QueueAffinity struct {
+	QueueIndex int   `json:"queueIndex"`
+	HostCPUs   []int `json:"hostCPUs"`
 }
 
 // Net is one virtio-net device backed by a host TAP interface.
@@ -352,6 +358,12 @@ func configureDisk(cfg config.Config, rec *vmstore.VMRecord, disk Disk, storage 
 		disk.DirectIO = *storage.DirectIO
 	}
 	disk.Sparse = disk.ImageType != vmstore.FormatQCOW2
+	if disk.NumQueues > 1 {
+		disk.QueueAffinity = make([]QueueAffinity, disk.NumQueues)
+		for queue := range disk.QueueAffinity {
+			disk.QueueAffinity[queue] = QueueAffinity{QueueIndex: queue, HostCPUs: []int{queue}}
+		}
+	}
 	return disk
 }
 
@@ -378,10 +390,25 @@ func diskArg(disk Disk) string {
 	if disk.QueueSize > 0 {
 		arg += fmt.Sprintf(",queue_size=%d", disk.QueueSize)
 	}
+	if len(disk.QueueAffinity) > 0 {
+		arg += ",queue_affinity=" + queueAffinityArg(disk.QueueAffinity)
+	}
 	if disk.Serial != "" {
 		arg += ",serial=" + disk.Serial
 	}
 	return arg
+}
+
+func queueAffinityArg(affinities []QueueAffinity) string {
+	parts := make([]string, len(affinities))
+	for i, affinity := range affinities {
+		cpus := make([]string, len(affinity.HostCPUs))
+		for j, cpu := range affinity.HostCPUs {
+			cpus[j] = fmt.Sprintf("%d", cpu)
+		}
+		parts[i] = fmt.Sprintf("%d@[%s]", affinity.QueueIndex, strings.Join(cpus, ","))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
 }
 
 func kernelCmdline(rec *vmstore.VMRecord) string {
