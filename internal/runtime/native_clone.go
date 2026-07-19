@@ -142,6 +142,9 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err := configureGuestIdentity(ctx, rec.VsockSocket, rec); err != nil {
 		return nil, err
 	}
+	if err := r.guestReadiness(ctx, rec.VsockSocket); err != nil {
+		return nil, fmt.Errorf("verify clone guest readiness: %w", err)
+	}
 	cloned, err := r.store.MarkRestored(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted))
 	if err != nil {
 		return nil, err

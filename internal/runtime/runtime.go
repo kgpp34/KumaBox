@@ -29,11 +29,12 @@ const forcedStopTimeout = 5 * time.Second
 // KumaBox is daemonless, so each command must reconcile persisted intent with
 // the current backend process state before making lifecycle decisions.
 type Runtime struct {
-	store   *vmstore.Store
-	backend backend.Lifecycle
-	cfg     config.Config
-	vmLocks *lockfile.Locker
-	qemuImg *storage.QEMUImg
+	store          *vmstore.Store
+	backend        backend.Lifecycle
+	cfg            config.Config
+	vmLocks        *lockfile.Locker
+	qemuImg        *storage.QEMUImg
+	guestReadiness func(context.Context, string) error
 }
 
 // CreateStoppedSnapshot captures managed writable disks while holding the VM
@@ -90,10 +91,11 @@ func New(cfg config.Config) *Runtime {
 // NewWithBackend creates a Runtime with an injected VM store and backend.
 func NewWithBackend(store *vmstore.Store, vmBackend backend.Lifecycle) *Runtime {
 	return &Runtime{
-		store:   store,
-		backend: vmBackend,
-		vmLocks: lockfile.New(filepath.Join(store.RootDir(), "locks", "vms")),
-		qemuImg: storage.NewQEMUImg("qemu-img"),
+		store:          store,
+		backend:        vmBackend,
+		vmLocks:        lockfile.New(filepath.Join(store.RootDir(), "locks", "vms")),
+		qemuImg:        storage.NewQEMUImg("qemu-img"),
+		guestReadiness: verifyGuestExecReadiness,
 	}
 }
 

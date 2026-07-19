@@ -18,6 +18,7 @@ import (
 
 func TestCloneNativeSnapshotCreatesIndependentRunningVM(t *testing.T) {
 	rt, store, source, ready := newNativeCloneRuntime(t)
+	rt.guestReadiness = func(context.Context, string) error { return nil }
 	originalIdentity := configureGuestIdentity
 	configureGuestIdentity = func(_ context.Context, socket string, rec *vmstore.VMRecord) error {
 		if rec.ID == source.ID || rec.Name != "clone" {
@@ -92,6 +93,7 @@ func TestCloneNativeSnapshotRollsBackFailedBackend(t *testing.T) {
 
 func TestCloneNativeSnapshotPinsMmapPayload(t *testing.T) {
 	rt, store, _, ready := newNativeCloneRuntime(t)
+	rt.guestReadiness = func(context.Context, string) error { return nil }
 	originalIdentity := configureGuestIdentity
 	configureGuestIdentity = func(context.Context, string, *vmstore.VMRecord) error { return nil }
 	defer func() { configureGuestIdentity = originalIdentity }()

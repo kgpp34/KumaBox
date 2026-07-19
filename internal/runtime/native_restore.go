@@ -119,6 +119,13 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	if err != nil {
 		return fail(fmt.Errorf("restore backend state: %w", err))
 	}
+	if err := r.guestReadiness(ctx, rec.VsockSocket); err != nil {
+		cleanupRec := *dirty
+		cleanupRec.PID = result.PID
+		cleanupRec.APISocket = result.APISocket
+		_, _ = r.backend.StopVM(&cleanupRec, backend.StopOptions{Force: true})
+		return fail(fmt.Errorf("verify restored guest readiness: %w", err))
+	}
 	restored, err := r.store.MarkRestored(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted))
 	if err != nil {
 		cleanupRec := *dirty

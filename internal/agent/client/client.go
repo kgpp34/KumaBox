@@ -19,6 +19,7 @@ const (
 	AgentPort           = protocol.AgentPort
 	hybridVsockReplyMax = 256
 	DefaultPingTimeout  = 60 * time.Second
+	CapabilityExec      = protocol.CapabilityExec
 	CapabilityIdentity  = protocol.CapabilityIdentity
 )
 
