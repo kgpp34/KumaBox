@@ -3,19 +3,13 @@
 package imagestore
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash"
-	"io"
-	"net/http"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -23,9 +17,8 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/fileutil"
+	"github.com/kumabox/kumabox/internal/imageimport"
 )
-
-const qemuImgInfoTimeout = 30 * time.Second
 
 // Store persists image metadata in the KumaBox image index.
 type Store struct {
@@ -182,25 +175,26 @@ func (s *Store) ImportLocal(req ImportRequest) (*ImageRecord, error) {
 		return nil, err
 	}
 
-	info, err := inspectImage(req.QemuImgPath, sourcePath)
-	if err != nil {
-		return nil, err
-	}
-
 	stagingDir, cleanup, err := s.createStagingDir("import")
 	if err != nil {
 		return nil, err
 	}
 	defer cleanup()
 
-	diskName := "base." + diskExtension(info.Format)
-	stagedDisk := filepath.Join(stagingDir, diskName)
-	sum, actualSize, err := copyWithSHA256(sourcePath, stagedDisk)
+	artifact, err := imageimport.Local(imageimport.Request{
+		Source:      sourcePath,
+		Destination: filepath.Join(stagingDir, "base.img"),
+		QemuImgPath: req.QemuImgPath,
+	})
 	if err != nil {
 		return nil, err
 	}
-	if info.ActualSizeBytes > 0 {
-		actualSize = info.ActualSizeBytes
+	diskName := "base." + imageimport.DiskExtension(artifact.Format)
+	if artifact.Path != filepath.Join(stagingDir, diskName) {
+		if err := os.Rename(artifact.Path, filepath.Join(stagingDir, diskName)); err != nil {
+			return nil, fmt.Errorf("prepare imported image: %w", err)
+		}
+		artifact.Path = filepath.Join(stagingDir, diskName)
 	}
 
 	return s.commitImportedImage(CreateRequest{
@@ -211,20 +205,20 @@ func (s *Store) ImportLocal(req ImportRequest) (*ImageRecord, error) {
 		},
 		RootDisk: RootDisk{
 			Path:             diskName,
-			Format:           info.Format,
-			VirtualSizeBytes: info.VirtualSizeBytes,
-			ActualSizeBytes:  actualSize,
-			SHA256:           sum,
+			Format:           artifact.Format,
+			VirtualSizeBytes: artifact.VirtualSizeBytes,
+			ActualSizeBytes:  artifact.ActualSizeBytes,
+			SHA256:           artifact.SHA256,
 		},
 		Boot: Boot{
 			Mode:     "uefi",
 			Firmware: firmwarePath,
 		},
 		OS: OS{
-			Family:  detectOSFamily(sourcePath),
+			Family:  imageimport.OSFamily(sourcePath),
 			Profile: "ubuntu-cloudimg",
 		},
-	}, stagedDisk)
+	}, artifact.Path)
 }
 
 // Pull downloads a cloud image URL into staging and commits it to the image store.
@@ -247,23 +241,20 @@ func (s *Store) Pull(req PullRequest) (*ImageRecord, error) {
 	defer cleanup()
 
 	downloadedDisk := filepath.Join(stagingDir, "download.img")
-	sum, actualSize, sourceHint, err := downloadToStaging(req.URL, downloadedDisk)
+	artifact, err := imageimport.Remote(imageimport.Request{
+		Source:         req.URL,
+		Destination:    downloadedDisk,
+		QemuImgPath:    req.QemuImgPath,
+		ExpectedSHA256: req.SHA256,
+	})
 	if err != nil {
-		return nil, err
-	}
-	if err := verifySHA256(req.SHA256, sum); err != nil {
+		if errors.Is(err, imageimport.ErrChecksumMismatch) {
+			return nil, fmt.Errorf("%w: %v", ErrChecksumMismatch, err)
+		}
 		return nil, err
 	}
 
-	info, err := inspectImage(req.QemuImgPath, downloadedDisk)
-	if err != nil {
-		return nil, err
-	}
-	if info.ActualSizeBytes > 0 {
-		actualSize = info.ActualSizeBytes
-	}
-
-	diskName := "base." + diskExtension(info.Format)
+	diskName := "base." + imageimport.DiskExtension(artifact.Format)
 	stagedDisk := filepath.Join(stagingDir, diskName)
 	if err := os.Rename(downloadedDisk, stagedDisk); err != nil {
 		return nil, fmt.Errorf("prepare pulled image: %w", err)
@@ -277,17 +268,17 @@ func (s *Store) Pull(req PullRequest) (*ImageRecord, error) {
 		},
 		RootDisk: RootDisk{
 			Path:             diskName,
-			Format:           info.Format,
-			VirtualSizeBytes: info.VirtualSizeBytes,
-			ActualSizeBytes:  actualSize,
-			SHA256:           sum,
+			Format:           artifact.Format,
+			VirtualSizeBytes: artifact.VirtualSizeBytes,
+			ActualSizeBytes:  artifact.ActualSizeBytes,
+			SHA256:           artifact.SHA256,
 		},
 		Boot: Boot{
 			Mode:     "uefi",
 			Firmware: firmwarePath,
 		},
 		OS: OS{
-			Family:  detectOSFamily(sourceHint),
+			Family:  imageimport.OSFamily(artifact.SourceHint),
 			Profile: "ubuntu-cloudimg",
 		},
 	}, stagedDisk)
@@ -634,167 +625,4 @@ func newOperationID(prefix string) (string, error) {
 		return "", fmt.Errorf("generate operation ID: %w", err)
 	}
 	return prefix + "-" + hex.EncodeToString(raw[:]), nil
-}
-
-type qemuImageInfo struct {
-	Filename         string `json:"filename"`
-	Format           string `json:"format"`
-	VirtualSizeBytes int64  `json:"virtual-size"`
-	ActualSizeBytes  int64  `json:"actual-size"`
-}
-
-func inspectImage(qemuImgPath, sourcePath string) (*qemuImageInfo, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), qemuImgInfoTimeout)
-	defer cancel()
-
-	out, err := exec.CommandContext(ctx, qemuImgPath, "info", "--output=json", sourcePath).Output() //nolint:gosec
-	if ctx.Err() == context.DeadlineExceeded {
-		return nil, fmt.Errorf("qemu-img info %s timed out after %s", sourcePath, qemuImgInfoTimeout)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("qemu-img info %s: %w", sourcePath, err)
-	}
-	var info qemuImageInfo
-	if err := json.Unmarshal(out, &info); err != nil {
-		return nil, fmt.Errorf("parse qemu-img info: %w", err)
-	}
-	if info.Format == "" {
-		return nil, errors.New("qemu-img info did not report image format")
-	}
-	if info.VirtualSizeBytes < 0 || info.ActualSizeBytes < 0 {
-		return nil, errors.New("qemu-img info reported negative image size")
-	}
-	return &info, nil
-}
-
-func copyWithSHA256(src, dst string) (string, int64, error) {
-	in, err := os.Open(src) //nolint:gosec
-	if err != nil {
-		return "", 0, fmt.Errorf("open source image: %w", err)
-	}
-	defer in.Close() //nolint:errcheck
-
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec
-	if err != nil {
-		return "", 0, fmt.Errorf("create staged image: %w", err)
-	}
-
-	hasher := sha256.New()
-	size, copyErr := copyAndHash(out, in, hasher)
-	closeErr := out.Close()
-	if copyErr != nil {
-		return "", 0, copyErr
-	}
-	if closeErr != nil {
-		return "", 0, fmt.Errorf("close staged image: %w", closeErr)
-	}
-	return hex.EncodeToString(hasher.Sum(nil)), size, nil
-}
-
-func downloadToStaging(rawURL, dst string) (string, int64, string, error) {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return "", 0, "", fmt.Errorf("parse image URL: %w", err)
-	}
-	switch parsed.Scheme {
-	case "file":
-		sourcePath, err := fileURLPath(parsed)
-		if err != nil {
-			return "", 0, "", err
-		}
-		sum, size, err := copyWithSHA256(sourcePath, dst)
-		return sum, size, sourcePath, err
-	case "http", "https":
-		sum, size, err := downloadHTTPToFile(rawURL, dst)
-		return sum, size, parsed.Path, err
-	default:
-		return "", 0, "", fmt.Errorf("unsupported image URL scheme: %s", parsed.Scheme)
-	}
-}
-
-func fileURLPath(parsed *url.URL) (string, error) {
-	if parsed.Host != "" && parsed.Host != "localhost" {
-		return "", fmt.Errorf("unsupported file URL host: %s", parsed.Host)
-	}
-	if parsed.Path == "" {
-		return "", errors.New("file URL path must not be empty")
-	}
-	path, err := url.PathUnescape(parsed.Path)
-	if err != nil {
-		return "", fmt.Errorf("decode file URL path: %w", err)
-	}
-	return path, nil
-}
-
-func downloadHTTPToFile(rawURL, dst string) (string, int64, error) {
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
-	if err != nil {
-		return "", 0, fmt.Errorf("create image download request: %w", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", 0, fmt.Errorf("download image: %w", err)
-	}
-	defer resp.Body.Close() //nolint:errcheck
-
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", 0, fmt.Errorf("download image: unexpected HTTP status %s", resp.Status)
-	}
-	return writeStreamWithSHA256(resp.Body, dst)
-}
-
-func writeStreamWithSHA256(src io.Reader, dst string) (string, int64, error) {
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec
-	if err != nil {
-		return "", 0, fmt.Errorf("create staged image: %w", err)
-	}
-
-	hasher := sha256.New()
-	size, copyErr := copyAndHash(out, src, hasher)
-	closeErr := out.Close()
-	if copyErr != nil {
-		return "", 0, copyErr
-	}
-	if closeErr != nil {
-		return "", 0, fmt.Errorf("close staged image: %w", closeErr)
-	}
-	return hex.EncodeToString(hasher.Sum(nil)), size, nil
-}
-
-func verifySHA256(expected, actual string) error {
-	if expected == "" {
-		return nil
-	}
-	normalized := strings.ToLower(strings.TrimSpace(expected))
-	if normalized != actual {
-		return fmt.Errorf("%w: got %s, want %s", ErrChecksumMismatch, actual, normalized)
-	}
-	return nil
-}
-
-func copyAndHash(dst io.Writer, src io.Reader, hasher hash.Hash) (int64, error) {
-	size, err := io.Copy(io.MultiWriter(dst, hasher), src)
-	if err != nil {
-		return 0, fmt.Errorf("copy image to staging: %w", err)
-	}
-	return size, nil
-}
-
-func diskExtension(format string) string {
-	switch strings.ToLower(format) {
-	case "raw":
-		return "raw"
-	case "qcow2":
-		return "qcow2"
-	default:
-		return "img"
-	}
-}
-
-func detectOSFamily(path string) string {
-	lower := strings.ToLower(filepath.Base(path))
-	if strings.Contains(lower, "ubuntu") || strings.Contains(lower, "jammy") || strings.Contains(lower, "noble") {
-		return "ubuntu"
-	}
-	return ""
 }
