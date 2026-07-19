@@ -11,17 +11,23 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+
+	"github.com/kumabox/kumabox/internal/agent/protocol"
 )
 
 const (
 	Version = "0.3.0"
-	Port    = 1024
+	Port    = protocol.AgentPort
 )
 
-var capabilities = []string{"hello", "exec", "identity"}
+var capabilities = []string{
+	string(protocol.CapabilityHello),
+	string(protocol.CapabilityExec),
+	string(protocol.CapabilityIdentity),
+}
 
 type helloRequest struct {
-	Type string `json:"type"`
+	Type protocol.RequestType `json:"type"`
 }
 
 type helloResponse struct {
@@ -34,11 +40,11 @@ type helloResponse struct {
 }
 
 type execRequest struct {
-	Type    string   `json:"type"`
-	Args    []string `json:"args"`
-	Env     []string `json:"env,omitempty"`
-	WorkDir string   `json:"workdir,omitempty"`
-	Stdin   []byte   `json:"stdin,omitempty"`
+	Type    protocol.RequestType `json:"type"`
+	Args    []string             `json:"args"`
+	Env     []string             `json:"env,omitempty"`
+	WorkDir string               `json:"workdir,omitempty"`
+	Stdin   []byte               `json:"stdin,omitempty"`
 }
 
 type execResponse struct {
@@ -50,9 +56,9 @@ type execResponse struct {
 }
 
 type identityRequest struct {
-	Type       string              `json:"type"`
-	Hostname   string              `json:"hostname"`
-	Interfaces []interfaceIdentity `json:"interfaces,omitempty"`
+	Type       protocol.RequestType `json:"type"`
+	Hostname   string               `json:"hostname"`
+	Interfaces []interfaceIdentity  `json:"interfaces,omitempty"`
 }
 
 type interfaceIdentity struct {
@@ -87,12 +93,12 @@ func handleConn(rw io.ReadWriter) {
 		writeResponse(rw, helloResponse{OK: false, Error: "invalid request"})
 		return
 	}
-	switch strings.ToLower(req.Type) {
-	case "hello":
+	switch protocol.RequestType(strings.ToLower(string(req.Type))) {
+	case protocol.RequestHello:
 		handleHello(rw)
-	case "exec":
+	case protocol.RequestExec:
 		handleExec(rw, []byte(line))
-	case "identity":
+	case protocol.RequestIdentity:
 		handleIdentity(rw, []byte(line))
 	default:
 		writeResponse(rw, helloResponse{OK: false, Error: "unsupported request"})

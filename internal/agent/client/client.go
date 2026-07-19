@@ -11,13 +11,15 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/kumabox/kumabox/internal/agent/protocol"
 )
 
 const (
-	AgentPort           uint32 = 1024
-	hybridVsockReplyMax        = 256
-	DefaultPingTimeout         = 60 * time.Second
-	CapabilityIdentity         = "identity"
+	AgentPort           = protocol.AgentPort
+	hybridVsockReplyMax = 256
+	DefaultPingTimeout  = 60 * time.Second
+	CapabilityIdentity  = protocol.CapabilityIdentity
 )
 
 var ErrNotReady = errors.New("AGENT_NOT_READY")
@@ -31,12 +33,12 @@ type HelloResponse struct {
 	Error        string   `json:"error,omitempty"`
 }
 
-func (r *HelloResponse) Supports(capability string) bool {
+func (r *HelloResponse) Supports(capability protocol.Capability) bool {
 	if r == nil {
 		return false
 	}
 	for _, candidate := range r.Capabilities {
-		if candidate == capability {
+		if candidate == string(capability) {
 			return true
 		}
 	}
@@ -97,7 +99,7 @@ func Ping(ctx context.Context, socketPath string) (*HelloResponse, error) {
 
 func pingOnce(ctx context.Context, socketPath string) (*HelloResponse, error) {
 	var resp HelloResponse
-	if err := roundTrip(ctx, socketPath, map[string]any{"type": "hello"}, &resp); err != nil {
+	if err := roundTrip(ctx, socketPath, map[string]any{"type": protocol.RequestHello}, &resp); err != nil {
 		return nil, err
 	}
 	if !resp.OK {
@@ -114,10 +116,10 @@ func Exec(ctx context.Context, socketPath string, req ExecRequest) (*ExecRespons
 		return nil, fmt.Errorf("AGENT_EXEC_INVALID: command must not be empty")
 	}
 	wireReq := struct {
-		Type string `json:"type"`
+		Type protocol.RequestType `json:"type"`
 		ExecRequest
 	}{
-		Type:        "exec",
+		Type:        protocol.RequestExec,
 		ExecRequest: req,
 	}
 	var resp ExecResponse
@@ -133,9 +135,9 @@ func Exec(ctx context.Context, socketPath string, req ExecRequest) (*ExecRespons
 // ConfigureIdentity applies clone-specific guest hostname and network state.
 func ConfigureIdentity(ctx context.Context, socketPath string, req IdentityRequest) (*IdentityResponse, error) {
 	wireReq := struct {
-		Type string `json:"type"`
+		Type protocol.RequestType `json:"type"`
 		IdentityRequest
-	}{Type: "identity", IdentityRequest: req}
+	}{Type: protocol.RequestIdentity, IdentityRequest: req}
 	var resp IdentityResponse
 	if err := roundTrip(ctx, socketPath, wireReq, &resp); err != nil {
 		return nil, err

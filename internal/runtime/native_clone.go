@@ -26,7 +26,7 @@ var configureGuestIdentity = configureCloneIdentity
 type NativeCloneOptions struct {
 	Name     string
 	Networks []string
-	Mode     string
+	Mode     RestoreMode
 }
 
 // CloneNativeSnapshot creates a new running VM from native state while
@@ -122,19 +122,19 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err := r.backend.RenderConfig(rec); err != nil {
 		return nil, fmt.Errorf("render clone launch config: %w", err)
 	}
-	staged, err := stageNativeRestore(ctx, snapshotRec, manifest, rec, opts.Mode)
+	staged, err := stageNativeRestore(ctx, snapshotRec, manifest, rec, string(opts.Mode))
 	if err != nil {
 		return nil, err
 	}
 	defer staged.cleanup() //nolint:errcheck
-	dirty, err := r.store.BeginRestore(rec.ID, snapshotRec.ID, opts.Mode)
+	dirty, err := r.store.BeginRestore(rec.ID, snapshotRec.ID, string(opts.Mode))
 	if err != nil {
 		return nil, err
 	}
 	if err := staged.commitDisks(); err != nil {
 		return nil, fmt.Errorf("replace clone writable disks: %w", err)
 	}
-	result, err = cloner.CloneVM(ctx, dirty, staged.nativeDir, opts.Mode)
+	result, err = cloner.CloneVM(ctx, dirty, staged.nativeDir, string(opts.Mode))
 	if err != nil {
 		return nil, fmt.Errorf("restore clone backend state: %w", err)
 	}

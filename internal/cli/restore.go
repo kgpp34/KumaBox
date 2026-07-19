@@ -21,7 +21,7 @@ func newRestoreCommand(opts *rootOptions) *cobra.Command {
 			if err := config.EnsureRuntimeDirs(cfg); err != nil {
 				return err
 			}
-			rec, err := kbruntime.New(cfg).RestoreNativeVM(cmd.Context(), args[0], args[1], kbruntime.NativeRestoreOptions{Mode: mode})
+			rec, err := kbruntime.New(cfg).RestoreNativeVM(cmd.Context(), args[0], args[1], kbruntime.NativeRestoreOptions{Mode: kbruntime.RestoreMode(mode)})
 			if err != nil {
 				return err
 			}

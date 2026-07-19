@@ -19,7 +19,7 @@ import (
 
 // NativeRestoreOptions controls in-place restoration of a running snapshot.
 type NativeRestoreOptions struct {
-	Mode string
+	Mode RestoreMode
 }
 
 type stagedRestore struct {
@@ -92,7 +92,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	if err := r.backend.RenderConfig(rec); err != nil {
 		return nil, fmt.Errorf("render restore launch config: %w", err)
 	}
-	staged, err := stageNativeRestore(ctx, snapshotRec, manifest, rec, opts.Mode)
+	staged, err := stageNativeRestore(ctx, snapshotRec, manifest, rec, string(opts.Mode))
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +104,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 			return nil, fmt.Errorf("stop VM for restore: %w", err)
 		}
 	}
-	dirty, err := r.store.BeginRestore(rec.ID, snapshotRec.ID, opts.Mode)
+	dirty, err := r.store.BeginRestore(rec.ID, snapshotRec.ID, string(opts.Mode))
 	if err != nil {
 		return nil, fmt.Errorf("mark restore dirty: %w", err)
 	}
@@ -115,7 +115,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	if err := staged.commitDisks(); err != nil {
 		return fail(fmt.Errorf("replace writable disks: %w", err))
 	}
-	result, err := restorer.RestoreVM(ctx, dirty, staged.nativeDir, opts.Mode)
+	result, err := restorer.RestoreVM(ctx, dirty, staged.nativeDir, string(opts.Mode))
 	if err != nil {
 		return fail(fmt.Errorf("restore backend state: %w", err))
 	}
@@ -155,7 +155,7 @@ func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manif
 		}
 		source := filepath.Join(snapshotRec.DataDir, filepath.FromSlash(file.Path))
 		destination := filepath.Join(nativeDir, filepath.Base(file.Path))
-		if restoreModePinsSnapshot(mode) && snapshot.IsNativeMemoryFile(file.Path) {
+		if restoreModePinsSnapshot(RestoreMode(mode)) && snapshot.IsNativeMemoryFile(file.Path) {
 			if err := linkNativeMemory(source, destination); err != nil {
 				return nil, fmt.Errorf("link native memory payload %s: %w", file.Path, err)
 			}

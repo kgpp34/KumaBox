@@ -7,29 +7,31 @@ import (
 	"github.com/kumabox/kumabox/internal/backend"
 )
 
+type RestoreMode string
+
 const (
-	restoreModeCopy     = "copy"
-	restoreModeOnDemand = "ondemand"
-	restoreModeMmap     = "mmap"
+	RestoreModeCopy     RestoreMode = "copy"
+	RestoreModeOnDemand RestoreMode = "ondemand"
+	RestoreModeMmap     RestoreMode = "mmap"
 )
 
-func normalizeRestoreMode(mode string) (string, error) {
+func normalizeRestoreMode(mode RestoreMode) (RestoreMode, error) {
 	if mode == "" {
-		return restoreModeCopy, nil
+		return RestoreModeCopy, nil
 	}
 	switch mode {
-	case restoreModeCopy, restoreModeOnDemand, restoreModeMmap:
+	case RestoreModeCopy, RestoreModeOnDemand, RestoreModeMmap:
 		return mode, nil
 	default:
 		return "", fmt.Errorf("RESTORE_MODE_UNSUPPORTED: %s", mode)
 	}
 }
 
-func requireRestoreMode(host backend.NativeHost, mode string) error {
-	if mode == restoreModeCopy {
+func requireRestoreMode(host backend.NativeHost, mode RestoreMode) error {
+	if mode == RestoreModeCopy {
 		return nil
 	}
-	if slices.Contains(host.RestoreModes, mode) {
+	if slices.Contains(host.RestoreModes, string(mode)) {
 		return nil
 	}
 	return fmt.Errorf(
@@ -39,6 +41,6 @@ func requireRestoreMode(host backend.NativeHost, mode string) error {
 	)
 }
 
-func restoreModePinsSnapshot(mode string) bool {
-	return mode == restoreModeOnDemand || mode == restoreModeMmap
+func restoreModePinsSnapshot(mode RestoreMode) bool {
+	return mode == RestoreModeOnDemand || mode == RestoreModeMmap
 }
