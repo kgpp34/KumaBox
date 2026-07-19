@@ -116,10 +116,10 @@ func TestRenderConfigSupportsFirmwareBoot(t *testing.T) {
 	if !argsContainPair(rendered.Args, "--firmware", rec.Firmware) {
 		t.Fatalf("firmware arg missing: %v", rendered.Args)
 	}
-	if !argsContainPair(rendered.Args, "--disk", "path="+rec.RootDisk+",image_type=qcow2,backing_files=on") {
+	if !argsContainPair(rendered.Args, "--disk", "path="+rec.RootDisk+",direct=on,image_type=qcow2,backing_files=on,num_queues=1,queue_size=512") {
 		t.Fatalf("qcow2 backing files arg missing: %v", rendered.Args)
 	}
-	if !argsContainPair(rendered.Args, "--disk", "path="+rec.Metadata.CidataDisk+",readonly=on,image_type=raw") {
+	if !argsContainPair(rendered.Args, "--disk", "path="+rec.Metadata.CidataDisk+",readonly=on,image_type=raw,num_queues=1,queue_size=512") {
 		t.Fatalf("cidata disk arg missing: %v", rendered.Args)
 	}
 	if countArg(rendered.Args, "--disk") != 1 {
@@ -147,7 +147,7 @@ func TestRenderConfigEnablesBackingFilesOnlyForWritableQcow2(t *testing.T) {
 	if rendered.Disks[1].BackingFiles {
 		t.Fatal("read-only raw disk unexpectedly enabled backing files")
 	}
-	if !argsContainPair(rendered.Args, "--disk", "path=/data/root.overlay.qcow2,image_type=qcow2,backing_files=on") {
+	if !argsContainPair(rendered.Args, "--disk", "path=/data/root.overlay.qcow2,direct=on,image_type=qcow2,backing_files=on,num_queues=1,queue_size=512") {
 		t.Fatalf("overlay disk arg missing: %v", rendered.Args)
 	}
 }
@@ -220,13 +220,40 @@ func TestRenderConfigSupportsOCIStorageDisks(t *testing.T) {
 	if rendered.Kernel == nil || rendered.Kernel.Cmdline != wantCmdline {
 		t.Fatalf("kernel = %+v", rendered.Kernel)
 	}
-	if !argsContainPair(rendered.Args, "--disk", "path=/data/oci/erofs/blobs/sha256/layer0.erofs,readonly=on,image_type=raw,serial=kumabox-layer0") {
+	if !argsContainPair(rendered.Args, "--disk", "path=/data/oci/erofs/blobs/sha256/layer0.erofs,readonly=on,image_type=raw,num_queues=1,queue_size=512,serial=kumabox-layer0") {
 		t.Fatalf("layer disk arg missing: %v", rendered.Args)
 	}
-	if !argsContainPair(rendered.Args, "--disk", "path="+filepath.Join(dir, "run", "vms", "kb_oci", "cow.ext4")+",image_type=raw,serial=kumabox-cow") {
+	if !argsContainPair(rendered.Args, "--disk", "path="+filepath.Join(dir, "run", "vms", "kb_oci", "cow.ext4")+",direct=on,sparse=on,image_type=raw,num_queues=1,queue_size=512,serial=kumabox-cow") {
 		t.Fatalf("cow disk arg missing: %v", rendered.Args)
 	}
 }
+
+func TestRenderConfigUsesConfiguredDiskIOPolicy(t *testing.T) {
+	rec := &vmstore.VMRecord{
+		ID:     "kb_disk_policy",
+		Name:   "disk-policy",
+		CPUs:   4,
+		Kernel: "/fixtures/vmlinuz",
+		Initrd: "/fixtures/initrd.img",
+		RunDir: "/run/kumabox/vms/kb_disk_policy",
+		LogDir: "/var/log/kumabox/vms/kb_disk_policy",
+		StorageConfigs: []vmstore.StorageConfig{{
+			ID: "data", Path: "/data/data.raw", Format: vmstore.FormatRaw,
+			DirectIO: boolPtr(false),
+		}},
+	}
+	cfg := config.Default()
+	cfg.Backend.CloudHypervisor.DiskQueueSize = 128
+	rendered := NewConfig(cfg, rec)
+	if got := rendered.Disks[0]; got.NumQueues != 4 || got.QueueSize != 128 || got.DirectIO || !got.Sparse {
+		t.Fatalf("disk policy = %+v", got)
+	}
+	if !argsContainPair(rendered.Args, "--disk", "path=/data/data.raw,sparse=on,image_type=raw,num_queues=4,queue_size=128") {
+		t.Fatalf("configured disk policy missing: %v", rendered.Args)
+	}
+}
+
+func boolPtr(value bool) *bool { return &value }
 
 func TestRenderConfigIncludesNetworkDevice(t *testing.T) {
 	dir := t.TempDir()

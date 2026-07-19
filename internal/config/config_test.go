@@ -19,6 +19,8 @@ log_dir = "/from-file/log"
 binary = "/usr/local/bin/cloud-hypervisor"
 api_socket_timeout_ms = 1234
 stop_timeout_ms = 5678
+disk_queue_size = 256
+no_direct_io = true
 
 [network]
 mode = "host-tap"
@@ -53,6 +55,9 @@ cni_bin_dir = "/tmp/cni/bin"
 	if cfg.Backend.CloudHypervisor.Binary != "/from-flag/cloud-hypervisor" {
 		t.Fatalf("cloud-hypervisor binary = %q", cfg.Backend.CloudHypervisor.Binary)
 	}
+	if cfg.Backend.CloudHypervisor.DiskQueueSize != 256 || !cfg.Backend.CloudHypervisor.NoDirectIO {
+		t.Fatalf("disk policy = %+v", cfg.Backend.CloudHypervisor)
+	}
 	if cfg.Network.Bridge != "kb-test0" {
 		t.Fatalf("network bridge = %q", cfg.Network.Bridge)
 	}
@@ -74,6 +79,9 @@ func TestDefaultNetworkConfig(t *testing.T) {
 	}
 	if cfg.Network.CIDR == "" || cfg.Network.Gateway == "" || cfg.Network.TapPrefix == "" {
 		t.Fatalf("incomplete default network config: %+v", cfg.Network)
+	}
+	if cfg.Backend.CloudHypervisor.DiskQueueSize != 512 || cfg.Backend.CloudHypervisor.NoDirectIO {
+		t.Fatalf("disk defaults = %+v", cfg.Backend.CloudHypervisor)
 	}
 }
 

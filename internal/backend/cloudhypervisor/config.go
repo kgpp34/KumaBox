@@ -72,8 +72,12 @@ type Memory struct {
 type Disk struct {
 	Path         string `json:"path"`
 	Readonly     bool   `json:"readonly"`
+	DirectIO     bool   `json:"direct,omitempty"`
+	Sparse       bool   `json:"sparse,omitempty"`
 	ImageType    string `json:"imageType,omitempty"`
 	BackingFiles bool   `json:"backingFiles,omitempty"`
+	NumQueues    int    `json:"numQueues,omitempty"`
+	QueueSize    int    `json:"queueSize,omitempty"`
 	Serial       string `json:"serial,omitempty"`
 }
 
@@ -201,7 +205,7 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 			"--cmdline", cmdline,
 		)
 	}
-	disks := newDisks(rec)
+	disks := newDisks(cfg, rec)
 	if len(disks) > 0 {
 		args = append(args, "--disk")
 		for _, disk := range disks {
@@ -307,34 +311,48 @@ func newNets(rec *vmstore.VMRecord) []Net {
 	return nets
 }
 
-func newDisks(rec *vmstore.VMRecord) []Disk {
-	disks := launchDisks(rec)
+func newDisks(cfg config.Config, rec *vmstore.VMRecord) []Disk {
+	disks := launchDisks(cfg, rec)
 	if meta := activeMetadata(rec); meta != nil && meta.CidataDisk != "" {
-		disks = append(disks, Disk{
+		disks = append(disks, configureDisk(cfg, rec, Disk{
 			Path:      meta.CidataDisk,
 			Readonly:  true,
 			ImageType: vmstore.FormatRaw,
-		})
+		}, nil))
 	}
 	return disks
 }
 
-func launchDisks(rec *vmstore.VMRecord) []Disk {
+func launchDisks(cfg config.Config, rec *vmstore.VMRecord) []Disk {
 	if len(rec.StorageConfigs) > 0 {
 		disks := make([]Disk, 0, len(rec.StorageConfigs))
-		for _, cfg := range rec.StorageConfigs {
-			imageType := cfg.EffectiveFormat()
-			disks = append(disks, Disk{
-				Path:         cfg.Path,
-				Readonly:     cfg.Readonly,
+		for _, storageCfg := range rec.StorageConfigs {
+			imageType := storageCfg.EffectiveFormat()
+			disks = append(disks, configureDisk(cfg, rec, Disk{
+				Path:         storageCfg.Path,
+				Readonly:     storageCfg.Readonly,
 				ImageType:    imageType,
-				BackingFiles: imageType == vmstore.FormatQCOW2 && !cfg.Readonly,
-				Serial:       cfg.Serial,
-			})
+				BackingFiles: imageType == vmstore.FormatQCOW2 && !storageCfg.Readonly,
+				Serial:       storageCfg.Serial,
+			}, &storageCfg))
 		}
 		return disks
 	}
-	return []Disk{newRootDisk(rec)}
+	return []Disk{configureDisk(cfg, rec, newRootDisk(rec), nil)}
+}
+
+func configureDisk(cfg config.Config, rec *vmstore.VMRecord, disk Disk, storage *vmstore.StorageConfig) Disk {
+	disk.NumQueues = vmCPUs(rec)
+	disk.QueueSize = cfg.Backend.CloudHypervisor.DiskQueueSize
+	if disk.Readonly {
+		return disk
+	}
+	disk.DirectIO = !cfg.Backend.CloudHypervisor.NoDirectIO
+	if storage != nil && storage.DirectIO != nil {
+		disk.DirectIO = *storage.DirectIO
+	}
+	disk.Sparse = disk.ImageType != vmstore.FormatQCOW2
+	return disk
 }
 
 func diskArg(disk Disk) string {
@@ -342,11 +360,23 @@ func diskArg(disk Disk) string {
 	if disk.Readonly {
 		arg += ",readonly=on"
 	}
+	if disk.DirectIO {
+		arg += ",direct=on"
+	}
+	if disk.Sparse {
+		arg += ",sparse=on"
+	}
 	if disk.ImageType != "" {
 		arg += ",image_type=" + disk.ImageType
 	}
 	if disk.BackingFiles {
 		arg += ",backing_files=on"
+	}
+	if disk.NumQueues > 0 {
+		arg += fmt.Sprintf(",num_queues=%d", disk.NumQueues)
+	}
+	if disk.QueueSize > 0 {
+		arg += fmt.Sprintf(",queue_size=%d", disk.QueueSize)
 	}
 	if disk.Serial != "" {
 		arg += ",serial=" + disk.Serial

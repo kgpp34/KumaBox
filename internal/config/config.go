@@ -22,6 +22,7 @@ const (
 	defaultQEMUImgBinary         = "qemu-img"
 	defaultAPISocketTimeoutMS    = 5000
 	defaultStopTimeoutMS         = 10000
+	defaultDiskQueueSize         = 512
 	defaultNetworkMode           = "cni"
 	defaultNetworkName           = "default"
 	defaultBridge                = "kumabox0"
@@ -73,6 +74,8 @@ type CloudHypervisorConfig struct {
 	Binary             string `toml:"binary" json:"binary"`
 	APISocketTimeoutMS int    `toml:"api_socket_timeout_ms" json:"apiSocketTimeoutMs"`
 	StopTimeoutMS      int    `toml:"stop_timeout_ms" json:"stopTimeoutMs"`
+	DiskQueueSize      int    `toml:"disk_queue_size" json:"diskQueueSize"`
+	NoDirectIO         bool   `toml:"no_direct_io" json:"noDirectIO"`
 }
 
 // NetworkConfig contains host networking defaults used by network providers.
@@ -141,6 +144,7 @@ func Default() Config {
 				Binary:             defaultCloudHypervisorBinary,
 				APISocketTimeoutMS: defaultAPISocketTimeoutMS,
 				StopTimeoutMS:      defaultStopTimeoutMS,
+				DiskQueueSize:      defaultDiskQueueSize,
 			},
 		},
 		Network: NetworkConfig{
@@ -203,6 +207,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.Backend.CloudHypervisor.Binary == "" {
 		return errors.New("backend.cloud_hypervisor.binary must not be empty")
+	}
+	if cfg.Backend.CloudHypervisor.DiskQueueSize < 0 {
+		return errors.New("backend.cloud_hypervisor.disk_queue_size must be non-negative")
 	}
 	if cfg.Storage.QEMUImgBinary == "" {
 		return errors.New("storage.qemu_img_binary must not be empty")

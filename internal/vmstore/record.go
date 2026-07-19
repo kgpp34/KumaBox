@@ -240,6 +240,7 @@ type StorageConfig struct {
 	Role             StorageRole  `json:"role,omitempty"`
 	Path             string       `json:"path"`
 	Readonly         bool         `json:"readonly"`
+	DirectIO         *bool        `json:"directIO,omitempty"`
 	Format           string       `json:"format,omitempty"`
 	Serial           string       `json:"serial,omitempty"`
 	Filesystem       string       `json:"filesystem,omitempty"`
