@@ -14,6 +14,7 @@ import (
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/storage"
 	"github.com/kumabox/kumabox/internal/vmstore"
+	"golang.org/x/sync/errgroup"
 )
 
 // NativeRestoreOptions controls in-place restoration of a running snapshot.
@@ -174,27 +175,37 @@ func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manif
 			targets[disk.ID] = disk
 		}
 	}
-	for _, disk := range manifest.Disks {
-		target, found := targets[disk.ID]
-		if !found {
-			return nil, fmt.Errorf("SNAPSHOT_INCOMPATIBLE: no writable target for disk %s", disk.ID)
-		}
-		if err := os.MkdirAll(filepath.Dir(target.Path), 0o700); err != nil {
-			return nil, fmt.Errorf("create target directory for disk %s: %w", disk.ID, err)
-		}
-		stagedPath := filepath.Join(filepath.Dir(target.Path), ".kumabox-restore-"+snapshotRec.ID+"-"+filepath.Base(target.Path))
-		if err := os.Remove(stagedPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("clear staged disk %s: %w", disk.ID, err)
-		}
-		source := filepath.Join(snapshotRec.DataDir, filepath.FromSlash(disk.Path))
-		result, err := storage.CopyFile(ctx, source, stagedPath)
-		if err != nil {
-			return nil, fmt.Errorf("stage writable disk %s: %w", disk.ID, err)
-		}
-		if result.SHA256 != disk.SHA256 {
-			return nil, fmt.Errorf("CHECKSUM_MISMATCH: staged disk %s", disk.ID)
-		}
-		staged.disks = append(staged.disks, stagedRestoreDisk{id: disk.ID, target: target.Path, staged: stagedPath})
+	staged.disks = make([]stagedRestoreDisk, len(manifest.Disks))
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(2)
+	for index, disk := range manifest.Disks {
+		index, disk := index, disk
+		group.Go(func() error {
+			target, found := targets[disk.ID]
+			if !found {
+				return fmt.Errorf("SNAPSHOT_INCOMPATIBLE: no writable target for disk %s", disk.ID)
+			}
+			if err := os.MkdirAll(filepath.Dir(target.Path), 0o700); err != nil {
+				return fmt.Errorf("create target directory for disk %s: %w", disk.ID, err)
+			}
+			stagedPath := filepath.Join(filepath.Dir(target.Path), ".kumabox-restore-"+snapshotRec.ID+"-"+filepath.Base(target.Path))
+			if err := os.Remove(stagedPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("clear staged disk %s: %w", disk.ID, err)
+			}
+			source := filepath.Join(snapshotRec.DataDir, filepath.FromSlash(disk.Path))
+			result, err := storage.CopyFile(groupCtx, source, stagedPath)
+			if err != nil {
+				return fmt.Errorf("stage writable disk %s: %w", disk.ID, err)
+			}
+			if result.SHA256 != disk.SHA256 {
+				return fmt.Errorf("CHECKSUM_MISMATCH: staged disk %s", disk.ID)
+			}
+			staged.disks[index] = stagedRestoreDisk{id: disk.ID, target: target.Path, staged: stagedPath}
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, err
 	}
 	if len(staged.disks) != len(targets) {
 		return nil, errors.New("SNAPSHOT_INCOMPATIBLE: writable disk set is incomplete")
