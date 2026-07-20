@@ -2,6 +2,18 @@
 
 . /scripts/functions
 
+boot_phase() {
+    phase="$1"
+    uptime="$(cut -d' ' -f1 /proc/uptime 2>/dev/null || true)"
+    seconds="${uptime%%.*}"
+    fraction="${uptime#*.}"
+    [ "$seconds" != "$uptime" ] || seconds=0
+    [ -n "$fraction" ] || fraction=0
+    fraction="$(printf '%s000' "$fraction" | cut -c1-3)"
+    printf 'KumaBox: boot-phase=%s monotonic-ms=%s\n' \
+        "$phase" "$((seconds * 1000 + fraction))" >/dev/console
+}
+
 resolve_disk() {
     serial="$1"
     timeout="${KUMABOX_TIMEOUT:-10}"
@@ -108,6 +120,7 @@ dump_block_devices() {
 }
 
 mountroot() {
+    boot_phase overlay-start
     log_begin_msg "KumaBox: mounting OCI overlay rootfs"
 
     if ! ls /run/net-*.conf >/dev/null 2>&1; then
@@ -169,5 +182,6 @@ mountroot() {
     cow_blk="${cow_dev##*/}"
     [ -e "/sys/block/${cow_blk}/queue/scheduler" ] && echo mq-deadline >"/sys/block/${cow_blk}/queue/scheduler" 2>/dev/null || true
 
+    boot_phase overlay-ready
     log_success_msg "KumaBox: OCI overlay rootfs ready"
 }
