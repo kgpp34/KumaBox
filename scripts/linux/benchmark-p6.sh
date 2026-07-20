@@ -104,7 +104,11 @@ step() { printf '==> %s\n' "$1" >&2; }
 
 console_phase_ms() {
   local console_log=$1 pattern=$2 line timestamp
-  line=$(grep -m1 -E "$pattern" "$console_log" 2>/dev/null || true)
+  if ((${#file_prefix[@]})); then
+    line=$("${file_prefix[@]}" grep -m1 -E "$pattern" "$console_log" 2>/dev/null || true)
+  else
+    line=$(grep -m1 -E "$pattern" "$console_log" 2>/dev/null || true)
+  fi
   [[ -n $line ]] || { printf 'null'; return; }
   timestamp=$(sed -nE 's/^\[[[:space:]]*([0-9]+\.[0-9]+)\].*/\1/p' <<<"$line")
   [[ -n $timestamp ]] || { printf 'null'; return; }
