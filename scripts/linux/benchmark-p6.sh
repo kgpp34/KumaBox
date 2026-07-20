@@ -117,7 +117,7 @@ build_project() {
   if [[ $(id -u) -eq 0 ]]; then
     build_user=${SUDO_USER:-}
     [[ -n "$build_user" ]] || { echo 'run as a normal user or use sudo from a normal user' >&2; exit 1; }
-    sudo -iu "$build_user" bash -lc "cd '$repo_dir' && make build"
+    sudo -iu "$build_user" bash -lc "source ~/.profile 2>/dev/null || true; source ~/.bashrc 2>/dev/null || true; cd '$repo_dir' && make build"
   else
     make -C "$repo_dir" build
   fi
