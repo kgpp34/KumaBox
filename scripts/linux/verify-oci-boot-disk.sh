@@ -125,20 +125,25 @@ printf '==> verify overlay root\n'
 root_fs="$(kb exec "$vm_name" -- findmnt -n -o FSTYPE /)"
 [ "$root_fs" = overlay ] || die "root filesystem is $root_fs, expected overlay"
 
-printf '==> verify EROFS layers\n'
-erofs_mounts="$(kb exec "$vm_name" -- sh -c "grep ' - erofs ' /proc/self/mountinfo || true")"
-printf '%s\n' "$erofs_mounts"
-erofs_count="$(printf '%s\n' "$erofs_mounts" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
-[ "$erofs_count" -ge "$layer_count" ] || {
-	printf '%s\n' 'guest mount table:'
-	kb exec "$vm_name" -- findmnt || true
-	die "expected $layer_count EROFS mounts, got $erofs_count"
-}
+printf '==> verify EROFS layers through overlay lowerdir\n'
+root_mount="$(kb exec "$vm_name" -- findmnt -n -o TARGET,OPTIONS /)"
+printf '%s\n' "$root_mount"
+lowerdir="$(printf '%s\n' "$root_mount" | sed -n 's/.*lowerdir=\([^,]*\).*/\1/p')"
+[ -n "$lowerdir" ] || die "overlay lowerdir is missing"
+
+for layer_index in $(seq 0 $((layer_count - 1))); do
+	layer_path="/.kumabox/layers/kumabox-layer${layer_index}"
+	case ":$lowerdir:" in
+		*":$layer_path:"*) printf 'PASS: %s is in overlay lowerdir\n' "$layer_path" ;;
+		*) die "missing $layer_path from overlay lowerdir" ;;
+	esac
+done
 
 printf '==> verify writable COW\n'
-cow_mount="$(kb exec "$vm_name" -- sh -c "findmnt -rn -t ext4 | grep '/.kumabox/cow' || true")"
-[ -n "$cow_mount" ] || die "COW filesystem is not mounted"
-printf '%s\n' "$cow_mount"
+kb exec "$vm_name" -- sh -c \
+  'test -d /.kumabox/cow/upper && test -d /.kumabox/cow/work && touch /.kumabox/cow/upper/.kumabox-verify && rm -f /.kumabox/cow/upper/.kumabox-verify' \
+  || die "COW filesystem is not mounted or writable"
+printf '%s\n' 'PASS: writable COW mounted'
 
 printf '==> verify virtio disk identities\n'
 virtio_links="$(kb exec "$vm_name" -- sh -c 'ls -l /dev/disk/by-id/virtio-* 2>/dev/null || true')"
