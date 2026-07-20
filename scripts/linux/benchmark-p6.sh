@@ -8,7 +8,7 @@ root_dir=/tmp/kumabox-p0/data
 run_dir=/tmp/kumabox-p0/run
 log_dir=/tmp/kumabox-p0/logs
 image=p3-agent-image-v3
-network=default
+network=cni:default
 storage=64M
 iterations=3
 concurrency=1
@@ -33,7 +33,7 @@ native running snapshot, and native clone.
   --run-dir PATH
   --log-dir PATH
   --image NAME              existing managed OCI image
-  --network NAME            defaults to default CNI network
+  --network NAME            defaults to cni:default
   --storage SIZE            defaults to 64M
   --iterations N            defaults to 3
   --concurrency N           additional parallel OCI+CNI run batch, defaults to 1
