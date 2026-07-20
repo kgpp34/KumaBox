@@ -108,7 +108,9 @@ cleanup() {
 trap 'cleanup' EXIT
 
 run_iteration() {
-  local index=$1 prefix="p6-bench-${index}"
+  local index prefix
+  index=$1
+  prefix="p6-bench-${index}"
   local source="${prefix}-source" restored="${prefix}-restored" clone="${prefix}-clone"
   local stopped_snapshot="${prefix}-stopped" native_snapshot="${prefix}-native"
   local run_json source_id clone_json clone_id snapshot_json snapshot_id
