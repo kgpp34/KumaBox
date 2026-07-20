@@ -11,6 +11,8 @@ image=p3-agent-image-v3
 image_ref=kumabox/ubuntu:24.04-p6
 network=cni:default
 storage=64M
+cpus=2
+memory=1G
 iterations=3
 concurrency=1
 output=/tmp/kumabox-p0/p6-baseline.json
@@ -40,6 +42,8 @@ native running snapshot, and native clone.
   --image-ref REF           local daemon image used to prepare NAME
   --network NAME            defaults to cni:default
   --storage SIZE            defaults to 64M
+  --cpus N                  defaults to 2
+  --memory SIZE             defaults to 1G
   --iterations N            defaults to 3
   --concurrency N           additional parallel OCI+CNI run batch, defaults to 1
   --output PATH             defaults to /tmp/kumabox-p0/p6-baseline.json
@@ -68,6 +72,8 @@ while (($#)); do
     --image-ref) require_value "$1" "${2:-}"; image_ref=$2; shift 2 ;;
     --network) require_value "$1" "${2:-}"; network=$2; shift 2 ;;
     --storage) require_value "$1" "${2:-}"; storage=$2; shift 2 ;;
+    --cpus) require_value "$1" "${2:-}"; cpus=$2; shift 2 ;;
+    --memory) require_value "$1" "${2:-}"; memory=$2; shift 2 ;;
     --iterations) require_value "$1" "${2:-}"; iterations=$2; shift 2 ;;
     --concurrency) require_value "$1" "${2:-}"; concurrency=$2; shift 2 ;;
     --output) require_value "$1" "${2:-}"; output=$2; shift 2 ;;
@@ -259,7 +265,7 @@ run_iteration() {
   step "iteration $index: cold run (timeout $run_timeout)"
   start_ms=$(now_ms)
   run_output=$(mktemp)
-  if ! kb run "$image" --name "$source" --network "$network" --storage "$storage" --timeout "$run_timeout" >"$run_output" 2>&1; then
+  if ! kb run "$image" --name "$source" --network "$network" --storage "$storage" --cpus "$cpus" --memory "$memory" --timeout "$run_timeout" >"$run_output" 2>&1; then
     printf 'cold run did not finish within %s or failed\n' "$run_timeout" >&2
     printf '%s\n' 'cold run output:' >&2
     cat "$run_output" >&2
@@ -323,7 +329,7 @@ run_iteration() {
   snapshot_id=$(jq -r '.id' <<<"$snapshot_json")
   snapshot_names+=("$snapshot_id")
   start_ms=$(now_ms)
-  snapshot_json=$(kb snapshot restore "$snapshot_id" --name "$restored" --network "$network")
+  snapshot_json=$(kb snapshot restore "$snapshot_id" --name "$restored" --cpus "$cpus" --network "$network")
   end_ms=$(now_ms)
   portable_restore_ms=$((end_ms - start_ms))
   restored_id=$(jq -r '.id' <<<"$snapshot_json")
@@ -369,7 +375,7 @@ run_concurrency_batch() {
   for ((index = 1; index <= concurrency; index++)); do
     name="p6-concurrent-${index}"
     vm_names+=("$name")
-    (kb run "$image" --name "$name" --network "$network" --storage "$storage" >"$batch_dir/$index.json") &
+    (kb run "$image" --name "$name" --network "$network" --storage "$storage" --cpus "$cpus" --memory "$memory" --timeout "$run_timeout" >"$batch_dir/$index.json") &
     pids+=("$!")
   done
   for pid in "${pids[@]}"; do wait "$pid"; done
@@ -387,17 +393,6 @@ run_concurrency_batch() {
   rm -rf "$batch_dir"
 }
 
-if [[ "$prepare_image" == true ]]; then
-  step 'prepare current host binary, guest agent, and OCI image'
-  build_project
-  kb image rm "$image" >/dev/null 2>&1 || true
-  kb image build "$image_ref" \
-    --source daemon \
-    --name "$image" \
-    --platform linux/amd64 \
-    --progress >/dev/null
-fi
-
 step "clean previous benchmark resources"
 if ((${#file_prefix[@]})); then
   "${file_prefix[@]}" mkdir -p "$artifacts_dir"
@@ -410,6 +405,17 @@ snapshot_names=(p6-bench-1-stopped p6-bench-1-native p6-bench-2-stopped p6-bench
 cleanup
 vm_names=()
 snapshot_names=()
+
+if [[ "$prepare_image" == true ]]; then
+  step 'prepare current host binary, guest agent, and OCI image'
+  build_project
+  kb image rm "$image" >/dev/null 2>&1 || true
+  kb image build "$image_ref" \
+    --source daemon \
+    --name "$image" \
+    --platform linux/amd64 \
+    --progress >/dev/null
+fi
 
 samples_file=$(mktemp)
 trap 'rm -f "$samples_file"; cleanup' EXIT
@@ -437,6 +443,8 @@ jq -s \
   --arg image "$image" \
   --arg network "$network" \
   --arg storage "$storage" \
+  --argjson cpus "$cpus" \
+  --arg memory "$memory" \
   --arg artifacts "$artifacts_dir" \
   --argjson iterations "$iterations" \
   --argjson host "$host_json" \
@@ -452,7 +460,7 @@ jq -s \
       (numbers($key) | sort) as $values |
       {count:($values | length),p50:percentile($values; 0.50),p95:percentile($values; 0.95),max:($values | max)};
     . as $samples |
-    {schema:"kumabox.p6.benchmark.v5",generatedAt:$generatedAt,image:$image,network:$network,storage:$storage,iterations:$iterations,artifactsDir:$artifacts,host:$host,imageRecord:$imageRecord,concurrency:$concurrency,samples:$samples,summary:{runShellMs:metric("runShellMs"),vmmReadyMs:metric("vmmReadyMs"),agentReadyMs:metric("agentReadyMs"),agentOverheadMs:metric("agentOverheadMs"),guestOverlayMs:metric("guestOverlayMs"),guestSystemdMs:metric("guestSystemdMs"),guestAgentMs:metric("guestAgentMs"),guestMultiuserMs:metric("guestMultiuserMs"),guestOverlayToSystemdMs:metric("guestOverlayToSystemdMs"),guestSystemdToAgentMs:metric("guestSystemdToAgentMs"),guestAgentToMultiuserMs:metric("guestAgentToMultiuserMs"),guestOverlayToMultiuserMs:metric("guestOverlayToMultiuserMs"),runReadyMs:metric("runReadyMs"),firstExecMs:metric("firstExecMs"),nativeSnapshotMs:metric("nativeSnapshotMs"),nativePauseMs:metric("nativePauseMs"),cloneRestoreMs:metric("cloneRestoreMs"),cloneBackendMs:metric("cloneBackendMs"),cloneReadinessMs:metric("cloneReadinessMs"),portableRestoreMs:metric("portableRestoreMs"),restartReadyMs:metric("restartReadyMs")}}
+    {schema:"kumabox.p6.benchmark.v5",generatedAt:$generatedAt,image:$image,network:$network,storage:$storage,cpus:$cpus,memory:$memory,iterations:$iterations,artifactsDir:$artifacts,host:$host,imageRecord:$imageRecord,concurrency:$concurrency,samples:$samples,summary:{runShellMs:metric("runShellMs"),vmmReadyMs:metric("vmmReadyMs"),agentReadyMs:metric("agentReadyMs"),agentOverheadMs:metric("agentOverheadMs"),guestOverlayMs:metric("guestOverlayMs"),guestSystemdMs:metric("guestSystemdMs"),guestAgentMs:metric("guestAgentMs"),guestMultiuserMs:metric("guestMultiuserMs"),guestOverlayToSystemdMs:metric("guestOverlayToSystemdMs"),guestSystemdToAgentMs:metric("guestSystemdToAgentMs"),guestAgentToMultiuserMs:metric("guestAgentToMultiuserMs"),guestOverlayToMultiuserMs:metric("guestOverlayToMultiuserMs"),runReadyMs:metric("runReadyMs"),firstExecMs:metric("firstExecMs"),nativeSnapshotMs:metric("nativeSnapshotMs"),nativePauseMs:metric("nativePauseMs"),cloneRestoreMs:metric("cloneRestoreMs"),cloneBackendMs:metric("cloneBackendMs"),cloneReadinessMs:metric("cloneReadinessMs"),portableRestoreMs:metric("portableRestoreMs"),restartReadyMs:metric("restartReadyMs")}}
   ' "$samples_file" >"$output"
 
 if [[ -n $baseline ]]; then
@@ -476,5 +484,5 @@ if [[ -n $baseline ]]; then
     ' >/dev/null || { echo "P6 benchmark regression gate failed" >&2; exit 1; }
 fi
 
-jq '{schema,generatedAt,image,network,iterations,concurrency,host,summary}' "$output"
+jq '{schema,generatedAt,image,network,storage,cpus,memory,iterations,concurrency,host,summary}' "$output"
 echo "P6 benchmark written to $output" >&2
