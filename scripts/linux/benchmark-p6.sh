@@ -86,7 +86,7 @@ if [[ $network == default ]]; then
   exit 2
 fi
 [[ -x $kumabox ]] || { echo "kumabox is not executable: $kumabox" >&2; exit 1; }
-for command in jq timeout "$cloud_hypervisor" "$qemu_img"; do
+for command in jq "$cloud_hypervisor" "$qemu_img"; do
   command -v "$command" >/dev/null 2>&1 || { echo "required command not found: $command" >&2; exit 1; }
 done
 
@@ -103,20 +103,6 @@ kb() {
   "${kb_prefix[@]}" "$kumabox" \
     --root-dir "$root_dir" --run-dir "$run_dir" --log-dir "$log_dir" \
     --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" "$@"
-}
-
-kb_timeout() {
-  local duration=$1
-  shift
-  if ((${#kb_prefix[@]})); then
-    timeout --foreground "$duration" "${kb_prefix[@]}" "$kumabox" \
-      --root-dir "$root_dir" --run-dir "$run_dir" --log-dir "$log_dir" \
-      --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" "$@"
-  else
-    timeout --foreground "$duration" "$kumabox" \
-      --root-dir "$root_dir" --run-dir "$run_dir" --log-dir "$log_dir" \
-      --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" "$@"
-  fi
 }
 
 now_ms() { date +%s%3N; }
@@ -242,7 +228,7 @@ run_iteration() {
   step "iteration $index: cold run (timeout $run_timeout)"
   start_ms=$(now_ms)
   run_output=$(mktemp)
-  if ! kb_timeout "$run_timeout" run "$image" --name "$source" --network "$network" --storage "$storage" >"$run_output" 2>&1; then
+  if ! kb run "$image" --name "$source" --network "$network" --storage "$storage" --timeout "$run_timeout" >"$run_output" 2>&1; then
     printf 'cold run did not finish within %s or failed\n' "$run_timeout" >&2
     printf '%s\n' 'cold run output:' >&2
     cat "$run_output" >&2

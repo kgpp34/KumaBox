@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -61,6 +62,7 @@ func newCreateCommand(opts *rootOptions) *cobra.Command {
 
 func newRunCommand(opts *rootOptions) *cobra.Command {
 	flags := createVMFlags{}
+	var timeout time.Duration
 
 	cmd := &cobra.Command{
 		Use:   "run [IMAGE]",
@@ -80,7 +82,13 @@ func newRunCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rec, err := rt.RunVMContext(cmd.Context(), req)
+			runContext := cmd.Context()
+			if timeout > 0 {
+				var cancel context.CancelFunc
+				runContext, cancel = context.WithTimeout(runContext, timeout)
+				defer cancel()
+			}
+			rec, err := rt.RunVMContext(runContext, req)
 			if err != nil {
 				return err
 			}
@@ -89,6 +97,7 @@ func newRunCommand(opts *rootOptions) *cobra.Command {
 	}
 
 	addCreateVMFlags(cmd, &flags)
+	cmd.Flags().DurationVar(&timeout, "timeout", 0, "VM startup and guest readiness timeout")
 	return cmd
 }
 
