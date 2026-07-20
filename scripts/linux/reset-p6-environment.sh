@@ -48,8 +48,13 @@ pkill -KILL -f '/tmp/kumabox-p0/run/vms/.*/ch.sock' 2>/dev/null || true
 pkill -KILL -f '/var/lib/cocoon/run/cloudhypervisor' 2>/dev/null || true
 pkill -KILL -x cocoon 2>/dev/null || true
 
-printf '%s\n' '==> remove KumaBox runtime data'
-rm -rf /tmp/kumabox-p0
+printf '%s\n' '==> remove KumaBox runtime data but preserve OCI image store'
+rm -rf \
+  /tmp/kumabox-p0/run \
+  /tmp/kumabox-p0/logs \
+  /tmp/kumabox-p0/p6-baseline.json \
+  /tmp/kumabox-p0/p6-baseline.json.logs \
+  /tmp/kumabox-p0/manual-run-diagnostic
 
 printf '%s\n' '==> remove Cocoon runtime state'
 rm -rf \
