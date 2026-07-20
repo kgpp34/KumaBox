@@ -9,7 +9,7 @@ kumabox_path="$repo_dir/bin/kumabox"
 root_dir="/tmp/kumabox-p0/data"
 run_dir="/tmp/kumabox-p0/run"
 log_dir="/tmp/kumabox-p0/logs"
-image_name="p6-agent-image"
+image_name="p6-agent-image-verify-$(date +%s)"
 image_ref="kumabox/ubuntu:24.04-p6"
 network="${NETWORK:-cni:cocoon}"
 vm_name="oci-disk-parity"
@@ -63,7 +63,6 @@ printf '==> remove old verification VM\n'
 kb delete "$vm_name" --force >/dev/null 2>&1 || true
 
 printf '==> rebuild managed OCI image\n'
-kb image rm "$image_name" --force >/dev/null 2>&1 || true
 kb image build "$image_ref" \
   --source daemon \
   --name "$image_name" \
@@ -142,6 +141,9 @@ cat "$console_copy"
 
 printf '==> delete verification VM\n'
 kb delete "$vm_name" --force | jq .
+
+printf '==> remove temporary verification image\n'
+kb image rm "$image_name" >/dev/null
 
 printf '\nPASS: OCI boot, disk identity, overlay and COW verification completed\n'
 printf 'console log: %s\n' "$console_copy"
