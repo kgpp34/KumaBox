@@ -163,6 +163,19 @@ phase_duration_ms() {
   fi
 }
 
+read_guest_startup_journal() {
+  local vm_ref=$1 attempt journal
+  for ((attempt = 1; attempt <= 20; attempt++)); do
+    journal=$(kb exec "$vm_ref" -- sh -c 'journalctl -b -o short-monotonic --no-pager | grep -E "systemd 255.*running in system mode|Started kumabox-agent.service|Reached target multi-user.target"' 2>/dev/null || true)
+    if grep -q 'Reached target multi-user.target' <<<"$journal"; then
+      printf '%s\n' "$journal"
+      return 0
+    fi
+    sleep 0.2
+  done
+  printf '%s\n' "$journal"
+}
+
 preserve_console_log() {
   local source_log=$1 destination=$2
   [[ -f $source_log ]] || return 0
@@ -268,7 +281,15 @@ run_iteration() {
   agent_ready_ms=$(jq -r '.performance.agentReadyDurationMs // 0' <<<"$run_json")
   agent_overhead_ms=$((agent_ready_ms - vmm_ready_ms))
   phase_log=$(kb exec "$source_id" -- cat /run/kumabox/boot-phases 2>/dev/null || true)
-  journal_log=$(kb exec "$source_id" -- sh -c 'journalctl -b -o short-monotonic --no-pager | grep -E "systemd 255.*running in system mode|Started kumabox-agent.service|Reached target multi-user.target"' 2>/dev/null || true)
+  source_run_total=$((end_ms - start_ms))
+
+  step "iteration $index: first exec"
+  start_ms=$(now_ms)
+  [[ $(kb exec "$source_id" -- true) == "" ]]
+  end_ms=$(now_ms)
+  exec_ms=$((end_ms - start_ms))
+
+  journal_log=$(read_guest_startup_journal "$source_id")
   preserve_text "$phase_log" "$artifacts_dir/iteration-${index}-source-boot-phases.log"
   preserve_text "$journal_log" "$preserved_journal_log"
   guest_overlay_ms=$(phase_file_marker_ms "$phase_log" 'boot-phase=overlay-ready')
@@ -279,13 +300,6 @@ run_iteration() {
   guest_systemd_to_agent_ms=$(phase_duration_ms "$guest_systemd_ms" "$guest_agent_ms")
   guest_agent_to_multiuser_ms=$(phase_duration_ms "$guest_agent_ms" "$guest_multiuser_ms")
   guest_overlay_to_multiuser_ms=$(phase_duration_ms "$guest_overlay_ms" "$guest_multiuser_ms")
-  source_run_total=$((end_ms - start_ms))
-
-  step "iteration $index: first exec"
-  start_ms=$(now_ms)
-  [[ $(kb exec "$source_id" -- true) == "" ]]
-  end_ms=$(now_ms)
-  exec_ms=$((end_ms - start_ms))
 
   step "iteration $index: native snapshot and clone"
   snapshot_json=$(kb snapshot create "$source_id" --name "$native_snapshot" --type running)
