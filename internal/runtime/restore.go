@@ -135,7 +135,11 @@ func restoreCreateRequest(opts RestoreOptions, image *imagestore.ImageRecord, ma
 			if layer.Digest != manifest.Base.LayerDigests[i] || layer.EROFS == nil {
 				return vmstore.CreateRequest{}, errors.New("BASE_IMAGE_MISMATCH: OCI layer digest differs")
 			}
-			configs = append(configs, vmstore.StorageConfig{ID: vmstore.LayerID(i), Role: vmstore.StorageRoleLayer, Path: layer.EROFS.Path, Readonly: true, Format: vmstore.FormatRaw, Filesystem: vmstore.FilesystemEROFS, Serial: vmstore.LayerSerial(i), SourceLayer: layer.Digest, VirtualSizeBytes: layer.EROFS.SizeBytes})
+			serial := layer.Serial
+			if serial == "" {
+				serial = vmstore.LayerSerial(i)
+			}
+			configs = append(configs, vmstore.StorageConfig{ID: vmstore.LayerID(i), Role: vmstore.StorageRoleLayer, Path: layer.EROFS.Path, Readonly: true, Format: vmstore.FormatRaw, Filesystem: vmstore.FilesystemEROFS, Serial: serial, SourceLayer: layer.Digest, VirtualSizeBytes: layer.EROFS.SizeBytes})
 		}
 	default:
 		return vmstore.CreateRequest{}, fmt.Errorf("unsupported snapshot base family %q", manifest.Base.Family)

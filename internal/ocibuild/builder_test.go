@@ -31,7 +31,7 @@ func TestEnsureEROFSBuildsAndReusesLayer(t *testing.T) {
 	layerDigest := "sha256:" + hex.EncodeToString(sum[:])
 
 	mkfs := filepath.Join(dir, "mkfs.erofs")
-	if err := os.WriteFile(mkfs, []byte("#!/bin/sh\ncp \"$3\" \"$2\"\n"), 0o755); err != nil {
+	if err := os.WriteFile(mkfs, []byte("#!/bin/sh\ncat > \"$7\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

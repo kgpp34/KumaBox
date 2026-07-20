@@ -5,6 +5,7 @@ package ocibuild
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/ocistore"
+	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
 const ociCmdlineTemplate = "console=ttyS0 loglevel=3 clocksource=kvm-clock reboot=k panic=1 boot=kumabox-overlay kumabox.layers={{layers}} kumabox.cow={{cow}} kumabox.timeout=10 rw"
@@ -77,23 +79,31 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 	}
 
 	layers := make([]imagestore.OCILayer, 0, len(pull.Layers))
+	var kernel, initrd *bootAsset
 	for i, layer := range pull.Layers {
-		erofs, err := b.ensureEROFS(ctx, req.MkfsEROFS, layer)
+		erofs, layerKernel, layerInitrd, err := b.ensureEROFSWithAssets(ctx, req.MkfsEROFS, layer)
 		if err != nil {
 			return nil, fmt.Errorf("build layer %d %s: %w", i, layer.Digest, err)
+		}
+		if layerKernel != nil && (kernel == nil || layerKernel.SourcePath > kernel.SourcePath) {
+			kernel = layerKernel
+		}
+		if layerInitrd != nil && (initrd == nil || layerInitrd.SourcePath > initrd.SourcePath) {
+			initrd = layerInitrd
 		}
 		layers = append(layers, imagestore.OCILayer{
 			Index:     i,
 			Digest:    layer.Digest,
+			Serial:    vmstore.LayerSerial(i),
 			MediaType: layer.MediaType,
 			SizeBytes: layer.SizeBytes,
 			EROFS:     erofs,
 		})
 	}
-	boot, err := b.resolveBootProfile(pull.Layers)
-	if err != nil {
-		return nil, err
+	if kernel == nil || initrd == nil {
+		return nil, fmt.Errorf("BOOT_PROFILE_UNSUPPORTED: OCI image must contain /boot/vmlinuz-* and /boot/initrd.img-*")
 	}
+	boot := imagestore.Boot{Mode: "direct", Kernel: kernel.Path, Initrd: initrd.Path, Cmdline: ociCmdlineTemplate}
 	imageConfig, err := decodeOCIImageConfig(pull.Config.Path)
 	if err != nil {
 		return nil, err
@@ -230,10 +240,14 @@ func (b *Builder) resolveBootProfile(layers []ocistore.BlobRecord) (imagestore.B
 			return imagestore.Boot{}, err
 		}
 		if layerKernel != nil {
-			kernel = layerKernel
+			if kernel == nil || layerKernel.SourcePath > kernel.SourcePath {
+				kernel = layerKernel
+			}
 		}
 		if layerInitrd != nil {
-			initrd = layerInitrd
+			if initrd == nil || layerInitrd.SourcePath > initrd.SourcePath {
+				initrd = layerInitrd
+			}
 		}
 	}
 	if kernel == nil || initrd == nil {
@@ -379,15 +393,24 @@ func (b *Builder) commitBootAsset(kind, sourcePath, sourceLayer string, src io.R
 }
 
 func (b *Builder) ensureEROFS(ctx context.Context, mkfs string, layer ocistore.BlobRecord) (*imagestore.EROFSLayer, error) {
+	erofs, _, _, err := b.ensureEROFSWithAssets(ctx, mkfs, layer)
+	return erofs, err
+}
+
+func (b *Builder) ensureEROFSWithAssets(ctx context.Context, mkfs string, layer ocistore.BlobRecord) (*imagestore.EROFSLayer, *bootAsset, *bootAsset, error) {
 	algo, value, err := splitDigest(layer.Digest)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	target := filepath.Join(b.erofsDir, algo, value+".erofs")
 	if info, err := os.Stat(target); err == nil && info.Mode().IsRegular() {
 		sum, err := fileSHA256(target)
 		if err != nil {
-			return nil, err
+			return nil, nil, nil, err
+		}
+		kernel, initrd, scanErr := b.scanBootAssets(layer)
+		if scanErr != nil {
+			return nil, nil, nil, scanErr
 		}
 		return &imagestore.EROFSLayer{
 			Path:        target,
@@ -395,43 +418,71 @@ func (b *Builder) ensureEROFS(ctx context.Context, mkfs string, layer ocistore.B
 			Digest:      "sha256:" + sum,
 			SizeBytes:   info.Size(),
 			SourceLayer: layer.Digest,
-		}, nil
+		}, kernel, initrd, nil
 	}
 
 	opID, err := operationID()
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	stage := filepath.Join(b.stageDir, "erofs-"+opID)
 	if err := os.MkdirAll(stage, 0o755); err != nil {
-		return nil, fmt.Errorf("create EROFS staging dir: %w", err)
+		return nil, nil, nil, fmt.Errorf("create EROFS staging dir: %w", err)
 	}
 	defer os.RemoveAll(stage) //nolint:errcheck
 
-	tarPath := filepath.Join(stage, "layer.tar")
-	if err := writeLayerTar(layer, tarPath); err != nil {
-		return nil, err
-	}
 	stagedEROFS := filepath.Join(stage, "layer.erofs")
-	cmd := exec.CommandContext(ctx, mkfs, "--tar=f", stagedEROFS, tarPath) //nolint:gosec
-	out, err := cmd.CombinedOutput()
+	cmd := exec.CommandContext(ctx, mkfs, "--tar=f", "-zlz4hc", "-C4096", "-T0", "-U", erofsUUID(value), stagedEROFS) //nolint:gosec
+	var output bytes.Buffer
+	cmd.Stderr = &output
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, fmt.Errorf("mkfs.erofs failed: %w: %s", err, strings.TrimSpace(string(out)))
+		return nil, nil, nil, fmt.Errorf("create mkfs.erofs stdin: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, nil, nil, fmt.Errorf("start mkfs.erofs: %w", err)
+	}
+	in, err := os.Open(layer.Path) //nolint:gosec
+	if err != nil {
+		_ = stdin.Close()
+		_ = cmd.Wait()
+		return nil, nil, nil, fmt.Errorf("open layer blob: %w", err)
+	}
+	reader, closeReader, err := layerTarReader(layer.MediaType, in)
+	if err != nil {
+		_ = in.Close()
+		_ = stdin.Close()
+		_ = cmd.Wait()
+		return nil, nil, nil, err
+	}
+	kernel, initrd, scanErr := b.scanBootAndStream(reader, stdin, layer.Digest)
+	closeReader()
+	_ = in.Close()
+	closeErr := stdin.Close()
+	waitErr := cmd.Wait()
+	if scanErr != nil {
+		return nil, nil, nil, scanErr
+	}
+	if closeErr != nil {
+		return nil, nil, nil, fmt.Errorf("close mkfs.erofs input: %w", closeErr)
+	}
+	if waitErr != nil {
+		return nil, nil, nil, fmt.Errorf("mkfs.erofs failed: %w: %s", waitErr, strings.TrimSpace(output.String()))
 	}
 
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return nil, fmt.Errorf("create EROFS blob dir: %w", err)
+		return nil, nil, nil, fmt.Errorf("create EROFS blob dir: %w", err)
 	}
 	if err := os.Rename(stagedEROFS, target); err != nil {
-		return nil, fmt.Errorf("commit EROFS blob: %w", err)
+		return nil, nil, nil, fmt.Errorf("commit EROFS blob: %w", err)
 	}
 	info, err := os.Stat(target)
 	if err != nil {
-		return nil, fmt.Errorf("stat EROFS blob: %w", err)
+		return nil, nil, nil, fmt.Errorf("stat EROFS blob: %w", err)
 	}
 	sum, err := fileSHA256(target)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	return &imagestore.EROFSLayer{
 		Path:        target,
@@ -439,38 +490,49 @@ func (b *Builder) ensureEROFS(ctx context.Context, mkfs string, layer ocistore.B
 		Digest:      "sha256:" + sum,
 		SizeBytes:   info.Size(),
 		SourceLayer: layer.Digest,
-	}, nil
+	}, kernel, initrd, nil
 }
 
-func writeLayerTar(layer ocistore.BlobRecord, dst string) error {
-	in, err := os.Open(layer.Path) //nolint:gosec
-	if err != nil {
-		return fmt.Errorf("open layer blob: %w", err)
-	}
-	defer in.Close() //nolint:errcheck
+func erofsUUID(value string) string {
+	return fmt.Sprintf("%s-%s-5%s-8%s-%s", value[0:8], value[8:12], value[13:16], value[17:20], value[20:32])
+}
 
-	reader, closeReader, err := layerTarReader(layer.MediaType, in)
-	if err != nil {
-		return err
+// scanBootAndStream lets mkfs.erofs consume the same uncompressed tar stream
+// that is inspected for boot assets. This avoids materializing a second tar.
+func (b *Builder) scanBootAndStream(src io.Reader, dst io.Writer, sourceLayer string) (*bootAsset, *bootAsset, error) {
+	tee := io.TeeReader(src, dst)
+	tr := tar.NewReader(tee)
+	var kernel, initrd *bootAsset
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("read layer tar: %w", err)
+		}
+		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+			continue
+		}
+		kind, ok := bootAssetKind(hdr.Name)
+		if !ok {
+			continue
+		}
+		asset, err := b.commitBootAsset(kind, hdr.Name, sourceLayer, tr)
+		if err != nil {
+			return nil, nil, err
+		}
+		if kind == "kernel" && (kernel == nil || asset.SourcePath > kernel.SourcePath) {
+			kernel = asset
+		}
+		if kind == "initrd" && (initrd == nil || asset.SourcePath > initrd.SourcePath) {
+			initrd = asset
+		}
 	}
-	defer closeReader()
-
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec
-	if err != nil {
-		return fmt.Errorf("create layer tar staging file: %w", err)
+	if _, err := io.Copy(io.Discard, tee); err != nil {
+		return nil, nil, fmt.Errorf("drain layer stream: %w", err)
 	}
-	_, copyErr := io.Copy(out, reader)
-	if copyErr == nil {
-		copyErr = out.Sync()
-	}
-	closeErr := out.Close()
-	if copyErr != nil {
-		return fmt.Errorf("write layer tar staging file: %w", copyErr)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close layer tar staging file: %w", closeErr)
-	}
-	return nil
+	return kernel, initrd, nil
 }
 
 func layerTarReader(mediaType string, src io.Reader) (io.Reader, func(), error) {

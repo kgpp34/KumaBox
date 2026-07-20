@@ -7,6 +7,7 @@ package ocisource
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os/exec"
@@ -102,6 +103,9 @@ func openDaemon(ctx context.Context, req Request) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("OCI_DAEMON_IMAGE_FAILED: parse docker image tar: %w", err)
 	}
+	if err := validatePlatform(img, platform); err != nil {
+		return nil, err
+	}
 	digest, err := img.Digest()
 	if err != nil {
 		return nil, fmt.Errorf("OCI_DIGEST_FAILED: %w", err)
@@ -133,4 +137,29 @@ func openDaemon(ctx context.Context, req Request) (*Result, error) {
 		ResolvedAt: time.Now().UTC(),
 	}
 	return &Result{Image: img, Resolved: resolved, Source: "daemon"}, nil
+}
+
+func validatePlatform(img v1.Image, want ociresolver.Platform) error {
+	raw, err := img.RawConfigFile()
+	if err != nil {
+		return fmt.Errorf("OCI_CONFIG_FAILED: %w", err)
+	}
+	var config struct {
+		OS           string `json:"os"`
+		Architecture string `json:"architecture"`
+		Variant      string `json:"variant,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return fmt.Errorf("OCI_CONFIG_FAILED: decode daemon image config: %w", err)
+	}
+	if config.OS != "" && config.OS != want.OS {
+		return fmt.Errorf("OCI_PLATFORM_MISMATCH: daemon image os=%s, requested=%s", config.OS, want.OS)
+	}
+	if config.Architecture != "" && config.Architecture != want.Architecture {
+		return fmt.Errorf("OCI_PLATFORM_MISMATCH: daemon image architecture=%s, requested=%s", config.Architecture, want.Architecture)
+	}
+	if want.Variant != "" && config.Variant != "" && config.Variant != want.Variant {
+		return fmt.Errorf("OCI_PLATFORM_MISMATCH: daemon image variant=%s, requested=%s", config.Variant, want.Variant)
+	}
+	return nil
 }

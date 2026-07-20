@@ -32,26 +32,27 @@ resolve_disk() {
                 sleep 1
                 i=$((i + 1))
             done
+            echo "KumaBox: device ${serial} not present after ${timeout}s" >&2
             return 1
             ;;
     esac
 
     while [ "$i" -lt "$timeout" ]; do
-        by_id="/dev/disk/by-id/virtio-${serial}"
-        if [ -b "$by_id" ]; then
-            echo "$by_id"
-            return 0
-        fi
         for sysdev in /sys/block/vd*; do
             [ -d "$sysdev" ] || continue
             dev_serial=""
             if [ -f "$sysdev/serial" ]; then
                 dev_serial="$(cat "$sysdev/serial")"
             fi
-            if [ -z "$dev_serial" ] && [ -f "$sysdev/device/serial" ]; then
+            if [ -f "$sysdev/device/serial" ]; then
                 dev_serial="$(cat "$sysdev/device/serial")"
             fi
-            dev_serial="$(printf '%s' "$dev_serial" | tr -d '[:space:]')"
+            while :; do
+                case "$dev_serial" in
+                    *[[:space:]]) dev_serial="${dev_serial%[[:space:]]}" ;;
+                    *) break ;;
+                esac
+            done
             if [ "$dev_serial" = "$serial" ]; then
                 echo "/dev/${sysdev##*/}"
                 return 0
@@ -59,6 +60,14 @@ resolve_disk() {
         done
         sleep 1
         i=$((i + 1))
+    done
+    echo "KumaBox: device serial ${serial} not found; available virtio disks:" >&2
+    for sysdev in /sys/block/vd*; do
+        [ -d "$sysdev" ] || continue
+        dev_serial=""
+        [ -f "$sysdev/serial" ] && dev_serial="$(cat "$sysdev/serial")"
+        [ -f "$sysdev/device/serial" ] && dev_serial="$(cat "$sysdev/device/serial")"
+        echo "KumaBox: ${sysdev##*/} serial=${dev_serial}" >&2
     done
     return 1
 }

@@ -377,13 +377,17 @@ func newOCIImageCreateRequest(flags createVMFlags, image *imagestore.ImageRecord
 		if layer.EROFS == nil || layer.EROFS.Path == "" {
 			return vmstore.CreateRequest{}, fmt.Errorf("image %q layer %d has no EROFS blob", image.Name, i)
 		}
+		serial := layer.Serial
+		if serial == "" {
+			serial = vmstore.LayerSerial(i)
+		}
 		storageConfigs = append(storageConfigs, vmstore.StorageConfig{
 			ID:               vmstore.LayerID(i),
 			Role:             vmstore.StorageRoleLayer,
 			Path:             layer.EROFS.Path,
 			Readonly:         true,
 			Format:           vmstore.FormatRaw,
-			Serial:           vmstore.LayerSerial(i),
+			Serial:           serial,
 			Filesystem:       vmstore.FilesystemEROFS,
 			SourceLayer:      layer.Digest,
 			VirtualSizeBytes: layer.EROFS.SizeBytes,
