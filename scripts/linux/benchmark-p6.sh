@@ -13,6 +13,7 @@ storage=64M
 iterations=3
 concurrency=1
 output=/tmp/kumabox-p0/p6-baseline.json
+artifacts_dir=
 baseline=
 max_p50_regression=10
 max_p95_regression=15
@@ -72,6 +73,8 @@ while (($#)); do
   esac
 done
 
+artifacts_dir="${output}.logs"
+
 [[ $(uname -s) == Linux ]] || { echo "P6 benchmark requires Linux" >&2; exit 1; }
 [[ $iterations =~ ^[1-9][0-9]*$ ]] || { echo "--iterations must be positive" >&2; exit 2; }
 [[ $concurrency =~ ^[1-9][0-9]*$ ]] || { echo "--concurrency must be positive" >&2; exit 2; }
@@ -115,6 +118,17 @@ console_phase_ms() {
   awk -v seconds="$timestamp" 'BEGIN { printf "%.0f", seconds * 1000 }'
 }
 
+preserve_console_log() {
+  local source_log=$1 destination=$2
+  [[ -f $source_log ]] || return 0
+  if ((${#file_prefix[@]})); then
+    "${file_prefix[@]}" cp "$source_log" "$destination"
+    "${file_prefix[@]}" chmod a+r "$destination"
+  else
+    cp "$source_log" "$destination"
+  fi
+}
+
 vm_names=()
 snapshot_names=()
 cleanup() {
@@ -136,7 +150,7 @@ run_iteration() {
   local clone_restore_ms clone_backend_ms clone_readiness_ms
   local vmm_ready_ms agent_ready_ms agent_overhead_ms
   local guest_kernel_ms guest_overlay_ms guest_systemd_ms guest_agent_ms guest_multiuser_ms
-  local console_log
+  local console_log preserved_console_log
 
   vm_names+=("$source" "$restored" "$clone")
   snapshot_names+=("$stopped_snapshot" "$native_snapshot")
@@ -146,6 +160,7 @@ run_iteration() {
   end_ms=$(now_ms)
   source_id=$(jq -r '.id' <<<"$run_json")
   console_log=$(kb inspect "$source_id" --json | jq -r '.logDir + "/console.log"')
+  preserved_console_log="$artifacts_dir/iteration-${index}-source-console.log"
   source_run_ready=$(jq -r '.performance.readyDurationMs // 0' <<<"$run_json")
   vmm_ready_ms=$(jq -r '.performance.vmmAPIReadyDurationMs // 0' <<<"$run_json")
   agent_ready_ms=$(jq -r '.performance.agentReadyDurationMs // 0' <<<"$run_json")
@@ -155,6 +170,7 @@ run_iteration() {
   guest_systemd_ms=$(console_phase_ms "$console_log" 'systemd\[[0-9]+\].*running in system mode')
   guest_agent_ms=$(console_phase_ms "$console_log" 'Started kumabox-agent\.service')
   guest_multiuser_ms=$(console_phase_ms "$console_log" 'Reached target multi-user\.target')
+  preserve_console_log "$console_log" "$preserved_console_log"
   source_run_total=$((end_ms - start_ms))
 
   step "iteration $index: first exec"
@@ -206,6 +222,7 @@ run_iteration() {
     --argjson guestSystemdMs "$guest_systemd_ms" \
     --argjson guestAgentMs "$guest_agent_ms" \
     --argjson guestMultiuserMs "$guest_multiuser_ms" \
+    --arg consoleLog "$preserved_console_log" \
     --argjson execMs "$exec_ms" \
     --argjson nativeSnapshotMs "$native_snapshot_ms" \
     --argjson nativePauseMs "$native_pause_ms" \
@@ -214,7 +231,7 @@ run_iteration() {
     --argjson cloneReadinessMs "$clone_readiness_ms" \
     --argjson portableRestoreMs "$portable_restore_ms" \
     --argjson restartReadyMs "$restart_ready_ms" \
-    '{iteration:$iteration,runShellMs:$runShellMs,vmmReadyMs:$vmmReadyMs,agentReadyMs:$agentReadyMs,agentOverheadMs:$agentOverheadMs,guestKernelMs:$guestKernelMs,guestOverlayMs:$guestOverlayMs,guestSystemdMs:$guestSystemdMs,guestAgentMs:$guestAgentMs,guestMultiuserMs:$guestMultiuserMs,runReadyMs:$runReadyMs,firstExecMs:$execMs,nativeSnapshotMs:$nativeSnapshotMs,nativePauseMs:$nativePauseMs,cloneRestoreMs:$cloneRestoreMs,cloneBackendMs:$cloneBackendMs,cloneReadinessMs:$cloneReadinessMs,portableRestoreMs:$portableRestoreMs,restartReadyMs:$restartReadyMs}'
+    '{iteration:$iteration,consoleLog:$consoleLog,runShellMs:$runShellMs,vmmReadyMs:$vmmReadyMs,agentReadyMs:$agentReadyMs,agentOverheadMs:$agentOverheadMs,guestKernelMs:$guestKernelMs,guestOverlayMs:$guestOverlayMs,guestSystemdMs:$guestSystemdMs,guestAgentMs:$guestAgentMs,guestMultiuserMs:$guestMultiuserMs,runReadyMs:$runReadyMs,firstExecMs:$execMs,nativeSnapshotMs:$nativeSnapshotMs,nativePauseMs:$nativePauseMs,cloneRestoreMs:$cloneRestoreMs,cloneBackendMs:$cloneBackendMs,cloneReadinessMs:$cloneReadinessMs,portableRestoreMs:$portableRestoreMs,restartReadyMs:$restartReadyMs}'
 }
 
 run_concurrency_batch() {
@@ -244,6 +261,12 @@ run_concurrency_batch() {
 }
 
 step "clean previous benchmark resources"
+if ((${#file_prefix[@]})); then
+  "${file_prefix[@]}" mkdir -p "$artifacts_dir"
+  "${file_prefix[@]}" chmod a+rX "$artifacts_dir"
+else
+  mkdir -p "$artifacts_dir"
+fi
 vm_names=(p6-bench-1-source p6-bench-1-restored p6-bench-1-clone p6-bench-2-source p6-bench-2-restored p6-bench-2-clone p6-bench-3-source p6-bench-3-restored p6-bench-3-clone)
 snapshot_names=(p6-bench-1-stopped p6-bench-1-native p6-bench-2-stopped p6-bench-2-native p6-bench-3-stopped p6-bench-3-native)
 cleanup
@@ -276,6 +299,7 @@ jq -s \
   --arg image "$image" \
   --arg network "$network" \
   --arg storage "$storage" \
+  --arg artifacts "$artifacts_dir" \
   --argjson iterations "$iterations" \
   --argjson host "$host_json" \
   --argjson imageRecord "$image_json" \
@@ -290,7 +314,7 @@ jq -s \
       (numbers($key) | sort) as $values |
       {count:($values | length),p50:percentile($values; 0.50),p95:percentile($values; 0.95),max:($values | max)};
     . as $samples |
-    {schema:"kumabox.p6.benchmark.v3",generatedAt:$generatedAt,image:$image,network:$network,storage:$storage,iterations:$iterations,host:$host,imageRecord:$imageRecord,concurrency:$concurrency,samples:$samples,summary:{runShellMs:metric("runShellMs"),vmmReadyMs:metric("vmmReadyMs"),agentReadyMs:metric("agentReadyMs"),agentOverheadMs:metric("agentOverheadMs"),guestKernelMs:metric("guestKernelMs"),guestOverlayMs:metric("guestOverlayMs"),guestSystemdMs:metric("guestSystemdMs"),guestAgentMs:metric("guestAgentMs"),guestMultiuserMs:metric("guestMultiuserMs"),runReadyMs:metric("runReadyMs"),firstExecMs:metric("firstExecMs"),nativeSnapshotMs:metric("nativeSnapshotMs"),nativePauseMs:metric("nativePauseMs"),cloneRestoreMs:metric("cloneRestoreMs"),cloneBackendMs:metric("cloneBackendMs"),cloneReadinessMs:metric("cloneReadinessMs"),portableRestoreMs:metric("portableRestoreMs"),restartReadyMs:metric("restartReadyMs")}}
+    {schema:"kumabox.p6.benchmark.v3",generatedAt:$generatedAt,image:$image,network:$network,storage:$storage,iterations:$iterations,artifactsDir:$artifacts,host:$host,imageRecord:$imageRecord,concurrency:$concurrency,samples:$samples,summary:{runShellMs:metric("runShellMs"),vmmReadyMs:metric("vmmReadyMs"),agentReadyMs:metric("agentReadyMs"),agentOverheadMs:metric("agentOverheadMs"),guestKernelMs:metric("guestKernelMs"),guestOverlayMs:metric("guestOverlayMs"),guestSystemdMs:metric("guestSystemdMs"),guestAgentMs:metric("guestAgentMs"),guestMultiuserMs:metric("guestMultiuserMs"),runReadyMs:metric("runReadyMs"),firstExecMs:metric("firstExecMs"),nativeSnapshotMs:metric("nativeSnapshotMs"),nativePauseMs:metric("nativePauseMs"),cloneRestoreMs:metric("cloneRestoreMs"),cloneBackendMs:metric("cloneBackendMs"),cloneReadinessMs:metric("cloneReadinessMs"),portableRestoreMs:metric("portableRestoreMs"),restartReadyMs:metric("restartReadyMs")}}
   ' "$samples_file" >"$output"
 
 if [[ -n $baseline ]]; then
