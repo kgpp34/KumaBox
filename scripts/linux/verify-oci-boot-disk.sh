@@ -104,6 +104,9 @@ printf '==> preserve console log\n'
 as_root cp "$console_log" "$console_copy"
 as_root chmod 0644 "$console_copy"
 
+printf '==> console boot log\n'
+cat "$console_copy"
+
 printf '==> verify console boot flow\n'
 grep -q 'KumaBox: mounting OCI overlay rootfs' "$console_copy" || die "overlay start log missing"
 grep -q 'KumaBox: OCI overlay rootfs ready' "$console_copy" || die "overlay ready log missing"
@@ -162,9 +165,6 @@ done < <(
 printf '==> verify guest execution\n'
 hostname="$(kb exec "$vm_name" -- hostname)"
 [ "$hostname" = "$vm_name" ] || die "unexpected guest hostname: $hostname"
-
-printf '==> console log\n'
-cat "$console_copy"
 
 printf '==> delete verification VM\n'
 kb delete "$vm_name" --force | jq .
