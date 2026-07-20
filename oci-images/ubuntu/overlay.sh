@@ -21,6 +21,10 @@ resolve_disk() {
     timeout="${KUMABOX_TIMEOUT:-10}"
     i=0
 
+    case "$timeout" in
+        ''|*[!0-9]*) timeout=10 ;;
+    esac
+
     case "$serial" in
         /dev/*)
             while [ "$i" -lt "$timeout" ]; do
@@ -44,79 +48,10 @@ resolve_disk() {
                 return 0
             fi
         done
-        fallback="$(fallback_disk_by_order "$serial")"
-        if [ -n "$fallback" ]; then
-            echo "$fallback"
-            return 0
-        fi
         sleep 1
         i=$((i + 1))
     done
-    fallback="$(fallback_disk_by_order "$serial")"
-    if [ -n "$fallback" ]; then
-        echo "$fallback"
-        return 0
-    fi
-    dump_block_devices >&2
     return 1
-}
-
-ordinal_disk() {
-    want="$1"
-    idx=0
-    for sysdev in /sys/block/vd*; do
-        [ -d "$sysdev" ] || continue
-        if [ "$idx" = "$want" ]; then
-            echo "/dev/${sysdev##*/}"
-            return 0
-        fi
-        idx=$((idx + 1))
-    done
-    return 1
-}
-
-layer_count() {
-    count=0
-    old_ifs="$IFS"
-    IFS=,
-    for _layer in ${LAYERS:-}; do
-        count=$((count + 1))
-    done
-    IFS="$old_ifs"
-    echo "$count"
-}
-
-fallback_disk_by_order() {
-    serial="$1"
-    case "$serial" in
-        kumabox-layer*)
-            idx="${serial#kumabox-layer}"
-            case "$idx" in
-                ''|*[!0-9]*) return 1 ;;
-            esac
-            ordinal_disk "$idx"
-            return
-            ;;
-        kumabox-cow)
-            ordinal_disk "$(layer_count)"
-            return
-            ;;
-    esac
-    return 1
-}
-
-dump_block_devices() {
-    echo "KumaBox: available virtio block devices:"
-    for sysdev in /sys/block/vd*; do
-        [ -d "$sysdev" ] || continue
-        dev_serial=""
-        [ -f "$sysdev/serial" ] && dev_serial="$(cat "$sysdev/serial")"
-        [ -f "$sysdev/device/serial" ] && dev_serial="$(cat "$sysdev/device/serial")"
-        dev_serial="$(printf '%s' "$dev_serial" | tr -d '[:space:]')"
-        size=""
-        [ -f "$sysdev/size" ] && size="$(cat "$sysdev/size")"
-        echo "KumaBox:   /dev/${sysdev##*/} serial=${dev_serial:-<empty>} sectors=${size:-unknown}"
-    done
 }
 
 mountroot() {

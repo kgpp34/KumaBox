@@ -443,6 +443,9 @@ func kernelCmdline(rec *vmstore.VMRecord) string {
 			cow = cfg.Serial
 		}
 	}
+	for left, right := 0, len(layers)-1; left < right; left, right = left+1, right-1 {
+		layers[left], layers[right] = layers[right], layers[left]
+	}
 	cmdline = strings.ReplaceAll(cmdline, "{{layers}}", strings.Join(layers, ","))
 	cmdline = strings.ReplaceAll(cmdline, "{{cow}}", cow)
 	if len(rec.StorageConfigs) > 0 {
