@@ -75,6 +75,10 @@ done
 [[ $(uname -s) == Linux ]] || { echo "P6 benchmark requires Linux" >&2; exit 1; }
 [[ $iterations =~ ^[1-9][0-9]*$ ]] || { echo "--iterations must be positive" >&2; exit 2; }
 [[ $concurrency =~ ^[1-9][0-9]*$ ]] || { echo "--concurrency must be positive" >&2; exit 2; }
+if [[ $network == default ]]; then
+  echo "benchmark requires CNI networking; use --network cni:<config-name> instead of --network default" >&2
+  exit 2
+fi
 [[ -x $kumabox ]] || { echo "kumabox is not executable: $kumabox" >&2; exit 1; }
 for command in jq "$cloud_hypervisor" "$qemu_img"; do
   command -v "$command" >/dev/null 2>&1 || { echo "required command not found: $command" >&2; exit 1; }
