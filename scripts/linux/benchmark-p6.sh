@@ -121,6 +121,7 @@ run_iteration() {
   local start_ms end_ms exec_ms portable_restore_ms restart_ready_ms
   local source_run_ready source_run_total native_snapshot_ms native_pause_ms
   local clone_restore_ms clone_backend_ms clone_readiness_ms
+  local vmm_ready_ms agent_ready_ms agent_overhead_ms
 
   vm_names+=("$source" "$restored" "$clone")
   snapshot_names+=("$stopped_snapshot" "$native_snapshot")
@@ -130,6 +131,9 @@ run_iteration() {
   end_ms=$(now_ms)
   source_id=$(jq -r '.id' <<<"$run_json")
   source_run_ready=$(jq -r '.performance.readyDurationMs // 0' <<<"$run_json")
+  vmm_ready_ms=$(jq -r '.performance.vmmAPIReadyDurationMs // 0' <<<"$run_json")
+  agent_ready_ms=$(jq -r '.performance.agentReadyDurationMs // 0' <<<"$run_json")
+  agent_overhead_ms=$((agent_ready_ms - vmm_ready_ms))
   source_run_total=$((end_ms - start_ms))
 
   step "iteration $index: first exec"
@@ -173,6 +177,9 @@ run_iteration() {
     --argjson iteration "$index" \
     --argjson runShellMs "$source_run_total" \
     --argjson runReadyMs "$source_run_ready" \
+    --argjson vmmReadyMs "$vmm_ready_ms" \
+    --argjson agentReadyMs "$agent_ready_ms" \
+    --argjson agentOverheadMs "$agent_overhead_ms" \
     --argjson execMs "$exec_ms" \
     --argjson nativeSnapshotMs "$native_snapshot_ms" \
     --argjson nativePauseMs "$native_pause_ms" \
@@ -181,7 +188,7 @@ run_iteration() {
     --argjson cloneReadinessMs "$clone_readiness_ms" \
     --argjson portableRestoreMs "$portable_restore_ms" \
     --argjson restartReadyMs "$restart_ready_ms" \
-    '{iteration:$iteration,runShellMs:$runShellMs,runReadyMs:$runReadyMs,firstExecMs:$execMs,nativeSnapshotMs:$nativeSnapshotMs,nativePauseMs:$nativePauseMs,cloneRestoreMs:$cloneRestoreMs,cloneBackendMs:$cloneBackendMs,cloneReadinessMs:$cloneReadinessMs,portableRestoreMs:$portableRestoreMs,restartReadyMs:$restartReadyMs}'
+    '{iteration:$iteration,runShellMs:$runShellMs,vmmReadyMs:$vmmReadyMs,agentReadyMs:$agentReadyMs,agentOverheadMs:$agentOverheadMs,runReadyMs:$runReadyMs,firstExecMs:$execMs,nativeSnapshotMs:$nativeSnapshotMs,nativePauseMs:$nativePauseMs,cloneRestoreMs:$cloneRestoreMs,cloneBackendMs:$cloneBackendMs,cloneReadinessMs:$cloneReadinessMs,portableRestoreMs:$portableRestoreMs,restartReadyMs:$restartReadyMs}'
 }
 
 run_concurrency_batch() {
@@ -257,7 +264,7 @@ jq -s \
       (numbers($key) | sort) as $values |
       {count:($values | length),p50:percentile($values; 0.50),p95:percentile($values; 0.95),max:($values | max)};
     . as $samples |
-    {schema:"kumabox.p6.benchmark.v1",generatedAt:$generatedAt,image:$image,network:$network,storage:$storage,iterations:$iterations,host:$host,imageRecord:$imageRecord,concurrency:$concurrency,samples:$samples,summary:{runShellMs:metric("runShellMs"),runReadyMs:metric("runReadyMs"),firstExecMs:metric("firstExecMs"),nativeSnapshotMs:metric("nativeSnapshotMs"),nativePauseMs:metric("nativePauseMs"),cloneRestoreMs:metric("cloneRestoreMs"),cloneBackendMs:metric("cloneBackendMs"),cloneReadinessMs:metric("cloneReadinessMs"),portableRestoreMs:metric("portableRestoreMs"),restartReadyMs:metric("restartReadyMs")}}
+    {schema:"kumabox.p6.benchmark.v2",generatedAt:$generatedAt,image:$image,network:$network,storage:$storage,iterations:$iterations,host:$host,imageRecord:$imageRecord,concurrency:$concurrency,samples:$samples,summary:{runShellMs:metric("runShellMs"),vmmReadyMs:metric("vmmReadyMs"),agentReadyMs:metric("agentReadyMs"),agentOverheadMs:metric("agentOverheadMs"),runReadyMs:metric("runReadyMs"),firstExecMs:metric("firstExecMs"),nativeSnapshotMs:metric("nativeSnapshotMs"),nativePauseMs:metric("nativePauseMs"),cloneRestoreMs:metric("cloneRestoreMs"),cloneBackendMs:metric("cloneBackendMs"),cloneReadinessMs:metric("cloneReadinessMs"),portableRestoreMs:metric("portableRestoreMs"),restartReadyMs:metric("restartReadyMs")}}
   ' "$samples_file" >"$output"
 
 if [[ -n $baseline ]]; then

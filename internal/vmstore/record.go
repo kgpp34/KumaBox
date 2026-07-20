@@ -170,6 +170,9 @@ type PerformanceMetrics struct {
 	VMMAPIReadyAt          *time.Time `json:"vmmAPIReadyAt,omitempty"`
 	AgentConnectedAt       *time.Time `json:"agentConnectedAt,omitempty"`
 	FirstExecCompletedAt   *time.Time `json:"firstExecCompletedAt,omitempty"`
+	VMMAPIReadyDurationMs  int64      `json:"vmmAPIReadyDurationMs,omitempty"`
+	AgentReadyDurationMs   int64      `json:"agentReadyDurationMs,omitempty"`
+	FirstExecDurationMs    int64      `json:"firstExecDurationMs,omitempty"`
 	ReadyDurationMs        int64      `json:"readyDurationMs,omitempty"`
 }
 

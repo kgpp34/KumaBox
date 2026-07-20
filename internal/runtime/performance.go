@@ -62,14 +62,17 @@ func (m *lifecycleMetrics) markVMMSpawned(at time.Time) {
 
 func (m *lifecycleMetrics) markVMMAPIReady(at time.Time) {
 	m.value.VMMAPIReadyAt = phaseTime(at)
+	m.value.VMMAPIReadyDurationMs = at.Sub(m.started).Milliseconds()
 }
 
 func (m *lifecycleMetrics) markAgentConnected(at time.Time) {
 	m.value.AgentConnectedAt = phaseTime(at)
+	m.value.AgentReadyDurationMs = at.Sub(m.started).Milliseconds()
 }
 
 func (m *lifecycleMetrics) markFirstExecCompleted(at time.Time) {
 	m.value.FirstExecCompletedAt = phaseTime(at)
+	m.value.FirstExecDurationMs = at.Sub(m.started).Milliseconds()
 	m.value.ReadyDurationMs = at.Sub(m.started).Milliseconds()
 }
 

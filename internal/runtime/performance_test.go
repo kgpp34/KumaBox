@@ -35,6 +35,9 @@ func TestLifecycleMetricsRecordOrderedReadinessPhases(t *testing.T) {
 	if got.ReadyDurationMs < 50 {
 		t.Fatalf("ready duration = %dms, want at least 50ms", got.ReadyDurationMs)
 	}
+	if got.VMMAPIReadyDurationMs < 40 || got.AgentReadyDurationMs < 50 || got.FirstExecDurationMs < 50 {
+		t.Fatalf("phase durations = %+v", got)
+	}
 	if got.ImageResolvedAt == nil || got.FirstExecCompletedAt == nil {
 		t.Fatalf("missing phase timestamps = %+v", got)
 	}
