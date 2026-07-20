@@ -145,7 +145,7 @@ run_iteration() {
   run_json=$(kb run "$image" --name "$source" --network "$network" --storage "$storage")
   end_ms=$(now_ms)
   source_id=$(jq -r '.id' <<<"$run_json")
-  console_log=$(jq -r '.logDir + "/console.log"' <<<"$run_json")
+  console_log=$(kb inspect "$source_id" --json | jq -r '.logDir + "/console.log"')
   source_run_ready=$(jq -r '.performance.readyDurationMs // 0' <<<"$run_json")
   vmm_ready_ms=$(jq -r '.performance.vmmAPIReadyDurationMs // 0' <<<"$run_json")
   agent_ready_ms=$(jq -r '.performance.agentReadyDurationMs // 0' <<<"$run_json")
