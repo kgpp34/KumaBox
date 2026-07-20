@@ -38,13 +38,18 @@ resolve_disk() {
     esac
 
     while [ "$i" -lt "$timeout" ]; do
+        by_id="/dev/disk/by-id/virtio-${serial}"
+        if [ -b "$by_id" ]; then
+            echo "$by_id"
+            return 0
+        fi
         for sysdev in /sys/block/vd*; do
             [ -d "$sysdev" ] || continue
             dev_serial=""
             if [ -f "$sysdev/serial" ]; then
                 dev_serial="$(cat "$sysdev/serial")"
             fi
-            if [ -f "$sysdev/device/serial" ]; then
+            if [ -z "$dev_serial" ] && [ -f "$sysdev/device/serial" ]; then
                 dev_serial="$(cat "$sysdev/device/serial")"
             fi
             while :; do
@@ -60,14 +65,6 @@ resolve_disk() {
         done
         sleep 1
         i=$((i + 1))
-    done
-    echo "KumaBox: device serial ${serial} not found; available virtio disks:" >&2
-    for sysdev in /sys/block/vd*; do
-        [ -d "$sysdev" ] || continue
-        dev_serial=""
-        [ -f "$sysdev/serial" ] && dev_serial="$(cat "$sysdev/serial")"
-        [ -f "$sysdev/device/serial" ] && dev_serial="$(cat "$sysdev/device/serial")"
-        echo "KumaBox: ${sysdev##*/} serial=${dev_serial}" >&2
     done
     return 1
 }
@@ -128,6 +125,11 @@ mountroot() {
     mount -t overlay overlay -o "$overlay_opts" "$rootmnt" || panic "overlay rootfs failed"
 
     mkdir -p "${rootmnt}/dev" "${rootmnt}/proc" "${rootmnt}/sys" "${rootmnt}/run"
+
+    # Every VM gets a fresh machine identity, including native clones.
+    rm -f "${rootmnt}/etc/machine-id" 2>/dev/null || true
+    : >"${rootmnt}/etc/machine-id"
+
     for dev in $layer_devs; do
         blk="${dev##*/}"
         [ -e "/sys/block/${blk}/queue/scheduler" ] && echo none >"/sys/block/${blk}/queue/scheduler" 2>/dev/null || true

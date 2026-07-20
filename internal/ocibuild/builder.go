@@ -503,7 +503,7 @@ func (b *Builder) ensureEROFSOnce(ctx context.Context, mkfs string, layer ocisto
 	defer os.RemoveAll(stage) //nolint:errcheck
 
 	stagedEROFS := filepath.Join(stage, "layer.erofs")
-	cmd := exec.CommandContext(ctx, mkfs, "--tar=f", "-zlz4hc", "-C4096", "-T0", "-U", erofsUUID(value), stagedEROFS) //nolint:gosec
+	cmd := exec.CommandContext(ctx, mkfs, "--tar=f", "-zlz4hc", "-C16384", "-T0", "-U", erofsUUID(value), stagedEROFS) //nolint:gosec
 	var output bytes.Buffer
 	cmd.Stderr = &output
 	stdin, err := cmd.StdinPipe()
