@@ -118,6 +118,15 @@ console_phase_ms() {
   awk -v seconds="$timestamp" 'BEGIN { printf "%.0f", seconds * 1000 }'
 }
 
+phase_duration_ms() {
+  local start=$1 end=$2
+  if [[ $start =~ ^[0-9]+$ && $end =~ ^[0-9]+$ && $end -ge $start ]]; then
+    printf '%s' "$((end - start))"
+  else
+    printf 'null'
+  fi
+}
+
 preserve_console_log() {
   local source_log=$1 destination=$2
   [[ -f $source_log ]] || return 0
@@ -150,6 +159,8 @@ run_iteration() {
   local clone_restore_ms clone_backend_ms clone_readiness_ms
   local vmm_ready_ms agent_ready_ms agent_overhead_ms
   local guest_kernel_ms guest_overlay_ms guest_systemd_ms guest_agent_ms guest_multiuser_ms
+  local guest_kernel_to_overlay_ms guest_overlay_to_systemd_ms guest_systemd_to_agent_ms
+  local guest_agent_to_multiuser_ms guest_kernel_to_multiuser_ms
   local console_log preserved_console_log
 
   vm_names+=("$source" "$restored" "$clone")
@@ -172,6 +183,11 @@ run_iteration() {
   guest_systemd_ms=$(console_phase_ms "$console_log" 'systemd\[[0-9]+\].*running in system mode')
   guest_agent_ms=$(console_phase_ms "$console_log" 'Started kumabox-agent\.service')
   guest_multiuser_ms=$(console_phase_ms "$console_log" 'Reached target multi-user\.target')
+  guest_kernel_to_overlay_ms=$(phase_duration_ms "$guest_kernel_ms" "$guest_overlay_ms")
+  guest_overlay_to_systemd_ms=$(phase_duration_ms "$guest_overlay_ms" "$guest_systemd_ms")
+  guest_systemd_to_agent_ms=$(phase_duration_ms "$guest_systemd_ms" "$guest_agent_ms")
+  guest_agent_to_multiuser_ms=$(phase_duration_ms "$guest_agent_ms" "$guest_multiuser_ms")
+  guest_kernel_to_multiuser_ms=$(phase_duration_ms "$guest_kernel_ms" "$guest_multiuser_ms")
   source_run_total=$((end_ms - start_ms))
 
   step "iteration $index: first exec"
@@ -223,6 +239,11 @@ run_iteration() {
     --argjson guestSystemdMs "$guest_systemd_ms" \
     --argjson guestAgentMs "$guest_agent_ms" \
     --argjson guestMultiuserMs "$guest_multiuser_ms" \
+    --argjson guestKernelToOverlayMs "$guest_kernel_to_overlay_ms" \
+    --argjson guestOverlayToSystemdMs "$guest_overlay_to_systemd_ms" \
+    --argjson guestSystemdToAgentMs "$guest_systemd_to_agent_ms" \
+    --argjson guestAgentToMultiuserMs "$guest_agent_to_multiuser_ms" \
+    --argjson guestKernelToMultiuserMs "$guest_kernel_to_multiuser_ms" \
     --arg consoleLog "$preserved_console_log" \
     --argjson execMs "$exec_ms" \
     --argjson nativeSnapshotMs "$native_snapshot_ms" \
@@ -232,7 +253,7 @@ run_iteration() {
     --argjson cloneReadinessMs "$clone_readiness_ms" \
     --argjson portableRestoreMs "$portable_restore_ms" \
     --argjson restartReadyMs "$restart_ready_ms" \
-    '{iteration:$iteration,consoleLog:$consoleLog,runShellMs:$runShellMs,vmmReadyMs:$vmmReadyMs,agentReadyMs:$agentReadyMs,agentOverheadMs:$agentOverheadMs,guestKernelMs:$guestKernelMs,guestOverlayMs:$guestOverlayMs,guestSystemdMs:$guestSystemdMs,guestAgentMs:$guestAgentMs,guestMultiuserMs:$guestMultiuserMs,runReadyMs:$runReadyMs,firstExecMs:$execMs,nativeSnapshotMs:$nativeSnapshotMs,nativePauseMs:$nativePauseMs,cloneRestoreMs:$cloneRestoreMs,cloneBackendMs:$cloneBackendMs,cloneReadinessMs:$cloneReadinessMs,portableRestoreMs:$portableRestoreMs,restartReadyMs:$restartReadyMs}'
+    '{iteration:$iteration,consoleLog:$consoleLog,runShellMs:$runShellMs,vmmReadyMs:$vmmReadyMs,agentReadyMs:$agentReadyMs,agentOverheadMs:$agentOverheadMs,guestKernelMs:$guestKernelMs,guestOverlayMs:$guestOverlayMs,guestSystemdMs:$guestSystemdMs,guestAgentMs:$guestAgentMs,guestMultiuserMs:$guestMultiuserMs,guestKernelToOverlayMs:$guestKernelToOverlayMs,guestOverlayToSystemdMs:$guestOverlayToSystemdMs,guestSystemdToAgentMs:$guestSystemdToAgentMs,guestAgentToMultiuserMs:$guestAgentToMultiuserMs,guestKernelToMultiuserMs:$guestKernelToMultiuserMs,runReadyMs:$runReadyMs,firstExecMs:$execMs,nativeSnapshotMs:$nativeSnapshotMs,nativePauseMs:$nativePauseMs,cloneRestoreMs:$cloneRestoreMs,cloneBackendMs:$cloneBackendMs,cloneReadinessMs:$cloneReadinessMs,portableRestoreMs:$portableRestoreMs,restartReadyMs:$restartReadyMs}'
 }
 
 run_concurrency_batch() {
@@ -315,7 +336,7 @@ jq -s \
       (numbers($key) | sort) as $values |
       {count:($values | length),p50:percentile($values; 0.50),p95:percentile($values; 0.95),max:($values | max)};
     . as $samples |
-    {schema:"kumabox.p6.benchmark.v3",generatedAt:$generatedAt,image:$image,network:$network,storage:$storage,iterations:$iterations,artifactsDir:$artifacts,host:$host,imageRecord:$imageRecord,concurrency:$concurrency,samples:$samples,summary:{runShellMs:metric("runShellMs"),vmmReadyMs:metric("vmmReadyMs"),agentReadyMs:metric("agentReadyMs"),agentOverheadMs:metric("agentOverheadMs"),guestKernelMs:metric("guestKernelMs"),guestOverlayMs:metric("guestOverlayMs"),guestSystemdMs:metric("guestSystemdMs"),guestAgentMs:metric("guestAgentMs"),guestMultiuserMs:metric("guestMultiuserMs"),runReadyMs:metric("runReadyMs"),firstExecMs:metric("firstExecMs"),nativeSnapshotMs:metric("nativeSnapshotMs"),nativePauseMs:metric("nativePauseMs"),cloneRestoreMs:metric("cloneRestoreMs"),cloneBackendMs:metric("cloneBackendMs"),cloneReadinessMs:metric("cloneReadinessMs"),portableRestoreMs:metric("portableRestoreMs"),restartReadyMs:metric("restartReadyMs")}}
+    {schema:"kumabox.p6.benchmark.v4",generatedAt:$generatedAt,image:$image,network:$network,storage:$storage,iterations:$iterations,artifactsDir:$artifacts,host:$host,imageRecord:$imageRecord,concurrency:$concurrency,samples:$samples,summary:{runShellMs:metric("runShellMs"),vmmReadyMs:metric("vmmReadyMs"),agentReadyMs:metric("agentReadyMs"),agentOverheadMs:metric("agentOverheadMs"),guestKernelMs:metric("guestKernelMs"),guestOverlayMs:metric("guestOverlayMs"),guestSystemdMs:metric("guestSystemdMs"),guestAgentMs:metric("guestAgentMs"),guestMultiuserMs:metric("guestMultiuserMs"),guestKernelToOverlayMs:metric("guestKernelToOverlayMs"),guestOverlayToSystemdMs:metric("guestOverlayToSystemdMs"),guestSystemdToAgentMs:metric("guestSystemdToAgentMs"),guestAgentToMultiuserMs:metric("guestAgentToMultiuserMs"),guestKernelToMultiuserMs:metric("guestKernelToMultiuserMs"),runReadyMs:metric("runReadyMs"),firstExecMs:metric("firstExecMs"),nativeSnapshotMs:metric("nativeSnapshotMs"),nativePauseMs:metric("nativePauseMs"),cloneRestoreMs:metric("cloneRestoreMs"),cloneBackendMs:metric("cloneBackendMs"),cloneReadinessMs:metric("cloneReadinessMs"),portableRestoreMs:metric("portableRestoreMs"),restartReadyMs:metric("restartReadyMs")}}
   ' "$samples_file" >"$output"
 
 if [[ -n $baseline ]]; then
