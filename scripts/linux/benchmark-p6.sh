@@ -18,7 +18,7 @@ baseline=
 max_p50_regression=10
 max_p95_regression=15
 use_sudo=false
-run_timeout=120s
+run_timeout=20s
 
 usage() {
   cat <<'EOF'
@@ -43,7 +43,7 @@ native running snapshot, and native clone.
   --baseline PATH           compare against a previous JSON baseline
   --max-p50-regression N    defaults to 10 percent
   --max-p95-regression N    defaults to 15 percent
-  --run-timeout DURATION    timeout for each VM lifecycle operation, defaults to 120s
+  --run-timeout DURATION    timeout for each VM lifecycle operation, defaults to 20s
   --sudo
 EOF
 }
@@ -170,6 +170,32 @@ preserve_console_log() {
   fi
 }
 
+print_cold_run_context() {
+  local vm_log_dir
+  printf '\n==> cold run failure context\n' >&2
+  printf 'run directories:\n' >&2
+  if ((${#file_prefix[@]})); then
+    "${file_prefix[@]}" find "$run_dir/vms" -maxdepth 2 -type f \( -name '*.json' -o -name '*.pid' \) -print 2>/dev/null >&2 || true
+  else
+    find "$run_dir/vms" -maxdepth 2 -type f \( -name '*.json' -o -name '*.pid' \) -print 2>/dev/null >&2 || true
+  fi
+  printf '\ncloud-hypervisor processes:\n' >&2
+  ps -ef | grep '[c]loud-hypervisor' >&2 || true
+  for vm_log_dir in "$log_dir"/vms/*; do
+    [[ -d "$vm_log_dir" ]] || continue
+    printf '\n--- %s console tail ---\n' "${vm_log_dir##*/}" >&2
+    if ((${#file_prefix[@]})); then
+      "${file_prefix[@]}" tail -n 80 "$vm_log_dir/console.log" 2>/dev/null >&2 || true
+      printf '\n--- %s VMM stderr tail ---\n' "${vm_log_dir##*/}" >&2
+      "${file_prefix[@]}" tail -n 80 "$vm_log_dir/cloud-hypervisor.stderr.log" 2>/dev/null >&2 || true
+    else
+      tail -n 80 "$vm_log_dir/console.log" 2>/dev/null >&2 || true
+      printf '\n--- %s VMM stderr tail ---\n' "${vm_log_dir##*/}" >&2
+      tail -n 80 "$vm_log_dir/cloud-hypervisor.stderr.log" 2>/dev/null >&2 || true
+    fi
+  done
+}
+
 vm_names=()
 snapshot_names=()
 cleanup() {
@@ -205,8 +231,7 @@ run_iteration() {
     printf '%s\n' 'cold run output:' >&2
     cat "$run_output" >&2
     rm -f "$run_output"
-    kb inspect "$source" --json 2>/dev/null || true
-    kb logs "$source" --source all --tail 80 2>/dev/null || true
+    print_cold_run_context
     return 1
   fi
   run_json=$(cat "$run_output")
