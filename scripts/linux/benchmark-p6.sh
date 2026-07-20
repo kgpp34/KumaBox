@@ -161,6 +161,8 @@ run_iteration() {
   source_id=$(jq -r '.id' <<<"$run_json")
   console_log=$(kb inspect "$source_id" --json | jq -r '.logDir + "/console.log"')
   preserved_console_log="$artifacts_dir/iteration-${index}-source-console.log"
+  preserve_console_log "$console_log" "$preserved_console_log"
+  console_log="$preserved_console_log"
   source_run_ready=$(jq -r '.performance.readyDurationMs // 0' <<<"$run_json")
   vmm_ready_ms=$(jq -r '.performance.vmmAPIReadyDurationMs // 0' <<<"$run_json")
   agent_ready_ms=$(jq -r '.performance.agentReadyDurationMs // 0' <<<"$run_json")
@@ -170,7 +172,6 @@ run_iteration() {
   guest_systemd_ms=$(console_phase_ms "$console_log" 'systemd\[[0-9]+\].*running in system mode')
   guest_agent_ms=$(console_phase_ms "$console_log" 'Started kumabox-agent\.service')
   guest_multiuser_ms=$(console_phase_ms "$console_log" 'Reached target multi-user\.target')
-  preserve_console_log "$console_log" "$preserved_console_log"
   source_run_total=$((end_ms - start_ms))
 
   step "iteration $index: first exec"
