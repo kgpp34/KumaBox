@@ -18,6 +18,7 @@ baseline=
 max_p50_regression=10
 max_p95_regression=15
 use_sudo=false
+run_timeout=120s
 
 usage() {
   cat <<'EOF'
@@ -42,6 +43,7 @@ native running snapshot, and native clone.
   --baseline PATH           compare against a previous JSON baseline
   --max-p50-regression N    defaults to 10 percent
   --max-p95-regression N    defaults to 15 percent
+  --run-timeout DURATION    timeout for each VM lifecycle operation, defaults to 120s
   --sudo
 EOF
 }
@@ -67,6 +69,7 @@ while (($#)); do
     --baseline) require_value "$1" "${2:-}"; baseline=$2; shift 2 ;;
     --max-p50-regression) require_value "$1" "${2:-}"; max_p50_regression=$2; shift 2 ;;
     --max-p95-regression) require_value "$1" "${2:-}"; max_p95_regression=$2; shift 2 ;;
+    --run-timeout) require_value "$1" "${2:-}"; run_timeout=$2; shift 2 ;;
     --sudo) use_sudo=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -83,7 +86,7 @@ if [[ $network == default ]]; then
   exit 2
 fi
 [[ -x $kumabox ]] || { echo "kumabox is not executable: $kumabox" >&2; exit 1; }
-for command in jq "$cloud_hypervisor" "$qemu_img"; do
+for command in jq timeout "$cloud_hypervisor" "$qemu_img"; do
   command -v "$command" >/dev/null 2>&1 || { echo "required command not found: $command" >&2; exit 1; }
 done
 
@@ -100,6 +103,20 @@ kb() {
   "${kb_prefix[@]}" "$kumabox" \
     --root-dir "$root_dir" --run-dir "$run_dir" --log-dir "$log_dir" \
     --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" "$@"
+}
+
+kb_timeout() {
+  local duration=$1
+  shift
+  if ((${#kb_prefix[@]})); then
+    timeout --foreground "$duration" "${kb_prefix[@]}" "$kumabox" \
+      --root-dir "$root_dir" --run-dir "$run_dir" --log-dir "$log_dir" \
+      --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" "$@"
+  else
+    timeout --foreground "$duration" "$kumabox" \
+      --root-dir "$root_dir" --run-dir "$run_dir" --log-dir "$log_dir" \
+      --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" "$@"
+  fi
 }
 
 now_ms() { date +%s%3N; }
@@ -179,9 +196,14 @@ run_iteration() {
 
   vm_names+=("$source" "$restored" "$clone")
   snapshot_names+=("$stopped_snapshot" "$native_snapshot")
-  step "iteration $index: cold run"
+  step "iteration $index: cold run (timeout $run_timeout)"
   start_ms=$(now_ms)
-  run_json=$(kb run "$image" --name "$source" --network "$network" --storage "$storage")
+  run_json=$(kb_timeout "$run_timeout" run "$image" --name "$source" --network "$network" --storage "$storage") || {
+    printf 'cold run did not finish within %s or failed\n' "$run_timeout" >&2
+    kb inspect "$source" --json 2>/dev/null || true
+    kb logs "$source" --source all --tail 80 2>/dev/null || true
+    return 1
+  }
   end_ms=$(now_ms)
   source_id=$(jq -r '.id' <<<"$run_json")
   console_log=$(kb inspect "$source_id" --json | jq -r '.logDir + "/console.log"')
