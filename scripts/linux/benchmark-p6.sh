@@ -8,6 +8,7 @@ root_dir=/tmp/kumabox-p0/data
 run_dir=/tmp/kumabox-p0/run
 log_dir=/tmp/kumabox-p0/logs
 image=p3-agent-image-v3
+image_ref=kumabox/ubuntu:24.04-p6
 network=cni:default
 storage=64M
 iterations=3
@@ -19,6 +20,7 @@ max_p50_regression=10
 max_p95_regression=15
 use_sudo=false
 run_timeout=20s
+prepare_image=true
 
 usage() {
   cat <<'EOF'
@@ -34,7 +36,8 @@ native running snapshot, and native clone.
   --root-dir PATH
   --run-dir PATH
   --log-dir PATH
-  --image NAME              existing managed OCI image
+  --image NAME              managed OCI image used by the benchmark
+  --image-ref REF           local daemon image used to prepare NAME
   --network NAME            defaults to cni:default
   --storage SIZE            defaults to 64M
   --iterations N            defaults to 3
@@ -44,6 +47,7 @@ native running snapshot, and native clone.
   --max-p50-regression N    defaults to 10 percent
   --max-p95-regression N    defaults to 15 percent
   --run-timeout DURATION    timeout for each VM lifecycle operation, defaults to 20s
+  --skip-image-prepare     use NAME as-is without rebuilding the OCI image
   --sudo
 EOF
 }
@@ -61,6 +65,7 @@ while (($#)); do
     --run-dir) require_value "$1" "${2:-}"; run_dir=$2; shift 2 ;;
     --log-dir) require_value "$1" "${2:-}"; log_dir=$2; shift 2 ;;
     --image) require_value "$1" "${2:-}"; image=$2; shift 2 ;;
+    --image-ref) require_value "$1" "${2:-}"; image_ref=$2; shift 2 ;;
     --network) require_value "$1" "${2:-}"; network=$2; shift 2 ;;
     --storage) require_value "$1" "${2:-}"; storage=$2; shift 2 ;;
     --iterations) require_value "$1" "${2:-}"; iterations=$2; shift 2 ;;
@@ -70,6 +75,7 @@ while (($#)); do
     --max-p50-regression) require_value "$1" "${2:-}"; max_p50_regression=$2; shift 2 ;;
     --max-p95-regression) require_value "$1" "${2:-}"; max_p95_regression=$2; shift 2 ;;
     --run-timeout) require_value "$1" "${2:-}"; run_timeout=$2; shift 2 ;;
+    --skip-image-prepare) prepare_image=false; shift ;;
     --sudo) use_sudo=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -77,6 +83,7 @@ while (($#)); do
 done
 
 artifacts_dir="${output}.logs"
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 [[ $(uname -s) == Linux ]] || { echo "P6 benchmark requires Linux" >&2; exit 1; }
 [[ $iterations =~ ^[1-9][0-9]*$ ]] || { echo "--iterations must be positive" >&2; exit 2; }
@@ -86,7 +93,7 @@ if [[ $network == default ]]; then
   exit 2
 fi
 [[ -x $kumabox ]] || { echo "kumabox is not executable: $kumabox" >&2; exit 1; }
-for command in jq "$cloud_hypervisor" "$qemu_img"; do
+for command in jq make "$cloud_hypervisor" "$qemu_img"; do
   command -v "$command" >/dev/null 2>&1 || { echo "required command not found: $command" >&2; exit 1; }
 done
 
@@ -103,6 +110,17 @@ kb() {
   "${kb_prefix[@]}" "$kumabox" \
     --root-dir "$root_dir" --run-dir "$run_dir" --log-dir "$log_dir" \
     --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" "$@"
+}
+
+build_project() {
+  local build_user
+  if [[ $(id -u) -eq 0 ]]; then
+    build_user=${SUDO_USER:-}
+    [[ -n "$build_user" ]] || { echo 'run as a normal user or use sudo from a normal user' >&2; exit 1; }
+    sudo -iu "$build_user" bash -lc "cd '$repo_dir' && make build"
+  else
+    make -C "$repo_dir" build
+  fi
 }
 
 now_ms() { date +%s%3N; }
@@ -354,6 +372,17 @@ run_concurrency_batch() {
   ' "$batch_dir"/*.json
   rm -rf "$batch_dir"
 }
+
+if [[ "$prepare_image" == true ]]; then
+  step 'prepare current host binary, guest agent, and OCI image'
+  build_project
+  kb image rm "$image" >/dev/null 2>&1 || true
+  kb image build "$image_ref" \
+    --source daemon \
+    --name "$image" \
+    --platform linux/amd64 \
+    --progress >/dev/null
+fi
 
 step "clean previous benchmark resources"
 if ((${#file_prefix[@]})); then
