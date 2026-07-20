@@ -14,7 +14,7 @@ image_ref="kumabox/ubuntu:24.04-p6"
 network="${NETWORK:-cni:cocoon}"
 vm_name="oci-disk-parity"
 storage="64M"
-console_copy="$root_dir/oci-disk-parity-console.log"
+console_copy="/tmp/kumabox-oci-disk-parity-console.log"
 
 die() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -22,11 +22,29 @@ die() {
 }
 
 kb() {
-  "$kumabox_path" \
+	as_root "$kumabox_path" \
     --root-dir "$root_dir" \
     --run-dir "$run_dir" \
     --log-dir "$log_dir" \
     "$@"
+}
+
+as_root() {
+	if [ "$(id -u)" -eq 0 ]; then
+		"$@"
+	else
+		sudo "$@"
+	fi
+}
+
+build_project() {
+	if [ "$(id -u)" -eq 0 ]; then
+		build_user="${SUDO_USER:-}"
+		[ -n "$build_user" ] || die "run as a normal user or use sudo from a normal user"
+		sudo -iu "$build_user" bash -lc "cd '$repo_dir' && make build"
+		return
+	fi
+	make build
 }
 
 require_command() {
@@ -39,7 +57,7 @@ require_command cloud-hypervisor
 cd "$repo_dir"
 
 printf '==> build host binary and Linux guest agent\n'
-make build
+build_project
 
 printf '==> remove old verification VM\n'
 kb delete "$vm_name" --force >/dev/null 2>&1 || true
@@ -67,7 +85,7 @@ printf '==> wait for guest agent\n'
 kb agent ping "$vm_name" --timeout 120s | jq .
 
 printf '==> preserve console log\n'
-cp "$console_log" "$console_copy"
+as_root cp "$console_log" "$console_copy"
 
 printf '==> verify console boot flow\n'
 grep -q 'KumaBox: mounting OCI overlay rootfs' "$console_copy" || die "overlay start log missing"
