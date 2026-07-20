@@ -102,6 +102,7 @@ kb agent ping "$vm_name" --timeout 120s | jq .
 
 printf '==> preserve console log\n'
 as_root cp "$console_log" "$console_copy"
+as_root chmod 0644 "$console_copy"
 
 printf '==> verify console boot flow\n'
 grep -q 'KumaBox: mounting OCI overlay rootfs' "$console_copy" || die "overlay start log missing"
