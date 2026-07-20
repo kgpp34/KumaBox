@@ -37,11 +37,20 @@ resolve_disk() {
     esac
 
     while [ "$i" -lt "$timeout" ]; do
+        by_id="/dev/disk/by-id/virtio-${serial}"
+        if [ -b "$by_id" ]; then
+            echo "$by_id"
+            return 0
+        fi
         for sysdev in /sys/block/vd*; do
             [ -d "$sysdev" ] || continue
             dev_serial=""
-            [ -f "$sysdev/serial" ] && dev_serial="$(cat "$sysdev/serial")"
-            [ -f "$sysdev/device/serial" ] && dev_serial="$(cat "$sysdev/device/serial")"
+            if [ -f "$sysdev/serial" ]; then
+                dev_serial="$(cat "$sysdev/serial")"
+            fi
+            if [ -z "$dev_serial" ] && [ -f "$sysdev/device/serial" ]; then
+                dev_serial="$(cat "$sysdev/device/serial")"
+            fi
             dev_serial="$(printf '%s' "$dev_serial" | tr -d '[:space:]')"
             if [ "$dev_serial" = "$serial" ]; then
                 echo "/dev/${sysdev##*/}"
