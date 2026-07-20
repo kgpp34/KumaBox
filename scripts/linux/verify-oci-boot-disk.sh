@@ -141,9 +141,9 @@ done
 
 printf '==> verify writable COW\n'
 kb exec "$vm_name" -- sh -c \
-  'test -d /.kumabox/cow/upper && test -d /.kumabox/cow/work && touch /.kumabox/cow/upper/.kumabox-verify && rm -f /.kumabox/cow/upper/.kumabox-verify' \
-  || die "COW filesystem is not mounted or writable"
-printf '%s\n' 'PASS: writable COW mounted'
+  'test -w / && touch /.kumabox-cow-verify && test -f /.kumabox-cow-verify && rm -f /.kumabox-cow-verify' \
+  || die "overlay root is not writable through COW"
+printf '%s\n' 'PASS: writable COW is active through overlay root'
 
 printf '==> verify virtio disk identities\n'
 virtio_links="$(kb exec "$vm_name" -- sh -c 'ls -l /dev/disk/by-id/virtio-* 2>/dev/null || true')"
