@@ -193,17 +193,24 @@ run_iteration() {
   local guest_overlay_ms guest_systemd_ms guest_agent_ms guest_multiuser_ms
   local guest_overlay_to_systemd_ms guest_systemd_to_agent_ms guest_agent_to_multiuser_ms
   local guest_overlay_to_multiuser_ms journal_log phase_log preserved_console_log preserved_journal_log
+  local run_output
 
   vm_names+=("$source" "$restored" "$clone")
   snapshot_names+=("$stopped_snapshot" "$native_snapshot")
   step "iteration $index: cold run (timeout $run_timeout)"
   start_ms=$(now_ms)
-  run_json=$(kb_timeout "$run_timeout" run "$image" --name "$source" --network "$network" --storage "$storage") || {
+  run_output=$(mktemp)
+  if ! kb_timeout "$run_timeout" run "$image" --name "$source" --network "$network" --storage "$storage" >"$run_output" 2>&1; then
     printf 'cold run did not finish within %s or failed\n' "$run_timeout" >&2
+    printf '%s\n' 'cold run output:' >&2
+    cat "$run_output" >&2
+    rm -f "$run_output"
     kb inspect "$source" --json 2>/dev/null || true
     kb logs "$source" --source all --tail 80 2>/dev/null || true
     return 1
-  }
+  fi
+  run_json=$(cat "$run_output")
+  rm -f "$run_output"
   end_ms=$(now_ms)
   source_id=$(jq -r '.id' <<<"$run_json")
   console_log=$(kb inspect "$source_id" --json | jq -r '.logDir + "/console.log"')
