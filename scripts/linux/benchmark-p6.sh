@@ -105,13 +105,9 @@ kb() {
 now_ms() { date +%s%3N; }
 step() { printf '==> %s\n' "$1" >&2; }
 
-console_marker_ms() {
-  local console_log=$1 pattern=$2 line timestamp
-  if ((${#file_prefix[@]})); then
-    line=$("${file_prefix[@]}" grep -m1 -E "$pattern" "$console_log" 2>/dev/null || true)
-  else
-    line=$(grep -m1 -E "$pattern" "$console_log" 2>/dev/null || true)
-  fi
+phase_file_marker_ms() {
+  local phase_log=$1 pattern=$2 line timestamp
+  line=$(grep -m1 -E "$pattern" <<<"$phase_log" || true)
   [[ -n $line ]] || { printf 'null'; return; }
   timestamp=$(sed -nE 's/.*monotonic-ms=([0-9]+).*/\1/p' <<<"$line")
   [[ -n $timestamp ]] || { printf 'null'; return; }
@@ -179,7 +175,7 @@ run_iteration() {
   local vmm_ready_ms agent_ready_ms agent_overhead_ms
   local guest_overlay_ms guest_systemd_ms guest_agent_ms guest_multiuser_ms
   local guest_overlay_to_systemd_ms guest_systemd_to_agent_ms guest_agent_to_multiuser_ms
-  local guest_overlay_to_multiuser_ms journal_log preserved_console_log preserved_journal_log
+  local guest_overlay_to_multiuser_ms journal_log phase_log preserved_console_log preserved_journal_log
 
   vm_names+=("$source" "$restored" "$clone")
   snapshot_names+=("$stopped_snapshot" "$native_snapshot")
@@ -197,9 +193,11 @@ run_iteration() {
   vmm_ready_ms=$(jq -r '.performance.vmmAPIReadyDurationMs // 0' <<<"$run_json")
   agent_ready_ms=$(jq -r '.performance.agentReadyDurationMs // 0' <<<"$run_json")
   agent_overhead_ms=$((agent_ready_ms - vmm_ready_ms))
+  phase_log=$(kb exec "$source_id" -- cat /run/kumabox/boot-phases 2>/dev/null || true)
   journal_log=$(kb exec "$source_id" -- sh -c 'journalctl -b -o short-monotonic --no-pager | grep -E "systemd 255.*running in system mode|Started kumabox-agent.service|Reached target multi-user.target"' 2>/dev/null || true)
+  preserve_text "$phase_log" "$artifacts_dir/iteration-${index}-source-boot-phases.log"
   preserve_text "$journal_log" "$preserved_journal_log"
-  guest_overlay_ms=$(console_marker_ms "$console_log" 'boot-phase=overlay-ready')
+  guest_overlay_ms=$(phase_file_marker_ms "$phase_log" 'boot-phase=overlay-ready')
   guest_systemd_ms=$(journal_marker_ms "$journal_log" 'systemd 255.*running in system mode')
   guest_agent_ms=$(journal_marker_ms "$journal_log" 'Started kumabox-agent\.service')
   guest_multiuser_ms=$(journal_marker_ms "$journal_log" 'Reached target multi-user\.target')
@@ -262,6 +260,7 @@ run_iteration() {
     --argjson guestAgentToMultiuserMs "$guest_agent_to_multiuser_ms" \
     --argjson guestOverlayToMultiuserMs "$guest_overlay_to_multiuser_ms" \
     --arg journalLog "$preserved_journal_log" \
+    --arg bootPhasesLog "$artifacts_dir/iteration-${index}-source-boot-phases.log" \
     --arg consoleLog "$preserved_console_log" \
     --argjson execMs "$exec_ms" \
     --argjson nativeSnapshotMs "$native_snapshot_ms" \
@@ -271,7 +270,7 @@ run_iteration() {
     --argjson cloneReadinessMs "$clone_readiness_ms" \
     --argjson portableRestoreMs "$portable_restore_ms" \
     --argjson restartReadyMs "$restart_ready_ms" \
-    '{iteration:$iteration,consoleLog:$consoleLog,journalLog:$journalLog,runShellMs:$runShellMs,vmmReadyMs:$vmmReadyMs,agentReadyMs:$agentReadyMs,agentOverheadMs:$agentOverheadMs,guestOverlayMs:$guestOverlayMs,guestSystemdMs:$guestSystemdMs,guestAgentMs:$guestAgentMs,guestMultiuserMs:$guestMultiuserMs,guestOverlayToSystemdMs:$guestOverlayToSystemdMs,guestSystemdToAgentMs:$guestSystemdToAgentMs,guestAgentToMultiuserMs:$guestAgentToMultiuserMs,guestOverlayToMultiuserMs:$guestOverlayToMultiuserMs,runReadyMs:$runReadyMs,firstExecMs:$execMs,nativeSnapshotMs:$nativeSnapshotMs,nativePauseMs:$nativePauseMs,cloneRestoreMs:$cloneRestoreMs,cloneBackendMs:$cloneBackendMs,cloneReadinessMs:$cloneReadinessMs,portableRestoreMs:$portableRestoreMs,restartReadyMs:$restartReadyMs}'
+    '{iteration:$iteration,consoleLog:$consoleLog,journalLog:$journalLog,bootPhasesLog:$bootPhasesLog,runShellMs:$runShellMs,vmmReadyMs:$vmmReadyMs,agentReadyMs:$agentReadyMs,agentOverheadMs:$agentOverheadMs,guestOverlayMs:$guestOverlayMs,guestSystemdMs:$guestSystemdMs,guestAgentMs:$guestAgentMs,guestMultiuserMs:$guestMultiuserMs,guestOverlayToSystemdMs:$guestOverlayToSystemdMs,guestSystemdToAgentMs:$guestSystemdToAgentMs,guestAgentToMultiuserMs:$guestAgentToMultiuserMs,guestOverlayToMultiuserMs:$guestOverlayToMultiuserMs,runReadyMs:$runReadyMs,firstExecMs:$execMs,nativeSnapshotMs:$nativeSnapshotMs,nativePauseMs:$nativePauseMs,cloneRestoreMs:$cloneRestoreMs,cloneBackendMs:$cloneBackendMs,cloneReadinessMs:$cloneReadinessMs,portableRestoreMs:$portableRestoreMs,restartReadyMs:$restartReadyMs}'
 }
 
 run_concurrency_batch() {

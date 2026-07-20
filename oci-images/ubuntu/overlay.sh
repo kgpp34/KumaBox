@@ -4,14 +4,16 @@
 
 boot_phase() {
     phase="$1"
+    phase_dir=/run/kumabox
     uptime="$(cut -d' ' -f1 /proc/uptime 2>/dev/null || true)"
     seconds="${uptime%%.*}"
     fraction="${uptime#*.}"
     [ "$seconds" != "$uptime" ] || seconds=0
     [ -n "$fraction" ] || fraction=0
     fraction="$(printf '%s000' "$fraction" | cut -c1-3)"
+    mkdir -p "$phase_dir"
     printf 'KumaBox: boot-phase=%s monotonic-ms=%s\n' \
-        "$phase" "$((seconds * 1000 + fraction))" >/dev/console
+        "$phase" "$((seconds * 1000 + fraction))" >>"$phase_dir/boot-phases"
 }
 
 resolve_disk() {
@@ -44,7 +46,6 @@ resolve_disk() {
         done
         fallback="$(fallback_disk_by_order "$serial")"
         if [ -n "$fallback" ]; then
-            echo "KumaBox: disk serial ${serial} not exposed; using attach-order fallback ${fallback}" >&2
             echo "$fallback"
             return 0
         fi
@@ -53,7 +54,6 @@ resolve_disk() {
     done
     fallback="$(fallback_disk_by_order "$serial")"
     if [ -n "$fallback" ]; then
-        echo "KumaBox: disk serial ${serial} not exposed; using attach-order fallback ${fallback}" >&2
         echo "$fallback"
         return 0
     fi
