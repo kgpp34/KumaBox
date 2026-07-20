@@ -126,10 +126,14 @@ root_fs="$(kb exec "$vm_name" -- findmnt -n -o FSTYPE /)"
 [ "$root_fs" = overlay ] || die "root filesystem is $root_fs, expected overlay"
 
 printf '==> verify EROFS layers\n'
-erofs_mounts="$(kb exec "$vm_name" -- findmnt -rn -t erofs)"
+erofs_mounts="$(kb exec "$vm_name" -- sh -c "grep ' - erofs ' /proc/self/mountinfo || true")"
 printf '%s\n' "$erofs_mounts"
 erofs_count="$(printf '%s\n' "$erofs_mounts" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
-[ "$erofs_count" -ge "$layer_count" ] || die "expected $layer_count EROFS mounts, got $erofs_count"
+[ "$erofs_count" -ge "$layer_count" ] || {
+	printf '%s\n' 'guest mount table:'
+	kb exec "$vm_name" -- findmnt || true
+	die "expected $layer_count EROFS mounts, got $erofs_count"
+}
 
 printf '==> verify writable COW\n'
 cow_mount="$(kb exec "$vm_name" -- sh -c "findmnt -rn -t ext4 | grep '/.kumabox/cow' || true")"
