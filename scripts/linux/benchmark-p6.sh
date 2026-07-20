@@ -198,8 +198,24 @@ print_cold_run_context() {
 
 vm_names=()
 snapshot_names=()
+cleanup_prefix_resources() {
+  local refs ref
+  refs=$(kb ps --json 2>/dev/null | jq -r '.[] | select((.name // "") | startswith("p6-bench-") or startswith("p6-concurrent-")) | .id' || true)
+  while IFS= read -r ref; do
+    [[ -n "$ref" ]] || continue
+    kb delete "$ref" --force >/dev/null 2>&1 || true
+  done <<<"$refs"
+
+  refs=$(kb snapshot ls --json 2>/dev/null | jq -r '.[] | select((.name // "") | startswith("p6-bench-")) | .id' || true)
+  while IFS= read -r ref; do
+    [[ -n "$ref" ]] || continue
+    kb snapshot rm "$ref" >/dev/null 2>&1 || true
+  done <<<"$refs"
+}
+
 cleanup() {
   local ref
+  cleanup_prefix_resources
   for ref in "${vm_names[@]:-}"; do kb delete "$ref" --force >/dev/null 2>&1 || true; done
   for ref in "${snapshot_names[@]:-}"; do kb snapshot rm "$ref" >/dev/null 2>&1 || true; done
 }
