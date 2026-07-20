@@ -68,6 +68,8 @@ type OCILayer struct {
 	Index     int         `json:"index"`
 	Digest    string      `json:"digest"`
 	Serial    string      `json:"serial,omitempty"`
+	Kernel    string      `json:"kernel,omitempty"`
+	Initrd    string      `json:"initrd,omitempty"`
 	MediaType string      `json:"mediaType"`
 	SizeBytes int64       `json:"sizeBytes"`
 	EROFS     *EROFSLayer `json:"erofs,omitempty"`

@@ -326,6 +326,9 @@ func addLiveImageOCI(paths map[string]struct{}, digests map[string]struct{}, ima
 	if image.OCI == nil {
 		return
 	}
+	if _, digest, ok := strings.Cut(image.OCI.DigestRef, "@"); ok {
+		digests[digest] = struct{}{}
+	}
 	if image.OCI.Config.Digest != "" {
 		digests[image.OCI.Config.Digest] = struct{}{}
 	}
@@ -336,6 +339,8 @@ func addLiveImageOCI(paths map[string]struct{}, digests map[string]struct{}, ima
 		if layer.EROFS != nil {
 			addLivePath(paths, layer.EROFS.Path)
 		}
+		addLivePath(paths, layer.Kernel)
+		addLivePath(paths, layer.Initrd)
 	}
 }
 

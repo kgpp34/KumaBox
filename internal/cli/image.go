@@ -36,6 +36,7 @@ func newImagePullOCICommand(opts *rootOptions) *cobra.Command {
 	var platform string
 	var jsonOutput bool
 	var source string
+	var progress bool
 
 	cmd := &cobra.Command{
 		Use:   "pull-oci REF",
@@ -50,6 +51,7 @@ func newImagePullOCICommand(opts *rootOptions) *cobra.Command {
 				Ref:      args[0],
 				Platform: platform,
 				Source:   source,
+				Progress: cliOCIProgress(cmd, progress),
 			})
 			if err != nil {
 				return err
@@ -59,6 +61,7 @@ func newImagePullOCICommand(opts *rootOptions) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&platform, "platform", ociresolver.DefaultPlatform(), "OCI platform os/arch[/variant]")
 	cmd.Flags().StringVar(&source, "source", "auto", "OCI source: auto, registry, or daemon")
+	cmd.Flags().BoolVar(&progress, "progress", false, "print OCI import progress to stderr")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
 	return cmd
 }
@@ -70,6 +73,8 @@ func newImageBuildCommand(opts *rootOptions) *cobra.Command {
 	var jsonOutput bool
 	var source string
 	var mkfsEROFS string
+	var concurrency int
+	var progress bool
 
 	cmd := &cobra.Command{
 		Use:   "build REF",
@@ -105,11 +110,13 @@ func newImageBuildCommand(opts *rootOptions) *cobra.Command {
 				})
 			}
 			rec, err := ocibuild.New(cfg.Runtime.RootDir).Build(cmd.Context(), ocibuild.BuildRequest{
-				Name:      name,
-				Ref:       args[0],
-				Platform:  platform,
-				Source:    source,
-				MkfsEROFS: mkfsEROFS,
+				Name:        name,
+				Ref:         args[0],
+				Platform:    platform,
+				Source:      source,
+				MkfsEROFS:   mkfsEROFS,
+				Concurrency: concurrency,
+				Progress:    cliOCIProgress(cmd, progress),
 			})
 			if err != nil {
 				return err
@@ -121,10 +128,25 @@ func newImageBuildCommand(opts *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&platform, "platform", ociresolver.DefaultPlatform(), "OCI platform os/arch[/variant]")
 	cmd.Flags().StringVar(&source, "source", "auto", "OCI source: auto, registry, or daemon")
 	cmd.Flags().StringVar(&mkfsEROFS, "mkfs-erofs", "mkfs.erofs", "mkfs.erofs binary path")
+	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "maximum concurrent OCI layer conversions; 0 uses host CPU count")
+	cmd.Flags().BoolVar(&progress, "progress", false, "print OCI import progress to stderr")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "resolve OCI metadata without publishing an image")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
 	_ = cmd.MarkFlagRequired("name")
 	return cmd
+}
+
+func cliOCIProgress(cmd *cobra.Command, enabled bool) func(ocistore.ProgressEvent) {
+	if !enabled {
+		return nil
+	}
+	return func(event ocistore.ProgressEvent) {
+		if event.Total > 0 {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "oci: phase=%s item=%d/%d digest=%s cached=%t\n", event.Phase, event.Index+1, event.Total, event.Digest, event.Cached)
+			return
+		}
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "oci: phase=%s digest=%s\n", event.Phase, event.Digest)
+	}
 }
 
 func newImageImportCommand(opts *rootOptions) *cobra.Command {

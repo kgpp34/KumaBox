@@ -19,10 +19,14 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/ocistore"
@@ -33,11 +37,13 @@ const ociCmdlineTemplate = "console=ttyS0 loglevel=3 clocksource=kvm-clock reboo
 
 // BuildRequest describes an OCI image build.
 type BuildRequest struct {
-	Name      string
-	Ref       string
-	Platform  string
-	Source    string
-	MkfsEROFS string
+	Name        string
+	Ref         string
+	Platform    string
+	Source      string
+	MkfsEROFS   string
+	Concurrency int
+	Progress    func(ocistore.ProgressEvent)
 }
 
 // Builder converts OCI layers into shared EROFS blobs and publishes an image record.
@@ -73,32 +79,73 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 		Ref:      req.Ref,
 		Platform: req.Platform,
 		Source:   req.Source,
+		Progress: req.Progress,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	layers := make([]imagestore.OCILayer, 0, len(pull.Layers))
-	var kernel, initrd *bootAsset
+	if err := checkEROFSVersion(ctx, req.MkfsEROFS); err != nil {
+		return nil, err
+	}
+	results := make([]layerBuildResult, len(pull.Layers))
+	workers := req.Concurrency
+	if workers <= 0 {
+		workers = runtime.NumCPU()
+	}
+	if workers > len(pull.Layers) {
+		workers = len(pull.Layers)
+	}
+	if workers == 0 {
+		return nil, fmt.Errorf("BOOT_PROFILE_UNSUPPORTED: OCI image has no layers")
+	}
+	group, groupCtx := errgroup.WithContext(ctx)
+	sem := make(chan struct{}, workers)
 	for i, layer := range pull.Layers {
-		erofs, layerKernel, layerInitrd, err := b.ensureEROFSWithAssets(ctx, req.MkfsEROFS, layer)
-		if err != nil {
-			return nil, fmt.Errorf("build layer %d %s: %w", i, layer.Digest, err)
-		}
-		if layerKernel != nil && (kernel == nil || layerKernel.SourcePath > kernel.SourcePath) {
-			kernel = layerKernel
-		}
-		if layerInitrd != nil && (initrd == nil || layerInitrd.SourcePath > initrd.SourcePath) {
-			initrd = layerInitrd
-		}
-		layers = append(layers, imagestore.OCILayer{
-			Index:     i,
-			Digest:    layer.Digest,
-			Serial:    vmstore.LayerSerial(i),
-			MediaType: layer.MediaType,
-			SizeBytes: layer.SizeBytes,
-			EROFS:     erofs,
+		i, layer := i, layer
+		group.Go(func() error {
+			select {
+			case sem <- struct{}{}:
+			case <-groupCtx.Done():
+				return groupCtx.Err()
+			}
+			defer func() { <-sem }()
+			erofs, kernel, initrd, err := b.ensureEROFSWithAssets(groupCtx, req.MkfsEROFS, layer)
+			if err != nil {
+				return fmt.Errorf("build layer %d %s: %w", i, layer.Digest, err)
+			}
+			results[i] = layerBuildResult{
+				layer: imagestore.OCILayer{
+					Index: i, Digest: layer.Digest, Serial: vmstore.LayerSerial(i),
+					MediaType: layer.MediaType, SizeBytes: layer.SizeBytes, EROFS: erofs,
+				},
+				kernel: kernel, initrd: initrd,
+			}
+			if kernel != nil {
+				results[i].layer.Kernel = kernel.Path
+			}
+			if initrd != nil {
+				results[i].layer.Initrd = initrd.Path
+			}
+			if req.Progress != nil {
+				req.Progress(ocistore.ProgressEvent{Phase: "erofs", Index: i, Total: len(pull.Layers), Digest: layer.Digest})
+			}
+			return nil
 		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+	layers := make([]imagestore.OCILayer, 0, len(results))
+	var kernel, initrd *bootAsset
+	for _, result := range results {
+		layers = append(layers, result.layer)
+		if result.kernel != nil {
+			kernel = result.kernel
+		}
+		if result.initrd != nil {
+			initrd = result.initrd
+		}
 	}
 	if kernel == nil || initrd == nil {
 		return nil, fmt.Errorf("BOOT_PROFILE_UNSUPPORTED: OCI image must contain /boot/vmlinuz-* and /boot/initrd.img-*")
@@ -140,6 +187,12 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 			BuiltAt:        time.Now().UTC(),
 		},
 	})
+}
+
+type layerBuildResult struct {
+	layer  imagestore.OCILayer
+	kernel *bootAsset
+	initrd *bootAsset
 }
 
 func decodeOCIImageConfig(configPath string) (imagestore.OCIImageConfig, error) {
@@ -240,14 +293,10 @@ func (b *Builder) resolveBootProfile(layers []ocistore.BlobRecord) (imagestore.B
 			return imagestore.Boot{}, err
 		}
 		if layerKernel != nil {
-			if kernel == nil || layerKernel.SourcePath > kernel.SourcePath {
-				kernel = layerKernel
-			}
+			kernel = layerKernel
 		}
 		if layerInitrd != nil {
-			if initrd == nil || layerInitrd.SourcePath > initrd.SourcePath {
-				initrd = layerInitrd
-			}
+			initrd = layerInitrd
 		}
 	}
 	if kernel == nil || initrd == nil {
@@ -374,7 +423,9 @@ func (b *Builder) commitBootAsset(kind, sourcePath, sourceLayer string, src io.R
 	}
 	if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
 		if err := os.Rename(tmpPath, target); err != nil {
-			return nil, fmt.Errorf("commit boot asset: %w", err)
+			if !os.IsExist(err) {
+				return nil, fmt.Errorf("commit boot asset: %w", err)
+			}
 		}
 	} else if err != nil {
 		return nil, fmt.Errorf("stat boot asset: %w", err)
@@ -398,6 +449,26 @@ func (b *Builder) ensureEROFS(ctx context.Context, mkfs string, layer ocistore.B
 }
 
 func (b *Builder) ensureEROFSWithAssets(ctx context.Context, mkfs string, layer ocistore.BlobRecord) (*imagestore.EROFSLayer, *bootAsset, *bootAsset, error) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		erofs, kernel, initrd, err := b.ensureEROFSOnce(ctx, mkfs, layer)
+		if err == nil {
+			return erofs, kernel, initrd, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil || attempt == 2 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, nil, nil, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+	return nil, nil, nil, fmt.Errorf("EROFS_CONVERSION_FAILED after retries: %w", lastErr)
+}
+
+func (b *Builder) ensureEROFSOnce(ctx context.Context, mkfs string, layer ocistore.BlobRecord) (*imagestore.EROFSLayer, *bootAsset, *bootAsset, error) {
 	algo, value, err := splitDigest(layer.Digest)
 	if err != nil {
 		return nil, nil, nil, err
@@ -473,7 +544,7 @@ func (b *Builder) ensureEROFSWithAssets(ctx context.Context, mkfs string, layer 
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return nil, nil, nil, fmt.Errorf("create EROFS blob dir: %w", err)
 	}
-	if err := os.Rename(stagedEROFS, target); err != nil {
+	if err := os.Rename(stagedEROFS, target); err != nil && !os.IsExist(err) {
 		return nil, nil, nil, fmt.Errorf("commit EROFS blob: %w", err)
 	}
 	info, err := os.Stat(target)
@@ -491,6 +562,25 @@ func (b *Builder) ensureEROFSWithAssets(ctx context.Context, mkfs string, layer 
 		SizeBytes:   info.Size(),
 		SourceLayer: layer.Digest,
 	}, kernel, initrd, nil
+}
+
+var erofsVersionPattern = regexp.MustCompile(`(\d+)\.(\d+)`)
+
+func checkEROFSVersion(ctx context.Context, mkfs string) error {
+	out, err := exec.CommandContext(ctx, mkfs, "--version").CombinedOutput() //nolint:gosec
+	if err != nil {
+		return fmt.Errorf("EROFS_VERSION_UNAVAILABLE: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	match := erofsVersionPattern.FindStringSubmatch(string(out))
+	if len(match) != 3 {
+		return fmt.Errorf("EROFS_VERSION_INVALID: cannot parse mkfs.erofs version from %q", strings.TrimSpace(string(out)))
+	}
+	major, _ := strconv.Atoi(match[1])
+	minor, _ := strconv.Atoi(match[2])
+	if major < 1 || (major == 1 && minor < 8) {
+		return fmt.Errorf("EROFS_VERSION_UNSUPPORTED: mkfs.erofs %s.%s requires at least 1.8", match[1], match[2])
+	}
+	return nil
 }
 
 func erofsUUID(value string) string {
