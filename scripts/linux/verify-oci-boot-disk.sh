@@ -47,6 +47,20 @@ build_project() {
 	make build
 }
 
+print_run_failure_context() {
+	set +e
+	printf '\n==> failure context: VM inspect\n' >&2
+	failed_json="$(kb inspect "$vm_name" --json 2>/dev/null)"
+	printf '%s\n' "$failed_json" | jq . >&2
+	failed_log_dir="$(printf '%s\n' "$failed_json" | jq -r '.logDir // empty')"
+	if [ -n "$failed_log_dir" ]; then
+		printf '\n==> failure context: console tail\n' >&2
+		as_root tail -n 160 "$failed_log_dir/console.log" 2>/dev/null >&2 || true
+		printf '\n==> failure context: VMM stderr\n' >&2
+		as_root tail -n 120 "$failed_log_dir/cloud-hypervisor.stderr.log" 2>/dev/null >&2 || true
+	fi
+}
+
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "missing command: $1"
 }
@@ -73,7 +87,10 @@ printf '==> run VM\n'
 run_json="$(kb run "$image_name" \
   --name "$vm_name" \
   --network "$network" \
-  --storage "$storage")" || die "VM run failed"
+  --storage "$storage")" || {
+  print_run_failure_context
+  die "VM run failed; inspect the failure context above"
+}
 printf '%s\n' "$run_json" | jq .
 
 state="$(printf '%s\n' "$run_json" | jq -r '.state')"
