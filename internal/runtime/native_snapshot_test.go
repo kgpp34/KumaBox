@@ -61,7 +61,7 @@ func TestCreateRunningSnapshotCapturesOnePauseWindow(t *testing.T) {
 	if manifest.SchemaVersion != "kumabox.snapshot.v2" || manifest.Type != "native" || manifest.Consistency != "crash" || manifest.Native == nil || len(manifest.Native.Files) != 3 {
 		t.Fatalf("manifest = %+v", manifest)
 	}
-	if manifest.Backend == nil || manifest.Machine == nil || manifest.Machine.MemoryBytes != 512<<20 || manifest.Native.Files[0].SHA256 == "" {
+	if manifest.Backend == nil || manifest.Machine == nil || manifest.Machine.MemoryBytes != 512<<20 || manifest.Native.Files[0].SHA256 != "" {
 		t.Fatalf("compatibility metadata = %+v", manifest)
 	}
 	if ready.Performance == nil || ready.Performance.TotalDurationMs < ready.Performance.PauseDurationMs {

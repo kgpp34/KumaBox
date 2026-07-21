@@ -18,6 +18,16 @@ import (
 // WriteNativeManifest validates the minimum Cloud Hypervisor payload and
 // writes the publication manifest after the source VM has resumed.
 func WriteNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecord, disks []DiskManifest, host backend.NativeHost) (*Manifest, int64, error) {
+	return writeNativeManifest(ctx, build, rec, disks, host, true)
+}
+
+// WriteNativeManifestFast publishes a local running snapshot without reading
+// payloads back for fsync and SHA256. Strict integrity is explicit.
+func WriteNativeManifestFast(ctx context.Context, build *Build, rec *vmstore.VMRecord, disks []DiskManifest, host backend.NativeHost) (*Manifest, int64, error) {
+	return writeNativeManifest(ctx, build, rec, disks, host, false)
+}
+
+func writeNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecord, disks []DiskManifest, host backend.NativeHost, strict bool) (*Manifest, int64, error) {
 	if build == nil || rec == nil {
 		return nil, 0, errors.New("snapshot build and VM record are required")
 	}
@@ -48,9 +58,12 @@ func WriteNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecor
 		case IsNativeMemoryFile(entry.Name()):
 			hasMemory = true
 		}
-		digest, err := syncAndHashFile(ctx, filepath.Join(nativeDir, entry.Name()))
-		if err != nil {
-			return nil, 0, fmt.Errorf("checksum native payload %s: %w", entry.Name(), err)
+		var digest string
+		if strict {
+			digest, err = syncAndHashFile(ctx, filepath.Join(nativeDir, entry.Name()))
+			if err != nil {
+				return nil, 0, fmt.Errorf("checksum native payload %s: %w", entry.Name(), err)
+			}
 		}
 		files = append(files, NativeFileManifest{
 			Path:      filepath.ToSlash(filepath.Join(NativePayloadDir, entry.Name())),
@@ -73,7 +86,7 @@ func WriteNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecor
 		Architecture: host.Architecture, CPUVendor: host.CPUVendor,
 		CPUFeatures: append([]string(nil), host.CPUFeatures...), VCPUs: rec.CPUs, MemoryBytes: rec.EffectiveMemoryBytes(),
 	}
-	boot, err := buildBootManifest(ctx, rec)
+	boot, err := buildBootManifest(ctx, rec, strict)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -91,8 +104,10 @@ func WriteNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecor
 	if err := fileutil.WriteJSONAtomic(filepath.Join(pending.StagingDir, ManifestFile), manifest, ".snapshot-manifest-*.tmp"); err != nil {
 		return nil, 0, fmt.Errorf("write native snapshot manifest: %w", err)
 	}
-	if err := writeChecksums(pending.StagingDir, manifest); err != nil {
-		return nil, 0, err
+	if strict {
+		if err := writeChecksums(pending.StagingDir, manifest); err != nil {
+			return nil, 0, err
+		}
 	}
 	for _, disk := range disks {
 		nativeSize += disk.AllocatedSizeBytes
@@ -121,7 +136,7 @@ func syncAndHashFile(ctx context.Context, path string) (string, error) {
 	return hashFileContext(ctx, path)
 }
 
-func buildBootManifest(ctx context.Context, rec *vmstore.VMRecord) (*BootManifest, error) {
+func buildBootManifest(ctx context.Context, rec *vmstore.VMRecord, strict bool) (*BootManifest, error) {
 	boot := &BootManifest{Mode: "direct"}
 	assets := []struct {
 		path   string
@@ -138,11 +153,13 @@ func buildBootManifest(ctx context.Context, rec *vmstore.VMRecord) (*BootManifes
 		if asset.path == "" {
 			continue
 		}
-		digest, err := hashFileContext(ctx, asset.path)
-		if err != nil {
-			return nil, fmt.Errorf("checksum boot asset %s: %w", asset.path, err)
+		if strict {
+			digest, err := hashFileContext(ctx, asset.path)
+			if err != nil {
+				return nil, fmt.Errorf("checksum boot asset %s: %w", asset.path, err)
+			}
+			*asset.target = "sha256:" + digest
 		}
-		*asset.target = "sha256:" + digest
 	}
 	return boot, nil
 }

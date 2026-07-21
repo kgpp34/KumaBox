@@ -669,12 +669,19 @@ Acceptance:
 
 ### P6-07: Snapshot Capture Fast Path
 
-Status: **baseline captured; host acceptance pending.** Running snapshot capture already stages
-writable disks during the single pause window and finalizes hashes after the VM
-resumes. Snapshot records now persist separate pause, native capture, disk
-staging, publication and total timings. The remaining work is benchmark
-validation on the reference host. The native snapshot E2E now checks these
-timings and verifies that the source guest remains usable after cloning.
+Status: **fast path implemented; host acceptance pending.** Running snapshot
+capture stages writable disks during the single pause window, resumes the VM,
+and publishes the local snapshot without a second full read for `fsync` and
+SHA256. This follows the reference runtime's `NoSync` local-copy path. Snapshot
+records still persist separate pause, native capture, disk staging,
+publication and total timings.
+
+Strict payload hashing remains on stopped snapshots and explicit integrity
+work. A fast running snapshot records payload shape and topology immediately;
+`snapshot verify` can validate its inventory and size, while portable export
+and any future durable/off-host path must perform the full checksum step before
+publishing external data. The native snapshot E2E continues to verify that the
+source guest remains usable after capture.
 
 Keep the pause window limited to the Cloud Hypervisor native snapshot transaction and writable-disk reflink/staging. Hashing, package compression and full-tree sync are outside the pause window and outside local restore readiness.
 

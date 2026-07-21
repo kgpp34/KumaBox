@@ -79,10 +79,9 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 			wrapOptional("resume VM after snapshot", resumeErr),
 		)
 	}
-	disks, _, err := snapshot.FinalizeWritableDisks(ctx, pending.StagingDir, stagedDisks)
-	if err != nil {
-		return nil, fmt.Errorf("finalize writable disks: %w", err)
-	}
+	// Running snapshots follow the fast local path: resume before durability
+	// work. Strict fsync and hashing belong to explicit verification/export.
+	disks := stagedDisks
 	if err := build.SetPerformance(snapshot.CaptureMetrics{
 		PauseDurationMs:       resumedAt.Sub(pausedAt).Milliseconds(),
 		NativeCaptureMs:       nativeCaptureMs,
@@ -97,7 +96,7 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 	if err != nil {
 		return nil, fmt.Errorf("inspect native compatibility: %w", err)
 	}
-	_, totalSize, err := snapshot.WriteNativeManifest(ctx, build, rec, disks, host)
+	_, totalSize, err := snapshot.WriteNativeManifestFast(ctx, build, rec, disks, host)
 	if err != nil {
 		return nil, err
 	}

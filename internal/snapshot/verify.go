@@ -154,6 +154,9 @@ func verifyNativeFiles(ctx context.Context, dataDir string, manifest *Manifest) 
 		return err
 	}
 	raw, err := os.ReadFile(filepath.Join(dataDir, "checksums.txt")) //nolint:gosec
+	if errors.Is(err, os.ErrNotExist) && allDigestsEmpty(declared) {
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("SNAPSHOT_CORRUPT: read checksums: %w", err)
 	}
@@ -209,6 +212,9 @@ func verifyPayloadFile(ctx context.Context, dataDir, relative string, size int64
 	if !info.Mode().IsRegular() || info.Size() != size {
 		return fmt.Errorf("SNAPSHOT_CORRUPT: payload %s shape mismatch", relative)
 	}
+	if expected == "" {
+		return nil
+	}
 	digest, err := hashFileContext(ctx, path)
 	if err != nil {
 		return fmt.Errorf("SNAPSHOT_CORRUPT: checksum %s: %w", relative, err)
@@ -217,6 +223,15 @@ func verifyPayloadFile(ctx context.Context, dataDir, relative string, size int64
 		return fmt.Errorf("CHECKSUM_MISMATCH: %s", relative)
 	}
 	return nil
+}
+
+func allDigestsEmpty(declared map[string]string) bool {
+	for _, digest := range declared {
+		if digest != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func verifyNativeConfig(dataDir string, manifest *Manifest) error {
@@ -335,12 +350,18 @@ func verifyNativeVM(ctx context.Context, manifest *Manifest, target *vmstore.VMR
 }
 
 func verifyNativeVMAssets(ctx context.Context, manifest *Manifest, target *vmstore.VMRecord) error {
-	boot, err := buildBootManifest(ctx, target)
+	boot, err := buildBootManifest(ctx, target, true)
 	if err != nil {
 		return fmt.Errorf("SNAPSHOT_INCOMPATIBLE: resolve boot assets: %w", err)
 	}
-	if *boot != *manifest.Boot {
-		return errors.New("SNAPSHOT_INCOMPATIBLE: boot asset digest mismatch")
+	if manifest.Boot.KernelDigest != "" && manifest.Boot.KernelDigest != boot.KernelDigest {
+		return errors.New("SNAPSHOT_INCOMPATIBLE: kernel asset digest mismatch")
+	}
+	if manifest.Boot.InitrdDigest != "" && manifest.Boot.InitrdDigest != boot.InitrdDigest {
+		return errors.New("SNAPSHOT_INCOMPATIBLE: initrd asset digest mismatch")
+	}
+	if manifest.Boot.FirmwareDigest != "" && manifest.Boot.FirmwareDigest != boot.FirmwareDigest {
+		return errors.New("SNAPSHOT_INCOMPATIBLE: firmware asset digest mismatch")
 	}
 	if manifest.Source.ImageID != "" {
 		if target.Image == nil || target.Image.ID != manifest.Source.ImageID || target.Image.Digest != manifest.Source.ImageDigest {

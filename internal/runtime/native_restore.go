@@ -191,7 +191,7 @@ func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manif
 		if err != nil {
 			return nil, metrics, fmt.Errorf("stage native payload %s: %w", file.Path, err)
 		}
-		if result.SHA256 != file.SHA256 {
+		if file.SHA256 != "" && result.SHA256 != file.SHA256 {
 			return nil, metrics, fmt.Errorf("CHECKSUM_MISMATCH: staged %s", file.Path)
 		}
 	}
@@ -225,7 +225,7 @@ func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manif
 			if err != nil {
 				return fmt.Errorf("stage writable disk %s: %w", disk.ID, err)
 			}
-			if result.SHA256 != disk.SHA256 {
+			if disk.SHA256 != "" && result.SHA256 != disk.SHA256 {
 				return fmt.Errorf("CHECKSUM_MISMATCH: staged disk %s", disk.ID)
 			}
 			staged.disks[index] = stagedRestoreDisk{id: disk.ID, target: target.Path, staged: stagedPath}
