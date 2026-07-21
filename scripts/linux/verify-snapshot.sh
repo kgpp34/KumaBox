@@ -27,7 +27,7 @@ Usage: scripts/linux/verify-snapshot.sh [options]
   --run-dir PATH
   --log-dir PATH
   --image NAME
-  --scenario all|stopped|native|hibernate
+  --scenario all|stopped|native|native-lifetime|hibernate
   --storage SIZE
   --agent-timeout DURATION
   --package PATH
@@ -62,7 +62,7 @@ while (($#)); do
   esac
 done
 
-case $scenario in all|stopped|native|hibernate) ;; *) echo "invalid --scenario: $scenario" >&2; exit 2 ;; esac
+case $scenario in all|stopped|native|native-lifetime|hibernate) ;; *) echo "invalid --scenario: $scenario" >&2; exit 2 ;; esac
 [[ $(uname -s) == Linux ]] || { echo "snapshot E2E requires Linux" >&2; exit 1; }
 for binary in jq "$cloud_hypervisor" "$qemu_img"; do
   command -v "$binary" >/dev/null 2>&1 || { echo "required command not found: $binary" >&2; exit 1; }
@@ -87,8 +87,8 @@ kb() {
 step() { printf '\n==> %s\n' "$1"; }
 remove_file() { "${file_prefix[@]}" rm -f "$1"; }
 
-vm_names=(snapshot-stopped-source snapshot-stopped-restored snapshot-native-source snapshot-native-clone snapshot-hibernate)
-snapshot_names=(snapshot-stopped-disk snapshot-stopped-imported snapshot-native-running snapshot-hibernate-running)
+vm_names=(snapshot-stopped-source snapshot-stopped-restored snapshot-native-source snapshot-native-clone snapshot-native-lifetime-source snapshot-native-lifetime-clone snapshot-hibernate)
+snapshot_names=(snapshot-stopped-disk snapshot-stopped-imported snapshot-native-running snapshot-native-lifetime snapshot-hibernate-running)
 
 cleanup_all() {
   local ref
@@ -222,6 +222,47 @@ verify_native() {
   echo "pass: native snapshot clone continuity and identity"
 }
 
+verify_native_lifetime() {
+  local source=snapshot-native-lifetime-source clone=snapshot-native-lifetime-clone snapshot=snapshot-native-lifetime
+  local source_json snapshot_json snapshot_id clone_json clone_id remove_output
+  active_case=native-lifetime
+
+  step "native-lifetime: run source and capture running snapshot"
+  source_json=$(kb run "$image" --name "$source" --network none --storage "$storage")
+  source_id=$(jq -r '.id' <<<"$source_json")
+  kb agent ping "$source_id" --timeout "$agent_timeout" >/dev/null
+  kb exec "$source_id" -- sh -c 'printf native-lifetime > /var/tmp/kumabox-native-lifetime; sync'
+  snapshot_json=$(kb snapshot create "$source_id" --name "$snapshot" --type running)
+  snapshot_id=$(jq -r '.id' <<<"$snapshot_json")
+  [[ -n $snapshot_id && $snapshot_id != null ]] || { echo "native snapshot id is missing" >&2; return 1; }
+
+  step "native-lifetime: restore clone with OnDemand memory"
+  clone_json=$(kb clone "$snapshot_id" --name "$clone" --network none --restore-mode ondemand)
+  clone_id=$(jq -r '.id' <<<"$clone_json")
+  kb agent ping "$clone_id" --timeout "$agent_timeout" >/dev/null
+  jq -e '.lastRestore.mode == "ondemand" and .lastRestore.durationMs >= 0' \
+    < <(kb inspect "$clone_id" --json) >/dev/null || {
+      echo "OnDemand clone restore metadata is incomplete" >&2
+      kb inspect "$clone_id" --json >&2 || true
+      return 1
+    }
+
+  step "native-lifetime: source snapshot must stay pinned while clone runs"
+  if remove_output=$(kb snapshot rm "$snapshot_id" 2>&1); then
+    echo "snapshot deletion unexpectedly succeeded while OnDemand clone was running" >&2
+    printf '%s\n' "$remove_output" >&2
+    return 1
+  fi
+  printf 'pass: source snapshot deletion rejected while clone is alive\n'
+  printf '%s\n' "$remove_output" | sed -n '1,3p'
+
+  step "native-lifetime: release clone and delete source snapshot"
+  kb delete "$clone_id" --force >/dev/null
+  kb snapshot rm "$snapshot_id" >/dev/null
+  kb delete "$source_id" --force >/dev/null
+  echo "pass: OnDemand snapshot lifetime pin released after clone deletion"
+}
+
 verify_hibernate() {
   local name=snapshot-hibernate snapshot=snapshot-hibernate-running
   active_case=hibernate
@@ -255,6 +296,7 @@ scripts/linux/env-check.sh --kumabox "$kumabox" --cloud-hypervisor "$cloud_hyper
 case $scenario in
   stopped) verify_stopped ;;
   native) verify_native ;;
+  native-lifetime) verify_native_lifetime ;;
   fs) verify_fs ;;
   hibernate) verify_hibernate ;;
   all) verify_stopped; verify_native; verify_hibernate ;;
