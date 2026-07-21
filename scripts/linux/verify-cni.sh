@@ -17,6 +17,8 @@ cni_bin_dir=/opt/cni/bin
 storage=64M
 timeout=180
 external_target=
+ping_count=10
+metrics_output=
 use_sudo=false
 passed=false
 
@@ -45,6 +47,8 @@ guest-to-gateway reachability, and CNI DEL cleanup.
   --storage SIZE            defaults to 64M
   --timeout SECONDS         defaults to 180
   --external-target IP      additionally require guest ping to this address
+  --ping-count COUNT        packets used for RTT measurement, defaults to 10
+  --metrics-output PATH     write datapath metrics as JSON
   --sudo
 
 The script never removes the root, run, or log directory. On failure it keeps
@@ -74,6 +78,8 @@ while (($#)); do
     --storage) require_value "$1" "${2:-}"; storage=$2; shift 2 ;;
     --timeout) require_value "$1" "${2:-}"; timeout=$2; shift 2 ;;
     --external-target) require_value "$1" "${2:-}"; external_target=$2; shift 2 ;;
+    --ping-count) require_value "$1" "${2:-}"; ping_count=$2; shift 2 ;;
+    --metrics-output) require_value "$1" "${2:-}"; metrics_output=$2; shift 2 ;;
     --sudo) use_sudo=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -82,6 +88,7 @@ done
 
 [[ $(uname -s) == Linux ]] || { echo "real CNI E2E requires Linux" >&2; exit 1; }
 [[ $timeout =~ ^[1-9][0-9]*$ ]] || { echo "--timeout must be positive" >&2; exit 2; }
+[[ $ping_count =~ ^[1-9][0-9]*$ ]] || { echo "--ping-count must be positive" >&2; exit 2; }
 [[ ${#bridge} -le 15 ]] || { echo "--bridge exceeds Linux's 15-byte interface-name limit" >&2; exit 2; }
 
 for command in jq ip tc ping "$cloud_hypervisor" "$qemu_img"; do
@@ -268,9 +275,14 @@ jq -e --arg network "cni:$network_name" --arg address "$guest_ip/$guest_prefix" 
   (.interfaces | length) == 1 and
   .interfaces[0].provider == "cni" and
   .interfaces[0].network == $network and
+  (.interfaces[0].numQueues >= 2) and
+  (.interfaces[0].queueSize == 512) and
   (.interfaces[0].ips | index($address)) != null and
   (.drift | length) == 0
 ' <<<"$network_json" >/dev/null
+
+queue_count=$(jq -r '.interfaces[0].numQueues' <<<"$network_json")
+queue_size=$(jq -r '.interfaces[0].queueSize' <<<"$network_json")
 
 ns_name=$(basename "$netns_path")
 "${privileged[@]}" ip -d link show "$bridge"
@@ -292,8 +304,13 @@ grep -Fq "$guest_ip/$guest_prefix" <<<"$guest_network" || { echo "guest is missi
 grep -Fq "default via $gateway" <<<"$guest_network" || { echo "guest is missing CNI default route" >&2; exit 1; }
 
 section "verify bidirectional reachability"
-ping -c 1 -W 3 "$guest_ip"
-kb exec "$name" -- ping -c 1 -W 3 "$gateway"
+host_ping=$(ping -c "$ping_count" -W 3 "$guest_ip")
+printf '%s\n' "$host_ping"
+guest_ping=$(kb exec "$name" -- ping -c "$ping_count" -W 3 "$gateway")
+printf '%s\n' "$guest_ping"
+host_rtt=$(awk -F'= | ms' '/^rtt|^round-trip/ {print $2}' <<<"$host_ping" | awk -F/ '{print $2}')
+guest_rtt=$(awk -F'= | ms' '/^rtt|^round-trip/ {print $2}' <<<"$guest_ping" | awk -F/ '{print $2}')
+[[ -n $host_rtt && -n $guest_rtt ]] || { echo "failed to parse ping RTT" >&2; exit 1; }
 if [[ -n $external_target ]]; then
   kb exec "$name" -- ping -c 1 -W 3 "$external_target"
 fi
@@ -315,6 +332,24 @@ lease_file=$ipam_data_dir/$network_name/$guest_ip
 if "${privileged[@]}" test -e "$lease_file"; then
   echo "host-local IPAM lease remains after delete: $lease_file" >&2
   exit 1
+fi
+
+if [[ -n $metrics_output ]]; then
+  metrics_dir=${metrics_output%/*}
+  [[ $metrics_dir != "$metrics_output" ]] && "${privileged[@]}" install -d -m 0755 "$metrics_dir"
+  jq -n \
+    --arg schema "kumabox.p6.cni-datapath.v1" \
+    --arg generatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg network "cni:$network_name" \
+    --arg guestIp "$guest_ip" \
+    --argjson pingCount "$ping_count" \
+    --argjson queueCount "$queue_count" \
+    --argjson queueSize "$queue_size" \
+    --arg hostRttMs "$host_rtt" \
+    --arg guestRttMs "$guest_rtt" \
+    '{schema:$schema,generatedAt:$generatedAt,network:$network,guestIp:$guestIp,pingCount:$pingCount,queueCount:$queueCount,queueSize:$queueSize,hostToGuestRttAvgMs:($hostRttMs|tonumber),guestToGatewayRttAvgMs:($guestRttMs|tonumber),cleanup:{netnsRemoved:true,tapRemoved:true,ipamLeaseRemoved:true}}' \
+    | "${privileged[@]}" tee "$metrics_output" >/dev/null
+  echo "CNI datapath metrics written to $metrics_output"
 fi
 
 passed=true
