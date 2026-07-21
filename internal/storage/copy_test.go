@@ -32,3 +32,28 @@ func TestStageAndFinalizeFile(t *testing.T) {
 		t.Fatalf("finalized result = %+v", finalized)
 	}
 }
+
+func TestProbeReflinkUsesRequestedDirectory(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	probe, err := ProbeReflink(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probe.Directory != dir {
+		t.Fatalf("probe directory = %q, want %q", probe.Directory, dir)
+	}
+}
+
+func TestProbeReflinkRejectsFile(t *testing.T) {
+	t.Parallel()
+
+	file := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ProbeReflink(file); err == nil {
+		t.Fatal("expected file path to be rejected")
+	}
+}

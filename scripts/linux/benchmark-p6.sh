@@ -23,6 +23,7 @@ max_p95_regression=15
 use_sudo=false
 run_timeout=20s
 prepare_image=true
+require_reflink=false
 
 usage() {
   cat <<'EOF'
@@ -51,6 +52,7 @@ native running snapshot, and native clone.
   --max-p50-regression N    defaults to 10 percent
   --max-p95-regression N    defaults to 15 percent
   --run-timeout DURATION    timeout for each VM lifecycle operation, defaults to 20s
+  --require-reflink         fail unless every writable snapshot disk uses reflink
   --skip-image-prepare     use NAME as-is without rebuilding the OCI image
   --sudo
 EOF
@@ -81,6 +83,7 @@ while (($#)); do
     --max-p50-regression) require_value "$1" "${2:-}"; max_p50_regression=$2; shift 2 ;;
     --max-p95-regression) require_value "$1" "${2:-}"; max_p95_regression=$2; shift 2 ;;
     --run-timeout) require_value "$1" "${2:-}"; run_timeout=$2; shift 2 ;;
+    --require-reflink) require_reflink=true; shift ;;
     --skip-image-prepare) prepare_image=false; shift ;;
     --sudo) use_sudo=true; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -258,7 +261,7 @@ run_iteration() {
   local guest_overlay_ms guest_systemd_ms guest_agent_ms guest_multiuser_ms
   local guest_overlay_to_systemd_ms guest_systemd_to_agent_ms guest_agent_to_multiuser_ms
   local guest_overlay_to_multiuser_ms journal_log phase_log preserved_console_log preserved_journal_log
-  local run_output
+  local run_output native_manifest_dir native_strategies
 
   vm_names+=("$source" "$restored" "$clone")
   snapshot_names+=("$stopped_snapshot" "$native_snapshot")
@@ -313,6 +316,28 @@ run_iteration() {
   snapshot_json=$(kb snapshot inspect "$snapshot_id" --json)
   native_snapshot_ms=$(jq -r '.performance.totalDurationMs // 0' <<<"$snapshot_json")
   native_pause_ms=$(jq -r '.performance.pauseDurationMs // 0' <<<"$snapshot_json")
+  native_manifest_dir=$(jq -r '.dataDir' <<<"$snapshot_json")
+  if ((${#file_prefix[@]})); then
+    native_strategies=$(
+      "${file_prefix[@]}" cat "$native_manifest_dir/snapshot.json" |
+        jq -r '[.disks[]?.copyStrategy] | join(",")'
+    )
+  else
+    native_strategies=$(jq -r '[.disks[]?.copyStrategy] | join(",")' "$native_manifest_dir/snapshot.json")
+  fi
+  printf 'snapshot writable-disk strategies: %s\n' "${native_strategies:-none}" >&2
+  if [[ "$require_reflink" == true ]]; then
+    if ((${#file_prefix[@]})); then
+      "${file_prefix[@]}" cat "$native_manifest_dir/snapshot.json" |
+        jq -e '(.disks | length > 0) and all(.disks[]; .copyStrategy == "reflink")' >/dev/null
+    else
+      jq -e '(.disks | length > 0) and all(.disks[]; .copyStrategy == "reflink")' \
+        "$native_manifest_dir/snapshot.json" >/dev/null
+    fi || {
+      printf 'reflink required but snapshot used: %s\n' "${native_strategies:-none}" >&2
+      return 1
+    }
+  fi
   clone_json=$(kb clone "$snapshot_id" --name "$clone" --network "$network" --restore-mode copy)
   clone_id=$(jq -r '.id' <<<"$clone_json")
   clone_json=$(kb inspect "$clone_id" --json)
@@ -364,7 +389,8 @@ run_iteration() {
     --argjson cloneReadinessMs "$clone_readiness_ms" \
     --argjson portableRestoreMs "$portable_restore_ms" \
     --argjson restartReadyMs "$restart_ready_ms" \
-    '{iteration:$iteration,consoleLog:$consoleLog,journalLog:$journalLog,bootPhasesLog:$bootPhasesLog,runShellMs:$runShellMs,vmmReadyMs:$vmmReadyMs,agentReadyMs:$agentReadyMs,agentOverheadMs:$agentOverheadMs,guestOverlayMs:$guestOverlayMs,guestSystemdMs:$guestSystemdMs,guestAgentMs:$guestAgentMs,guestMultiuserMs:$guestMultiuserMs,guestOverlayToSystemdMs:$guestOverlayToSystemdMs,guestSystemdToAgentMs:$guestSystemdToAgentMs,guestAgentToMultiuserMs:$guestAgentToMultiuserMs,guestOverlayToMultiuserMs:$guestOverlayToMultiuserMs,runReadyMs:$runReadyMs,firstExecMs:$execMs,nativeSnapshotMs:$nativeSnapshotMs,nativePauseMs:$nativePauseMs,cloneRestoreMs:$cloneRestoreMs,cloneBackendMs:$cloneBackendMs,cloneReadinessMs:$cloneReadinessMs,portableRestoreMs:$portableRestoreMs,restartReadyMs:$restartReadyMs}'
+    --arg nativeDiskStrategies "$native_strategies" \
+    '{iteration:$iteration,consoleLog:$consoleLog,journalLog:$journalLog,bootPhasesLog:$bootPhasesLog,runShellMs:$runShellMs,vmmReadyMs:$vmmReadyMs,agentReadyMs:$agentReadyMs,agentOverheadMs:$agentOverheadMs,guestOverlayMs:$guestOverlayMs,guestSystemdMs:$guestSystemdMs,guestAgentMs:$guestAgentMs,guestMultiuserMs:$guestMultiuserMs,guestOverlayToSystemdMs:$guestOverlayToSystemdMs,guestSystemdToAgentMs:$guestSystemdToAgentMs,guestAgentToMultiuserMs:$guestAgentToMultiuserMs,guestOverlayToMultiuserMs:$guestOverlayToMultiuserMs,runReadyMs:$runReadyMs,firstExecMs:$execMs,nativeSnapshotMs:$nativeSnapshotMs,nativePauseMs:$nativePauseMs,nativeDiskStrategies:$nativeDiskStrategies,cloneRestoreMs:$cloneRestoreMs,cloneBackendMs:$cloneBackendMs,cloneReadinessMs:$cloneReadinessMs,portableRestoreMs:$portableRestoreMs,restartReadyMs:$restartReadyMs}'
 }
 
 run_concurrency_batch() {
@@ -450,6 +476,7 @@ jq -s \
   --argjson host "$host_json" \
   --argjson imageRecord "$image_json" \
   --argjson concurrency "$concurrency_json" \
+  --argjson requireReflink "$require_reflink" \
   '
     def numbers($key): [.[].[$key] | select(type == "number")];
     def percentile($values; $p):
@@ -460,7 +487,7 @@ jq -s \
       (numbers($key) | sort) as $values |
       {count:($values | length),p50:percentile($values; 0.50),p95:percentile($values; 0.95),max:($values | max)};
     . as $samples |
-    {schema:"kumabox.p6.benchmark.v5",generatedAt:$generatedAt,image:$image,network:$network,storage:$storage,cpus:$cpus,memory:$memory,iterations:$iterations,artifactsDir:$artifacts,host:$host,imageRecord:$imageRecord,concurrency:$concurrency,samples:$samples,summary:{runShellMs:metric("runShellMs"),vmmReadyMs:metric("vmmReadyMs"),agentReadyMs:metric("agentReadyMs"),agentOverheadMs:metric("agentOverheadMs"),guestOverlayMs:metric("guestOverlayMs"),guestSystemdMs:metric("guestSystemdMs"),guestAgentMs:metric("guestAgentMs"),guestMultiuserMs:metric("guestMultiuserMs"),guestOverlayToSystemdMs:metric("guestOverlayToSystemdMs"),guestSystemdToAgentMs:metric("guestSystemdToAgentMs"),guestAgentToMultiuserMs:metric("guestAgentToMultiuserMs"),guestOverlayToMultiuserMs:metric("guestOverlayToMultiuserMs"),runReadyMs:metric("runReadyMs"),firstExecMs:metric("firstExecMs"),nativeSnapshotMs:metric("nativeSnapshotMs"),nativePauseMs:metric("nativePauseMs"),cloneRestoreMs:metric("cloneRestoreMs"),cloneBackendMs:metric("cloneBackendMs"),cloneReadinessMs:metric("cloneReadinessMs"),portableRestoreMs:metric("portableRestoreMs"),restartReadyMs:metric("restartReadyMs")}}
+    {schema:"kumabox.p6.benchmark.v5",generatedAt:$generatedAt,image:$image,network:$network,storage:$storage,cpus:$cpus,memory:$memory,iterations:$iterations,artifactsDir:$artifacts,host:$host,imageRecord:$imageRecord,concurrency:$concurrency,requireReflink:$requireReflink,samples:$samples,summary:{runShellMs:metric("runShellMs"),vmmReadyMs:metric("vmmReadyMs"),agentReadyMs:metric("agentReadyMs"),agentOverheadMs:metric("agentOverheadMs"),guestOverlayMs:metric("guestOverlayMs"),guestSystemdMs:metric("guestSystemdMs"),guestAgentMs:metric("guestAgentMs"),guestMultiuserMs:metric("guestMultiuserMs"),guestOverlayToSystemdMs:metric("guestOverlayToSystemdMs"),guestSystemdToAgentMs:metric("guestSystemdToAgentMs"),guestAgentToMultiuserMs:metric("guestAgentToMultiuserMs"),guestOverlayToMultiuserMs:metric("guestOverlayToMultiuserMs"),runReadyMs:metric("runReadyMs"),firstExecMs:metric("firstExecMs"),nativeSnapshotMs:metric("nativeSnapshotMs"),nativePauseMs:metric("nativePauseMs"),cloneRestoreMs:metric("cloneRestoreMs"),cloneBackendMs:metric("cloneBackendMs"),cloneReadinessMs:metric("cloneReadinessMs"),portableRestoreMs:metric("portableRestoreMs"),restartReadyMs:metric("restartReadyMs")}}
   ' "$samples_file" >"$output"
 
 if [[ -n $baseline ]]; then
