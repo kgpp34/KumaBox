@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 
@@ -34,11 +35,38 @@ func (b Backend) InspectNativeHost(ctx context.Context, rec *vmstore.VMRecord) (
 		return backend.NativeHost{}, fmt.Errorf("inspect cloud-hypervisor version: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	vendor, features := linuxCPUIdentity()
+	version := parseBackendVersion(string(output))
+	modes := inspectRestoreModes(binary)
+	if !containsRestoreMode(modes, "ondemand") && cloudHypervisorSupportsOnDemand(version) {
+		// Release binaries may omit the Rust source strings used by the
+		// best-effort scanner below. v51.1 introduced the stable OnDemand
+		// restore request, so do not reject a valid request because of that
+		// missing diagnostic string.
+		modes = append(modes, "ondemand")
+		sort.Strings(modes)
+	}
 	return backend.NativeHost{
-		BackendName: "cloud-hypervisor", BackendVersion: parseBackendVersion(string(output)),
+		BackendName: "cloud-hypervisor", BackendVersion: version,
 		SnapshotFormat: nativeSnapshotFormat, Architecture: runtime.GOARCH,
-		CPUVendor: vendor, CPUFeatures: features, RestoreModes: inspectRestoreModes(binary),
+		CPUVendor: vendor, CPUFeatures: features, RestoreModes: modes,
 	}, nil
+}
+
+func containsRestoreMode(modes []string, wanted string) bool {
+	return slices.Contains(modes, wanted)
+}
+
+func cloudHypervisorSupportsOnDemand(version string) bool {
+	major, minor, ok := parseVersionParts(version)
+	return ok && (major > 51 || (major == 51 && minor >= 1))
+}
+
+func parseVersionParts(version string) (int, int, bool) {
+	var major, minor int
+	if _, err := fmt.Sscanf(version, "%d.%d", &major, &minor); err != nil {
+		return 0, 0, false
+	}
+	return major, minor, true
 }
 
 func inspectRestoreModes(binary string) []string {
