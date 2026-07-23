@@ -66,3 +66,28 @@ func TestJournalReconcilePublishesRepairResult(t *testing.T) {
 		t.Fatalf("recoverable after reconcile = %+v, err = %v", recoverable, err)
 	}
 }
+
+func TestJournalPreservesRelatedResourceDuringRecovery(t *testing.T) {
+	engine, err := meta.NewMemoryEngine(string(namespace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	journal := NewWithEngine(engine)
+	ctx := context.Background()
+	started, err := journal.BeginWithRelated(ctx, "op-restore", KindSnapshotRestoreVM, "vm-1", "snap-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.RelatedID != "snap-1" {
+		t.Fatalf("related resource = %q", started.RelatedID)
+	}
+	if err := journal.Reconcile(ctx, func(_ context.Context, record Record) error {
+		if record.ResourceID != "vm-1" || record.RelatedID != "snap-1" {
+			t.Fatalf("reconcile record = %+v", record)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
