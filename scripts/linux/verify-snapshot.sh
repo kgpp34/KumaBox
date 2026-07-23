@@ -13,6 +13,8 @@ storage=64M
 agent_timeout=180s
 package=/tmp/kumabox-p0/snapshot-e2e.kbsnap
 use_sudo=false
+metadata_backend=json
+metadata_path=
 success=false
 active_case=preflight
 
@@ -32,6 +34,8 @@ Usage: scripts/linux/verify-snapshot.sh [options]
   --agent-timeout DURATION
   --package PATH
   --sudo
+  --metadata-backend VALUE
+  --metadata-path PATH
 
 Runs the high-value snapshot E2E scenarios against one managed direct-boot OCI
 image. Failed state is preserved. Successful scenarios remove their own VMs,
@@ -57,10 +61,14 @@ while (($#)); do
     --agent-timeout) require_value "$1" "${2:-}"; agent_timeout=$2; shift 2 ;;
     --package) require_value "$1" "${2:-}"; package=$2; shift 2 ;;
     --sudo) use_sudo=true; shift ;;
+    --metadata-backend) require_value "$1" "${2:-}"; metadata_backend=$2; shift 2 ;;
+    --metadata-path) require_value "$1" "${2:-}"; metadata_path=$2; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+[[ "$metadata_backend" == json || "$metadata_backend" == sqlite ]] || { echo "--metadata-backend must be json or sqlite" >&2; exit 2; }
 
 case $scenario in all|stopped|native|native-lifetime|hibernate) ;; *) echo "invalid --scenario: $scenario" >&2; exit 2 ;; esac
 [[ $(uname -s) == Linux ]] || { echo "snapshot E2E requires Linux" >&2; exit 1; }
@@ -82,7 +90,8 @@ fi
 kb() {
   "${kb_prefix[@]}" "$kumabox" \
     --root-dir "$root_dir" --run-dir "$run_dir" --log-dir "$log_dir" \
-    --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" "$@"
+    --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" \
+    --metadata-backend "$metadata_backend" ${metadata_path:+--metadata-path "$metadata_path"} "$@"
 }
 step() { printf '\n==> %s\n' "$1"; }
 remove_file() { "${file_prefix[@]}" rm -f "$1"; }

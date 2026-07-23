@@ -20,6 +20,8 @@ external_target=
 ping_count=10
 metrics_output=
 use_sudo=false
+metadata_backend=json
+metadata_path=
 passed=false
 
 usage() {
@@ -50,6 +52,8 @@ guest-to-gateway reachability, and CNI DEL cleanup.
   --ping-count COUNT        packets used for RTT measurement, defaults to 10
   --metrics-output PATH     write datapath metrics as JSON
   --sudo
+  --metadata-backend VALUE   metadata backend: json or sqlite
+  --metadata-path PATH       SQLite metadata path
 
 The script never removes the root, run, or log directory. On failure it keeps
 the VM and CNI resources for inspection; rerunning cleans the named resources.
@@ -81,10 +85,14 @@ while (($#)); do
     --ping-count) require_value "$1" "${2:-}"; ping_count=$2; shift 2 ;;
     --metrics-output) require_value "$1" "${2:-}"; metrics_output=$2; shift 2 ;;
     --sudo) use_sudo=true; shift ;;
+    --metadata-backend) require_value "$1" "${2:-}"; metadata_backend=$2; shift 2 ;;
+    --metadata-path) require_value "$1" "${2:-}"; metadata_path=$2; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+[[ "$metadata_backend" == json || "$metadata_backend" == sqlite ]] || { echo "--metadata-backend must be json or sqlite" >&2; exit 2; }
 
 [[ $(uname -s) == Linux ]] || { echo "real CNI E2E requires Linux" >&2; exit 1; }
 [[ $timeout =~ ^[1-9][0-9]*$ ]] || { echo "--timeout must be positive" >&2; exit 2; }
@@ -116,7 +124,7 @@ cni_conf=$cni_conf_dir/10-$network_name.conflist
 ipam_data_dir=$work_dir/ipam
 
 kb() {
-  "${kb_prefix[@]}" "$kumabox" --config "$config_file" "$@"
+  "${kb_prefix[@]}" "$kumabox" --config "$config_file" --metadata-backend "$metadata_backend" ${metadata_path:+--metadata-path "$metadata_path"} "$@"
 }
 
 section() {

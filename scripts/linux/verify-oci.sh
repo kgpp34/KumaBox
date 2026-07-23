@@ -17,6 +17,8 @@ mkfs_erofs="mkfs.erofs"
 timeout="120s"
 skip_base_build=0
 use_sudo=false
+metadata_backend=json
+metadata_path=
 script_status=1
 tail_pid=""
 
@@ -41,6 +43,8 @@ Options:
   --timeout DURATION         agent timeout, defaults to 120s
   --skip-base-build          use existing local OCI base image
   --sudo                     run kumabox and root-owned file reads through sudo
+  --metadata-backend VALUE   metadata backend: json or sqlite
+  --metadata-path PATH       SQLite metadata path
 
 Verifies OCI exec MVP:
 build OCI image -> run VM -> wait for agent -> execute hostname/stdin/env/failing
@@ -121,10 +125,14 @@ while [[ $# -gt 0 ]]; do
     --timeout) require_value "$1" "${2:-}"; timeout="$2"; shift 2 ;;
     --skip-base-build) skip_base_build=1; shift ;;
     --sudo) use_sudo=true; shift ;;
+    --metadata-backend) require_value "$1" "${2:-}"; metadata_backend="$2"; shift 2 ;;
+    --metadata-path) require_value "$1" "${2:-}"; metadata_path="$2"; shift 2 ;;
     -h|--help) script_status=0; usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+[[ "$metadata_backend" == json || "$metadata_backend" == sqlite ]] || { echo "--metadata-backend must be json or sqlite" >&2; exit 2; }
 
 if [[ ! -x "$kumabox_path" ]]; then
   echo "kumabox is not executable: $kumabox_path" >&2
@@ -170,6 +178,8 @@ kb() {
     --run-dir "$run_dir" \
     --log-dir "$log_dir" \
     --cloud-hypervisor-bin "$cloud_hypervisor_path" \
+    --metadata-backend "$metadata_backend" \
+    ${metadata_path:+--metadata-path "$metadata_path"} \
     "$@"
 }
 
