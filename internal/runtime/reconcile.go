@@ -41,16 +41,23 @@ func (r *Runtime) reconcileOperation(ctx context.Context, record operation.Recor
 	case operation.KindSnapshotCreateRun:
 		return r.requireSnapshotForVM(ctx, record, record.RelatedID)
 	case operation.KindSnapshotCloneNative:
-		return r.requireVMRestoredFromSnapshot(record.RelatedID)
+		return r.requireVMRestore(record)
 	case operation.KindSnapshotRestoreVM:
 		return r.requireVMRestore(record)
 	case operation.KindVMHibernate:
 		return r.requireSnapshotForVM(ctx, record, record.RelatedID)
 	case operation.KindSnapshotRestoreDisk:
-		return fmt.Errorf("OPERATION_RECONCILIATION_UNSUPPORTED: portable restore has no durable output VM identity")
+		return r.requireVMExists(record)
 	default:
 		return fmt.Errorf("OPERATION_KIND_UNKNOWN: %s", record.Kind)
 	}
+}
+
+func (r *Runtime) requireVMExists(record operation.Record) error {
+	if _, err := r.vmReader.Inspect(record.ResourceID); err != nil {
+		return fmt.Errorf("SNAPSHOT_RESTORE_INCOMPLETE: restored VM %s is unavailable: %w", record.ResourceID, err)
+	}
+	return nil
 }
 
 func (r *Runtime) requireVMRestore(record operation.Record) error {

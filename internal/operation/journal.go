@@ -120,6 +120,31 @@ func (j *Journal) Fail(ctx context.Context, id, reason string) (*Record, error) 
 	return j.finish(ctx, id, StatusFailed, reason)
 }
 
+// BindResource records the concrete resource created by an operation whose
+// output identity was not known when the operation began.
+func (j *Journal) BindResource(ctx context.Context, id, resourceID string) (*Record, error) {
+	if id == "" || resourceID == "" {
+		return nil, fmt.Errorf("operation id and resource id are required: %w", meta.ErrScope)
+	}
+	var result Record
+	err := j.engine.Update(ctx, meta.Scope{Write: namespace}, meta.CommitDurable, func(writer meta.Writer) error {
+		record, err := j.collection.Get(ctx, writer, meta.RecordID(id))
+		if err != nil {
+			return err
+		}
+		record.ResourceID = resourceID
+		if err := j.collection.Replace(ctx, writer, meta.RecordID(id), record); err != nil {
+			return err
+		}
+		result = *record
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return clone(result), nil
+}
+
 func (j *Journal) finish(ctx context.Context, id string, status Status, reason string) (*Record, error) {
 	var result Record
 	err := j.engine.Update(ctx, meta.Scope{Write: namespace}, meta.CommitDurable, func(writer meta.Writer) error {

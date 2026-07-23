@@ -41,3 +41,11 @@ func (r *Runtime) finishOperation(ctx context.Context, id string, operationErr e
 	}
 	return operationErr
 }
+
+func (r *Runtime) bindOperationResource(ctx context.Context, operationID, resourceID string) error {
+	if operationID == "" || r.operations == nil {
+		return nil
+	}
+	_, err := r.operations.BindResource(ctx, operationID, resourceID)
+	return err
+}

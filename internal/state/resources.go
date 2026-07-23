@@ -72,6 +72,7 @@ type OCIState interface {
 type OperationState interface {
 	Begin(context.Context, string, string, string) (*operation.Record, error)
 	BeginWithRelated(context.Context, string, string, string, string) (*operation.Record, error)
+	BindResource(context.Context, string, string) (*operation.Record, error)
 	Complete(context.Context, string) (*operation.Record, error)
 	Fail(context.Context, string, string) (*operation.Record, error)
 	Recoverable(context.Context) ([]operation.Record, error)

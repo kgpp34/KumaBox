@@ -91,6 +91,10 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err != nil {
 		return nil, err
 	}
+	if err := r.bindOperationResource(ctx, operationID, rec.ID); err != nil {
+		_ = r.vmRecords.Delete(rec.ID)
+		return nil, fmt.Errorf("bind clone operation resource: %w", err)
+	}
 	if err := r.recordVMImageReference(ctx, rec); err != nil {
 		_ = r.vmRecords.Delete(rec.ID)
 		return nil, fmt.Errorf("record clone image reference: %w", err)
