@@ -86,9 +86,9 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 		}
 		return nil, errors.Join(fmt.Errorf("terminate hibernated VMM: %w", err), recoverErr, removeErr)
 	}
-	hibernated, err := r.vmLifecycle.MarkHibernated(rec.ID, ready.ID)
+	hibernated, err := r.vmUpdater.CompleteHibernate(rec.ID, ready.ID)
 	if err != nil {
-		_, _ = r.vmLifecycle.MarkError(rec.ID, "hibernate snapshot is durable but stopped state publication failed")
+		_, _ = r.vmUpdater.SetError(rec.ID, "hibernate snapshot is durable but stopped state publication failed")
 		return nil, fmt.Errorf("publish hibernated VM state: %w", err)
 	}
 	_ = writeVMEvent(hibernated, "vm.hibernate.completed", vmstore.Observation{

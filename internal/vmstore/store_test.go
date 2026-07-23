@@ -337,7 +337,7 @@ func TestCreateRejectsMixedNetworkProviderFamilies(t *testing.T) {
 	}
 }
 
-func TestMarkRunningMarksFirmwareVMFirstBooted(t *testing.T) {
+func TestMarkStartedMarksFirmwareVMFirstBooted(t *testing.T) {
 	dir := t.TempDir()
 	store := New(filepath.Join(dir, "data"))
 
@@ -355,7 +355,7 @@ func TestMarkRunningMarksFirmwareVMFirstBooted(t *testing.T) {
 		t.Fatal("new VM should not be marked first-booted")
 	}
 
-	running, err := store.MarkRunning(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"))
+	running, err := store.MarkStarted(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +364,7 @@ func TestMarkRunningMarksFirmwareVMFirstBooted(t *testing.T) {
 	}
 }
 
-func TestMarkPerformancePersistsDefensivePhaseMetrics(t *testing.T) {
+func TestUpdatePerformancePersistsDefensivePhaseMetrics(t *testing.T) {
 	dir := t.TempDir()
 	store := New(filepath.Join(dir, "data"))
 	rec, err := store.Create(CreateRequest{
@@ -380,7 +380,7 @@ func TestMarkPerformancePersistsDefensivePhaseMetrics(t *testing.T) {
 		Operation: "run", CommandStartedAt: phase,
 		ImageResolvedAt: &phase, ReadyDurationMs: 42,
 	}
-	updated, err := store.MarkPerformance(rec.ID, metrics)
+	updated, err := store.UpdatePerformance(rec.ID, metrics)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +397,7 @@ func TestMarkPerformancePersistsDefensivePhaseMetrics(t *testing.T) {
 	}
 }
 
-func TestMarkRestoredMarksFirmwareVMFirstBooted(t *testing.T) {
+func TestCompleteRestoreMarksFirmwareVMFirstBooted(t *testing.T) {
 	dir := t.TempDir()
 	store := New(filepath.Join(dir, "data"))
 
@@ -414,7 +414,7 @@ func TestMarkRestoredMarksFirmwareVMFirstBooted(t *testing.T) {
 	if _, err := store.BeginRestore(rec.ID, "snap_test", "copy"); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := store.MarkRestored(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"), 250*time.Millisecond)
+	restored, err := store.CompleteRestore(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"), 250*time.Millisecond, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +423,7 @@ func TestMarkRestoredMarksFirmwareVMFirstBooted(t *testing.T) {
 	}
 }
 
-func TestMarkRestoredPinsDelayedMemoryUntilStop(t *testing.T) {
+func TestCompleteRestorePinsDelayedMemoryUntilStop(t *testing.T) {
 	dir := t.TempDir()
 	store := New(filepath.Join(dir, "data"))
 	rec, err := store.Create(CreateRequest{
@@ -435,7 +435,7 @@ func TestMarkRestoredPinsDelayedMemoryUntilStop(t *testing.T) {
 	if _, err := store.BeginRestore(rec.ID, "snap_delayed", "mmap"); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := store.MarkRestored(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"), 250*time.Millisecond)
+	restored, err := store.CompleteRestore(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"), 250*time.Millisecond, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +445,10 @@ func TestMarkRestoredPinsDelayedMemoryUntilStop(t *testing.T) {
 	if restored.LastRestore == nil || restored.LastRestore.Mode != "mmap" || restored.LastRestore.DurationMs != 250 {
 		t.Fatalf("last restore = %+v", restored.LastRestore)
 	}
-	stopped, err := store.MarkStopped(rec.ID)
+	if err := store.UpdateStates([]string{rec.ID}, StateStopped); err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := store.Inspect(rec.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +457,7 @@ func TestMarkRestoredPinsDelayedMemoryUntilStop(t *testing.T) {
 	}
 }
 
-func TestMarkRestoredPersistsPhaseMetrics(t *testing.T) {
+func TestCompleteRestorePersistsPhaseMetrics(t *testing.T) {
 	dir := t.TempDir()
 	store := New(filepath.Join(dir, "data"))
 	rec, err := store.Create(CreateRequest{
@@ -467,7 +470,7 @@ func TestMarkRestoredPersistsPhaseMetrics(t *testing.T) {
 	if _, err := store.BeginRestore(rec.ID, "snap_timed", "copy"); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := store.MarkRestoredWithMetrics(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"), time.Second, &RestoreResult{
+	restored, err := store.CompleteRestore(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"), time.Second, &RestoreResult{
 		NativeStageDurationMs: 11, DiskStageDurationMs: 22, DiskCommitDurationMs: 3,
 		BackendRestoreDurationMs: 44, IdentityDurationMs: 55, ReadinessDurationMs: 66,
 	})

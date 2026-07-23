@@ -32,7 +32,7 @@ const forcedStopTimeout = 5 * time.Second
 type Runtime struct {
 	vmReader       state.VMReader
 	vmRecords      state.VMRecords
-	vmLifecycle    state.VMLifecycle
+	vmUpdater      state.VMUpdater
 	vmRestore      state.VMRestore
 	storeSet       StoreSet
 	backend        backend.Lifecycle
@@ -98,7 +98,7 @@ func NewWithBackend(store state.VMState, vmBackend backend.Lifecycle) *Runtime {
 	return &Runtime{
 		vmReader:       store,
 		vmRecords:      store,
-		vmLifecycle:    store,
+		vmUpdater:      store,
 		vmRestore:      store,
 		storeSet:       newStoreSet(store.RootDir(), store),
 		backend:        vmBackend,
@@ -117,7 +117,7 @@ func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) *Runt
 	return &Runtime{
 		vmReader:       stores.VM,
 		vmRecords:      stores.VM,
-		vmLifecycle:    stores.VM,
+		vmUpdater:      stores.VM,
 		vmRestore:      stores.VM,
 		storeSet:       stores,
 		backend:        vmBackend,
@@ -221,7 +221,7 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecy
 	metrics.bindRecord(rec)
 	metrics.markNetworkReady(time.Now())
 	if err := prepareStorageWithQEMUImg(ctx, rec, r.vmReader.RootDir(), r.qemuImg); err != nil {
-		if _, markErr := r.vmLifecycle.MarkError(rec.ID, err.Error()); markErr != nil {
+		if _, markErr := r.vmUpdater.SetError(rec.ID, err.Error()); markErr != nil {
 			return nil, markErr
 		}
 		return nil, err
@@ -229,7 +229,7 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecy
 	metrics.markStorageReady(time.Now())
 
 	if err := r.backend.RenderConfig(rec); err != nil {
-		if _, markErr := r.vmLifecycle.MarkError(rec.ID, err.Error()); markErr != nil {
+		if _, markErr := r.vmUpdater.SetError(rec.ID, err.Error()); markErr != nil {
 			return nil, markErr
 		}
 		return nil, err
@@ -241,20 +241,20 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecy
 	metrics.markVMMSpawned(time.Now())
 	result, err := r.backend.StartVM(rec)
 	if err != nil {
-		if _, markErr := r.vmLifecycle.MarkError(rec.ID, err.Error()); markErr != nil {
+		if _, markErr := r.vmUpdater.SetError(rec.ID, err.Error()); markErr != nil {
 			return nil, markErr
 		}
 		return nil, err
 	}
 	metrics.markVMMAPIReady(time.Now())
-	started, err := r.vmLifecycle.MarkRunning(rec.ID, result.PID, result.APISocket)
+	started, err := r.vmUpdater.MarkStarted(rec.ID, result.PID, result.APISocket)
 	if err != nil {
 		return nil, err
 	}
 	if requiresAgentReadiness(started) {
 		if err := r.guestReadiness(ctx, started.VsockSocket); err != nil {
 			_, _ = r.backend.StopVM(started, backend.StopOptions{Force: true})
-			if _, markErr := r.vmLifecycle.MarkError(started.ID, err.Error()); markErr != nil {
+			if _, markErr := r.vmUpdater.SetError(started.ID, err.Error()); markErr != nil {
 				return nil, markErr
 			}
 			return nil, err
@@ -263,7 +263,7 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecy
 		metrics.markAgentConnected(readyAt)
 		metrics.markFirstExecCompleted(readyAt)
 	}
-	updated, err := r.vmLifecycle.MarkPerformance(started.ID, metrics.snapshot())
+	updated, err := r.vmUpdater.UpdatePerformance(started.ID, metrics.snapshot())
 	if err != nil {
 		return nil, err
 	}
@@ -336,9 +336,12 @@ func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.Sto
 	observed := r.applyObservation(rec)
 	if (observed.State == vmstore.StateRunning || observed.State == vmstore.StatePaused) &&
 		observed.ObservedState != vmstore.ObservedStateRunning && observed.ObservedState != vmstore.ObservedStatePaused {
-		stopped, markErr := r.vmLifecycle.MarkStopped(observed.ID)
-		if markErr != nil {
-			return nil, markErr
+		if err := r.vmUpdater.UpdateStates([]string{observed.ID}, vmstore.StateStopped); err != nil {
+			return nil, err
+		}
+		stopped, err := r.vmReader.Inspect(observed.ID)
+		if err != nil {
+			return nil, err
 		}
 		_ = writeVMEvent(stopped, "backend.stop.completed", vmstore.Observation{
 			State:     vmstore.ObservedStateStopped,
@@ -352,12 +355,15 @@ func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.Sto
 	}
 
 	if _, err := r.backend.StopVM(observed, opts); err != nil {
-		if _, markErr := r.vmLifecycle.MarkError(observed.ID, err.Error()); markErr != nil {
+		if _, markErr := r.vmUpdater.SetError(observed.ID, err.Error()); markErr != nil {
 			return nil, markErr
 		}
 		return nil, err
 	}
-	stopped, err := r.vmLifecycle.MarkStopped(observed.ID)
+	if err := r.vmUpdater.UpdateStates([]string{observed.ID}, vmstore.StateStopped); err != nil {
+		return nil, err
+	}
+	stopped, err := r.vmReader.Inspect(observed.ID)
 	if err != nil {
 		return nil, err
 	}

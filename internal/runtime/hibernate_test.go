@@ -107,13 +107,13 @@ func TestMarkRestoredClearsHibernateState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.MarkHibernated(rec.ID, "snap_nap"); err != nil {
+	if _, err := store.CompleteHibernate(rec.ID, "snap_nap"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.BeginRestore(rec.ID, "snap_nap", "copy"); err != nil {
 		t.Fatal(err)
 	}
-	woken, err := store.MarkRestored(rec.ID, 42, filepath.Join(rec.RunDir, "ch.sock"), time.Second)
+	woken, err := store.CompleteRestore(rec.ID, 42, filepath.Join(rec.RunDir, "ch.sock"), time.Second, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

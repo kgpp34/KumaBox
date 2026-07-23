@@ -96,8 +96,8 @@ func (r *Runtime) transitionVMState(ctx context.Context, ref string, target vmst
 }
 
 func (r *Runtime) persistLiveState(ref string, state vmstore.VMState) (*vmstore.VMRecord, error) {
-	if state == vmstore.StatePaused {
-		return r.vmLifecycle.MarkPaused(ref)
+	if err := r.vmUpdater.UpdateStates([]string{ref}, state); err != nil {
+		return nil, err
 	}
-	return r.vmLifecycle.MarkResumed(ref)
+	return r.vmReader.Inspect(ref)
 }

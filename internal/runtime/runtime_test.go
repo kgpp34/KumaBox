@@ -1271,7 +1271,7 @@ func TestCreateStoppedSnapshotCapturesManagedCOW(t *testing.T) {
 	if err := os.WriteFile(rec.StorageConfigs[0].Path, []byte("writable"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.MarkStopped(rec.ID); err != nil {
+	if err := store.UpdateStates([]string{rec.ID}, vmstore.StateStopped); err != nil {
 		t.Fatal(err)
 	}
 	rt := NewWithBackend(store, backendFake{observe: func(*vmstore.VMRecord) vmstore.Observation {

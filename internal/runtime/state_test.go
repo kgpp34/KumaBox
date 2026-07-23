@@ -44,7 +44,7 @@ func TestPauseResumePersistsLiveState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.MarkRunning(rec.ID, 1234, "/tmp/ch.sock"); err != nil {
+	if _, err := store.MarkStarted(rec.ID, 1234, "/tmp/ch.sock"); err != nil {
 		t.Fatal(err)
 	}
 

@@ -132,7 +132,7 @@ func TestStoreRemoveRejectsDurableVMDependency(t *testing.T) {
 	if _, err := vmStore.BeginRestore(rec.ID, ready.ID, "ondemand"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := vmStore.MarkRestored(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"), time.Second); err != nil {
+	if _, err := vmStore.CompleteRestore(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"), time.Second, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Remove(ready.ID); !errors.Is(err, ErrInUse) {
@@ -141,7 +141,7 @@ func TestStoreRemoveRejectsDurableVMDependency(t *testing.T) {
 	if leased, err := store.IsLeased(ready.ID); err != nil || !leased {
 		t.Fatalf("durable lease = %t, err = %v", leased, err)
 	}
-	if _, err := vmStore.MarkStopped(rec.ID); err != nil {
+	if err := vmStore.UpdateStates([]string{rec.ID}, vmstore.StateStopped); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Remove(ready.ID); err != nil {
@@ -161,7 +161,7 @@ func TestStoreRemoveRejectsHibernateSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := vmStore.MarkHibernated(rec.ID, ready.ID); err != nil {
+	if _, err := vmStore.CompleteHibernate(rec.ID, ready.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Remove(ready.ID); !errors.Is(err, ErrInUse) {

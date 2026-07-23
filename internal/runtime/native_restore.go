@@ -114,7 +114,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 		return nil, fmt.Errorf("mark restore dirty: %w", err)
 	}
 	fail := func(cause error) (*vmstore.VMRecord, error) {
-		_, markErr := r.vmRestore.MarkRestoreFailed(rec.ID, cause.Error())
+		_, markErr := r.vmRestore.FailRestore(rec.ID, cause.Error())
 		return nil, errors.Join(cause, markErr)
 	}
 	diskCommitStarted := time.Now()
@@ -137,7 +137,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 		return fail(fmt.Errorf("verify restored guest readiness: %w", err))
 	}
 	readinessDuration := time.Since(readinessStarted)
-	restored, err := r.vmRestore.MarkRestoredWithMetrics(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
+	restored, err := r.vmRestore.CompleteRestore(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
 		NativeStageDurationMs:    stageMetrics.nativeStageDuration.Milliseconds(),
 		DiskStageDurationMs:      stageMetrics.diskStageDuration.Milliseconds(),
 		DiskCommitDurationMs:     diskCommitDuration.Milliseconds(),

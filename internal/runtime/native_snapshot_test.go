@@ -152,7 +152,7 @@ func newRunningSnapshotRuntime(t *testing.T) (*Runtime, *vmstore.Store, *vmstore
 	if err := os.WriteFile(sourceDisk, []byte("writable"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	rec, err = store.MarkRunning(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"))
+	rec, err = store.MarkStarted(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}

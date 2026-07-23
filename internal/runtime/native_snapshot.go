@@ -129,10 +129,10 @@ func captureNativeWindow(ctx context.Context, snapshotter backend.NativeSnapshot
 func (r *Runtime) persistSnapshotResumeFailure(rec *vmstore.VMRecord) {
 	observation := r.backend.ObserveVM(rec)
 	if observation.State == vmstore.ObservedStatePaused {
-		_, _ = r.vmLifecycle.MarkPaused(rec.ID)
+		_ = r.vmUpdater.UpdateStates([]string{rec.ID}, vmstore.StatePaused)
 		return
 	}
-	_, _ = r.vmLifecycle.MarkError(rec.ID, "failed to resume VM after running snapshot")
+	_, _ = r.vmUpdater.SetError(rec.ID, "failed to resume VM after running snapshot")
 }
 
 func wrapOptional(operation string, err error) error {

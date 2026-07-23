@@ -152,7 +152,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		return nil, fmt.Errorf("verify clone guest readiness: %w", err)
 	}
 	readinessDuration := time.Since(readinessStarted)
-	cloned, err := r.vmRestore.MarkRestoredWithMetrics(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
+	cloned, err := r.vmRestore.CompleteRestore(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
 		NativeStageDurationMs:    stageMetrics.nativeStageDuration.Milliseconds(),
 		DiskStageDurationMs:      stageMetrics.diskStageDuration.Milliseconds(),
 		DiskCommitDurationMs:     diskCommitDuration.Milliseconds(),

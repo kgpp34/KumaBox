@@ -168,11 +168,42 @@ func (s *Store) Delete(ref string) error {
 	})
 }
 
-// MarkRunning records backend process identity after a successful start.
+// UpdateStates applies one state update to every existing VM in refs in a
+// single metadata transaction.
+func (s *Store) UpdateStates(refs []string, state VMState) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	return s.update(func(idx *vmIndex) error {
+		now := time.Now().UTC()
+		for _, ref := range refs {
+			id, err := idx.resolve(ref)
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			rec := idx.VMs[id]
+			rec.State = state
+			rec.UpdatedAt = now
+			if state == StateStopped {
+				rec.PID = 0
+				rec.APISocket = ""
+				rec.Error = ""
+				rec.SnapshotDependency = nil
+				rec.StoppedAt = &now
+			}
+		}
+		return nil
+	})
+}
+
+// MarkStarted records backend process identity after a successful start.
 //
 // For cloud-image boots, marking running also flips FirstBooted so subsequent
 // starts do not regenerate one-shot first-boot metadata unexpectedly.
-func (s *Store) MarkRunning(ref string, pid int, apiSocket string) (*VMRecord, error) {
+func (s *Store) MarkStarted(ref string, pid int, apiSocket string) (*VMRecord, error) {
 	var updated *VMRecord
 	err := s.update(func(idx *vmIndex) error {
 		id, err := idx.resolve(ref)
@@ -201,9 +232,9 @@ func (s *Store) MarkRunning(ref string, pid int, apiSocket string) (*VMRecord, e
 	return updated, nil
 }
 
-// MarkPerformance persists the latest lifecycle timing after the VM has
+// UpdatePerformance persists the latest lifecycle timing after the VM has
 // reached the product readiness boundary.
-func (s *Store) MarkPerformance(ref string, metrics PerformanceMetrics) (*VMRecord, error) {
+func (s *Store) UpdatePerformance(ref string, metrics PerformanceMetrics) (*VMRecord, error) {
 	var updated *VMRecord
 	err := s.update(func(idx *vmIndex) error {
 		id, err := idx.resolve(ref)
@@ -252,9 +283,9 @@ func (s *Store) BeginRestore(ref, snapshotID, mode string) (*VMRecord, error) {
 	return updated, err
 }
 
-// MarkRestoreFailed quarantines a VM after the destructive restore boundary.
+// FailRestore quarantines a VM after the destructive restore boundary.
 // The restore marker is retained so start cannot boot mixed-generation state.
-func (s *Store) MarkRestoreFailed(ref, message string) (*VMRecord, error) {
+func (s *Store) FailRestore(ref, message string) (*VMRecord, error) {
 	var updated *VMRecord
 	err := s.update(func(idx *vmIndex) error {
 		id, err := idx.resolve(ref)
@@ -280,15 +311,9 @@ func (s *Store) MarkRestoreFailed(ref, message string) (*VMRecord, error) {
 	return updated, err
 }
 
-// MarkRestored atomically publishes restored process identity and clears the
-// recovery marker only after the backend has restored and resumed the VM.
-func (s *Store) MarkRestored(ref string, pid int, apiSocket string, duration time.Duration) (*VMRecord, error) {
-	return s.MarkRestoredWithMetrics(ref, pid, apiSocket, duration, nil)
-}
-
-// MarkRestoredWithMetrics atomically publishes restored process identity and
+// CompleteRestore atomically publishes restored process identity and
 // the phase timings collected during the restore or clone transaction.
-func (s *Store) MarkRestoredWithMetrics(ref string, pid int, apiSocket string, duration time.Duration, metrics *RestoreResult) (*VMRecord, error) {
+func (s *Store) CompleteRestore(ref string, pid int, apiSocket string, duration time.Duration, metrics *RestoreResult) (*VMRecord, error) {
 	var updated *VMRecord
 	err := s.update(func(idx *vmIndex) error {
 		id, err := idx.resolve(ref)
@@ -342,9 +367,9 @@ func (s *Store) MarkRestoredWithMetrics(ref string, pid int, apiSocket string, d
 	return updated, err
 }
 
-// MarkHibernated publishes the durable snapshot linkage only after the VMM
+// CompleteHibernate publishes the durable snapshot linkage only after the VMM
 // has terminated. Network and storage identity remain allocated for wake.
-func (s *Store) MarkHibernated(ref, snapshotID string) (*VMRecord, error) {
+func (s *Store) CompleteHibernate(ref, snapshotID string) (*VMRecord, error) {
 	var updated *VMRecord
 	err := s.update(func(idx *vmIndex) error {
 		id, err := idx.resolve(ref)
@@ -367,43 +392,11 @@ func (s *Store) MarkHibernated(ref, snapshotID string) (*VMRecord, error) {
 	return updated, err
 }
 
-// MarkPaused records a live paused VM without clearing backend process identity.
-func (s *Store) MarkPaused(ref string) (*VMRecord, error) {
-	return s.markLiveState(ref, StatePaused)
-}
-
-// MarkResumed records a paused VM returning to running without opening a new
-// lifecycle interval or changing its original start timestamp.
-func (s *Store) MarkResumed(ref string) (*VMRecord, error) {
-	return s.markLiveState(ref, StateRunning)
-}
-
-func (s *Store) markLiveState(ref string, state VMState) (*VMRecord, error) {
-	var updated *VMRecord
-	err := s.update(func(idx *vmIndex) error {
-		id, err := idx.resolve(ref)
-		if err != nil {
-			return err
-		}
-		rec := idx.VMs[id]
-		now := time.Now().UTC()
-		rec.State = state
-		rec.Error = ""
-		rec.UpdatedAt = now
-		updated = cloneRecord(rec)
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return updated, nil
-}
-
-// MarkError records a lifecycle failure while preserving the VM record.
+// SetError records a lifecycle failure while preserving the VM record.
 //
 // Keeping the record allows inspect, logs, and delete cleanup to work after a
 // failed render/start/stop operation.
-func (s *Store) MarkError(ref string, message string) (*VMRecord, error) {
+func (s *Store) SetError(ref string, message string) (*VMRecord, error) {
 	var updated *VMRecord
 	err := s.update(func(idx *vmIndex) error {
 		id, err := idx.resolve(ref)
@@ -414,35 +407,6 @@ func (s *Store) MarkError(ref string, message string) (*VMRecord, error) {
 		now := time.Now().UTC()
 		rec.State = StateError
 		rec.Error = message
-		rec.UpdatedAt = now
-		updated = cloneRecord(rec)
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return updated, nil
-}
-
-// MarkStopped clears transient backend identity after a VM has stopped.
-//
-// Network attachments and image references are intentionally preserved so the
-// VM can be started again with the same identity.
-func (s *Store) MarkStopped(ref string) (*VMRecord, error) {
-	var updated *VMRecord
-	err := s.update(func(idx *vmIndex) error {
-		id, err := idx.resolve(ref)
-		if err != nil {
-			return err
-		}
-		rec := idx.VMs[id]
-		now := time.Now().UTC()
-		rec.State = StateStopped
-		rec.PID = 0
-		rec.APISocket = ""
-		rec.Error = ""
-		rec.SnapshotDependency = nil
-		rec.StoppedAt = &now
 		rec.UpdatedAt = now
 		updated = cloneRecord(rec)
 		return nil

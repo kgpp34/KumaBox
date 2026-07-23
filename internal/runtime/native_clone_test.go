@@ -176,7 +176,7 @@ func newNativeCloneRuntime(t *testing.T) (*Runtime, *vmstore.Store, *vmstore.VMR
 	if err := os.WriteFile(source.StorageConfigs[1].Path, []byte("source-cow"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	source, err = store.MarkRunning(source.ID, 1234, filepath.Join(source.RunDir, "ch.sock"))
+	source, err = store.MarkStarted(source.ID, 1234, filepath.Join(source.RunDir, "ch.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}

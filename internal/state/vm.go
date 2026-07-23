@@ -25,23 +25,21 @@ type VMRecords interface {
 	SetNetworkConfigs(string, []kbnetwork.Config) (*vmstore.VMRecord, error)
 }
 
-// VMLifecycle contains durable state changes around backend lifecycle events.
-type VMLifecycle interface {
-	MarkRunning(string, int, string) (*vmstore.VMRecord, error)
-	MarkPerformance(string, vmstore.PerformanceMetrics) (*vmstore.VMRecord, error)
-	MarkHibernated(string, string) (*vmstore.VMRecord, error)
-	MarkPaused(string) (*vmstore.VMRecord, error)
-	MarkResumed(string) (*vmstore.VMRecord, error)
-	MarkError(string, string) (*vmstore.VMRecord, error)
-	MarkStopped(string) (*vmstore.VMRecord, error)
+// VMUpdater contains durable VM record updates. Ordinary state changes use
+// UpdateStates; the remaining methods carry additional lifecycle data.
+type VMUpdater interface {
+	UpdateStates([]string, vmstore.VMState) error
+	MarkStarted(string, int, string) (*vmstore.VMRecord, error)
+	UpdatePerformance(string, vmstore.PerformanceMetrics) (*vmstore.VMRecord, error)
+	CompleteHibernate(string, string) (*vmstore.VMRecord, error)
+	SetError(string, string) (*vmstore.VMRecord, error)
 }
 
 // VMRestore contains durable markers for destructive and completed restores.
 type VMRestore interface {
 	BeginRestore(string, string, string) (*vmstore.VMRecord, error)
-	MarkRestoreFailed(string, string) (*vmstore.VMRecord, error)
-	MarkRestored(string, int, string, time.Duration) (*vmstore.VMRecord, error)
-	MarkRestoredWithMetrics(string, int, string, time.Duration, *vmstore.RestoreResult) (*vmstore.VMRecord, error)
+	FailRestore(string, string) (*vmstore.VMRecord, error)
+	CompleteRestore(string, int, string, time.Duration, *vmstore.RestoreResult) (*vmstore.VMRecord, error)
 }
 
 // VMState is the complete VM resource state API consumed by the runtime.
@@ -51,7 +49,7 @@ type VMRestore interface {
 type VMState interface {
 	VMReader
 	VMRecords
-	VMLifecycle
+	VMUpdater
 	VMRestore
 }
 
