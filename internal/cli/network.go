@@ -34,7 +34,11 @@ func newNetworkLSCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			records, err := kbnetwork.NewStore(cfg.Runtime.RootDir).List()
+			stores, err := configuredStores(cfg)
+			if err != nil {
+				return err
+			}
+			records, err := stores.Networks.List()
 			if err != nil {
 				return err
 			}
@@ -120,7 +124,11 @@ func newNetworkInspectCommand(opts *rootOptions) *cobra.Command {
 			var vmID, vmName, networkName string
 			var networks []string
 			var networkConfigs []kbnetwork.Config
-			rec, err := vmstore.New(cfg.Runtime.RootDir).Inspect(args[0])
+			stores, err := configuredStores(cfg)
+			if err != nil {
+				return err
+			}
+			rec, err := stores.VM.Inspect(args[0])
 			if err != nil && !errors.Is(err, vmstore.ErrNotFound) {
 				return err
 			}
@@ -133,7 +141,7 @@ func newNetworkInspectCommand(opts *rootOptions) *cobra.Command {
 			} else {
 				vmID = args[0]
 			}
-			result, err := kbnetwork.NewStore(cfg.Runtime.RootDir).InspectVM(vmID, vmName, networkName, networks, networkConfigs)
+			result, err := stores.Networks.InspectVM(vmID, vmName, networkName, networks, networkConfigs)
 			if err != nil {
 				return err
 			}

@@ -51,15 +51,24 @@ type Builder struct {
 	rootDir  string
 	erofsDir string
 	stageDir string
+	content  *ocistore.Store
+	images   *imagestore.Store
 }
 
 // New returns a Builder rooted under rootDir.
 func New(rootDir string) *Builder {
+	return NewWithStores(rootDir, ocistore.New(rootDir), imagestore.New(rootDir))
+}
+
+// NewWithStores creates a builder using caller-owned metadata stores.
+func NewWithStores(rootDir string, content *ocistore.Store, images *imagestore.Store) *Builder {
 	base := filepath.Join(rootDir, "oci", "erofs")
 	return &Builder{
 		rootDir:  rootDir,
 		erofsDir: filepath.Join(base, "blobs"),
 		stageDir: filepath.Join(base, "staging"),
+		content:  content,
+		images:   images,
 	}
 }
 
@@ -75,7 +84,7 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 		req.MkfsEROFS = "mkfs.erofs"
 	}
 
-	pull, err := ocistore.New(b.rootDir).Pull(ctx, ocistore.PullRequest{
+	pull, err := b.content.Pull(ctx, ocistore.PullRequest{
 		Ref:      req.Ref,
 		Platform: req.Platform,
 		Source:   req.Source,
@@ -156,7 +165,7 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 		return nil, err
 	}
 
-	return imagestore.New(b.rootDir).Create(imagestore.CreateRequest{
+	return b.images.Create(imagestore.CreateRequest{
 		Name: req.Name,
 		Source: imagestore.Source{
 			Type: "oci",

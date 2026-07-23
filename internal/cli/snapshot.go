@@ -97,7 +97,11 @@ func newSnapshotImportCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rec, err := snapshot.NewStore(cfg.Runtime.RootDir).Import(cmd.Context(), snapshot.ImportOptions{Input: input, Name: name, QEMUImgBinary: cfg.Storage.QEMUImgBinary})
+			stores, err := configuredStores(cfg)
+			if err != nil {
+				return err
+			}
+			rec, err := stores.Snapshots.Import(cmd.Context(), snapshot.ImportOptions{Input: input, Name: name, QEMUImgBinary: cfg.Storage.QEMUImgBinary})
 			if err != nil {
 				return err
 			}
@@ -122,7 +126,11 @@ func newSnapshotExportCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("resolve export output: %w", err)
 			}
-			if err := snapshot.NewStore(cfg.Runtime.RootDir).Export(cmd.Context(), args[0], snapshot.ExportOptions{Output: absolute, Compression: compression}); err != nil {
+			stores, err := configuredStores(cfg)
+			if err != nil {
+				return err
+			}
+			if err := stores.Snapshots.Export(cmd.Context(), args[0], snapshot.ExportOptions{Output: absolute, Compression: compression}); err != nil {
 				return err
 			}
 			return writeJSON(cmd.OutOrStdout(), map[string]string{"snapshot": args[0], "output": absolute, "compression": compression})
@@ -176,7 +184,11 @@ func newSnapshotLSCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			records, err := snapshot.NewStore(cfg.Runtime.RootDir).List()
+			stores, err := configuredStores(cfg)
+			if err != nil {
+				return err
+			}
+			records, err := stores.Snapshots.List()
 			if err != nil {
 				return err
 			}
@@ -199,7 +211,11 @@ func newSnapshotInspectCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rec, err := snapshot.NewStore(cfg.Runtime.RootDir).Inspect(args[0])
+			stores, err := configuredStores(cfg)
+			if err != nil {
+				return err
+			}
+			rec, err := stores.Snapshots.Inspect(args[0])
 			if err != nil {
 				return err
 			}
@@ -221,7 +237,11 @@ func newSnapshotRMCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rec, err := snapshot.NewStore(cfg.Runtime.RootDir).Remove(args[0])
+			stores, err := configuredStores(cfg)
+			if err != nil {
+				return err
+			}
+			rec, err := stores.Snapshots.Remove(args[0])
 			if err != nil {
 				return err
 			}

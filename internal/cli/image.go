@@ -13,8 +13,7 @@ import (
 	"github.com/kumabox/kumabox/internal/ocibuild"
 	"github.com/kumabox/kumabox/internal/ociresolver"
 	"github.com/kumabox/kumabox/internal/ocistore"
-	kbsnapshot "github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/resources"
 )
 
 func newImageCommand(opts *rootOptions) *cobra.Command {
@@ -47,7 +46,11 @@ func newImagePullOCICommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := ocistore.New(cfg.Runtime.RootDir).Pull(cmd.Context(), ocistore.PullRequest{
+			stores, err := configuredStores(cfg)
+			if err != nil {
+				return err
+			}
+			result, err := stores.OCI.Pull(cmd.Context(), ocistore.PullRequest{
 				Ref:      args[0],
 				Platform: platform,
 				Source:   source,
@@ -109,7 +112,11 @@ func newImageBuildCommand(opts *rootOptions) *cobra.Command {
 					Result:        result,
 				})
 			}
-			rec, err := ocibuild.New(cfg.Runtime.RootDir).Build(cmd.Context(), ocibuild.BuildRequest{
+			stores, err := configuredStores(cfg)
+			if err != nil {
+				return err
+			}
+			rec, err := ocibuild.NewWithStores(cfg.Runtime.RootDir, stores.OCI, stores.Images).Build(cmd.Context(), ocibuild.BuildRequest{
 				Name:        name,
 				Ref:         args[0],
 				Platform:    platform,
@@ -163,7 +170,11 @@ func newImageImportCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rec, err := imagestore.New(cfg.Runtime.RootDir).ImportLocal(imagestore.ImportRequest{
+			stores, err := configuredStores(cfg)
+			if err != nil {
+				return err
+			}
+			rec, err := stores.Images.ImportLocal(imagestore.ImportRequest{
 				Name:        name,
 				File:        args[0],
 				Firmware:    firmware,
@@ -198,7 +209,11 @@ func newImagePullCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rec, err := imagestore.New(cfg.Runtime.RootDir).Pull(imagestore.PullRequest{
+			stores, err := configuredStores(cfg)
+			if err != nil {
+				return err
+			}
+			rec, err := stores.Images.Pull(imagestore.PullRequest{
 				Name:        name,
 				URL:         args[0],
 				Firmware:    firmware,
@@ -232,7 +247,11 @@ func newImageLSCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			records, err := imagestore.New(cfg.Runtime.RootDir).List()
+			stores, err := configuredStores(cfg)
+			if err != nil {
+				return err
+			}
+			records, err := stores.Images.List()
 			if err != nil {
 				return err
 			}
@@ -258,7 +277,11 @@ func newImageInspectCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rec, err := imagestore.New(cfg.Runtime.RootDir).Inspect(args[0])
+			stores, err := configuredStores(cfg)
+			if err != nil {
+				return err
+			}
+			rec, err := stores.Images.Inspect(args[0])
 			if err != nil {
 				return err
 			}
@@ -285,11 +308,15 @@ func newImageRMCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			refs, err := imageReferencesFromVMs(cfg.Runtime.RootDir)
+			stores, err := configuredStores(cfg)
 			if err != nil {
 				return err
 			}
-			rec, err := imagestore.New(cfg.Runtime.RootDir).Remove(imagestore.RemoveRequest{
+			refs, err := imageReferencesFromVMs(stores)
+			if err != nil {
+				return err
+			}
+			rec, err := stores.Images.Remove(imagestore.RemoveRequest{
 				Ref:        args[0],
 				Force:      force,
 				References: refs,
@@ -304,8 +331,8 @@ func newImageRMCommand(opts *rootOptions) *cobra.Command {
 	return cmd
 }
 
-func imageReferencesFromVMs(rootDir string) ([]imagestore.Reference, error) {
-	records, err := vmstore.New(rootDir).List()
+func imageReferencesFromVMs(stores resources.StoreSet) ([]imagestore.Reference, error) {
+	records, err := stores.VM.List()
 	if err != nil {
 		return nil, err
 	}
@@ -322,13 +349,12 @@ func imageReferencesFromVMs(rootDir string) ([]imagestore.Reference, error) {
 			ImageID: rec.Image.ID,
 		})
 	}
-	snapshotStore := kbsnapshot.NewStore(rootDir)
-	snapshots, err := snapshotStore.List()
+	snapshots, err := stores.Snapshots.List()
 	if err != nil {
 		return nil, fmt.Errorf("read snapshot references: %w", err)
 	}
 	for _, rec := range snapshots {
-		manifest, err := snapshotStore.LoadManifest(context.Background(), rec.ID)
+		manifest, err := stores.Snapshots.LoadManifest(context.Background(), rec.ID)
 		if err != nil {
 			return nil, fmt.Errorf("read snapshot %s image reference: %w", rec.ID, err)
 		}
