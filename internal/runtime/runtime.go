@@ -714,7 +714,7 @@ func (r *Runtime) cleanupNetwork(rec *vmstore.VMRecord) error {
 	if rec == nil || len(rec.NetworkConfigs) == 0 {
 		return nil
 	}
-	store := kbnetwork.NewStore(r.cfg.Runtime.RootDir)
+	store := r.stores.Networks
 	allocator := kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network)
 	var cleanupErrs []error
 	cniCount := countCNIConfigs(rec.NetworkConfigs)
