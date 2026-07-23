@@ -57,6 +57,7 @@ func NewRootCommand() *cobra.Command {
 	cmd.AddCommand(newAgentCommand(opts))
 	cmd.AddCommand(newExecCommand(opts))
 	cmd.AddCommand(newPSCommand(opts))
+	cmd.AddCommand(newMetadataCommand(opts))
 	return cmd
 }
 
