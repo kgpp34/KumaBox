@@ -19,11 +19,16 @@ func (r *Runtime) ResumeVM(ctx context.Context, ref string) (*vmstore.VMRecord, 
 	return r.transitionVMState(ctx, ref, vmstore.StateRunning)
 }
 
-func (r *Runtime) transitionVMState(ctx context.Context, ref string, target vmstore.VMState) (*vmstore.VMRecord, error) {
+func (r *Runtime) transitionVMState(ctx context.Context, ref string, target vmstore.VMState) (result *vmstore.VMRecord, resultErr error) {
 	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
+	operationID, err := r.beginOperation(ctx, liveStateOperation(target), rec.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { resultErr = r.finishOperation(ctx, operationID, resultErr) }()
 	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
 	if err != nil {
 		return nil, fmt.Errorf("lock VM %s for %s: %w", rec.ID, target, err)
@@ -93,6 +98,17 @@ func (r *Runtime) transitionVMState(ctx context.Context, ref string, target vmst
 		CheckedAt: time.Now().UTC(),
 	})
 	return updated, nil
+}
+
+func liveStateOperation(target vmstore.VMState) string {
+	switch target {
+	case vmstore.StatePaused:
+		return "vm.pause"
+	case vmstore.StateRunning:
+		return "vm.resume"
+	default:
+		return "vm.state-transition"
+	}
 }
 
 func (r *Runtime) persistLiveState(ref string, state vmstore.VMState) (*vmstore.VMRecord, error) {
