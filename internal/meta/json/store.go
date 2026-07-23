@@ -419,12 +419,16 @@ func writeFileSync(path string, raw []byte, pattern string) error {
 	return nil
 }
 
-func syncDirectory(path string) error {
+func syncDirectory(path string) (err error) {
 	dir, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open metadata directory: %w", err)
 	}
-	defer func() { _ = dir.Close() }()
+	defer func() {
+		if closeErr := dir.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close metadata directory: %w", closeErr)
+		}
+	}()
 	if err := dir.Sync(); err != nil && !errors.Is(err, os.ErrInvalid) {
 		return fmt.Errorf("sync metadata directory: %w", err)
 	}
