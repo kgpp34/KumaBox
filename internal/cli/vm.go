@@ -303,7 +303,11 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 	if flags.rootDisk != "" || flags.kernel != "" || flags.initrd != "" || flags.firmware != "" {
 		return vmstore.CreateRequest{}, fmt.Errorf("IMAGE cannot be combined with --root-disk, --kernel, --initrd, or --firmware")
 	}
-	image, err := imagestore.New(cfg.Runtime.RootDir).Inspect(args[0])
+	stores, err := configuredStores(cfg)
+	if err != nil {
+		return vmstore.CreateRequest{}, err
+	}
+	image, err := stores.Images.Inspect(args[0])
 	if err != nil {
 		return vmstore.CreateRequest{}, fmt.Errorf("resolve image %q: %w", args[0], err)
 	}
