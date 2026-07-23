@@ -41,7 +41,7 @@ type restoreStageMetrics struct {
 // RestoreNativeVM restores native memory, device state, and writable disks
 // into the original VM identity. Snapshot and VM operation locks are held for
 // the complete transaction.
-func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string, opts NativeRestoreOptions) (*vmstore.VMRecord, error) {
+func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string, opts NativeRestoreOptions) (result *vmstore.VMRecord, resultErr error) {
 	mode, err := normalizeRestoreMode(opts.Mode)
 	if err != nil {
 		return nil, err
@@ -52,6 +52,11 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	if err != nil {
 		return nil, err
 	}
+	operationID, err := r.beginOperation(ctx, "snapshot.restore-native", rec.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { resultErr = r.finishOperation(ctx, operationID, resultErr) }()
 	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
 	if err != nil {
 		return nil, fmt.Errorf("lock VM %s for restore: %w", rec.ID, err)
@@ -123,7 +128,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	}
 	diskCommitDuration := time.Since(diskCommitStarted)
 	backendRestoreStarted := time.Now()
-	result, err := restorer.RestoreVM(ctx, dirty, staged.nativeDir, string(opts.Mode))
+	backendResult, err := restorer.RestoreVM(ctx, dirty, staged.nativeDir, string(opts.Mode))
 	if err != nil {
 		return fail(fmt.Errorf("restore backend state: %w", err))
 	}
@@ -131,13 +136,13 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	readinessStarted := time.Now()
 	if err := r.guestReadiness(ctx, rec.VsockSocket); err != nil {
 		cleanupRec := *dirty
-		cleanupRec.PID = result.PID
-		cleanupRec.APISocket = result.APISocket
+		cleanupRec.PID = backendResult.PID
+		cleanupRec.APISocket = backendResult.APISocket
 		_, _ = r.backend.StopVM(&cleanupRec, backend.StopOptions{Force: true})
 		return fail(fmt.Errorf("verify restored guest readiness: %w", err))
 	}
 	readinessDuration := time.Since(readinessStarted)
-	restored, err := r.vmRestore.CompleteRestore(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
+	restored, err := r.vmRestore.CompleteRestore(rec.ID, backendResult.PID, backendResult.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
 		NativeStageDurationMs:    stageMetrics.nativeStageDuration.Milliseconds(),
 		DiskStageDurationMs:      stageMetrics.diskStageDuration.Milliseconds(),
 		DiskCommitDurationMs:     diskCommitDuration.Milliseconds(),
@@ -146,8 +151,8 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	})
 	if err != nil {
 		cleanupRec := *dirty
-		cleanupRec.PID = result.PID
-		cleanupRec.APISocket = result.APISocket
+		cleanupRec.PID = backendResult.PID
+		cleanupRec.APISocket = backendResult.APISocket
 		_, _ = r.backend.StopVM(&cleanupRec, backend.StopOptions{Force: true})
 		return fail(fmt.Errorf("publish restored VM state: %w", err))
 	}

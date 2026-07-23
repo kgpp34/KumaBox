@@ -24,7 +24,7 @@ type HibernateResult struct {
 
 // HibernateVM durably captures a paused VM and terminates the VMM without a
 // resume gap. Persistence failure resumes the original process.
-func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOptions) (*HibernateResult, error) {
+func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOptions) (result *HibernateResult, resultErr error) {
 	if opts.Name == "" {
 		return nil, errors.New("hibernate snapshot name must not be empty")
 	}
@@ -32,6 +32,11 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 	if err != nil {
 		return nil, err
 	}
+	operationID, err := r.beginOperation(ctx, "vm.hibernate", rec.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { resultErr = r.finishOperation(ctx, operationID, resultErr) }()
 	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
 	if err != nil {
 		return nil, fmt.Errorf("lock VM %s for hibernate: %w", rec.ID, err)

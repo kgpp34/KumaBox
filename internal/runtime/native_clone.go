@@ -31,10 +31,15 @@ type NativeCloneOptions struct {
 
 // CloneNativeSnapshot creates a new running VM from native state while
 // assigning fresh host storage, vsock, and provider network identities.
-func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, opts NativeCloneOptions) (*vmstore.VMRecord, error) {
+func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, opts NativeCloneOptions) (result *vmstore.VMRecord, resultErr error) {
 	if opts.Name == "" {
 		return nil, errors.New("clone VM name must not be empty")
 	}
+	operationID, err := r.beginOperation(ctx, "snapshot.clone-native", snapshotRef)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { resultErr = r.finishOperation(ctx, operationID, resultErr) }()
 	mode, err := normalizeRestoreMode(opts.Mode)
 	if err != nil {
 		return nil, err
@@ -92,16 +97,16 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	}
 	defer lock.Release() //nolint:errcheck
 
-	var result *backend.StartResult
+	var backendResult *backend.StartResult
 	committed := false
 	defer func() {
 		if committed {
 			return
 		}
-		if result != nil {
+		if backendResult != nil {
 			cleanup := *rec
-			cleanup.PID = result.PID
-			cleanup.APISocket = result.APISocket
+			cleanup.PID = backendResult.PID
+			cleanup.APISocket = backendResult.APISocket
 			_, _ = r.backend.StopVM(&cleanup, backend.StopOptions{Force: true})
 		}
 		r.rollbackNetwork(rec)
@@ -137,7 +142,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	}
 	diskCommitDuration := time.Since(diskCommitStarted)
 	backendRestoreStarted := time.Now()
-	result, err = cloner.CloneVM(ctx, dirty, staged.nativeDir, string(opts.Mode))
+	backendResult, err = cloner.CloneVM(ctx, dirty, staged.nativeDir, string(opts.Mode))
 	if err != nil {
 		return nil, fmt.Errorf("restore clone backend state: %w", err)
 	}
@@ -152,7 +157,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		return nil, fmt.Errorf("verify clone guest readiness: %w", err)
 	}
 	readinessDuration := time.Since(readinessStarted)
-	cloned, err := r.vmRestore.CompleteRestore(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
+	cloned, err := r.vmRestore.CompleteRestore(rec.ID, backendResult.PID, backendResult.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
 		NativeStageDurationMs:    stageMetrics.nativeStageDuration.Milliseconds(),
 		DiskStageDurationMs:      stageMetrics.diskStageDuration.Milliseconds(),
 		DiskCommitDurationMs:     diskCommitDuration.Milliseconds(),

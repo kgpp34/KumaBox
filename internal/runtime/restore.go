@@ -24,7 +24,7 @@ type RestoreOptions struct {
 }
 
 // RestoreSnapshot creates a new CREATED VM from portable writable disk state.
-func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreOptions) (*vmstore.VMRecord, error) {
+func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreOptions) (result *vmstore.VMRecord, resultErr error) {
 	if opts.Name == "" {
 		return nil, errors.New("restore VM name must not be empty")
 	}
@@ -37,6 +37,11 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	if len(opts.Networks) == 0 {
 		opts.Networks = []string{"none"}
 	}
+	operationID, err := r.beginOperation(ctx, "snapshot.restore-portable", ref)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { resultErr = r.finishOperation(ctx, operationID, resultErr) }()
 
 	snapshotStore := r.storeSet.Snapshots
 	snapshotRec, lease, err := snapshotStore.AcquireRead(ctx, ref)
