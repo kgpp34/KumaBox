@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 )
@@ -84,7 +85,7 @@ func deleteCNINetnsLinux(vmID, nsPath string) error {
 	}
 }
 
-func createNamedNetns(name string) error {
+func createNamedNetns(name string) (err error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
@@ -92,20 +93,20 @@ func createNamedNetns(name string) error {
 	if err != nil {
 		return fmt.Errorf("get current netns: %w", err)
 	}
-	defer origNS.Close() //nolint:errcheck
+	defer fileutil.CloseAndJoin(&err, &origNS, "close original network namespace")
 
 	ns, err := netns.NewNamed(name)
 	if err != nil {
 		return fmt.Errorf("create netns %s: %w", name, err)
 	}
-	_ = ns.Close()
+	fileutil.CloseAndJoin(&err, &ns, "close created network namespace")
 	if err := netns.Set(origNS); err != nil {
 		return fmt.Errorf("restore netns: %w", err)
 	}
 	return nil
 }
 
-func withNetNSPath(path string, fn func() error) error {
+func withNetNSPath(path string, fn func() error) (err error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
@@ -113,13 +114,13 @@ func withNetNSPath(path string, fn func() error) error {
 	if err != nil {
 		return fmt.Errorf("get current netns: %w", err)
 	}
-	defer origNS.Close() //nolint:errcheck
+	defer fileutil.CloseAndJoin(&err, &origNS, "close original network namespace")
 
 	targetNS, err := netns.GetFromPath(path)
 	if err != nil {
 		return fmt.Errorf("open netns %s: %w", path, err)
 	}
-	defer targetNS.Close() //nolint:errcheck
+	defer fileutil.CloseAndJoin(&err, &targetNS, "close target network namespace")
 
 	if err := netns.Set(targetNS); err != nil {
 		return fmt.Errorf("enter netns %s: %w", path, err)

@@ -51,7 +51,7 @@ func serveVsock(port uint32, handler func(io.ReadWriter)) error {
 		}
 		go func() {
 			conn := &fdConn{file: os.NewFile(uintptr(connFD), "vsock-agent")}
-			defer conn.Close() //nolint:errcheck
+			defer func() { _ = conn.Close() }()
 			handler(conn)
 		}()
 	}

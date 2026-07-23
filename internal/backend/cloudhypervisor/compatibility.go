@@ -79,8 +79,6 @@ func inspectRestoreModes(binary string) []string {
 	if err != nil {
 		return modes
 	}
-	defer file.Close() //nolint:errcheck
-
 	// Older builds ignore unknown restore JSON fields. Schema markers embedded
 	// in the Rust binary let preflight fail before any destructive VM mutation.
 	const overlap = 64
@@ -111,6 +109,9 @@ func inspectRestoreModes(binary string) []string {
 			break
 		}
 	}
+	if err := file.Close(); err != nil {
+		return modes
+	}
 	if hasField && hasOnDemand {
 		modes = append(modes, "ondemand")
 	}
@@ -133,8 +134,6 @@ func linuxCPUIdentity() (string, []string) {
 	if err != nil {
 		return "unknown", nil
 	}
-	defer file.Close() //nolint:errcheck
-
 	vendor := "unknown"
 	var features []string
 	scanner := bufio.NewScanner(file)
@@ -152,6 +151,9 @@ func linuxCPUIdentity() (string, []string) {
 		if vendor != "unknown" && len(features) > 0 {
 			break
 		}
+	}
+	if err := file.Close(); err != nil {
+		return "unknown", nil
 	}
 	sort.Strings(features)
 	return vendor, features

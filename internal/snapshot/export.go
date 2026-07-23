@@ -115,7 +115,7 @@ func writeTarBytes(tw *tar.Writer, name string, data []byte) error {
 	return nil
 }
 
-func writeSparseDisk(ctx context.Context, tw *tar.Writer, path, name string) error {
+func writeSparseDisk(ctx context.Context, tw *tar.Writer, path, name string) (err error) {
 	extents, logical, err := sparseExtents(path)
 	if err != nil {
 		return err
@@ -134,7 +134,11 @@ func writeSparseDisk(ctx context.Context, tw *tar.Writer, path, name string) err
 	if err != nil {
 		return fmt.Errorf("open snapshot disk: %w", err)
 	}
-	defer file.Close() //nolint:errcheck
+	defer func() {
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close snapshot disk: %w", closeErr)
+		}
+	}()
 	for _, extent := range extents {
 		if err := ctx.Err(); err != nil {
 			return err

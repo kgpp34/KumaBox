@@ -547,7 +547,7 @@ type eventRecord struct {
 	APISocket     string                `json:"apiSocket,omitempty"`
 }
 
-func writeVMEvent(rec *vmstore.VMRecord, eventType string, obs vmstore.Observation) error {
+func writeVMEvent(rec *vmstore.VMRecord, eventType string, obs vmstore.Observation) (err error) {
 	if rec.LogDir == "" {
 		return nil
 	}
@@ -560,7 +560,11 @@ func writeVMEvent(rec *vmstore.VMRecord, eventType string, obs vmstore.Observati
 	if err != nil {
 		return fmt.Errorf("open events log: %w", err)
 	}
-	defer file.Close() //nolint:errcheck
+	defer func() {
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close VM events log: %w", closeErr)
+		}
+	}()
 
 	event := eventRecord{
 		Time:          obs.CheckedAt,

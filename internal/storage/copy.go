@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"syscall"
+
+	"github.com/kumabox/kumabox/internal/fileutil"
 )
 
 // MaxConcurrentFileCopies bounds simultaneous large file copies so snapshot
@@ -84,28 +86,25 @@ func copyResult(strategy string, info os.FileInfo, checksum string) CopyResult {
 	}
 }
 
-func bufferedCopy(ctx context.Context, source, destination string) (string, error) {
+func bufferedCopy(ctx context.Context, source, destination string) (strategy string, err error) {
 	src, err := os.Open(source) //nolint:gosec
 	if err != nil {
 		return "", fmt.Errorf("open source disk: %w", err)
 	}
-	defer src.Close()                                                              //nolint:errcheck
+	defer fileutil.CloseAndJoin(&err, src, "close source disk")
 	dst, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec
 	if err != nil {
 		return "", fmt.Errorf("create destination disk: %w", err)
 	}
 	ok := false
 	defer func() {
-		_ = dst.Close()
+		fileutil.CloseAndJoin(&err, dst, "close destination disk")
 		if !ok {
 			_ = os.Remove(destination)
 		}
 	}()
 	if _, err := io.Copy(dst, &contextReader{ctx: ctx, reader: src}); err != nil {
 		return "", fmt.Errorf("copy disk: %w", err)
-	}
-	if err := dst.Close(); err != nil {
-		return "", fmt.Errorf("close copied disk: %w", err)
 	}
 	ok = true
 	return "stream", nil

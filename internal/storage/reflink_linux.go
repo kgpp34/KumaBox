@@ -7,10 +7,11 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/kumabox/kumabox/internal/fileutil"
 	"golang.org/x/sys/unix"
 )
 
-func probeReflink(directory string) (bool, error) {
+func probeReflink(directory string) (result bool, err error) {
 	tmp, err := os.MkdirTemp(directory, ".kumabox-reflink-probe-")
 	if err != nil {
 		return false, fmt.Errorf("create reflink probe directory: %w", err)
@@ -26,12 +27,12 @@ func probeReflink(directory string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("open reflink probe source: %w", err)
 	}
-	defer source.Close()                                                                     //nolint:errcheck
+	defer fileutil.CloseAndJoin(&err, source, "close reflink probe source")
 	destination, err := os.OpenFile(destinationPath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600) //nolint:gosec
 	if err != nil {
 		return false, fmt.Errorf("create reflink probe destination: %w", err)
 	}
-	defer destination.Close() //nolint:errcheck
+	defer fileutil.CloseAndJoin(&err, destination, "close reflink probe destination")
 
 	if err := unix.IoctlFileClone(int(destination.Fd()), int(source.Fd())); err != nil {
 		return false, nil

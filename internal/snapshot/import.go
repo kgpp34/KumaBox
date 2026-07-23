@@ -50,7 +50,7 @@ func (s *Store) Import(ctx context.Context, opts ImportOptions) (record *Record,
 	if err != nil {
 		return nil, fmt.Errorf("open snapshot package: %w", err)
 	}
-	defer file.Close() //nolint:errcheck
+	defer fileutil.CloseAndJoin(&err, file, "close snapshot package")
 	reader, closeReader, err := compressionReader(file)
 	if err != nil {
 		return nil, err
@@ -329,12 +329,16 @@ func hashFile(path string) (string, error) {
 	return hashFileContext(context.Background(), path)
 }
 
-func hashFileContext(ctx context.Context, path string) (string, error) {
+func hashFileContext(ctx context.Context, path string) (sum string, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close() //nolint:errcheck
+	defer func() {
+		if closeErr := f.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close snapshot file: %w", closeErr)
+		}
+	}()
 	h := sha256.New()
 	if _, err := io.Copy(h, &contextReader{ctx: ctx, reader: f}); err != nil {
 		return "", err
@@ -353,12 +357,16 @@ func (r *contextReader) Read(p []byte) (int, error) {
 	}
 	return r.reader.Read(p)
 }
-func validateExt4(path string) error {
+func validateExt4(path string) (err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close() //nolint:errcheck
+	defer func() {
+		if closeErr := f.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close snapshot disk: %w", closeErr)
+		}
+	}()
 	magic := make([]byte, 2)
 	if _, err := f.ReadAt(magic, 1024+56); err != nil || magic[0] != 0x53 || magic[1] != 0xef {
 		return errors.New("SNAPSHOT_CORRUPT: raw disk is not ext4")

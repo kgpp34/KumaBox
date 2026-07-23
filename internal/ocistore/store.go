@@ -327,12 +327,16 @@ func (s *Store) ensureBlob(idx *indexFile, digest, mediaType string, src io.Read
 	return *rec, nil
 }
 
-func fileSHA256(path string) (string, error) {
+func fileSHA256(path string) (sum string, err error) {
 	file, err := os.Open(path) //nolint:gosec
 	if err != nil {
 		return "", err
 	}
-	defer file.Close() //nolint:errcheck
+	defer func() {
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close OCI blob: %w", closeErr)
+		}
+	}()
 	hasher := sha256.New()
 	if _, err := io.Copy(hasher, file); err != nil {
 		return "", err

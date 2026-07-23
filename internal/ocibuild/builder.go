@@ -28,6 +28,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/ocistore"
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -327,12 +328,12 @@ func (b *Builder) resolveBootProfile(layers []ocistore.BlobRecord) (imagestore.B
 	}, nil
 }
 
-func (b *Builder) scanBootAssets(layer ocistore.BlobRecord) (*bootAsset, *bootAsset, error) {
+func (b *Builder) scanBootAssets(layer ocistore.BlobRecord) (kernel, initrd *bootAsset, err error) {
 	in, err := os.Open(layer.Path) //nolint:gosec
 	if err != nil {
 		return nil, nil, fmt.Errorf("open layer blob: %w", err)
 	}
-	defer in.Close() //nolint:errcheck
+	defer fileutil.CloseAndJoin(&err, in, "close OCI layer blob")
 
 	reader, closeReader, err := layerTarReader(layer.MediaType, in)
 	if err != nil {
@@ -340,8 +341,6 @@ func (b *Builder) scanBootAssets(layer ocistore.BlobRecord) (*bootAsset, *bootAs
 	}
 	defer closeReader()
 
-	var kernel *bootAsset
-	var initrd *bootAsset
 	tr := tar.NewReader(reader)
 	for {
 		hdr, err := tr.Next()
@@ -674,12 +673,16 @@ func splitDigest(digest string) (string, string, error) {
 	return algo, value, nil
 }
 
-func fileSHA256(path string) (string, error) {
+func fileSHA256(path string) (sum string, err error) {
 	file, err := os.Open(path) //nolint:gosec
 	if err != nil {
 		return "", fmt.Errorf("open file for sha256: %w", err)
 	}
-	defer file.Close() //nolint:errcheck
+	defer func() {
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close file after sha256: %w", closeErr)
+		}
+	}()
 
 	hasher := sha256.New()
 	if _, err := io.Copy(hasher, file); err != nil {

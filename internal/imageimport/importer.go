@@ -143,12 +143,16 @@ func inspect(qemuImgPath, sourcePath string) (*imageInfo, error) {
 	return &info, nil
 }
 
-func copyAndHashFile(src, dst string) (string, int64, error) {
+func copyAndHashFile(src, dst string) (sum string, size int64, err error) {
 	in, err := os.Open(src) //nolint:gosec
 	if err != nil {
 		return "", 0, fmt.Errorf("open source image: %w", err)
 	}
-	defer in.Close() //nolint:errcheck
+	defer func() {
+		if closeErr := in.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close source image: %w", closeErr)
+		}
+	}()
 	return writeStreamWithSHA256(in, dst)
 }
 
@@ -187,7 +191,7 @@ func fileURLPath(parsed *url.URL) (string, error) {
 	return path, nil
 }
 
-func downloadHTTP(rawURL, dst string) (string, int64, error) {
+func downloadHTTP(rawURL, dst string) (sum string, size int64, err error) {
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
 		return "", 0, fmt.Errorf("create image download request: %w", err)
@@ -196,7 +200,11 @@ func downloadHTTP(rawURL, dst string) (string, int64, error) {
 	if err != nil {
 		return "", 0, fmt.Errorf("download image: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer func() {
+		if closeErr := resp.Body.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close image response: %w", closeErr)
+		}
+	}()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return "", 0, fmt.Errorf("download image: unexpected HTTP status %s", resp.Status)
 	}

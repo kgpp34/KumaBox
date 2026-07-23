@@ -122,7 +122,7 @@ func Render(cfg Config) (*Rendered, error) {
 //
 // The directory files are useful for debugging. The disk image is what Cloud
 // Hypervisor attaches to the guest during firmware/cloud-image boots.
-func WriteNoCloud(dir, diskPath string, cfg Config) error {
+func WriteNoCloud(dir, diskPath string, cfg Config) (err error) {
 	rendered, err := Render(cfg)
 	if err != nil {
 		return err
@@ -149,7 +149,11 @@ func WriteNoCloud(dir, diskPath string, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("create cidata disk: %w", err)
 	}
-	defer file.Close() //nolint:errcheck
+	defer func() {
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close cidata disk: %w", closeErr)
+		}
+	}()
 	if err := WriteFAT12(file, CidataLabel, files); err != nil {
 		return fmt.Errorf("write cidata disk: %w", err)
 	}

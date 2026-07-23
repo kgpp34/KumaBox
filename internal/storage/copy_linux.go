@@ -9,22 +9,26 @@ import (
 	"io"
 	"os"
 
+	"github.com/kumabox/kumabox/internal/fileutil"
 	"golang.org/x/sys/unix"
 )
 
-func copyPlatform(ctx context.Context, source, destination string) (string, error) {
+func copyPlatform(ctx context.Context, source, destination string) (strategy string, err error) {
 	src, err := os.Open(source) //nolint:gosec
 	if err != nil {
 		return "", fmt.Errorf("open source disk: %w", err)
 	}
-	defer src.Close()                                                            //nolint:errcheck
+	defer fileutil.CloseAndJoin(&err, src, "close source disk")
 	dst, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600) //nolint:gosec
 	if err != nil {
 		return "", fmt.Errorf("create destination disk: %w", err)
 	}
 	ok := false
+	dstClosed := false
 	defer func() {
-		_ = dst.Close()
+		if !dstClosed {
+			fileutil.CloseAndJoin(&err, dst, "close destination disk")
+		}
 		if !ok {
 			_ = os.Remove(destination)
 		}
@@ -43,10 +47,11 @@ func copyPlatform(ctx context.Context, source, destination string) (string, erro
 	if err := dst.Close(); err != nil {
 		return "", fmt.Errorf("close sparse fallback: %w", err)
 	}
+	dstClosed = true
 	if err := os.Remove(destination); err != nil {
 		return "", fmt.Errorf("reset sparse fallback: %w", err)
 	}
-	strategy, err := bufferedCopy(ctx, source, destination)
+	strategy, err = bufferedCopy(ctx, source, destination)
 	if err != nil {
 		return "", err
 	}

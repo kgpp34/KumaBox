@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/backend"
+	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/storage"
@@ -289,11 +290,11 @@ func (s *stagedRestore) cleanup() error {
 	return errors.Join(errs...)
 }
 
-func syncDirectory(path string) error {
+func syncDirectory(path string) (err error) {
 	dir, err := os.Open(path) //nolint:gosec
 	if err != nil {
 		return err
 	}
-	defer dir.Close() //nolint:errcheck
+	defer fileutil.CloseAndJoin(&err, dir, "close restore directory")
 	return dir.Sync()
 }

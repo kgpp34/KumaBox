@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/backend"
+	"github.com/kumabox/kumabox/internal/fileutil"
 )
 
 const (
@@ -39,7 +40,7 @@ func (Starter) StartConfig(path string) (*backend.StartResult, error) {
 	return startProcess(cfg)
 }
 
-func startProcess(cfg Config) (*backend.StartResult, error) {
+func startProcess(cfg Config) (result *backend.StartResult, err error) {
 	if err := validateStartConfig(cfg); err != nil {
 		return nil, err
 	}
@@ -58,13 +59,13 @@ func startProcess(cfg Config) (*backend.StartResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open stdout log: %w", err)
 	}
-	defer stdout.Close() //nolint:errcheck
+	defer fileutil.CloseAndJoin(&err, stdout, "close Cloud Hypervisor stdout log")
 
 	stderr, err := os.OpenFile(cfg.StderrLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open stderr log: %w", err)
 	}
-	defer stderr.Close() //nolint:errcheck
+	defer fileutil.CloseAndJoin(&err, stderr, "close Cloud Hypervisor stderr log")
 
 	cmd := exec.Command(cfg.Binary, cfg.Args...) //nolint:gosec
 	cmd.Stdout = stdout

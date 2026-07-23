@@ -7,10 +7,11 @@ import (
 	"os/exec"
 	"runtime"
 
+	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/vishvananda/netns"
 )
 
-func startInNetNS(cmd *exec.Cmd, netnsPath string) error {
+func startInNetNS(cmd *exec.Cmd, netnsPath string) (err error) {
 	if netnsPath == "" {
 		return cmd.Start()
 	}
@@ -21,13 +22,13 @@ func startInNetNS(cmd *exec.Cmd, netnsPath string) error {
 	if err != nil {
 		return fmt.Errorf("get current netns: %w", err)
 	}
-	defer origNS.Close() //nolint:errcheck
+	defer fileutil.CloseAndJoin(&err, &origNS, "close original network namespace")
 
 	targetNS, err := netns.GetFromPath(netnsPath)
 	if err != nil {
 		return fmt.Errorf("open netns %s: %w", netnsPath, err)
 	}
-	defer targetNS.Close() //nolint:errcheck
+	defer fileutil.CloseAndJoin(&err, &targetNS, "close target network namespace")
 
 	if err := netns.Set(targetNS); err != nil {
 		return fmt.Errorf("enter netns %s: %w", netnsPath, err)

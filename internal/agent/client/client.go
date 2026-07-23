@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/agent/protocol"
+	"github.com/kumabox/kumabox/internal/fileutil"
 )
 
 const (
@@ -152,12 +153,12 @@ func ConfigureIdentity(ctx context.Context, socketPath string, req IdentityReque
 	return &resp, nil
 }
 
-func roundTrip(ctx context.Context, socketPath string, req any, resp any) error {
+func roundTrip(ctx context.Context, socketPath string, req any, resp any) (err error) {
 	conn, err := dialHybridVsock(ctx, socketPath, AgentPort)
 	if err != nil {
 		return fmt.Errorf("%w: dial guest agent: %v", ErrNotReady, err)
 	}
-	defer conn.Close() //nolint:errcheck
+	defer fileutil.CloseAndJoin(&err, conn, "close guest agent connection")
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -58,7 +59,7 @@ func doAPIOnce(ctx context.Context, socketPath string, timeout time.Duration, me
 	return doAPIOnceWithClient(ctx, client, method, endpoint, body, successCodes...)
 }
 
-func doAPIOnceWithClient(ctx context.Context, client *http.Client, method, endpoint string, body []byte, successCodes ...int) ([]byte, error) {
+func doAPIOnceWithClient(ctx context.Context, client *http.Client, method, endpoint string, body []byte, successCodes ...int) (responseBody []byte, err error) {
 	req, err := http.NewRequestWithContext(ctx, method, apiBaseURL+endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create %s request: %w", endpoint, err)
@@ -70,9 +71,9 @@ func doAPIOnceWithClient(ctx context.Context, client *http.Client, method, endpo
 	if err != nil {
 		return nil, fmt.Errorf("BACKEND_API_UNAVAILABLE: %s: %w", endpoint, err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
+	defer fileutil.CloseAndJoin(&err, resp.Body, "close backend API response")
 
-	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, apiErrorBodySize+1))
+	responseBody, err = io.ReadAll(io.LimitReader(resp.Body, apiErrorBodySize+1))
 	if err != nil {
 		return nil, fmt.Errorf("read %s response: %w", endpoint, err)
 	}

@@ -7,14 +7,16 @@ import (
 	"fmt"
 	"golang.org/x/sys/unix"
 	"os"
+
+	"github.com/kumabox/kumabox/internal/fileutil"
 )
 
-func sparseExtents(path string) ([]extent, int64, error) {
+func sparseExtents(path string) (result []extent, size int64, err error) {
 	f, err := os.Open(path) //nolint:gosec
 	if err != nil {
 		return nil, 0, fmt.Errorf("open sparse disk: %w", err)
 	}
-	defer f.Close() //nolint:errcheck
+	defer fileutil.CloseAndJoin(&err, f, "close sparse disk")
 	info, err := f.Stat()
 	if err != nil {
 		return nil, 0, err
