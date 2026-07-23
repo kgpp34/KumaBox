@@ -771,7 +771,7 @@ func (r *Runtime) cleanupNetwork(rec *vmstore.VMRecord) error {
 
 func cleanupNetworkConfig(
 	ctx context.Context,
-	store *kbnetwork.Store,
+	store state.NetworkState,
 	allocator *kbnetwork.Allocator,
 	cfg config.Config,
 	rec *vmstore.VMRecord,

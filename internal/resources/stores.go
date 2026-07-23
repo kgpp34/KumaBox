@@ -22,11 +22,11 @@ import (
 // set to Runtime, GC, or a CLI command.
 type StoreSet struct {
 	VM         state.VMState
-	Images     *imagestore.Store
-	Snapshots  *snapshot.Store
-	Networks   *kbnetwork.Store
-	OCI        *ocistore.Store
-	Operations *operation.Journal
+	Images     state.ImageState
+	Snapshots  state.SnapshotState
+	Networks   state.NetworkState
+	OCI        state.OCIState
+	Operations state.OperationState
 	Metadata   meta.MetaEngine
 }
 

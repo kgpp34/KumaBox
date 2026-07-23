@@ -3,8 +3,11 @@ package state
 import (
 	"context"
 
+	"github.com/kumabox/kumabox/internal/backend"
 	kbimage "github.com/kumabox/kumabox/internal/imagestore"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
+	"github.com/kumabox/kumabox/internal/ocistore"
+	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
 )
 
@@ -25,6 +28,8 @@ type ImageState interface {
 // explicit to callers.
 type SnapshotState interface {
 	Reserve(context.Context, string) (*snapshot.Build, error)
+	Import(context.Context, snapshot.ImportOptions) (*snapshot.Record, error)
+	Export(context.Context, string, snapshot.ExportOptions) error
 	List() ([]*snapshot.Record, error)
 	Scan() ([]*snapshot.Record, error)
 	IsLeased(string) (bool, error)
@@ -32,6 +37,9 @@ type SnapshotState interface {
 	AcquireRead(context.Context, string) (*snapshot.Record, *snapshot.Lease, error)
 	LoadManifest(context.Context, string) (*snapshot.Manifest, error)
 	Remove(string) (*snapshot.Record, error)
+	VerifyNative(context.Context, string, snapshot.NativeVerifyTarget) (*snapshot.Manifest, error)
+	VerifyNativeRecord(context.Context, *snapshot.Record, snapshot.NativeVerifyTarget) (*snapshot.Manifest, error)
+	VerifyNativePayloadRecord(context.Context, *snapshot.Record, backend.NativeHost) (*snapshot.Manifest, error)
 }
 
 // NetworkState is the provider metadata capability. Host device operations
@@ -53,3 +61,19 @@ type NetworkState interface {
 var _ ImageState = (*kbimage.Store)(nil)
 var _ SnapshotState = (*snapshot.Store)(nil)
 var _ NetworkState = (*kbnetwork.Store)(nil)
+
+// OCIState is the content metadata capability used by image workflows.
+type OCIState interface {
+	Pull(context.Context, ocistore.PullRequest) (*ocistore.PullResult, error)
+}
+
+// OperationState records control-plane work that can require reconciliation.
+type OperationState interface {
+	Begin(context.Context, string, string, string) (*operation.Record, error)
+	Complete(context.Context, string) (*operation.Record, error)
+	Fail(context.Context, string, string) (*operation.Record, error)
+	Recoverable(context.Context) ([]operation.Record, error)
+}
+
+var _ OCIState = (*ocistore.Store)(nil)
+var _ OperationState = (*operation.Journal)(nil)

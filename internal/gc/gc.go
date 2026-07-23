@@ -20,6 +20,7 @@ import (
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
+	"github.com/kumabox/kumabox/internal/state"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -132,7 +133,7 @@ func DryRun(cfg config.Config) (*Report, error) {
 }
 
 func snapshotGCCandidates(
-	store *snapshot.Store,
+	store state.SnapshotState,
 	rootDir string,
 	records []*snapshot.Record,
 	now time.Time,
