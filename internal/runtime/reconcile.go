@@ -33,6 +33,10 @@ func (r *Runtime) reconcileOperation(ctx context.Context, record operation.Recor
 			return nil
 		}
 		return fmt.Errorf("VM_DELETE_INCOMPLETE: VM %s still exists", record.ResourceID)
+	case operation.KindNetworkAttach:
+		return r.requireNetworkAttached(record)
+	case operation.KindNetworkCleanup:
+		return r.requireNetworkClean(record)
 	case operation.KindSnapshotCreateRun, operation.KindSnapshotCloneNative,
 		operation.KindSnapshotRestoreDisk, operation.KindSnapshotRestoreVM,
 		operation.KindVMHibernate:
@@ -40,6 +44,34 @@ func (r *Runtime) reconcileOperation(ctx context.Context, record operation.Recor
 	default:
 		return fmt.Errorf("OPERATION_KIND_UNKNOWN: %s", record.Kind)
 	}
+}
+
+func (r *Runtime) requireNetworkAttached(record operation.Record) error {
+	if r.storeSet.Networks == nil {
+		return fmt.Errorf("NETWORK_RECONCILIATION_UNAVAILABLE: network state is not configured")
+	}
+	result, err := r.storeSet.Networks.Inspect(record.ResourceID)
+	if err != nil {
+		return err
+	}
+	if len(result.Interfaces) == 0 {
+		return fmt.Errorf("NETWORK_ATTACH_INCOMPLETE: VM %s has no provider interface", record.ResourceID)
+	}
+	return nil
+}
+
+func (r *Runtime) requireNetworkClean(record operation.Record) error {
+	if r.storeSet.Networks == nil {
+		return fmt.Errorf("NETWORK_RECONCILIATION_UNAVAILABLE: network state is not configured")
+	}
+	result, err := r.storeSet.Networks.Inspect(record.ResourceID)
+	if err != nil {
+		return err
+	}
+	if len(result.Interfaces) != 0 {
+		return fmt.Errorf("NETWORK_CLEANUP_INCOMPLETE: VM %s still has %d provider interface(s)", record.ResourceID, len(result.Interfaces))
+	}
+	return nil
 }
 
 func (r *Runtime) requireVMState(record operation.Record, expected vmstore.ObservedState) error {

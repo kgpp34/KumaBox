@@ -667,7 +667,12 @@ func prepareCOW(cfg vmstore.StorageConfig) error {
 	return nil
 }
 
-func (r *Runtime) attachNetwork(rec *vmstore.VMRecord) error {
+func (r *Runtime) attachNetwork(rec *vmstore.VMRecord) (resultErr error) {
+	operationID, err := r.beginOperation(context.Background(), operation.KindNetworkAttach, rec.ID)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = r.finishOperation(context.Background(), operationID, resultErr) }()
 	selections := networkSelections(rec)
 	if len(selections) == 0 {
 		return nil
@@ -769,7 +774,12 @@ func (r *Runtime) rollbackNetwork(rec *vmstore.VMRecord) {
 	rollbackNetworkConfigs(rec, r.cfg, rec.NetworkConfigs)
 }
 
-func (r *Runtime) cleanupNetwork(rec *vmstore.VMRecord) error {
+func (r *Runtime) cleanupNetwork(rec *vmstore.VMRecord) (resultErr error) {
+	operationID, err := r.beginOperation(context.Background(), operation.KindNetworkCleanup, rec.ID)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = r.finishOperation(context.Background(), operationID, resultErr) }()
 	if rec == nil || len(rec.NetworkConfigs) == 0 {
 		return nil
 	}
