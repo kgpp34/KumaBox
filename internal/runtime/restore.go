@@ -38,7 +38,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 		opts.Networks = []string{"none"}
 	}
 
-	snapshotStore := snapshot.NewStore(r.store.RootDir())
+	snapshotStore := r.stores.Snapshots
 	snapshotRec, lease, err := snapshotStore.AcquireRead(ctx, ref)
 	if err != nil {
 		return nil, err
@@ -49,7 +49,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	if err != nil {
 		return nil, err
 	}
-	image, err := imagestore.New(r.store.RootDir()).Inspect(manifest.Source.ImageID)
+	image, err := r.stores.Images.Inspect(manifest.Source.ImageID)
 	if err != nil {
 		return nil, fmt.Errorf("BASE_IMAGE_MISSING: resolve image %s: %w", manifest.Source.ImageID, err)
 	}

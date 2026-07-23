@@ -8,7 +8,6 @@ import (
 
 	agentclient "github.com/kumabox/kumabox/internal/agent/client"
 	"github.com/kumabox/kumabox/internal/backend"
-	"github.com/kumabox/kumabox/internal/imagestore"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -51,7 +50,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		return nil, errors.New("BACKEND_OPERATION_UNSUPPORTED: backend does not expose native compatibility")
 	}
 
-	snapshotStore := snapshot.NewStore(r.store.RootDir())
+	snapshotStore := r.stores.Snapshots
 	snapshotRec, lease, err := snapshotStore.AcquireRead(ctx, snapshotRef)
 	if err != nil {
 		return nil, err
@@ -72,7 +71,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err != nil {
 		return nil, err
 	}
-	image, err := imagestore.New(r.store.RootDir()).Inspect(manifest.Source.ImageID)
+	image, err := r.stores.Images.Inspect(manifest.Source.ImageID)
 	if err != nil {
 		return nil, fmt.Errorf("BASE_IMAGE_MISSING: resolve image %s: %w", manifest.Source.ImageID, err)
 	}

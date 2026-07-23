@@ -50,7 +50,7 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 		return nil, errors.New("BACKEND_OPERATION_UNSUPPORTED: backend does not expose native compatibility")
 	}
 
-	build, err := snapshot.NewStore(r.store.RootDir()).Reserve(ctx, name)
+	build, err := r.stores.Snapshots.Reserve(ctx, name)
 	if err != nil {
 		return nil, err
 	}

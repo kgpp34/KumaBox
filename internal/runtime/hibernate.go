@@ -58,7 +58,7 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 		return nil, errors.New("BACKEND_OPERATION_UNSUPPORTED: backend does not expose native compatibility")
 	}
 
-	snapshotStore := snapshot.NewStore(r.store.RootDir())
+	snapshotStore := r.stores.Snapshots
 	build, err := snapshotStore.Reserve(ctx, opts.Name)
 	if err != nil {
 		return nil, err

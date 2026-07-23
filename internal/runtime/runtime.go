@@ -31,6 +31,7 @@ const forcedStopTimeout = 5 * time.Second
 // the current backend process state before making lifecycle decisions.
 type Runtime struct {
 	store          state.VMState
+	stores         StoreSet
 	backend        backend.Lifecycle
 	cfg            config.Config
 	vmLocks        *lockfile.Locker
@@ -61,7 +62,7 @@ func (r *Runtime) CreateStoppedSnapshot(ctx context.Context, ref, name string) (
 	if observed.State != vmstore.StateStopped {
 		return nil, fmt.Errorf("VM_NOT_STOPPED: VM %s state is %s", rec.Name, observed.State)
 	}
-	build, err := snapshot.NewStore(r.store.RootDir()).Reserve(ctx, name)
+	build, err := r.stores.Snapshots.Reserve(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -93,8 +94,25 @@ func New(cfg config.Config) *Runtime {
 func NewWithBackend(store state.VMState, vmBackend backend.Lifecycle) *Runtime {
 	return &Runtime{
 		store:          store,
+		stores:         newStoreSet(store.RootDir(), store),
 		backend:        vmBackend,
 		vmLocks:        lockfile.New(filepath.Join(store.RootDir(), "locks", "vms")),
+		qemuImg:        storage.NewQEMUImg("qemu-img"),
+		guestReadiness: verifyGuestExecReadiness,
+	}
+}
+
+// NewWithBackendAndStores creates a Runtime with an explicit resource-store
+// composition. This is the seam used when switching metadata engines.
+func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) *Runtime {
+	if stores.VM == nil {
+		panic("runtime store set must include a VM store")
+	}
+	return &Runtime{
+		store:          stores.VM,
+		stores:         stores,
+		backend:        vmBackend,
+		vmLocks:        lockfile.New(filepath.Join(stores.VM.RootDir(), "locks", "vms")),
 		qemuImg:        storage.NewQEMUImg("qemu-img"),
 		guestReadiness: verifyGuestExecReadiness,
 	}
@@ -443,7 +461,7 @@ func (r *Runtime) inspectNetwork(rec *vmstore.VMRecord) *kbnetwork.InspectResult
 	if rec == nil {
 		return nil
 	}
-	result, err := kbnetwork.NewStore(r.cfg.Runtime.RootDir).InspectVM(rec.ID, rec.Name, rec.Network, rec.Networks, rec.NetworkConfigs)
+	result, err := r.stores.Networks.InspectVM(rec.ID, rec.Name, rec.Network, rec.Networks, rec.NetworkConfigs)
 	if err != nil {
 		return &kbnetwork.InspectResult{
 			VMID:       rec.ID,
@@ -643,7 +661,7 @@ func (r *Runtime) attachNetworkConfig(rec *vmstore.VMRecord, selection string, i
 		_ = kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network).ReleaseIP(allocation.Config.Network.IP)
 		return nil, err
 	}
-	networkStore := kbnetwork.NewStore(r.cfg.Runtime.RootDir)
+	networkStore := r.stores.Networks
 	if err := networkStore.UpsertRecord(allocation.Record); err != nil {
 		_ = deleteHostTap(allocation.Record.TAP)
 		_ = kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network).ReleaseIP(allocation.Config.Network.IP)
@@ -671,7 +689,7 @@ func (r *Runtime) attachCNIConfig(rec *vmstore.VMRecord, selection string, index
 	if err != nil {
 		return nil, err
 	}
-	networkStore := kbnetwork.NewStore(r.cfg.Runtime.RootDir)
+	networkStore := r.stores.Networks
 	if err := networkStore.UpsertRecord(allocation.Record); err != nil {
 		_ = deleteCNI(context.Background(), r.cfg.Runtime.RootDir, r.cfg.Network, kbnetwork.CNIDeleteRequest{
 			VMID:      rec.ID,
