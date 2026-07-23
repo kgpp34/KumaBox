@@ -12,6 +12,7 @@ import (
 func newMetadataCommand(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "metadata", Short: "Inspect metadata storage"}
 	cmd.AddCommand(newMetadataStatusCommand(opts))
+	cmd.AddCommand(newMetadataVerifyCommand(opts))
 	return cmd
 }
 
@@ -45,6 +46,39 @@ func newMetadataStatusCommand(opts *rootOptions) *cobra.Command {
 				result["namespaces"] = status
 			}
 			return writeJSON(cmd.OutOrStdout(), result)
+		},
+	}
+}
+
+func newMetadataVerifyCommand(opts *rootOptions) *cobra.Command {
+	return &cobra.Command{
+		Use: "verify", Short: "Verify metadata backend identity and namespace state", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			stores, err := configuredStores(cfg)
+			if err != nil {
+				return err
+			}
+			if cfg.Metadata.Backend != "sqlite" {
+				return writeJSON(cmd.OutOrStdout(), map[string]any{"backend": cfg.Metadata.Backend, "verified": true})
+			}
+			engine, ok := stores.Metadata.(*metasqlite.Store)
+			if !ok {
+				return fmt.Errorf("configured SQLite metadata engine has unexpected type %T", stores.Metadata)
+			}
+			status, err := engine.Status(cmd.Context())
+			if err != nil {
+				return err
+			}
+			for _, namespace := range status {
+				if namespace.State != "initialized" && namespace.State != "converted" {
+					return fmt.Errorf("metadata namespace %q has invalid state %q", namespace.Namespace, namespace.State)
+				}
+			}
+			return writeJSON(cmd.OutOrStdout(), map[string]any{"backend": "sqlite", "verified": true, "namespaces": status})
 		},
 	}
 }
