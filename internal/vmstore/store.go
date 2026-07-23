@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	stdjson "encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -25,6 +24,8 @@ type Store struct {
 	rootDir string
 	engine  meta.MetaEngine
 }
+
+var vmIndexCollection = meta.NewCollection[vmIndex]("vms", vmIndexTable)
 
 // New returns a VM store rooted under rootDir.
 //
@@ -522,24 +523,16 @@ func (s *Store) update(fn func(*vmIndex) error) error {
 		if err := fn(idx); err != nil {
 			return err
 		}
-		raw, err := marshalIndex(idx)
-		if err != nil {
-			return err
-		}
-		return writer.PutRaw(ctx, "vms", vmIndexTable, vmIndexRecord, raw)
+		return vmIndexCollection.Upsert(ctx, writer, vmIndexRecord, idx)
 	})
 }
 
 func (s *Store) readIndex(ctx context.Context, reader meta.Reader) (*vmIndex, error) {
-	raw, ok, err := reader.GetRaw(ctx, "vms", vmIndexTable, vmIndexRecord)
-	if err != nil {
+	idx, err := vmIndexCollection.Get(ctx, reader, vmIndexRecord)
+	if errors.Is(err, meta.ErrNotFound) {
+		idx = &vmIndex{}
+	} else if err != nil {
 		return nil, fmt.Errorf("read VM index: %w", err)
-	}
-	idx := &vmIndex{}
-	if ok {
-		if err := unmarshalIndex(raw, idx); err != nil {
-			return nil, err
-		}
 	}
 	idx.init()
 	for id, rec := range idx.VMs {
@@ -548,21 +541,6 @@ func (s *Store) readIndex(ctx context.Context, reader meta.Reader) (*vmIndex, er
 		}
 	}
 	return idx, nil
-}
-
-func marshalIndex(idx *vmIndex) ([]byte, error) {
-	raw, err := stdjson.Marshal(idx)
-	if err != nil {
-		return nil, fmt.Errorf("encode VM index: %w", err)
-	}
-	return raw, nil
-}
-
-func unmarshalIndex(raw []byte, idx *vmIndex) error {
-	if err := stdjson.Unmarshal(raw, idx); err != nil {
-		return fmt.Errorf("parse VM index: %w", err)
-	}
-	return nil
 }
 
 func validateCreateRequest(req CreateRequest) error {

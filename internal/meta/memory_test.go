@@ -112,6 +112,45 @@ func TestMemoryEngineDetachedValuesAndStableScan(t *testing.T) {
 	}
 }
 
+func TestCollectionPersistsTypedDetachedRecords(t *testing.T) {
+	type record struct {
+		Name string `json:"name"`
+	}
+
+	engine := newTestEngine(t)
+	collection := NewCollection[record]("vm", "records")
+	ctx := context.Background()
+	if err := engine.Update(ctx, Scope{Write: "vm"}, CommitDurable, func(writer Writer) error {
+		return collection.Upsert(ctx, writer, "vm-1", &record{Name: "one"})
+	}); err != nil {
+		t.Fatalf("typed update: %v", err)
+	}
+
+	if err := engine.View(ctx, []Namespace{"vm"}, func(reader Reader) error {
+		got, err := collection.Get(ctx, reader, "vm-1")
+		if err != nil {
+			return err
+		}
+		got.Name = "mutated outside transaction"
+		return nil
+	}); err != nil {
+		t.Fatalf("typed view: %v", err)
+	}
+
+	if err := engine.View(ctx, []Namespace{"vm"}, func(reader Reader) error {
+		got, err := collection.Get(ctx, reader, "vm-1")
+		if err != nil {
+			return err
+		}
+		if got.Name != "one" {
+			t.Fatalf("typed record was not detached: %q", got.Name)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("verify typed record: %v", err)
+	}
+}
+
 func TestMemoryEngineEventsAreCoalesced(t *testing.T) {
 	engine := newTestEngine(t)
 	ctx := context.Background()

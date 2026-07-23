@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	stdjson "encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -27,6 +26,8 @@ type Store struct {
 	cloudimgDir string
 	engine      meta.MetaEngine
 }
+
+var imageIndexCollection = meta.NewCollection[imageIndex]("images", imageIndexTable)
 
 // New returns a Store rooted under rootDir.
 func New(rootDir string) *Store {
@@ -505,24 +506,16 @@ func (s *Store) update(fn func(*imageIndex) error) error {
 		if err := fn(idx); err != nil {
 			return err
 		}
-		raw, err := stdjson.Marshal(idx)
-		if err != nil {
-			return fmt.Errorf("encode image index: %w", err)
-		}
-		return writer.PutRaw(ctx, "images", imageIndexTable, imageIndexRecord, raw)
+		return imageIndexCollection.Upsert(ctx, writer, imageIndexRecord, idx)
 	})
 }
 
 func (s *Store) readIndex(ctx context.Context, reader meta.Reader) (*imageIndex, error) {
-	raw, ok, err := reader.GetRaw(ctx, "images", imageIndexTable, imageIndexRecord)
-	if err != nil {
+	idx, err := imageIndexCollection.Get(ctx, reader, imageIndexRecord)
+	if errors.Is(err, meta.ErrNotFound) {
+		idx = &imageIndex{}
+	} else if err != nil {
 		return nil, fmt.Errorf("read image index: %w", err)
-	}
-	idx := &imageIndex{}
-	if ok {
-		if err := stdjson.Unmarshal(raw, idx); err != nil {
-			return nil, fmt.Errorf("parse image index: %w", err)
-		}
 	}
 	idx.init()
 	return idx, nil

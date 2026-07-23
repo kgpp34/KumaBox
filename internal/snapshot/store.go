@@ -26,6 +26,8 @@ type Store struct {
 	leaser   *leaser
 }
 
+var snapshotIndexCollection = meta.NewCollection[snapshotIndex]("snapshots", snapshotIndexTable)
+
 // NewStore creates a snapshot store under rootDir.
 func NewStore(rootDir string) *Store {
 	dir := filepath.Join(rootDir, "snapshot")
@@ -383,11 +385,7 @@ func (s *Store) withIndex(write bool, fn func(*snapshotIndex) error) error {
 			if err := fn(idx); err != nil {
 				return err
 			}
-			raw, err := stdjson.Marshal(idx)
-			if err != nil {
-				return fmt.Errorf("encode snapshot index: %w", err)
-			}
-			return writer.PutRaw(ctx, "snapshots", snapshotIndexTable, snapshotIndexRecord, raw)
+			return snapshotIndexCollection.Upsert(ctx, writer, snapshotIndexRecord, idx)
 		})
 	}
 	return s.engine.View(ctx, []meta.Namespace{"snapshots"}, func(reader meta.Reader) error {
@@ -400,15 +398,11 @@ func (s *Store) withIndex(write bool, fn func(*snapshotIndex) error) error {
 }
 
 func (s *Store) readIndex(ctx context.Context, reader meta.Reader) (*snapshotIndex, error) {
-	raw, ok, err := reader.GetRaw(ctx, "snapshots", snapshotIndexTable, snapshotIndexRecord)
-	if err != nil {
+	idx, err := snapshotIndexCollection.Get(ctx, reader, snapshotIndexRecord)
+	if errors.Is(err, meta.ErrNotFound) {
+		idx = &snapshotIndex{}
+	} else if err != nil {
 		return nil, fmt.Errorf("read snapshot index: %w", err)
-	}
-	idx := &snapshotIndex{}
-	if ok {
-		if err := stdjson.Unmarshal(raw, idx); err != nil {
-			return nil, fmt.Errorf("decode snapshot index: %w", err)
-		}
 	}
 	idx.init()
 	return idx, nil

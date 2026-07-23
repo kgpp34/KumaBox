@@ -2,7 +2,7 @@ package network
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -33,6 +33,12 @@ type Store struct {
 	hostTapPath   string
 	hostTapLock   string
 }
+
+var (
+	networkIndexCollection = meta.NewCollection[networkIndex]("networks", networkIndexTable)
+	leaseIndexCollection   = meta.NewCollection[leaseIndex]("leases", networkLeaseTable)
+	hostTapCollection      = meta.NewCollection[HostTapState]("host-tap", hostTapTable)
+)
 
 type index struct {
 	SchemaVersion string             `json:"schemaVersion"`
@@ -322,11 +328,7 @@ func (s *Store) withIndex(write bool, fn func(*networkIndex) error) error {
 			if err := fn(idx); err != nil {
 				return err
 			}
-			raw, err := json.Marshal(idx)
-			if err != nil {
-				return fmt.Errorf("encode network index: %w", err)
-			}
-			return writer.PutRaw(ctx, "networks", networkIndexTable, networkIndexRecord, raw)
+			return networkIndexCollection.Upsert(ctx, writer, networkIndexRecord, idx)
 		})
 	}
 	return s.engine.View(ctx, []meta.Namespace{"networks"}, func(reader meta.Reader) error {
@@ -339,15 +341,11 @@ func (s *Store) withIndex(write bool, fn func(*networkIndex) error) error {
 }
 
 func (s *Store) readNetworkIndex(ctx context.Context, reader meta.Reader) (*networkIndex, error) {
-	raw, ok, err := reader.GetRaw(ctx, "networks", networkIndexTable, networkIndexRecord)
-	if err != nil {
+	idx, err := networkIndexCollection.Get(ctx, reader, networkIndexRecord)
+	if errors.Is(err, meta.ErrNotFound) {
+		idx = &networkIndex{SchemaVersion: indexSchemaVersion, Networks: map[string]*Record{}}
+	} else if err != nil {
 		return nil, fmt.Errorf("read network index: %w", err)
-	}
-	idx := &networkIndex{SchemaVersion: indexSchemaVersion, Networks: map[string]*Record{}}
-	if ok {
-		if err := json.Unmarshal(raw, idx); err != nil {
-			return nil, fmt.Errorf("parse network index: %w", err)
-		}
 	}
 	if idx.SchemaVersion != "" && idx.SchemaVersion != indexSchemaVersion {
 		return nil, fmt.Errorf("unsupported network index schema %q", idx.SchemaVersion)
@@ -369,11 +367,7 @@ func (s *Store) withLeases(write bool, fn func(*leaseIndex) error) error {
 			if err := fn(leases); err != nil {
 				return err
 			}
-			raw, err := json.Marshal(leases)
-			if err != nil {
-				return fmt.Errorf("encode network leases: %w", err)
-			}
-			return writer.PutRaw(ctx, "leases", networkLeaseTable, networkLeaseRecord, raw)
+			return leaseIndexCollection.Upsert(ctx, writer, networkLeaseRecord, leases)
 		})
 	}
 	return s.leaseEngine.View(ctx, []meta.Namespace{"leases"}, func(reader meta.Reader) error {
@@ -386,15 +380,11 @@ func (s *Store) withLeases(write bool, fn func(*leaseIndex) error) error {
 }
 
 func (s *Store) readLeaseIndex(ctx context.Context, reader meta.Reader) (*leaseIndex, error) {
-	raw, ok, err := reader.GetRaw(ctx, "leases", networkLeaseTable, networkLeaseRecord)
-	if err != nil {
+	leases, err := leaseIndexCollection.Get(ctx, reader, networkLeaseRecord)
+	if errors.Is(err, meta.ErrNotFound) {
+		leases = &leaseIndex{SchemaVersion: leaseSchemaVersion, Leases: map[string]*Lease{}}
+	} else if err != nil {
 		return nil, fmt.Errorf("read network leases: %w", err)
-	}
-	leases := &leaseIndex{SchemaVersion: leaseSchemaVersion, Leases: map[string]*Lease{}}
-	if ok {
-		if err := json.Unmarshal(raw, leases); err != nil {
-			return nil, fmt.Errorf("parse network leases: %w", err)
-		}
 	}
 	if leases.SchemaVersion != "" && leases.SchemaVersion != leaseSchemaVersion {
 		return nil, fmt.Errorf("unsupported network leases schema %q", leases.SchemaVersion)
@@ -447,20 +437,13 @@ func (s *Store) adjustHostTapRef(delta int, requireState bool) error {
 func (s *Store) withHostTap(write bool, fn func(**HostTapState) error) error {
 	ctx := context.Background()
 	read := func(reader meta.Reader) error {
-		raw, ok, err := reader.GetRaw(ctx, "host-tap", hostTapTable, hostTapRecord)
-		if err != nil {
+		state, err := hostTapCollection.Get(ctx, reader, hostTapRecord)
+		if errors.Is(err, meta.ErrNotFound) {
+			state = nil
+		} else if err != nil {
 			return fmt.Errorf("read host-tap state: %w", err)
-		}
-		var state *HostTapState
-		if ok {
-			var decoded HostTapState
-			if err := json.Unmarshal(raw, &decoded); err != nil {
-				return fmt.Errorf("parse host-tap state: %w", err)
-			}
-			if decoded.SchemaVersion == "" {
-				decoded.SchemaVersion = hostTapSchemaVersion
-			}
-			state = &decoded
+		} else if state.SchemaVersion == "" {
+			state.SchemaVersion = hostTapSchemaVersion
 		}
 		return fn(&state)
 	}
@@ -473,25 +456,17 @@ func (s *Store) withHostTap(write bool, fn func(**HostTapState) error) error {
 				if !hadState {
 					return nil
 				}
-				return writer.DeleteRaw(ctx, "host-tap", hostTapTable, hostTapRecord)
+				return hostTapCollection.Delete(ctx, writer, hostTapRecord)
 			}
-			raw, err := json.Marshal(current)
-			if err != nil {
-				return fmt.Errorf("encode host-tap state: %w", err)
-			}
-			return writer.PutRaw(ctx, "host-tap", hostTapTable, hostTapRecord, raw)
+			return hostTapCollection.Upsert(ctx, writer, hostTapRecord, current)
 		}
 		var state *HostTapState
 		hadState := false
-		if raw, ok, err := writer.GetRaw(ctx, "host-tap", hostTapTable, hostTapRecord); err != nil {
+		if decoded, err := hostTapCollection.Get(ctx, writer, hostTapRecord); err != nil && !errors.Is(err, meta.ErrNotFound) {
 			return err
-		} else if ok {
+		} else if err == nil {
 			hadState = true
-			var decoded HostTapState
-			if err := json.Unmarshal(raw, &decoded); err != nil {
-				return fmt.Errorf("parse host-tap state: %w", err)
-			}
-			state = &decoded
+			state = decoded
 		}
 		if err := fn(&state); err != nil {
 			return err

@@ -7,16 +7,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/fileutil"
+	"github.com/kumabox/kumabox/internal/meta"
+	metajson "github.com/kumabox/kumabox/internal/meta/json"
 	"github.com/kumabox/kumabox/internal/ociresolver"
 	"github.com/kumabox/kumabox/internal/ocisource"
 )
@@ -24,8 +24,7 @@ import (
 // Store caches OCI manifest/config/layer blobs by digest.
 type Store struct {
 	rootDir  string
-	index    string
-	lockPath string
+	engine   meta.MetaEngine
 	blobsDir string
 	stageDir string
 }
@@ -88,16 +87,25 @@ type indexFile struct {
 	Refs          map[string]*RefRecord  `json:"refs"`
 }
 
+var contentIndexCollection = meta.NewCollection[indexFile]("oci-content", contentIndexTable)
+
 // New returns an OCI content store under rootDir.
 func New(rootDir string) *Store {
 	base := filepath.Join(rootDir, "oci", "content")
 	return &Store{
 		rootDir:  base,
-		index:    filepath.Join(base, "index.json"),
-		lockPath: filepath.Join(base, "index.lock"),
+		engine:   mustOpenContentEngine(metajson.Namespace{Name: "oci-content", FilePath: filepath.Join(base, "index.json"), LockPath: filepath.Join(base, "index.lock"), Codec: indexCodec{}}),
 		blobsDir: filepath.Join(base, "blobs"),
 		stageDir: filepath.Join(base, "staging"),
 	}
+}
+
+func mustOpenContentEngine(namespace metajson.Namespace) meta.MetaEngine {
+	engine, err := metajson.Open(namespace)
+	if err != nil {
+		panic(fmt.Sprintf("open OCI content metadata engine: %v", err))
+	}
+	return engine
 }
 
 // Pull resolves an OCI ref and downloads manifest/config/layers into the blob store.
@@ -131,17 +139,6 @@ func (s *Store) Pull(ctx context.Context, req PullRequest) (*PullResult, error) 
 		return nil, fmt.Errorf("OCI_LAYERS_FAILED: %w", err)
 	}
 
-	unlock, err := s.lock()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-
-	idx, err := s.load()
-	if err != nil {
-		return nil, err
-	}
-
 	result := &PullResult{
 		SchemaVersion: "kumabox.oci.content.pull.v1",
 		Ref:           resolved.Ref,
@@ -151,70 +148,80 @@ func (s *Store) Pull(ctx context.Context, req PullRequest) (*PullResult, error) 
 	}
 	emitProgress(req.Progress, ProgressEvent{Phase: "manifest", Digest: resolved.ResolvedDigest})
 
-	result.Manifest, err = s.ensureBlob(idx, resolved.ResolvedDigest, "application/vnd.oci.image.manifest.v1+json", bytes.NewReader(manifestBytes))
+	err = s.engine.Update(ctx, meta.Scope{Write: "oci-content"}, meta.CommitDurable, func(writer meta.Writer) error {
+		idx, err := contentIndexCollection.Get(ctx, writer, contentIndexRecord)
+		if errors.Is(err, meta.ErrNotFound) {
+			idx = &indexFile{}
+		} else if err != nil {
+			return fmt.Errorf("read OCI content index: %w", err)
+		}
+		idx.init()
+		result.Manifest, err = s.ensureBlob(idx, resolved.ResolvedDigest, "application/vnd.oci.image.manifest.v1+json", bytes.NewReader(manifestBytes))
+		if err != nil {
+			return fmt.Errorf("store manifest: %w", err)
+		}
+		result.Config, err = s.ensureBlob(idx, resolved.Config.Digest, resolved.Config.MediaType, bytes.NewReader(configBytes))
+		if err != nil {
+			return fmt.Errorf("store config: %w", err)
+		}
+		emitProgress(req.Progress, ProgressEvent{Phase: "config", Digest: result.Config.Digest})
+
+		for i, layer := range layers {
+			digest, err := layer.Digest()
+			if err != nil {
+				return fmt.Errorf("layer %d digest: %w", i, err)
+			}
+			mediaType, err := layer.MediaType()
+			if err != nil {
+				return fmt.Errorf("layer %d media type: %w", i, err)
+			}
+			rc, err := layer.Compressed()
+			if err != nil {
+				return fmt.Errorf("layer %d compressed stream: %w", i, err)
+			}
+			rec, storeErr := s.ensureBlob(idx, digest.String(), string(mediaType), rc)
+			closeErr := rc.Close()
+			if storeErr != nil {
+				return fmt.Errorf("store layer %d: %w", i, storeErr)
+			}
+			if closeErr != nil {
+				return fmt.Errorf("close layer %d: %w", i, closeErr)
+			}
+			result.Layers = append(result.Layers, rec)
+			emitProgress(req.Progress, ProgressEvent{
+				Phase:  "layer",
+				Index:  i,
+				Total:  len(layers),
+				Digest: rec.Digest,
+				Cached: rec.CreatedAt != rec.UpdatedAt,
+			})
+		}
+
+		for _, rec := range append([]BlobRecord{result.Manifest, result.Config}, result.Layers...) {
+			if rec.CreatedAt.Equal(rec.UpdatedAt) {
+				result.Downloaded++
+				continue
+			}
+			result.Cached++
+		}
+
+		layerDigests := make([]string, 0, len(result.Layers))
+		for _, layer := range result.Layers {
+			layerDigests = append(layerDigests, layer.Digest)
+		}
+		now := time.Now().UTC()
+		idx.Refs[resolved.Ref] = &RefRecord{
+			Ref:            resolved.Ref,
+			DigestRef:      resolved.DigestRef,
+			ResolvedDigest: resolved.ResolvedDigest,
+			Platform:       resolved.Platform,
+			Config:         result.Config.Digest,
+			Layers:         layerDigests,
+			UpdatedAt:      now,
+		}
+		return contentIndexCollection.Upsert(ctx, writer, contentIndexRecord, idx)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("store manifest: %w", err)
-	}
-	result.Config, err = s.ensureBlob(idx, resolved.Config.Digest, resolved.Config.MediaType, bytes.NewReader(configBytes))
-	if err != nil {
-		return nil, fmt.Errorf("store config: %w", err)
-	}
-	emitProgress(req.Progress, ProgressEvent{Phase: "config", Digest: result.Config.Digest})
-
-	for i, layer := range layers {
-		digest, err := layer.Digest()
-		if err != nil {
-			return nil, fmt.Errorf("layer %d digest: %w", i, err)
-		}
-		mediaType, err := layer.MediaType()
-		if err != nil {
-			return nil, fmt.Errorf("layer %d media type: %w", i, err)
-		}
-		rc, err := layer.Compressed()
-		if err != nil {
-			return nil, fmt.Errorf("layer %d compressed stream: %w", i, err)
-		}
-		rec, storeErr := s.ensureBlob(idx, digest.String(), string(mediaType), rc)
-		closeErr := rc.Close()
-		if storeErr != nil {
-			return nil, fmt.Errorf("store layer %d: %w", i, storeErr)
-		}
-		if closeErr != nil {
-			return nil, fmt.Errorf("close layer %d: %w", i, closeErr)
-		}
-		result.Layers = append(result.Layers, rec)
-		emitProgress(req.Progress, ProgressEvent{
-			Phase:  "layer",
-			Index:  i,
-			Total:  len(layers),
-			Digest: rec.Digest,
-			Cached: rec.CreatedAt != rec.UpdatedAt,
-		})
-	}
-
-	for _, rec := range append([]BlobRecord{result.Manifest, result.Config}, result.Layers...) {
-		if rec.CreatedAt.Equal(rec.UpdatedAt) {
-			result.Downloaded++
-			continue
-		}
-		result.Cached++
-	}
-
-	layerDigests := make([]string, 0, len(result.Layers))
-	for _, layer := range result.Layers {
-		layerDigests = append(layerDigests, layer.Digest)
-	}
-	now := time.Now().UTC()
-	idx.Refs[resolved.Ref] = &RefRecord{
-		Ref:            resolved.Ref,
-		DigestRef:      resolved.DigestRef,
-		ResolvedDigest: resolved.ResolvedDigest,
-		Platform:       resolved.Platform,
-		Config:         result.Config.Digest,
-		Layers:         layerDigests,
-		UpdatedAt:      now,
-	}
-	if err := s.write(idx); err != nil {
 		return nil, err
 	}
 	emitProgress(req.Progress, ProgressEvent{Phase: "complete", Total: len(result.Layers)})
@@ -327,49 +334,6 @@ func fileSHA256(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(hasher.Sum(nil)), nil
-}
-
-func (s *Store) load() (*indexFile, error) {
-	raw, err := os.ReadFile(s.index) //nolint:gosec
-	if err != nil {
-		if os.IsNotExist(err) {
-			idx := &indexFile{}
-			idx.init()
-			return idx, nil
-		}
-		return nil, fmt.Errorf("read OCI content index: %w", err)
-	}
-	var idx indexFile
-	if err := json.Unmarshal(raw, &idx); err != nil {
-		return nil, fmt.Errorf("parse OCI content index: %w", err)
-	}
-	idx.init()
-	return &idx, nil
-}
-
-func (s *Store) write(idx *indexFile) error {
-	if err := fileutil.WriteJSONAtomic(s.index, idx, ".index-*.tmp"); err != nil {
-		return fmt.Errorf("write OCI content index: %w", err)
-	}
-	return nil
-}
-
-func (s *Store) lock() (func(), error) {
-	if err := os.MkdirAll(filepath.Dir(s.lockPath), 0o755); err != nil {
-		return nil, fmt.Errorf("create OCI content lock dir: %w", err)
-	}
-	file, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return nil, fmt.Errorf("open OCI content lock: %w", err)
-	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("lock OCI content index: %w", err)
-	}
-	return func() {
-		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-		_ = file.Close()
-	}, nil
 }
 
 func (idx *indexFile) init() {

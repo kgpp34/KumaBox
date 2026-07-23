@@ -55,14 +55,15 @@ type MetaEngine interface {
 	Close() error
 }
 
-// Reader exposes detached metadata values inside one consistent view.
+// Reader is the low-level storage SPI used by Collection. Resource code should
+// normally use a typed Collection instead of handling encoded values directly.
 type Reader interface {
 	GetRaw(ctx context.Context, namespace Namespace, table Table, id RecordID) (json.RawMessage, bool, error)
 	ScanRaw(ctx context.Context, namespace Namespace, table Table, fn func(RecordID, json.RawMessage) error) error
 }
 
-// Writer is the write-capable transaction view. All mutations are discarded
-// when the callback returns an error.
+// Writer is the low-level write SPI. All mutations are discarded when the
+// callback returns an error. Collection is the typed boundary above it.
 type Writer interface {
 	Reader
 	PutRaw(ctx context.Context, namespace Namespace, table Table, id RecordID, raw json.RawMessage) error
