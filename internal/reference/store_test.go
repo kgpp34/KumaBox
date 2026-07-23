@@ -12,7 +12,11 @@ func TestStoreListsExplicitTargetReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer engine.Close()
+	defer func() {
+		if err := engine.Close(); err != nil {
+			t.Errorf("close metadata engine: %v", err)
+		}
+	}()
 	store := NewWithEngine(engine)
 	ctx := context.Background()
 	if err := store.Upsert(ctx, Record{ID: "ref-1", SourceKind: "vm", SourceID: "vm-1", TargetKind: "snapshot", TargetID: "snap-1"}); err != nil {

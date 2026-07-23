@@ -144,9 +144,9 @@ func waitForUnixSocket(path string, exited <-chan error, timeout time.Duration) 
 		select {
 		case err := <-exited:
 			if err == nil {
-				return fmt.Errorf("Cloud Hypervisor exited before API socket became ready")
+				return fmt.Errorf("cloud hypervisor exited before API socket became ready")
 			}
-			return fmt.Errorf("Cloud Hypervisor exited before API socket became ready: %w", err)
+			return fmt.Errorf("cloud hypervisor exited before API socket became ready: %w", err)
 		default:
 		}
 		conn, err := net.DialTimeout("unix", path, 100*time.Millisecond)

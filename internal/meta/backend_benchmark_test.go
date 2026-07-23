@@ -36,7 +36,11 @@ func benchmarkMetadataUpdate(b *testing.B, open func(string) (meta.MetaEngine, e
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer engine.Close()
+	b.Cleanup(func() {
+		if err := engine.Close(); err != nil {
+			b.Errorf("close metadata engine: %v", err)
+		}
+	})
 	collection := meta.NewCollection[benchmarkRecord]("bench", "records")
 	ctx := context.Background()
 	b.ReportAllocs()
@@ -71,7 +75,11 @@ func TestMetadataBackendsRollbackTheWholeUpdate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer engine.Close()
+			t.Cleanup(func() {
+				if err := engine.Close(); err != nil {
+					t.Errorf("close metadata engine: %v", err)
+				}
+			})
 			collection := meta.NewCollection[benchmarkRecord]("fault", "records")
 			ctx := context.Background()
 			wantErr := errors.New("injected failure")
