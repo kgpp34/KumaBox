@@ -48,6 +48,7 @@ type Record struct {
 	ID         string     `json:"id"`
 	Kind       string     `json:"kind"`
 	ResourceID string     `json:"resourceId"`
+	RelatedID  string     `json:"relatedId,omitempty"`
 	Status     Status     `json:"status"`
 	StartedAt  time.Time  `json:"startedAt"`
 	FinishedAt *time.Time `json:"finishedAt,omitempty"`
@@ -80,11 +81,19 @@ func NewWithEngine(engine meta.MetaEngine) *Journal {
 func (j *Journal) MetadataEngine() meta.MetaEngine { return j.engine }
 
 func (j *Journal) Begin(ctx context.Context, id, kind, resourceID string) (*Record, error) {
+	return j.begin(ctx, id, kind, resourceID, "")
+}
+
+func (j *Journal) BeginWithRelated(ctx context.Context, id, kind, resourceID, relatedID string) (*Record, error) {
+	return j.begin(ctx, id, kind, resourceID, relatedID)
+}
+
+func (j *Journal) begin(ctx context.Context, id, kind, resourceID, relatedID string) (*Record, error) {
 	if id == "" || kind == "" || resourceID == "" {
 		return nil, fmt.Errorf("operation id, kind, and resource id are required: %w", meta.ErrScope)
 	}
 	now := time.Now().UTC()
-	record := &Record{ID: id, Kind: kind, ResourceID: resourceID, Status: StatusRunning, StartedAt: now, Attempt: 1}
+	record := &Record{ID: id, Kind: kind, ResourceID: resourceID, RelatedID: relatedID, Status: StatusRunning, StartedAt: now, Attempt: 1}
 	err := j.engine.Update(ctx, meta.Scope{Write: namespace}, meta.CommitDurable, func(writer meta.Writer) error {
 		previous, err := j.collection.Get(ctx, writer, meta.RecordID(id))
 		if err == nil {

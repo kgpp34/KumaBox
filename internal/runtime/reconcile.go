@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/kumabox/kumabox/internal/operation"
+	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -37,13 +38,78 @@ func (r *Runtime) reconcileOperation(ctx context.Context, record operation.Recor
 		return r.requireNetworkAttached(record)
 	case operation.KindNetworkCleanup:
 		return r.requireNetworkClean(record)
-	case operation.KindSnapshotCreateRun, operation.KindSnapshotCloneNative,
-		operation.KindSnapshotRestoreDisk, operation.KindSnapshotRestoreVM,
-		operation.KindVMHibernate:
-		return fmt.Errorf("OPERATION_RECONCILIATION_UNSUPPORTED: %s requires snapshot-specific inspection", record.Kind)
+	case operation.KindSnapshotCreateRun:
+		return r.requireSnapshotForVM(ctx, record, record.RelatedID)
+	case operation.KindSnapshotCloneNative:
+		return r.requireVMRestoredFromSnapshot(record.RelatedID)
+	case operation.KindSnapshotRestoreVM:
+		return r.requireVMRestore(record)
+	case operation.KindVMHibernate:
+		return r.requireSnapshotForVM(ctx, record, record.RelatedID)
+	case operation.KindSnapshotRestoreDisk:
+		return fmt.Errorf("OPERATION_RECONCILIATION_UNSUPPORTED: portable restore has no durable output VM identity")
 	default:
 		return fmt.Errorf("OPERATION_KIND_UNKNOWN: %s", record.Kind)
 	}
+}
+
+func (r *Runtime) requireVMRestore(record operation.Record) error {
+	rec, err := r.vmReader.Inspect(record.ResourceID)
+	if err != nil {
+		return err
+	}
+	if rec.LastRestore != nil && rec.LastRestore.SnapshotID == record.RelatedID {
+		return nil
+	}
+	if rec.SnapshotDependency != nil && rec.SnapshotDependency.SnapshotID == record.RelatedID {
+		return nil
+	}
+	return fmt.Errorf("SNAPSHOT_RESTORE_INCOMPLETE: VM %s has no completed restore from %s", rec.ID, record.RelatedID)
+}
+
+func (r *Runtime) requireVMRestoredFromSnapshot(snapshotRef string) error {
+	records, err := r.vmReader.List()
+	if err != nil {
+		return err
+	}
+	for _, rec := range records {
+		if rec == nil {
+			continue
+		}
+		if rec.LastRestore != nil && rec.LastRestore.SnapshotID == snapshotRef {
+			return nil
+		}
+		if rec.SnapshotDependency != nil && rec.SnapshotDependency.SnapshotID == snapshotRef {
+			return nil
+		}
+	}
+	return fmt.Errorf("SNAPSHOT_CLONE_INCOMPLETE: no VM restored from snapshot %s", snapshotRef)
+}
+
+func (r *Runtime) requireSnapshotForVM(ctx context.Context, record operation.Record, snapshotRef string) error {
+	if r.storeSet.Snapshots == nil {
+		return fmt.Errorf("SNAPSHOT_RECONCILIATION_UNAVAILABLE: snapshot state is not configured")
+	}
+	snapshots, err := r.storeSet.Snapshots.Scan()
+	if err != nil {
+		return err
+	}
+	for _, candidate := range snapshots {
+		if candidate == nil || candidate.State != snapshot.StateReady {
+			continue
+		}
+		if candidate.ID != snapshotRef && candidate.Name != snapshotRef {
+			continue
+		}
+		manifest, err := r.storeSet.Snapshots.LoadManifest(ctx, candidate.ID)
+		if err != nil {
+			return err
+		}
+		if manifest.Source.VMID == record.ResourceID {
+			return nil
+		}
+	}
+	return fmt.Errorf("SNAPSHOT_OPERATION_INCOMPLETE: no ready snapshot %s for VM %s", snapshotRef, record.ResourceID)
 }
 
 func (r *Runtime) requireNetworkAttached(record operation.Record) error {

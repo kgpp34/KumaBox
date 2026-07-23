@@ -9,6 +9,10 @@ import (
 )
 
 func (r *Runtime) beginOperation(ctx context.Context, kind, resourceID string) (string, error) {
+	return r.beginOperationWithRelated(ctx, kind, resourceID, "")
+}
+
+func (r *Runtime) beginOperationWithRelated(ctx context.Context, kind, resourceID, relatedID string) (string, error) {
 	if r.operations == nil {
 		return "", nil
 	}
@@ -16,7 +20,7 @@ func (r *Runtime) beginOperation(ctx context.Context, kind, resourceID string) (
 	if err != nil {
 		return "", err
 	}
-	if _, err := r.operations.Begin(ctx, id, kind, resourceID); err != nil {
+	if _, err := r.operations.BeginWithRelated(ctx, id, kind, resourceID, relatedID); err != nil {
 		return "", err
 	}
 	return id, nil

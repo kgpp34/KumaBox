@@ -38,7 +38,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	if len(opts.Networks) == 0 {
 		opts.Networks = []string{"none"}
 	}
-	operationID, err := r.beginOperation(ctx, operation.KindSnapshotRestoreDisk, ref)
+	operationID, err := r.beginOperationWithRelated(ctx, operation.KindSnapshotRestoreDisk, ref, ref)
 	if err != nil {
 		return nil, err
 	}

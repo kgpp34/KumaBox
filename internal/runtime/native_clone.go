@@ -36,7 +36,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if opts.Name == "" {
 		return nil, errors.New("clone VM name must not be empty")
 	}
-	operationID, err := r.beginOperation(ctx, operation.KindSnapshotCloneNative, snapshotRef)
+	operationID, err := r.beginOperationWithRelated(ctx, operation.KindSnapshotCloneNative, snapshotRef, snapshotRef)
 	if err != nil {
 		return nil, err
 	}

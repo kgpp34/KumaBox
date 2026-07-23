@@ -24,7 +24,7 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 	if err != nil {
 		return nil, err
 	}
-	operationID, err := r.beginOperation(ctx, operation.KindSnapshotCreateRun, rec.ID)
+	operationID, err := r.beginOperationWithRelated(ctx, operation.KindSnapshotCreateRun, rec.ID, name)
 	if err != nil {
 		return nil, err
 	}

@@ -33,7 +33,7 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 	if err != nil {
 		return nil, err
 	}
-	operationID, err := r.beginOperation(ctx, operation.KindVMHibernate, rec.ID)
+	operationID, err := r.beginOperationWithRelated(ctx, operation.KindVMHibernate, rec.ID, opts.Name)
 	if err != nil {
 		return nil, err
 	}

@@ -53,7 +53,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	if err != nil {
 		return nil, err
 	}
-	operationID, err := r.beginOperation(ctx, operation.KindSnapshotRestoreVM, rec.ID)
+	operationID, err := r.beginOperationWithRelated(ctx, operation.KindSnapshotRestoreVM, rec.ID, snapshotRef)
 	if err != nil {
 		return nil, err
 	}
