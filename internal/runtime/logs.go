@@ -54,7 +54,7 @@ type VMLogs struct {
 // failed, stopped, and deleted-after-failure states where only some streams may
 // have been produced.
 func (r *Runtime) LogsVM(ref string, opts LogOptions) (*VMLogs, error) {
-	rec, err := r.vmStore.Inspect(ref)
+	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}

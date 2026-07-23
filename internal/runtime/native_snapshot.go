@@ -19,7 +19,7 @@ const snapshotCleanupTimeout = 30 * time.Second
 // one pause window, then publishes the snapshot after the source VM resumes.
 func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (*snapshot.Record, error) {
 	captureStarted := time.Now()
-	rec, err := r.vmStore.Inspect(ref)
+	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +29,7 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 	}
 	defer lock.Release() //nolint:errcheck
 
-	rec, err = r.vmStore.Inspect(rec.ID)
+	rec, err = r.vmReader.Inspect(rec.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -129,10 +129,10 @@ func captureNativeWindow(ctx context.Context, snapshotter backend.NativeSnapshot
 func (r *Runtime) persistSnapshotResumeFailure(rec *vmstore.VMRecord) {
 	observation := r.backend.ObserveVM(rec)
 	if observation.State == vmstore.ObservedStatePaused {
-		_, _ = r.vmStore.MarkPaused(rec.ID)
+		_, _ = r.vmLifecycle.MarkPaused(rec.ID)
 		return
 	}
-	_, _ = r.vmStore.MarkError(rec.ID, "failed to resume VM after running snapshot")
+	_, _ = r.vmLifecycle.MarkError(rec.ID, "failed to resume VM after running snapshot")
 }
 
 func wrapOptional(operation string, err error) error {

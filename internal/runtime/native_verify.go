@@ -12,7 +12,7 @@ import (
 // VerifyNativeSnapshot performs a read-only restore preflight against an
 // existing VM. It shares the same compatibility path used by restore.
 func (r *Runtime) VerifyNativeSnapshot(ctx context.Context, snapshotRef, vmRef string) (*snapshot.Manifest, error) {
-	rec, err := r.vmStore.Inspect(vmRef)
+	rec, err := r.vmReader.Inspect(vmRef)
 	if err != nil {
 		return nil, err
 	}
@@ -21,7 +21,7 @@ func (r *Runtime) VerifyNativeSnapshot(ctx context.Context, snapshotRef, vmRef s
 		return nil, fmt.Errorf("lock VM %s for snapshot verification: %w", rec.ID, err)
 	}
 	defer lock.Release() //nolint:errcheck
-	rec, err = r.vmStore.Inspect(rec.ID)
+	rec, err = r.vmReader.Inspect(rec.ID)
 	if err != nil {
 		return nil, err
 	}

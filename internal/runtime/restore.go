@@ -57,13 +57,13 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	if err != nil {
 		return nil, err
 	}
-	rec, err := r.vmStore.Create(req)
+	rec, err := r.vmRecords.Create(req)
 	if err != nil {
 		return nil, err
 	}
 	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
 	if err != nil {
-		_ = r.vmStore.Delete(rec.ID)
+		_ = r.vmRecords.Delete(rec.ID)
 		return nil, err
 	}
 	defer lock.Release() //nolint:errcheck
@@ -72,8 +72,8 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	defer func() {
 		if !ok {
 			r.rollbackNetwork(rec)
-			_ = removeManagedDirs(rec, r.vmStore.RootDir())
-			_ = r.vmStore.Delete(rec.ID)
+			_ = removeManagedDirs(rec, r.vmReader.RootDir())
+			_ = r.vmRecords.Delete(rec.ID)
 		}
 	}()
 	if err := restoreWritableDisks(ctx, rec, snapshotRec.DataDir, manifest, r.qemuImg); err != nil {
@@ -82,10 +82,10 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	if err := r.attachNetwork(rec); err != nil {
 		return nil, err
 	}
-	if updated, inspectErr := r.vmStore.Inspect(rec.ID); inspectErr == nil {
+	if updated, inspectErr := r.vmReader.Inspect(rec.ID); inspectErr == nil {
 		rec = updated
 	}
-	if err := prepareStorageWithQEMUImg(ctx, rec, r.vmStore.RootDir(), r.qemuImg); err != nil {
+	if err := prepareStorageWithQEMUImg(ctx, rec, r.vmReader.RootDir(), r.qemuImg); err != nil {
 		return nil, err
 	}
 	if err := r.backend.RenderConfig(rec); err != nil {

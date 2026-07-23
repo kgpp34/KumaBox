@@ -81,13 +81,13 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err != nil {
 		return nil, err
 	}
-	rec, err := r.vmStore.Create(req)
+	rec, err := r.vmRecords.Create(req)
 	if err != nil {
 		return nil, err
 	}
 	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
 	if err != nil {
-		_ = r.vmStore.Delete(rec.ID)
+		_ = r.vmRecords.Delete(rec.ID)
 		return nil, fmt.Errorf("lock clone VM %s: %w", rec.ID, err)
 	}
 	defer lock.Release() //nolint:errcheck
@@ -105,14 +105,14 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 			_, _ = r.backend.StopVM(&cleanup, backend.StopOptions{Force: true})
 		}
 		r.rollbackNetwork(rec)
-		_ = removeManagedDirs(rec, r.vmStore.RootDir())
-		_ = r.vmStore.Delete(rec.ID)
+		_ = removeManagedDirs(rec, r.vmReader.RootDir())
+		_ = r.vmRecords.Delete(rec.ID)
 	}()
 
 	if err := r.attachNetwork(rec); err != nil {
 		return nil, err
 	}
-	rec, err = r.vmStore.Inspect(rec.ID)
+	rec, err = r.vmReader.Inspect(rec.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +127,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		return nil, err
 	}
 	defer staged.cleanup() //nolint:errcheck
-	dirty, err := r.vmStore.BeginRestore(rec.ID, snapshotRec.ID, string(opts.Mode))
+	dirty, err := r.vmRestore.BeginRestore(rec.ID, snapshotRec.ID, string(opts.Mode))
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +152,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		return nil, fmt.Errorf("verify clone guest readiness: %w", err)
 	}
 	readinessDuration := time.Since(readinessStarted)
-	cloned, err := r.vmStore.MarkRestoredWithMetrics(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
+	cloned, err := r.vmRestore.MarkRestoredWithMetrics(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
 		NativeStageDurationMs:    stageMetrics.nativeStageDuration.Milliseconds(),
 		DiskStageDurationMs:      stageMetrics.diskStageDuration.Milliseconds(),
 		DiskCommitDurationMs:     diskCommitDuration.Milliseconds(),

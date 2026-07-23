@@ -20,7 +20,7 @@ func (r *Runtime) ResumeVM(ctx context.Context, ref string) (*vmstore.VMRecord, 
 }
 
 func (r *Runtime) transitionVMState(ctx context.Context, ref string, target vmstore.VMState) (*vmstore.VMRecord, error) {
-	rec, err := r.vmStore.Inspect(ref)
+	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +30,7 @@ func (r *Runtime) transitionVMState(ctx context.Context, ref string, target vmst
 	}
 	defer lock.Release() //nolint:errcheck
 
-	rec, err = r.vmStore.Inspect(rec.ID)
+	rec, err = r.vmReader.Inspect(rec.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func (r *Runtime) transitionVMState(ctx context.Context, ref string, target vmst
 
 func (r *Runtime) persistLiveState(ref string, state vmstore.VMState) (*vmstore.VMRecord, error) {
 	if state == vmstore.StatePaused {
-		return r.vmStore.MarkPaused(ref)
+		return r.vmLifecycle.MarkPaused(ref)
 	}
-	return r.vmStore.MarkResumed(ref)
+	return r.vmLifecycle.MarkResumed(ref)
 }
