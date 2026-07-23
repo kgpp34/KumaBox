@@ -3,28 +3,29 @@
 package imagestore
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	stdjson "encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/kumabox/kumabox/internal/imageimport"
+	"github.com/kumabox/kumabox/internal/meta"
+	metajson "github.com/kumabox/kumabox/internal/meta/json"
 )
 
 // Store persists image metadata in the KumaBox image index.
 type Store struct {
 	cloudimgDir string
-	indexPath   string
-	lockPath    string
+	engine      meta.MetaEngine
 }
 
 // New returns a Store rooted under rootDir.
@@ -32,9 +33,21 @@ func New(rootDir string) *Store {
 	cloudimgDir := filepath.Join(rootDir, "cloudimg")
 	return &Store{
 		cloudimgDir: cloudimgDir,
-		indexPath:   filepath.Join(cloudimgDir, "index.json"),
-		lockPath:    filepath.Join(cloudimgDir, "index.lock"),
+		engine: mustOpenImageEngine(metajson.Namespace{
+			Name:     "images",
+			FilePath: filepath.Join(cloudimgDir, "index.json"),
+			LockPath: filepath.Join(cloudimgDir, "index.lock"),
+			Codec:    indexCodec{},
+		}),
 	}
+}
+
+func mustOpenImageEngine(namespace metajson.Namespace) meta.MetaEngine {
+	engine, err := metajson.Open(namespace)
+	if err != nil {
+		panic(fmt.Sprintf("open image metadata engine: %v", err))
+	}
+	return engine
 }
 
 // CreateRequest contains metadata for creating an image record directly.
@@ -472,80 +485,47 @@ func (s *Store) createStagingDir(prefix string) (string, func(), error) {
 }
 
 func (s *Store) withIndex(fn func(*imageIndex) error) error {
-	unlock, err := s.lock()
-	if err != nil {
-		return err
-	}
-	defer unlock()
-
-	idx, err := s.load()
-	if err != nil {
-		return err
-	}
-	return fn(idx)
+	ctx := context.Background()
+	return s.engine.View(ctx, []string{"images"}, func(reader meta.Reader) error {
+		idx, err := s.readIndex(ctx, reader)
+		if err != nil {
+			return err
+		}
+		return fn(idx)
+	})
 }
 
 func (s *Store) update(fn func(*imageIndex) error) error {
-	unlock, err := s.lock()
-	if err != nil {
-		return err
-	}
-	defer unlock()
-
-	idx, err := s.load()
-	if err != nil {
-		return err
-	}
-	if err := fn(idx); err != nil {
-		return err
-	}
-	return s.write(idx)
+	ctx := context.Background()
+	return s.engine.Update(ctx, meta.Scope{Write: "images"}, meta.CommitDurable, func(writer meta.Writer) error {
+		idx, err := s.readIndex(ctx, writer)
+		if err != nil {
+			return err
+		}
+		if err := fn(idx); err != nil {
+			return err
+		}
+		raw, err := stdjson.Marshal(idx)
+		if err != nil {
+			return fmt.Errorf("encode image index: %w", err)
+		}
+		return writer.PutRaw(ctx, "images", imageIndexTable, imageIndexRecord, raw)
+	})
 }
 
-func (s *Store) load() (*imageIndex, error) {
-	raw, err := os.ReadFile(s.indexPath) //nolint:gosec
+func (s *Store) readIndex(ctx context.Context, reader meta.Reader) (*imageIndex, error) {
+	raw, ok, err := reader.GetRaw(ctx, "images", imageIndexTable, imageIndexRecord)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			idx := &imageIndex{}
-			idx.init()
-			return idx, nil
-		}
 		return nil, fmt.Errorf("read image index: %w", err)
 	}
-
-	var idx imageIndex
-	if err := json.Unmarshal(raw, &idx); err != nil {
-		return nil, fmt.Errorf("parse image index: %w", err)
+	idx := &imageIndex{}
+	if ok {
+		if err := stdjson.Unmarshal(raw, idx); err != nil {
+			return nil, fmt.Errorf("parse image index: %w", err)
+		}
 	}
 	idx.init()
-	return &idx, nil
-}
-
-func (s *Store) write(idx *imageIndex) error {
-	if err := fileutil.WriteJSONAtomic(s.indexPath, idx, ".index-*.tmp"); err != nil {
-		return fmt.Errorf("write image index: %w", err)
-	}
-	return nil
-}
-
-func (s *Store) lock() (func(), error) {
-	if err := os.MkdirAll(filepath.Dir(s.lockPath), 0o755); err != nil {
-		return nil, fmt.Errorf("create image index lock dir: %w", err)
-	}
-
-	file, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return nil, fmt.Errorf("open image index lock: %w", err)
-	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("lock image index: %w", err)
-	}
-
-	return func() {
-		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-		_ = file.Close()
-	}, nil
+	return idx, nil
 }
 
 func validateCreateRequest(req CreateRequest) error {

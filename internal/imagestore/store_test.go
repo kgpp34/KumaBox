@@ -60,6 +60,37 @@ func TestStoreCreateListInspectAndResolve(t *testing.T) {
 	}
 }
 
+func TestStoreRecoversPreviousIndexGeneration(t *testing.T) {
+	dir := t.TempDir()
+	store := New(dir)
+	request := func(name string) CreateRequest {
+		return CreateRequest{
+			Name:     name,
+			Source:   Source{Type: "test", URI: "fixture:" + name},
+			RootDisk: RootDisk{Path: filepath.Join(dir, name+".img"), Format: "raw"},
+		}
+	}
+	first, err := store.Create(request("first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create(request("second")); err != nil {
+		t.Fatal(err)
+	}
+
+	indexPath := filepath.Join(dir, "cloudimg", "index.json")
+	if err := os.WriteFile(indexPath, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := store.Inspect(first.ID)
+	if err != nil {
+		t.Fatalf("inspect recovered image: %v", err)
+	}
+	if recovered.Name != "first" {
+		t.Fatalf("recovered image name = %q", recovered.Name)
+	}
+}
+
 func TestStoreRejectsDuplicateImageName(t *testing.T) {
 	store := New(filepath.Join(t.TempDir(), "data"))
 
