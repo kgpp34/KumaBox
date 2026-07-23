@@ -63,11 +63,6 @@ func (a *Allocator) Allocate(req AllocateRequest) (*Allocation, error) {
 	if err := validateAllocateRequest(req); err != nil {
 		return nil, err
 	}
-	networkName := req.Network
-	if networkName == "" {
-		networkName = a.cfg.Default
-	}
-
 	var allocation *Allocation
 	err := a.store.withLeases(true, func(leases *leaseIndex) error {
 		now := time.Now().UTC()

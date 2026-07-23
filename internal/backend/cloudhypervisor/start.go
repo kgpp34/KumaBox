@@ -101,19 +101,19 @@ func startProcess(cfg Config) (*backend.StartResult, error) {
 
 func validateStartConfig(cfg Config) error {
 	if cfg.Binary == "" {
-		return fmt.Errorf("Cloud Hypervisor binary is empty")
+		return fmt.Errorf("cloud hypervisor binary is empty")
 	}
 	if cfg.APISocket == "" {
-		return fmt.Errorf("Cloud Hypervisor API socket is empty")
+		return fmt.Errorf("cloud hypervisor API socket is empty")
 	}
 	if cfg.PIDFile == "" {
-		return fmt.Errorf("Cloud Hypervisor pid file is empty")
+		return fmt.Errorf("cloud hypervisor pid file is empty")
 	}
 	if cfg.StdoutLog == "" {
-		return fmt.Errorf("Cloud Hypervisor stdout log is empty")
+		return fmt.Errorf("cloud hypervisor stdout log is empty")
 	}
 	if cfg.StderrLog == "" {
-		return fmt.Errorf("Cloud Hypervisor stderr log is empty")
+		return fmt.Errorf("cloud hypervisor stderr log is empty")
 	}
 	return nil
 }

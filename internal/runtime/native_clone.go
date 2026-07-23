@@ -189,7 +189,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 
 func cloneNetworkSelections(requested []string, nicCount int) ([]string, error) {
 	if nicCount == 0 {
-		if len(requested) > 0 && !(len(requested) == 1 && requested[0] == "none") {
+		if len(requested) > 0 && (len(requested) != 1 || requested[0] != "none") {
 			return nil, errors.New("SNAPSHOT_INCOMPATIBLE: networkless snapshot cannot gain NICs during clone")
 		}
 		return []string{"none"}, nil

@@ -122,9 +122,9 @@ func writeDigest(digest hash.Hash, namespace Namespace, table Table, id RecordID
 	// Length prefixes keep adjacent fields unambiguous (for example, "ab"+"c"
 	// cannot collide with "a"+"bc").
 	for _, value := range []string{string(namespace), string(table), string(id)} {
-		fmt.Fprintf(digest, "%d:", len(value))
-		digest.Write([]byte(value))
+		_, _ = fmt.Fprintf(digest, "%d:", len(value))
+		_, _ = digest.Write([]byte(value))
 	}
-	fmt.Fprintf(digest, "%d:", len(raw))
-	digest.Write(raw)
+	_, _ = fmt.Fprintf(digest, "%d:", len(raw))
+	_, _ = digest.Write(raw)
 }

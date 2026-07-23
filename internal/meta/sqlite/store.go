@@ -170,7 +170,7 @@ func (s *Store) Close() error {
 // Status returns the initialization state recorded for each declared
 // namespace. The state is used by migration and recovery tooling rather than
 // by normal resource reads and writes.
-func (s *Store) Status(ctx context.Context) ([]NamespaceStatus, error) {
+func (s *Store) Status(ctx context.Context) (result []NamespaceStatus, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -184,8 +184,11 @@ func (s *Store) Status(ctx context.Context) ([]NamespaceStatus, error) {
 	if err != nil {
 		return nil, mapError(err)
 	}
-	defer rows.Close()
-	var result []NamespaceStatus
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			err = mapError(closeErr)
+		}
+	}()
 	for rows.Next() {
 		var status NamespaceStatus
 		if err := rows.Scan(&status.Namespace, &status.State, &status.SchemaVersion, &status.Records, &status.Source, &status.Digest, &status.UpdatedAt); err != nil {
@@ -320,7 +323,7 @@ func (r *txReader) GetRaw(ctx context.Context, namespace meta.Namespace, table m
 	return append(json.RawMessage(nil), raw...), true, nil
 }
 
-func (r *txReader) ScanRaw(ctx context.Context, namespace meta.Namespace, table meta.Table, fn func(meta.RecordID, json.RawMessage) error) error {
+func (r *txReader) ScanRaw(ctx context.Context, namespace meta.Namespace, table meta.Table, fn func(meta.RecordID, json.RawMessage) error) (err error) {
 	if fn == nil {
 		return fmt.Errorf("metadata scan callback must not be nil: %w", meta.ErrScope)
 	}
@@ -331,7 +334,11 @@ func (r *txReader) ScanRaw(ctx context.Context, namespace meta.Namespace, table 
 	if err != nil {
 		return mapError(err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			err = mapError(closeErr)
+		}
+	}()
 	for rows.Next() {
 		var id string
 		var raw []byte

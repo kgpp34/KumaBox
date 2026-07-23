@@ -425,13 +425,6 @@ func (s *Store) writeHostTapState(state *HostTapState) error {
 	})
 }
 
-func (s *Store) removeHostTapState() error {
-	return s.withHostTap(true, func(current **HostTapState) error {
-		*current = nil
-		return nil
-	})
-}
-
 func (s *Store) adjustHostTapRef(delta int, requireState bool) error {
 	return s.withHostTap(true, func(current **HostTapState) error {
 		state := *current

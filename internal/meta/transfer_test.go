@@ -22,7 +22,11 @@ func TestTransferCopiesJSONMetadataIntoSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer jsonEngine.Close()
+	defer func() {
+		if err := jsonEngine.Close(); err != nil {
+			t.Errorf("close JSON engine: %v", err)
+		}
+	}()
 
 	type record struct {
 		Name string `json:"name"`
@@ -40,7 +44,11 @@ func TestTransferCopiesJSONMetadataIntoSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer sqliteEngine.Close()
+	defer func() {
+		if err := sqliteEngine.Close(); err != nil {
+			t.Errorf("close SQLite engine: %v", err)
+		}
+	}()
 
 	report, err := meta.TransferWithReport(ctx, jsonEngine, sqliteEngine, []meta.TableSet{{
 		Namespace: "vms",
@@ -76,7 +84,11 @@ func TestSQLiteConversionMarksNamespacesAfterTransfer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer source.Close()
+	defer func() {
+		if err := source.Close(); err != nil {
+			t.Errorf("close source engine: %v", err)
+		}
+	}()
 	collection := meta.NewCollection[map[string]string]("vms", "records")
 	record := map[string]string{"name": "source"}
 	if err := source.Update(ctx, meta.Scope{Write: "vms"}, meta.CommitDurable, func(writer meta.Writer) error {
@@ -88,7 +100,11 @@ func TestSQLiteConversionMarksNamespacesAfterTransfer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer destination.Close()
+	defer func() {
+		if err := destination.Close(); err != nil {
+			t.Errorf("close destination engine: %v", err)
+		}
+	}()
 	if _, err := metasqlite.Convert(ctx, source, destination, "json", []meta.TableSet{{Namespace: "vms", Tables: []meta.Table{"records"}}}); err != nil {
 		t.Fatal(err)
 	}

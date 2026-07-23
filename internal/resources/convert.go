@@ -19,7 +19,7 @@ import (
 // ConvertJSONToSQLite imports existing JSON resource indexes into one SQLite
 // database. Source files remain untouched, so a failed conversion can be
 // retried or rolled back by selecting the JSON backend again.
-func ConvertJSONToSQLite(ctx context.Context, rootDir, databasePath string) ([]metasqlite.NamespaceStatus, error) {
+func ConvertJSONToSQLite(ctx context.Context, rootDir, databasePath string) (statuses []metasqlite.NamespaceStatus, err error) {
 	if databasePath == "" {
 		databasePath = filepath.Join(rootDir, "metadata", "kumabox.db")
 	}
@@ -27,7 +27,11 @@ func ConvertJSONToSQLite(ctx context.Context, rootDir, databasePath string) ([]m
 	if err != nil {
 		return nil, err
 	}
-	defer destination.Close()
+	defer func() {
+		if closeErr := destination.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close SQLite metadata store: %w", closeErr)
+		}
+	}()
 
 	vm := vmstore.New(rootDir)
 	images := imagestore.New(rootDir)
@@ -46,9 +50,21 @@ func ConvertJSONToSQLite(ctx context.Context, rootDir, databasePath string) ([]m
 		}
 	}()
 	networkEngine, leaseEngine, hostTapEngine := networks.MetadataEngines()
-	defer networkEngine.Close()
-	defer leaseEngine.Close()
-	defer hostTapEngine.Close()
+	defer func() {
+		if closeErr := networkEngine.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close network metadata store: %w", closeErr)
+		}
+	}()
+	defer func() {
+		if closeErr := leaseEngine.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close lease metadata store: %w", closeErr)
+		}
+	}()
+	defer func() {
+		if closeErr := hostTapEngine.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close host-tap metadata store: %w", closeErr)
+		}
+	}()
 
 	conversions := []struct {
 		engine meta.MetaEngine

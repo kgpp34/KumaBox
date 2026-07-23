@@ -53,7 +53,7 @@ func ValidateStorageContract(rec *VMRecord, rootDir string) error {
 
 		if role == StorageRoleCOW || role == StorageRoleData {
 			legacy := storage.Role == "" && storage.Type != ""
-			if !pathWithin(storage.Path, ownerDir) && !(legacy && pathWithin(storage.Path, rec.RunDir)) {
+			if !pathWithin(storage.Path, ownerDir) && (!legacy || !pathWithin(storage.Path, rec.RunDir)) {
 				return storageError("writable storage %q is outside VM owner directory", storage.ID)
 			}
 		}

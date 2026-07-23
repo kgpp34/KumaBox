@@ -74,25 +74,6 @@ func (r *Runtime) requireVMRestore(record operation.Record) error {
 	return fmt.Errorf("SNAPSHOT_RESTORE_INCOMPLETE: VM %s has no completed restore from %s", rec.ID, record.RelatedID)
 }
 
-func (r *Runtime) requireVMRestoredFromSnapshot(snapshotRef string) error {
-	records, err := r.vmReader.List()
-	if err != nil {
-		return err
-	}
-	for _, rec := range records {
-		if rec == nil {
-			continue
-		}
-		if rec.LastRestore != nil && rec.LastRestore.SnapshotID == snapshotRef {
-			return nil
-		}
-		if rec.SnapshotDependency != nil && rec.SnapshotDependency.SnapshotID == snapshotRef {
-			return nil
-		}
-	}
-	return fmt.Errorf("SNAPSHOT_CLONE_INCOMPLETE: no VM restored from snapshot %s", snapshotRef)
-}
-
 func (r *Runtime) requireSnapshotForVM(ctx context.Context, record operation.Record, snapshotRef string) error {
 	if r.storeSet.Snapshots == nil {
 		return fmt.Errorf("SNAPSHOT_RECONCILIATION_UNAVAILABLE: snapshot state is not configured")

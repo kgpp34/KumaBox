@@ -424,7 +424,7 @@ func syncDirectory(path string) error {
 	if err != nil {
 		return fmt.Errorf("open metadata directory: %w", err)
 	}
-	defer dir.Close()
+	defer func() { _ = dir.Close() }()
 	if err := dir.Sync(); err != nil && !errors.Is(err, os.ErrInvalid) {
 		return fmt.Errorf("sync metadata directory: %w", err)
 	}

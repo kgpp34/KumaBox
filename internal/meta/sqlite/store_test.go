@@ -60,7 +60,11 @@ func TestStorePersistsTypedCollectionAndRollsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	}()
 	if err := store.View(ctx, []meta.Namespace{"vms"}, func(reader meta.Reader) error {
 		got, err := collection.Get(ctx, reader, "vm-1")
 		if err != nil {
@@ -83,7 +87,11 @@ func TestStoreEnforcesDeclaredScopeAndCoalescesEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	}()
 	ctx := context.Background()
 	if err := store.Update(ctx, meta.Scope{Write: "vms"}, meta.CommitDurable, func(writer meta.Writer) error {
 		return writer.PutRaw(ctx, "network", "leases", "ip-1", []byte(`{}`))

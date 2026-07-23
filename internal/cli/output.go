@@ -21,13 +21,13 @@ func writeJSON(w io.Writer, value any) error {
 }
 
 func writeDoctorText(w io.Writer, report doctor.Report) {
-	fmt.Fprintf(w, "doctor: %s\n", report.Status)
+	_, _ = fmt.Fprintf(w, "doctor: %s\n", report.Status)
 	for _, check := range report.Checks {
 		if check.Code != "" {
-			fmt.Fprintf(w, "%s: %s (%s): %s\n", check.Status, check.Name, check.Code, check.Message)
+			_, _ = fmt.Fprintf(w, "%s: %s (%s): %s\n", check.Status, check.Name, check.Code, check.Message)
 			continue
 		}
-		fmt.Fprintf(w, "%s: %s: %s\n", check.Status, check.Name, check.Message)
+		_, _ = fmt.Fprintf(w, "%s: %s: %s\n", check.Status, check.Name, check.Message)
 	}
 }
 

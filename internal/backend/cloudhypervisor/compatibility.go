@@ -28,7 +28,7 @@ func (b Backend) InspectNativeHost(ctx context.Context, rec *vmstore.VMRecord) (
 		}
 	}
 	if binary == "" {
-		return backend.NativeHost{}, fmt.Errorf("Cloud Hypervisor binary is empty")
+		return backend.NativeHost{}, fmt.Errorf("cloud hypervisor binary is empty")
 	}
 	output, err := exec.CommandContext(ctx, binary, "--version").CombinedOutput() //nolint:gosec
 	if err != nil {

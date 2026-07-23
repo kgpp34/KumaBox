@@ -282,7 +282,7 @@ func parseSnapshotDigest(digest string) (string, string, error) {
 		return "", "", fmt.Errorf("invalid digest %q", digest)
 	}
 	for _, char := range value {
-		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
 			return "", "", fmt.Errorf("invalid digest %q", digest)
 		}
 	}

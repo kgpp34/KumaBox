@@ -37,7 +37,7 @@ type ImportOptions struct {
 }
 
 // Import validates an untrusted package in staging before publishing it.
-func (s *Store) Import(ctx context.Context, opts ImportOptions) (*Record, error) {
+func (s *Store) Import(ctx context.Context, opts ImportOptions) (record *Record, err error) {
 	if opts.Input == "" {
 		return nil, errors.New("snapshot import input must not be empty")
 	}
@@ -55,7 +55,11 @@ func (s *Store) Import(ctx context.Context, opts ImportOptions) (*Record, error)
 	if err != nil {
 		return nil, err
 	}
-	defer closeReader()
+	defer func() {
+		if closeErr := closeReader(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 	manifest, checksums, err := extractPackage(ctx, tar.NewReader(reader), build.Record().StagingDir)
 	if err != nil {
 		return nil, err
@@ -94,7 +98,7 @@ func extractPackage(ctx context.Context, tr *tar.Reader, staging string) (*Manif
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+		if hdr.Typeflag != tar.TypeReg {
 			return nil, nil, fmt.Errorf("ARCHIVE_UNSAFE: entry %q is not a regular file", hdr.Name)
 		}
 		name, err := safeArchivePath(hdr.Name)

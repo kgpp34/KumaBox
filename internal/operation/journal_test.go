@@ -13,7 +13,11 @@ func TestJournalRecordsAndRecoversRunningOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer engine.Close()
+	defer func() {
+		if err := engine.Close(); err != nil {
+			t.Errorf("close engine: %v", err)
+		}
+	}()
 	journal := NewWithEngine(engine)
 	ctx := context.Background()
 	started, err := journal.Begin(ctx, "op-1", "run", "vm-1")
@@ -45,7 +49,11 @@ func TestJournalReconcilePublishesRepairResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer engine.Close()
+	defer func() {
+		if err := engine.Close(); err != nil {
+			t.Errorf("close engine: %v", err)
+		}
+	}()
 	journal := NewWithEngine(engine)
 	ctx := context.Background()
 	if _, err := journal.Begin(ctx, "op-ok", "delete", "vm-1"); err != nil {
@@ -72,7 +80,11 @@ func TestJournalPreservesRelatedResourceDuringRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer engine.Close()
+	defer func() {
+		if err := engine.Close(); err != nil {
+			t.Errorf("close engine: %v", err)
+		}
+	}()
 	journal := NewWithEngine(engine)
 	ctx := context.Background()
 	started, err := journal.BeginWithRelated(ctx, "op-restore", KindSnapshotRestoreVM, "vm-1", "snap-1")

@@ -351,7 +351,7 @@ func (b *Builder) scanBootAssets(layer ocistore.BlobRecord) (*bootAsset, *bootAs
 		if err != nil {
 			return nil, nil, fmt.Errorf("read layer tar: %w", err)
 		}
-		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
 		kind, ok := bootAssetKind(hdr.Name)
@@ -618,7 +618,7 @@ func (b *Builder) scanBootAndStream(src io.Reader, dst io.Writer, sourceLayer st
 		if err != nil {
 			return nil, nil, fmt.Errorf("read layer tar: %w", err)
 		}
-		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
 		kind, ok := bootAssetKind(hdr.Name)
