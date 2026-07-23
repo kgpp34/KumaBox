@@ -31,17 +31,19 @@ var snapshotIndexCollection = meta.NewCollection[snapshotIndex]("snapshots", sna
 // NewStore creates a snapshot store under rootDir.
 func NewStore(rootDir string) *Store {
 	dir := filepath.Join(rootDir, "snapshot")
-	return &Store{
-		dataRoot: rootDir,
-		rootDir:  dir,
-		engine: mustOpenSnapshotEngine(metajson.Namespace{
-			Name:     "snapshots",
-			FilePath: filepath.Join(dir, "index.json"),
-			LockPath: filepath.Join(dir, "index.lock"),
-			Codec:    indexCodec{},
-		}),
-		leaser: newLeaser(filepath.Join(dir, "leases")),
-	}
+	engine := mustOpenSnapshotEngine(metajson.Namespace{
+		Name:     "snapshots",
+		FilePath: filepath.Join(dir, "index.json"),
+		LockPath: filepath.Join(dir, "index.lock"),
+		Codec:    indexCodec{},
+	})
+	return NewStoreWithEngine(rootDir, engine)
+}
+
+// NewStoreWithEngine creates a snapshot store with an injected metadata engine.
+func NewStoreWithEngine(rootDir string, engine meta.MetaEngine) *Store {
+	dir := filepath.Join(rootDir, "snapshot")
+	return &Store{dataRoot: rootDir, rootDir: dir, engine: engine, leaser: newLeaser(filepath.Join(dir, "leases"))}
 }
 
 func mustOpenSnapshotEngine(namespace metajson.Namespace) meta.MetaEngine {

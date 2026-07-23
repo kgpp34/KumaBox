@@ -32,15 +32,18 @@ var imageIndexCollection = meta.NewCollection[imageIndex]("images", imageIndexTa
 // New returns a Store rooted under rootDir.
 func New(rootDir string) *Store {
 	cloudimgDir := filepath.Join(rootDir, "cloudimg")
-	return &Store{
-		cloudimgDir: cloudimgDir,
-		engine: mustOpenImageEngine(metajson.Namespace{
-			Name:     "images",
-			FilePath: filepath.Join(cloudimgDir, "index.json"),
-			LockPath: filepath.Join(cloudimgDir, "index.lock"),
-			Codec:    indexCodec{},
-		}),
-	}
+	engine := mustOpenImageEngine(metajson.Namespace{
+		Name:     "images",
+		FilePath: filepath.Join(cloudimgDir, "index.json"),
+		LockPath: filepath.Join(cloudimgDir, "index.lock"),
+		Codec:    indexCodec{},
+	})
+	return NewWithEngine(rootDir, engine)
+}
+
+// NewWithEngine creates an image store with an injected metadata engine.
+func NewWithEngine(rootDir string, engine meta.MetaEngine) *Store {
+	return &Store{cloudimgDir: filepath.Join(rootDir, "cloudimg"), engine: engine}
 }
 
 func mustOpenImageEngine(namespace metajson.Namespace) meta.MetaEngine {

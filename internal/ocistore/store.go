@@ -92,12 +92,13 @@ var contentIndexCollection = meta.NewCollection[indexFile]("oci-content", conten
 // New returns an OCI content store under rootDir.
 func New(rootDir string) *Store {
 	base := filepath.Join(rootDir, "oci", "content")
-	return &Store{
-		rootDir:  base,
-		engine:   mustOpenContentEngine(metajson.Namespace{Name: "oci-content", FilePath: filepath.Join(base, "index.json"), LockPath: filepath.Join(base, "index.lock"), Codec: indexCodec{}}),
-		blobsDir: filepath.Join(base, "blobs"),
-		stageDir: filepath.Join(base, "staging"),
-	}
+	return NewWithEngine(rootDir, mustOpenContentEngine(metajson.Namespace{Name: "oci-content", FilePath: filepath.Join(base, "index.json"), LockPath: filepath.Join(base, "index.lock"), Codec: indexCodec{}}))
+}
+
+// NewWithEngine creates an OCI content store with an injected metadata engine.
+func NewWithEngine(rootDir string, engine meta.MetaEngine) *Store {
+	base := filepath.Join(rootDir, "oci", "content")
+	return &Store{rootDir: base, engine: engine, blobsDir: filepath.Join(base, "blobs"), stageDir: filepath.Join(base, "staging")}
 }
 
 func mustOpenContentEngine(namespace metajson.Namespace) meta.MetaEngine {

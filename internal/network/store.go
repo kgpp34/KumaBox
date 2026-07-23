@@ -62,10 +62,21 @@ type leaseIndex struct {
 // NewStore returns a network store rooted under rootDir.
 func NewStore(rootDir string) *Store {
 	networkDir := filepath.Join(rootDir, "network")
+	return NewStoreWithEngines(rootDir,
+		mustOpenNetworkEngine(metajson.Namespace{Name: "networks", FilePath: filepath.Join(networkDir, "index.json"), LockPath: filepath.Join(networkDir, "index.lock"), Codec: indexCodec{}}),
+		mustOpenNetworkEngine(metajson.Namespace{Name: "leases", FilePath: filepath.Join(networkDir, "leases.json"), LockPath: filepath.Join(networkDir, "leases.lock"), Codec: leaseCodec{}}),
+		mustOpenNetworkEngine(metajson.Namespace{Name: "host-tap", FilePath: filepath.Join(networkDir, "host-tap.json"), LockPath: filepath.Join(networkDir, "host-tap.lock"), Codec: hostTapCodec{}}),
+	)
+}
+
+// NewStoreWithEngines creates a network store with separately injectable
+// engines for provider records, leases, and host-tap ownership.
+func NewStoreWithEngines(rootDir string, engine, leaseEngine, hostTapEngine meta.MetaEngine) *Store {
+	networkDir := filepath.Join(rootDir, "network")
 	return &Store{
-		engine:        mustOpenNetworkEngine(metajson.Namespace{Name: "networks", FilePath: filepath.Join(networkDir, "index.json"), LockPath: filepath.Join(networkDir, "index.lock"), Codec: indexCodec{}}),
-		leaseEngine:   mustOpenNetworkEngine(metajson.Namespace{Name: "leases", FilePath: filepath.Join(networkDir, "leases.json"), LockPath: filepath.Join(networkDir, "leases.lock"), Codec: leaseCodec{}}),
-		hostTapEngine: mustOpenNetworkEngine(metajson.Namespace{Name: "host-tap", FilePath: filepath.Join(networkDir, "host-tap.json"), LockPath: filepath.Join(networkDir, "host-tap.lock"), Codec: hostTapCodec{}}),
+		engine:        engine,
+		leaseEngine:   leaseEngine,
+		hostTapEngine: hostTapEngine,
 		indexPath:     filepath.Join(networkDir, "index.json"),
 		indexLock:     filepath.Join(networkDir, "index.lock"),
 		leasePath:     filepath.Join(networkDir, "leases.json"),
