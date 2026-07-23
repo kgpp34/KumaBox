@@ -46,6 +46,9 @@ func NewWithEngine(rootDir string, engine meta.MetaEngine) *Store {
 	return &Store{cloudimgDir: filepath.Join(rootDir, "cloudimg"), engine: engine}
 }
 
+// MetadataEngine exposes the persistence boundary to migration tools.
+func (s *Store) MetadataEngine() meta.MetaEngine { return s.engine }
+
 func mustOpenImageEngine(namespace metajson.Namespace) meta.MetaEngine {
 	engine, err := metajson.Open(namespace)
 	if err != nil {

@@ -43,17 +43,7 @@ func NewStoreSetForConfig(cfg config.Config) (StoreSet, error) {
 	if path == "" {
 		path = filepath.Join(cfg.Runtime.RootDir, "metadata", "kumabox.db")
 	}
-	engine, err := metasqlite.Open(path,
-		metasqlite.Namespace{Name: "vms", Tables: []meta.Table{"vm-index"}},
-		metasqlite.Namespace{Name: "images", Tables: []meta.Table{"image-index"}},
-		metasqlite.Namespace{Name: "snapshots", Tables: []meta.Table{"snapshot-index"}},
-		metasqlite.Namespace{Name: "networks", Tables: []meta.Table{"network-index"}},
-		metasqlite.Namespace{Name: "leases", Tables: []meta.Table{"network-leases"}},
-		metasqlite.Namespace{Name: "host-tap", Tables: []meta.Table{"host-tap"}},
-		metasqlite.Namespace{Name: "oci-content", Tables: []meta.Table{"oci-content"}},
-		metasqlite.Namespace{Name: "operations", Tables: []meta.Table{"records"}},
-		metasqlite.Namespace{Name: "references", Tables: []meta.Table{"records"}},
-	)
+	engine, err := metasqlite.Open(path, sqliteDefinitions()...)
 	if err != nil {
 		return StoreSet{}, fmt.Errorf("open configured metadata backend: %w", err)
 	}
@@ -67,6 +57,20 @@ func NewStoreSetForConfig(cfg config.Config) (StoreSet, error) {
 		References: reference.NewWithEngine(engine),
 		Metadata:   engine,
 	}, nil
+}
+
+func sqliteDefinitions() []metasqlite.Namespace {
+	return []metasqlite.Namespace{
+		{Name: "vms", Tables: []meta.Table{"vm-index"}},
+		{Name: "images", Tables: []meta.Table{"image-index"}},
+		{Name: "snapshots", Tables: []meta.Table{"snapshot-index"}},
+		{Name: "networks", Tables: []meta.Table{"network-index"}},
+		{Name: "leases", Tables: []meta.Table{"network-leases"}},
+		{Name: "host-tap", Tables: []meta.Table{"host-tap"}},
+		{Name: "oci-content", Tables: []meta.Table{"oci-content"}},
+		{Name: "operations", Tables: []meta.Table{"records"}},
+		{Name: "references", Tables: []meta.Table{"records"}},
+	}
 }
 
 // NewStoreSet creates the default JSON-backed resource stores.

@@ -86,6 +86,11 @@ func NewStoreWithEngines(rootDir string, engine, leaseEngine, hostTapEngine meta
 	}
 }
 
+// MetadataEngines exposes network persistence boundaries to migration tools.
+func (s *Store) MetadataEngines() (meta.MetaEngine, meta.MetaEngine, meta.MetaEngine) {
+	return s.engine, s.leaseEngine, s.hostTapEngine
+}
+
 func mustOpenNetworkEngine(namespace metajson.Namespace) meta.MetaEngine {
 	engine, err := metajson.Open(namespace)
 	if err != nil {

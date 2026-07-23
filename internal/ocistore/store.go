@@ -101,6 +101,9 @@ func NewWithEngine(rootDir string, engine meta.MetaEngine) *Store {
 	return &Store{rootDir: base, engine: engine, blobsDir: filepath.Join(base, "blobs"), stageDir: filepath.Join(base, "staging")}
 }
 
+// MetadataEngine exposes the persistence boundary to migration tools.
+func (s *Store) MetadataEngine() meta.MetaEngine { return s.engine }
+
 func mustOpenContentEngine(namespace metajson.Namespace) meta.MetaEngine {
 	engine, err := metajson.Open(namespace)
 	if err != nil {

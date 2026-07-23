@@ -48,6 +48,8 @@ func NewWithEngine(engine meta.MetaEngine) *Store {
 	return &Store{engine: engine, collection: meta.NewCollection[Record](namespace, table)}
 }
 
+func (s *Store) MetadataEngine() meta.MetaEngine { return s.engine }
+
 func (s *Store) Upsert(ctx context.Context, record Record) error {
 	if record.ID == "" || record.SourceKind == "" || record.SourceID == "" || record.TargetKind == "" || record.TargetID == "" {
 		return fmt.Errorf("reference identity is incomplete: %w", meta.ErrScope)

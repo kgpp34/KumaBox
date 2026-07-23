@@ -47,6 +47,10 @@ func NewWithEngine(rootDir string, engine meta.MetaEngine) *Store {
 	return &Store{rootDir: rootDir, engine: engine}
 }
 
+// MetadataEngine exposes the store's persistence boundary to migration tools.
+// Runtime code should use the VM state capability instead.
+func (s *Store) MetadataEngine() meta.MetaEngine { return s.engine }
+
 func mustOpenEngine(namespace metajson.Namespace) meta.MetaEngine {
 	engine, err := metajson.Open(namespace)
 	if err != nil {

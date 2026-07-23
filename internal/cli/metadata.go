@@ -7,13 +7,36 @@ import (
 	"github.com/spf13/cobra"
 
 	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
+	"github.com/kumabox/kumabox/internal/resources"
 )
 
 func newMetadataCommand(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "metadata", Short: "Inspect metadata storage"}
 	cmd.AddCommand(newMetadataStatusCommand(opts))
 	cmd.AddCommand(newMetadataVerifyCommand(opts))
+	cmd.AddCommand(newMetadataConvertCommand(opts))
 	return cmd
+}
+
+func newMetadataConvertCommand(opts *rootOptions) *cobra.Command {
+	return &cobra.Command{
+		Use: "convert", Short: "Convert JSON metadata into SQLite", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			path := cfg.Metadata.Path
+			if path == "" {
+				path = filepath.Join(cfg.Runtime.RootDir, "metadata", "kumabox.db")
+			}
+			status, err := resources.ConvertJSONToSQLite(cmd.Context(), cfg.Runtime.RootDir, path)
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), map[string]any{"backend": "sqlite", "path": path, "namespaces": status})
+		},
+	}
 }
 
 func newMetadataStatusCommand(opts *rootOptions) *cobra.Command {

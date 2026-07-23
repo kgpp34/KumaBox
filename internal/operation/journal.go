@@ -51,6 +51,8 @@ func NewWithEngine(engine meta.MetaEngine) *Journal {
 	return &Journal{engine: engine, collection: meta.NewCollection[Record](namespace, table)}
 }
 
+func (j *Journal) MetadataEngine() meta.MetaEngine { return j.engine }
+
 func (j *Journal) Begin(ctx context.Context, id, kind, resourceID string) (*Record, error) {
 	if id == "" || kind == "" || resourceID == "" {
 		return nil, fmt.Errorf("operation id, kind, and resource id are required: %w", meta.ErrScope)

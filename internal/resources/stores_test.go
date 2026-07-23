@@ -31,3 +31,19 @@ func TestNewStoreSetForConfigUsesOneSQLiteEngine(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestConvertJSONToSQLiteCreatesCompletedNamespaceState(t *testing.T) {
+	root := t.TempDir()
+	status, err := ConvertJSONToSQLite(context.Background(), root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status) != 9 {
+		t.Fatalf("converted namespace count = %d", len(status))
+	}
+	for _, namespace := range status {
+		if namespace.State != "converted" || namespace.Source != "json" {
+			t.Fatalf("namespace conversion status = %+v", namespace)
+		}
+	}
+}
