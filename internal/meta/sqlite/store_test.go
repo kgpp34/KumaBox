@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -117,5 +118,61 @@ func TestStoreEnforcesDeclaredScopeAndCoalescesEvents(t *testing.T) {
 	case <-changes:
 		t.Fatal("metadata events should coalesce")
 	default:
+	}
+}
+
+func TestStoreRecordsIdentityAndNamespaceStatus(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "meta.db")
+	store, err := Open(path, Namespace{Name: "vms", Tables: []meta.Table{"records"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := store.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status) != 1 || status[0].Namespace != "vms" || status[0].State != "initialized" || status[0].SchemaVersion != databaseSchemaVersion {
+		t.Fatalf("namespace status = %+v", status)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA application_id = 1234"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(path, Namespace{Name: "vms", Tables: []meta.Table{"records"}}); !errors.Is(err, meta.ErrCorrupt) {
+		t.Fatalf("wrong application id error = %v", err)
+	}
+}
+
+func TestStoreRejectsUnsupportedSchemaVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "meta.db")
+	store, err := Open(path, Namespace{Name: "vms", Tables: []meta.Table{"records"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 99"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(path, Namespace{Name: "vms", Tables: []meta.Table{"records"}}); !errors.Is(err, meta.ErrCorrupt) {
+		t.Fatalf("wrong schema version error = %v", err)
 	}
 }

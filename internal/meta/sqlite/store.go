@@ -18,10 +18,29 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const (
+	databaseApplicationID = 0x4b4d4231 // "KMB1"
+	databaseSchemaVersion = 1
+	metadataStateTable    = "_kumabox_meta_state"
+)
+
 // Namespace declares the tables an SQLite metadata file may contain.
 type Namespace struct {
 	Name   meta.Namespace
 	Tables []meta.Table
+}
+
+// NamespaceStatus describes the durable initialization state of one metadata
+// namespace. It is intentionally separate from resource records so startup
+// can validate the database before opening resource collections.
+type NamespaceStatus struct {
+	Namespace     meta.Namespace
+	State         string
+	SchemaVersion int
+	Records       int
+	Source        string
+	Digest        string
+	UpdatedAt     string
 }
 
 // Store is an SQLite-backed MetaEngine.
@@ -54,6 +73,10 @@ func Open(path string, definitions ...Namespace) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	store := &Store{db: db, namespaces: namespaces, subscribers: make(map[chan struct{}]struct{})}
+	if err := store.initializeIdentity(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := store.createTables(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -144,9 +167,77 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// Status returns the initialization state recorded for each declared
+// namespace. The state is used by migration and recovery tooling rather than
+// by normal resource reads and writes.
+func (s *Store) Status(ctx context.Context) ([]NamespaceStatus, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	closed := s.closed
+	s.mu.Unlock()
+	if closed {
+		return nil, meta.ErrClosed
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT namespace, state, schema_version, records, source, digest, updated_at FROM "+metadataStateTable+" ORDER BY namespace")
+	if err != nil {
+		return nil, mapError(err)
+	}
+	defer rows.Close()
+	var result []NamespaceStatus
+	for rows.Next() {
+		var status NamespaceStatus
+		if err := rows.Scan(&status.Namespace, &status.State, &status.SchemaVersion, &status.Records, &status.Source, &status.Digest, &status.UpdatedAt); err != nil {
+			return nil, mapError(err)
+		}
+		if _, declared := s.namespaces[status.Namespace]; declared {
+			result = append(result, status)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapError(err)
+	}
+	if len(result) != len(s.namespaces) {
+		return nil, fmt.Errorf("SQLite metadata namespace state is incomplete: %w", meta.ErrCorrupt)
+	}
+	return result, nil
+}
+
+func (s *Store) initializeIdentity() error {
+	var applicationID int
+	if err := s.db.QueryRow("PRAGMA application_id").Scan(&applicationID); err != nil {
+		return mapError(err)
+	}
+	if applicationID == 0 {
+		if _, err := s.db.Exec(fmt.Sprintf("PRAGMA application_id = %d", databaseApplicationID)); err != nil {
+			return mapError(err)
+		}
+	} else if applicationID != databaseApplicationID {
+		return fmt.Errorf("SQLite metadata application id %d is not KumaBox: %w", applicationID, meta.ErrCorrupt)
+	}
+
+	var schemaVersion int
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&schemaVersion); err != nil {
+		return mapError(err)
+	}
+	if schemaVersion == 0 {
+		if _, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion)); err != nil {
+			return mapError(err)
+		}
+	} else if schemaVersion != databaseSchemaVersion {
+		return fmt.Errorf("unsupported SQLite metadata schema version %d: %w", schemaVersion, meta.ErrCorrupt)
+	}
+	return nil
+}
+
 func (s *Store) createTables() error {
 	tx, err := s.db.Begin()
 	if err != nil {
+		return mapError(err)
+	}
+	if _, err := tx.Exec("CREATE TABLE IF NOT EXISTS " + metadataStateTable + " (namespace TEXT PRIMARY KEY NOT NULL, state TEXT NOT NULL, schema_version INTEGER NOT NULL, source TEXT NOT NULL DEFAULT '', digest TEXT NOT NULL DEFAULT '', records INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)"); err != nil {
+		_ = tx.Rollback()
 		return mapError(err)
 	}
 	for namespace, tables := range s.namespaces {
@@ -157,8 +248,16 @@ func (s *Store) createTables() error {
 				return mapError(err)
 			}
 		}
+		if _, err := tx.Exec("INSERT OR IGNORE INTO "+metadataStateTable+" (namespace, state, schema_version, updated_at) VALUES (?, 'initialized', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))", namespace, databaseSchemaVersion); err != nil {
+			_ = tx.Rollback()
+			return mapError(err)
+		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return mapError(err)
+	}
+	_, err = s.Status(context.Background())
+	return err
 }
 
 func (s *Store) checkOpenAndScope(namespaces []meta.Namespace, write meta.Namespace) error {
