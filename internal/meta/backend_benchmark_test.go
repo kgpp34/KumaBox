@@ -122,7 +122,11 @@ func TestMetadataBackendsDoNotPartiallyOverwriteExistingRecords(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer engine.Close()
+			t.Cleanup(func() {
+				if err := engine.Close(); err != nil {
+					t.Errorf("close metadata engine: %v", err)
+				}
+			})
 			collection := meta.NewCollection[benchmarkRecord]("fault", "records")
 			ctx := context.Background()
 			if err := engine.Update(ctx, meta.Scope{Write: "fault"}, meta.CommitDurable, func(writer meta.Writer) error {
