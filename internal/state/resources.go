@@ -8,6 +8,7 @@ import (
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/ocistore"
 	"github.com/kumabox/kumabox/internal/operation"
+	"github.com/kumabox/kumabox/internal/reference"
 	"github.com/kumabox/kumabox/internal/snapshot"
 )
 
@@ -77,3 +78,11 @@ type OperationState interface {
 
 var _ OCIState = (*ocistore.Store)(nil)
 var _ OperationState = (*operation.Journal)(nil)
+
+type ReferenceState interface {
+	Upsert(context.Context, reference.Record) error
+	Delete(context.Context, string) error
+	ListTarget(context.Context, string, string) ([]reference.Record, error)
+}
+
+var _ ReferenceState = (*reference.Store)(nil)

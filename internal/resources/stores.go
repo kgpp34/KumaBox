@@ -12,6 +12,7 @@ import (
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/ocistore"
 	"github.com/kumabox/kumabox/internal/operation"
+	"github.com/kumabox/kumabox/internal/reference"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/state"
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -27,6 +28,7 @@ type StoreSet struct {
 	Networks   state.NetworkState
 	OCI        state.OCIState
 	Operations state.OperationState
+	References state.ReferenceState
 	Metadata   meta.MetaEngine
 }
 
@@ -50,6 +52,7 @@ func NewStoreSetForConfig(cfg config.Config) (StoreSet, error) {
 		metasqlite.Namespace{Name: "host-tap", Tables: []meta.Table{"host-tap"}},
 		metasqlite.Namespace{Name: "oci-content", Tables: []meta.Table{"oci-content"}},
 		metasqlite.Namespace{Name: "operations", Tables: []meta.Table{"records"}},
+		metasqlite.Namespace{Name: "references", Tables: []meta.Table{"records"}},
 	)
 	if err != nil {
 		return StoreSet{}, fmt.Errorf("open configured metadata backend: %w", err)
@@ -61,6 +64,7 @@ func NewStoreSetForConfig(cfg config.Config) (StoreSet, error) {
 		Networks:   kbnetwork.NewStoreWithEngines(cfg.Runtime.RootDir, engine, engine, engine),
 		OCI:        ocistore.NewWithEngine(cfg.Runtime.RootDir, engine),
 		Operations: operation.NewWithEngine(engine),
+		References: reference.NewWithEngine(engine),
 		Metadata:   engine,
 	}, nil
 }
@@ -74,5 +78,6 @@ func NewStoreSet(rootDir string) StoreSet {
 		Networks:   kbnetwork.NewStore(rootDir),
 		OCI:        ocistore.New(rootDir),
 		Operations: operation.New(rootDir),
+		References: reference.New(rootDir),
 	}
 }

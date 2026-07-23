@@ -24,7 +24,7 @@ func TestNewStoreSetForConfigUsesOneSQLiteEngine(t *testing.T) {
 		t.Fatalf("metadata engine type = %T", stores.Metadata)
 	}
 	status, err := statusStore.Status(context.Background())
-	if err != nil || len(status) != 8 {
+	if err != nil || len(status) != 9 {
 		t.Fatalf("namespace status = %d, err = %v", len(status), err)
 	}
 	if err := stores.Metadata.Close(); err != nil {
