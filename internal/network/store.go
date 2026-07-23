@@ -28,6 +28,7 @@ const hostTapSchemaVersion = "kumabox.network.hostTap.v1"
 // network commands may touch them independently.
 type Store struct {
 	engine      meta.MetaEngine
+	leaseEngine meta.MetaEngine
 	indexPath   string
 	indexLock   string
 	leasePath   string
@@ -60,6 +61,7 @@ func NewStore(rootDir string) *Store {
 	networkDir := filepath.Join(rootDir, "network")
 	return &Store{
 		engine:      mustOpenNetworkEngine(metajson.Namespace{Name: "networks", FilePath: filepath.Join(networkDir, "index.json"), LockPath: filepath.Join(networkDir, "index.lock"), Codec: indexCodec{}}),
+		leaseEngine: mustOpenNetworkEngine(metajson.Namespace{Name: "leases", FilePath: filepath.Join(networkDir, "leases.json"), LockPath: filepath.Join(networkDir, "leases.lock"), Codec: leaseCodec{}}),
 		indexPath:   filepath.Join(networkDir, "index.json"),
 		indexLock:   filepath.Join(networkDir, "index.lock"),
 		leasePath:   filepath.Join(networkDir, "leases.json"),
@@ -269,15 +271,18 @@ func cloneConfigs(configs []Config) []Config {
 
 // ListLeases returns a defensive copy of the IP lease map keyed by IP address.
 func (s *Store) ListLeases() (map[string]Lease, error) {
-	leases, err := s.readLeases()
+	var out map[string]Lease
+	err := s.withLeases(false, func(leases *leaseIndex) error {
+		out = make(map[string]Lease, len(leases.Leases))
+		for ip, lease := range leases.Leases {
+			if lease != nil {
+				out[ip] = *lease
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	out := make(map[string]Lease, len(leases.Leases))
-	for ip, lease := range leases.Leases {
-		if lease != nil {
-			out[ip] = *lease
-		}
 	}
 	return out, nil
 }
@@ -355,65 +360,49 @@ func (s *Store) readNetworkIndex(ctx context.Context, reader meta.Reader) (*netw
 	return idx, nil
 }
 
-func (s *Store) readLeases() (*leaseIndex, error) {
-	raw, err := os.ReadFile(s.leasePath) //nolint:gosec
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return &leaseIndex{
-				SchemaVersion: leaseSchemaVersion,
-				Leases:        map[string]*Lease{},
-			}, nil
+func (s *Store) withLeases(write bool, fn func(*leaseIndex) error) error {
+	ctx := context.Background()
+	if write {
+		return s.leaseEngine.Update(ctx, meta.Scope{Write: "leases"}, meta.CommitDurable, func(writer meta.Writer) error {
+			leases, err := s.readLeaseIndex(ctx, writer)
+			if err != nil {
+				return err
+			}
+			if err := fn(leases); err != nil {
+				return err
+			}
+			raw, err := json.Marshal(leases)
+			if err != nil {
+				return fmt.Errorf("encode network leases: %w", err)
+			}
+			return writer.PutRaw(ctx, "leases", networkLeaseTable, networkLeaseRecord, raw)
+		})
+	}
+	return s.leaseEngine.View(ctx, []string{"leases"}, func(reader meta.Reader) error {
+		leases, err := s.readLeaseIndex(ctx, reader)
+		if err != nil {
+			return err
 		}
+		return fn(leases)
+	})
+}
+
+func (s *Store) readLeaseIndex(ctx context.Context, reader meta.Reader) (*leaseIndex, error) {
+	raw, ok, err := reader.GetRaw(ctx, "leases", networkLeaseTable, networkLeaseRecord)
+	if err != nil {
 		return nil, fmt.Errorf("read network leases: %w", err)
 	}
-
-	var leases leaseIndex
-	if err := json.Unmarshal(raw, &leases); err != nil {
-		return nil, fmt.Errorf("parse network leases: %w", err)
+	leases := &leaseIndex{SchemaVersion: leaseSchemaVersion, Leases: map[string]*Lease{}}
+	if ok {
+		if err := json.Unmarshal(raw, leases); err != nil {
+			return nil, fmt.Errorf("parse network leases: %w", err)
+		}
 	}
 	if leases.SchemaVersion != "" && leases.SchemaVersion != leaseSchemaVersion {
 		return nil, fmt.Errorf("unsupported network leases schema %q", leases.SchemaVersion)
 	}
-	if leases.SchemaVersion == "" {
-		leases.SchemaVersion = leaseSchemaVersion
-	}
-	if leases.Leases == nil {
-		leases.Leases = map[string]*Lease{}
-	}
-	return &leases, nil
-}
-
-func (s *Store) writeLeases(leases *leaseIndex) error {
-	if leases.SchemaVersion == "" {
-		leases.SchemaVersion = leaseSchemaVersion
-	}
-	if leases.Leases == nil {
-		leases.Leases = map[string]*Lease{}
-	}
-	if err := fileutil.WriteJSONAtomic(s.leasePath, leases, ".leases-*.tmp"); err != nil {
-		return fmt.Errorf("write network leases: %w", err)
-	}
-	return nil
-}
-
-func (s *Store) lockLeases() (func(), error) {
-	if err := os.MkdirAll(filepath.Dir(s.leaseLock), 0o755); err != nil {
-		return nil, fmt.Errorf("create network lease lock dir: %w", err)
-	}
-
-	file, err := os.OpenFile(s.leaseLock, os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return nil, fmt.Errorf("open network lease lock: %w", err)
-	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("lock network leases: %w", err)
-	}
-
-	return func() {
-		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-		_ = file.Close()
-	}, nil
+	leases.init()
+	return leases, nil
 }
 
 func (s *Store) readHostTapState() (*HostTapState, error) {

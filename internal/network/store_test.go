@@ -46,6 +46,33 @@ func TestStoreRecoversPreviousProviderIndex(t *testing.T) {
 	}
 }
 
+func TestStoreRecoversPreviousLeaseGeneration(t *testing.T) {
+	dir := t.TempDir()
+	allocator := NewAllocator(dir, testNetworkConfig())
+	first, err := allocator.Allocate(AllocateRequest{VMID: "kb_lease_first", Index: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := allocator.Allocate(AllocateRequest{VMID: "kb_lease_second", Index: 0}); err != nil {
+		t.Fatal(err)
+	}
+
+	leasePath := filepath.Join(dir, "network", "leases.json")
+	if err := os.WriteFile(leasePath, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	leases, err := NewStore(dir).ListLeases()
+	if err != nil {
+		t.Fatalf("list recovered leases: %v", err)
+	}
+	if len(leases) != 1 {
+		t.Fatalf("recovered leases = %+v", leases)
+	}
+	if _, ok := leases[first.Config.Network.IP]; !ok {
+		t.Fatalf("first lease missing after recovery: %+v", leases)
+	}
+}
+
 func TestStoreListReadsNetworkIndex(t *testing.T) {
 	dir := t.TempDir()
 	indexPath := filepath.Join(dir, "network", "index.json")

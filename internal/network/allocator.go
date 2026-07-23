@@ -68,43 +68,39 @@ func (a *Allocator) Allocate(req AllocateRequest) (*Allocation, error) {
 		networkName = a.cfg.Default
 	}
 
-	unlock, err := a.store.lockLeases()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-
-	leases, err := a.store.readLeases()
-	if err != nil {
-		return nil, err
-	}
-	now := time.Now().UTC()
-
-	tap := TapName(a.cfg.TapPrefix, req.VMID, req.Index)
-	mac, err := a.allocateMAC(leases, req.VMID)
-	if err != nil {
-		return nil, err
-	}
-	ip, prefix, err := a.allocateIP(leases)
-	if err != nil {
-		return nil, err
-	}
-	if req.Existing != nil {
-		tap, mac, ip, prefix, err = a.recoverExisting(leases, req)
+	var allocation *Allocation
+	err := a.store.withLeases(true, func(leases *leaseIndex) error {
+		now := time.Now().UTC()
+		tap := TapName(a.cfg.TapPrefix, req.VMID, req.Index)
+		mac, err := a.allocateMAC(leases, req.VMID)
 		if err != nil {
-			return nil, err
+			return err
 		}
-	}
-
-	leases.CIDR = a.cfg.CIDR
-	leases.Leases[ip] = &Lease{
-		VMID:      req.VMID,
-		MAC:       mac,
-		TAP:       tap,
-		CreatedAt: now,
-	}
-	if err := a.store.writeLeases(leases); err != nil {
+		ip, prefix, err := a.allocateIP(leases)
+		if err != nil {
+			return err
+		}
+		if req.Existing != nil {
+			tap, mac, ip, prefix, err = a.recoverExisting(leases, req)
+			if err != nil {
+				return err
+			}
+		}
+		leases.CIDR = a.cfg.CIDR
+		leases.Leases[ip] = &Lease{VMID: req.VMID, MAC: mac, TAP: tap, CreatedAt: now}
+		allocation = a.buildAllocation(req, tap, mac, ip, prefix, now)
+		return nil
+	})
+	if err != nil {
 		return nil, err
+	}
+	return allocation, nil
+}
+
+func (a *Allocator) buildAllocation(req AllocateRequest, tap, mac, ip string, prefix int, now time.Time) *Allocation {
+	networkName := req.Network
+	if networkName == "" {
+		networkName = a.cfg.Default
 	}
 
 	ips := []string{fmt.Sprintf("%s/%d", ip, prefix)}
@@ -143,7 +139,7 @@ func (a *Allocator) Allocate(req AllocateRequest) (*Allocation, error) {
 			DNS:     append([]string(nil), record.DNS...),
 		},
 	}
-	return &Allocation{Record: record, Config: cfg}, nil
+	return &Allocation{Record: record, Config: cfg}
 }
 
 // ReleaseIP removes a guest IP lease.
@@ -153,17 +149,10 @@ func (a *Allocator) ReleaseIP(ip string) error {
 	if ip == "" {
 		return nil
 	}
-	unlock, err := a.store.lockLeases()
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	leases, err := a.store.readLeases()
-	if err != nil {
-		return err
-	}
-	delete(leases.Leases, ip)
-	return a.store.writeLeases(leases)
+	return a.store.withLeases(true, func(leases *leaseIndex) error {
+		delete(leases.Leases, ip)
+		return nil
+	})
 }
 
 func (a *Allocator) allocateIP(leases *leaseIndex) (string, int, error) {
