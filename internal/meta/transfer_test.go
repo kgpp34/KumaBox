@@ -42,11 +42,15 @@ func TestTransferCopiesJSONMetadataIntoSQLite(t *testing.T) {
 	}
 	defer sqliteEngine.Close()
 
-	if err := meta.Transfer(ctx, jsonEngine, sqliteEngine, []meta.TableSet{{
+	report, err := meta.TransferWithReport(ctx, jsonEngine, sqliteEngine, []meta.TableSet{{
 		Namespace: "vms",
 		Tables:    []meta.Table{"records"},
-	}}); err != nil {
+	}})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if report.Records["vms"] != 1 || report.Digest == "" {
+		t.Fatalf("transfer report = %+v", report)
 	}
 	if err := sqliteEngine.View(ctx, []meta.Namespace{"vms"}, func(reader meta.Reader) error {
 		got, err := collection.Get(ctx, reader, "vm-1")
@@ -59,5 +63,40 @@ func TestTransferCopiesJSONMetadataIntoSQLite(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSQLiteConversionMarksNamespacesAfterTransfer(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	source, err := metajson.Open(metajson.Namespace{
+		Name: "vms", FilePath: filepath.Join(dir, "vms.json"), LockPath: filepath.Join(dir, "vms.lock"),
+		Codec: metajson.TableCodec{Specs: []metajson.TableSpec{{Key: "records", Table: "records"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	collection := meta.NewCollection[map[string]string]("vms", "records")
+	record := map[string]string{"name": "source"}
+	if err := source.Update(ctx, meta.Scope{Write: "vms"}, meta.CommitDurable, func(writer meta.Writer) error {
+		return collection.Upsert(ctx, writer, "vm-1", &record)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	destination, err := metasqlite.Open(filepath.Join(dir, "metadata.db"), metasqlite.Namespace{Name: "vms", Tables: []meta.Table{"records"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destination.Close()
+	if _, err := metasqlite.Convert(ctx, source, destination, "json", []meta.TableSet{{Namespace: "vms", Tables: []meta.Table{"records"}}}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := destination.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status) != 1 || status[0].State != "converted" || status[0].Records != 1 || status[0].Source != "json" {
+		t.Fatalf("conversion status = %+v", status)
 	}
 }
