@@ -69,10 +69,18 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 }
 
 func (s *Store) ListTarget(ctx context.Context, kind, id string) ([]Record, error) {
+	return s.list(ctx, func(record Record) bool { return record.TargetKind == kind && record.TargetID == id })
+}
+
+func (s *Store) ListSource(ctx context.Context, kind, id string) ([]Record, error) {
+	return s.list(ctx, func(record Record) bool { return record.SourceKind == kind && record.SourceID == id })
+}
+
+func (s *Store) list(ctx context.Context, matches func(Record) bool) ([]Record, error) {
 	var result []Record
 	err := s.engine.View(ctx, []meta.Namespace{namespace}, func(reader meta.Reader) error {
 		return s.collection.Scan(ctx, reader, func(_ meta.RecordID, record *Record) error {
-			if record.TargetKind == kind && record.TargetID == id {
+			if matches(*record) {
 				result = append(result, *record)
 			}
 			return nil
@@ -86,4 +94,5 @@ var _ interface {
 	Upsert(context.Context, Record) error
 	Delete(context.Context, string) error
 	ListTarget(context.Context, string, string) ([]Record, error)
+	ListSource(context.Context, string, string) ([]Record, error)
 } = (*Store)(nil)

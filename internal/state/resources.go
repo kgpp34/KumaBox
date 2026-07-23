@@ -84,6 +84,7 @@ type ReferenceState interface {
 	Upsert(context.Context, reference.Record) error
 	Delete(context.Context, string) error
 	ListTarget(context.Context, string, string) ([]reference.Record, error)
+	ListSource(context.Context, string, string) ([]reference.Record, error)
 }
 
 var _ ReferenceState = (*reference.Store)(nil)

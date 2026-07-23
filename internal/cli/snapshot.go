@@ -241,6 +241,19 @@ func newSnapshotRMCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if stores.References != nil {
+				record, inspectErr := stores.Snapshots.Inspect(args[0])
+				if inspectErr != nil {
+					return inspectErr
+				}
+				refs, listErr := stores.References.ListTarget(cmd.Context(), "snapshot", record.ID)
+				if listErr != nil {
+					return listErr
+				}
+				if len(refs) > 0 {
+					return fmt.Errorf("SNAPSHOT_IN_USE: snapshot %s has %d explicit reference(s)", record.Name, len(refs))
+				}
+			}
 			rec, err := stores.Snapshots.Remove(args[0])
 			if err != nil {
 				return err

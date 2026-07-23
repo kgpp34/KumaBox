@@ -97,6 +97,14 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 		_, _ = r.vmUpdater.SetError(rec.ID, "hibernate snapshot is durable but stopped state publication failed")
 		return nil, fmt.Errorf("publish hibernated VM state: %w", err)
 	}
+	if rec.Image != nil {
+		if err := r.recordSnapshotImageReference(ctx, ready.ID, rec.Image.ID); err != nil {
+			return nil, fmt.Errorf("record hibernate image reference: %w", err)
+		}
+	}
+	if err := r.recordVMSnapshotReference(ctx, hibernated.ID, ready.ID); err != nil {
+		return nil, fmt.Errorf("record hibernate snapshot reference: %w", err)
+	}
 	_ = writeVMEvent(hibernated, "vm.hibernate.completed", vmstore.Observation{
 		State: vmstore.ObservedStateStopped, Reason: "hibernated to native snapshot " + ready.ID, CheckedAt: time.Now().UTC(),
 	})

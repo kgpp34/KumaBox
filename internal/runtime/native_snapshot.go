@@ -110,6 +110,12 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 	if err != nil {
 		return nil, err
 	}
+	if rec.Image != nil {
+		if err := r.recordSnapshotImageReference(ctx, ready.ID, rec.Image.ID); err != nil {
+			_, _ = r.storeSet.Snapshots.Remove(ready.ID)
+			return nil, fmt.Errorf("record snapshot image reference: %w", err)
+		}
+	}
 	_ = writeVMEvent(rec, "snapshot.capture.completed", vmstore.Observation{
 		State:     vmstore.ObservedStateRunning,
 		Reason:    fmt.Sprintf("native crash-consistent snapshot %s captured", ready.ID),

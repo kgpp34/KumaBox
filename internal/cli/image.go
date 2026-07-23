@@ -316,6 +316,11 @@ func newImageRMCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if explicit, err := explicitImageReferences(cmd.Context(), stores, args[0]); err != nil {
+				return err
+			} else if len(explicit) > 0 {
+				refs = explicit
+			}
 			rec, err := stores.Images.Remove(imagestore.RemoveRequest{
 				Ref:        args[0],
 				Force:      force,
@@ -329,6 +334,25 @@ func newImageRMCommand(opts *rootOptions) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "allow removal of damaged unreferenced image directories")
 	return cmd
+}
+
+func explicitImageReferences(ctx context.Context, stores resources.StoreSet, ref string) ([]imagestore.Reference, error) {
+	if stores.References == nil {
+		return nil, nil
+	}
+	image, err := stores.Images.Inspect(ref)
+	if err != nil {
+		return nil, err
+	}
+	records, err := stores.References.ListTarget(ctx, "image", image.ID)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]imagestore.Reference, 0, len(records))
+	for _, record := range records {
+		refs = append(refs, imagestore.Reference{Kind: record.SourceKind, VMID: record.SourceID, VMName: record.SourceID, ImageID: image.ID})
+	}
+	return refs, nil
 }
 
 func imageReferencesFromVMs(stores resources.StoreSet) ([]imagestore.Reference, error) {

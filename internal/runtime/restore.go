@@ -67,6 +67,10 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	if err != nil {
 		return nil, err
 	}
+	if err := r.recordVMImageReference(ctx, rec); err != nil {
+		_ = r.vmRecords.Delete(rec.ID)
+		return nil, fmt.Errorf("record restored image reference: %w", err)
+	}
 	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
 	if err != nil {
 		_ = r.vmRecords.Delete(rec.ID)

@@ -77,7 +77,17 @@ func (r *Runtime) CreateStoppedSnapshot(ctx context.Context, ref, name string) (
 	if err != nil {
 		return nil, err
 	}
-	return build.Finalize(sizeBytes)
+	ready, err := build.Finalize(sizeBytes)
+	if err != nil {
+		return nil, err
+	}
+	if rec.Image != nil {
+		if err := r.recordSnapshotImageReference(ctx, ready.ID, rec.Image.ID); err != nil {
+			_, _ = r.storeSet.Snapshots.Remove(ready.ID)
+			return nil, fmt.Errorf("record snapshot image reference: %w", err)
+		}
+	}
+	return ready, nil
 }
 
 var deleteHostTap = kbnetwork.DeleteHostTap
@@ -180,6 +190,12 @@ func (r *Runtime) createVMContext(ctx context.Context, req vmstore.CreateRequest
 		_ = removeManagedDirs(rec, r.vmReader.RootDir())
 		_ = r.vmRecords.Delete(rec.ID)
 		return nil, err
+	}
+	if err := r.recordVMImageReference(ctx, rec); err != nil {
+		r.rollbackNetwork(rec)
+		_ = removeManagedDirs(rec, r.vmReader.RootDir())
+		_ = r.vmRecords.Delete(rec.ID)
+		return nil, fmt.Errorf("record VM image reference: %w", err)
 	}
 	return r.applyObservation(rec), nil
 }
@@ -443,6 +459,9 @@ func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (
 
 	if err := r.cleanupNetwork(observed); err != nil {
 		return nil, err
+	}
+	if err := r.removeVMReferences(ctx, observed.ID); err != nil {
+		return nil, fmt.Errorf("remove VM references: %w", err)
 	}
 
 	_ = writeVMEvent(observed, "backend.delete.completed", vmstore.Observation{

@@ -157,6 +157,9 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 		_, _ = r.backend.StopVM(&cleanupRec, backend.StopOptions{Force: true})
 		return fail(fmt.Errorf("publish restored VM state: %w", err))
 	}
+	if err := r.recordVMSnapshotReference(ctx, restored.ID, snapshotRec.ID); err != nil {
+		return nil, fmt.Errorf("record restore snapshot reference: %w", err)
+	}
 	_ = writeVMEvent(restored, "snapshot.restore.completed", vmstore.Observation{
 		State: vmstore.ObservedStateRunning, Reason: "native snapshot " + snapshotRec.ID + " restored", CheckedAt: time.Now().UTC(),
 	})

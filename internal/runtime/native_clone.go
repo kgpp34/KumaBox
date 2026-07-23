@@ -91,6 +91,10 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err != nil {
 		return nil, err
 	}
+	if err := r.recordVMImageReference(ctx, rec); err != nil {
+		_ = r.vmRecords.Delete(rec.ID)
+		return nil, fmt.Errorf("record clone image reference: %w", err)
+	}
 	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
 	if err != nil {
 		_ = r.vmRecords.Delete(rec.ID)
@@ -168,6 +172,9 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	})
 	if err != nil {
 		return nil, err
+	}
+	if err := r.recordVMSnapshotReference(ctx, cloned.ID, snapshotRec.ID); err != nil {
+		return nil, fmt.Errorf("record clone snapshot reference: %w", err)
 	}
 	committed = true
 	_ = writeVMEvent(cloned, "snapshot.clone.completed", vmstore.Observation{
