@@ -88,10 +88,14 @@ else
 fi
 
 kb() {
+  local metadata_args=(--metadata-backend "$metadata_backend")
+  if [[ -n "$metadata_path" ]]; then
+    metadata_args+=(--metadata-path "$metadata_path")
+  fi
   "${kb_prefix[@]}" "$kumabox" \
     --root-dir "$root_dir" --run-dir "$run_dir" --log-dir "$log_dir" \
     --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" \
-    --metadata-backend "$metadata_backend" ${metadata_path:+--metadata-path "$metadata_path"} "$@"
+    "${metadata_args[@]}" "$@"
 }
 step() { printf '\n==> %s\n' "$1"; }
 remove_file() { "${file_prefix[@]}" rm -f "$1"; }

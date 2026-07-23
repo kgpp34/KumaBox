@@ -124,7 +124,11 @@ cni_conf=$cni_conf_dir/10-$network_name.conflist
 ipam_data_dir=$work_dir/ipam
 
 kb() {
-  "${kb_prefix[@]}" "$kumabox" --config "$config_file" --metadata-backend "$metadata_backend" ${metadata_path:+--metadata-path "$metadata_path"} "$@"
+  local metadata_args=(--metadata-backend "$metadata_backend")
+  if [[ -n "$metadata_path" ]]; then
+    metadata_args+=(--metadata-path "$metadata_path")
+  fi
+  "${kb_prefix[@]}" "$kumabox" --config "$config_file" "${metadata_args[@]}" "$@"
 }
 
 section() {
