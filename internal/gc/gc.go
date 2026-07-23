@@ -18,6 +18,7 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
+	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -43,15 +44,16 @@ type Report struct {
 // It never removes data. The report is intended for operator review and for
 // validating GC policy before destructive cleanup is implemented.
 func DryRun(cfg config.Config) (*Report, error) {
-	records, err := vmstore.New(cfg.Runtime.RootDir).List()
+	stores := resources.NewStoreSet(cfg.Runtime.RootDir)
+	records, err := stores.VM.List()
 	if err != nil {
 		return nil, fmt.Errorf("read VM store: %w", err)
 	}
-	images, err := imagestore.New(cfg.Runtime.RootDir).List()
+	images, err := stores.Images.List()
 	if err != nil {
 		return nil, fmt.Errorf("read image store: %w", err)
 	}
-	networkStore := kbnetwork.NewStore(cfg.Runtime.RootDir)
+	networkStore := stores.Networks
 	networkRecords, err := networkStore.List()
 	if err != nil {
 		return nil, fmt.Errorf("read network store: %w", err)
@@ -60,7 +62,7 @@ func DryRun(cfg config.Config) (*Report, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read network leases: %w", err)
 	}
-	snapshotStore := snapshot.NewStore(cfg.Runtime.RootDir)
+	snapshotStore := stores.Snapshots
 	snapshots, err := snapshotStore.Scan()
 	if err != nil {
 		return nil, fmt.Errorf("read snapshot store: %w", err)

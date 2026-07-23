@@ -1,38 +1,22 @@
 package runtime
 
 import (
-	"github.com/kumabox/kumabox/internal/imagestore"
-	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	"github.com/kumabox/kumabox/internal/ocistore"
-	"github.com/kumabox/kumabox/internal/snapshot"
+	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/state"
-	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
-// StoreSet is the runtime's resource-store composition. Keeping these
-// instances together prevents lifecycle code from silently creating a second
-// store with a different metadata engine.
-type StoreSet struct {
-	VM        state.VMState
-	Images    *imagestore.Store
-	Snapshots *snapshot.Store
-	Networks  *kbnetwork.Store
-	OCI       *ocistore.Store
-}
+// StoreSet is kept as a runtime alias for source compatibility. The actual
+// resource composition belongs to the resources package so other entrypoints
+// can use the same construction boundary.
+type StoreSet = resources.StoreSet
 
 func newStoreSet(rootDir string, vm state.VMState) StoreSet {
-	return StoreSet{
-		VM:        vm,
-		Images:    imagestore.New(rootDir),
-		Snapshots: snapshot.NewStore(rootDir),
-		Networks:  kbnetwork.NewStore(rootDir),
-		OCI:       ocistore.New(rootDir),
-	}
+	stores := resources.NewStoreSet(rootDir)
+	stores.VM = vm
+	return stores
 }
 
-// NewStoreSet creates the default JSON-backed resource stores. The returned
-// set is intentionally concrete so callers can replace individual stores with
-// injected-engine variants before constructing a Runtime.
+// NewStoreSet creates the default resource composition for runtime callers.
 func NewStoreSet(rootDir string) StoreSet {
-	return newStoreSet(rootDir, vmstore.New(rootDir))
+	return resources.NewStoreSet(rootDir)
 }
