@@ -18,6 +18,34 @@ func TestStoreListMissingIndexReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestStoreRecoversPreviousProviderIndex(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	base := Record{Provider: ProviderHostTap, Network: "default", IfName: "eth0", Cleanup: Cleanup{}}
+	first := base
+	first.ID, first.VMID, first.TAP = "net_first", "kb_first", "kbtap-first"
+	second := base
+	second.ID, second.VMID, second.TAP = "net_second", "kb_second", "kbtap-second"
+	if err := store.UpsertRecord(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertRecord(second); err != nil {
+		t.Fatal(err)
+	}
+
+	indexPath := filepath.Join(dir, "network", "index.json")
+	if err := os.WriteFile(indexPath, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	records, err := store.List()
+	if err != nil {
+		t.Fatalf("list recovered records: %v", err)
+	}
+	if len(records) != 1 || records[0].ID != first.ID {
+		t.Fatalf("recovered records = %+v", records)
+	}
+}
+
 func TestStoreListReadsNetworkIndex(t *testing.T) {
 	dir := t.TempDir()
 	indexPath := filepath.Join(dir, "network", "index.json")

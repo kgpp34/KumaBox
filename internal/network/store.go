@@ -1,6 +1,7 @@
 package network
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/fileutil"
+	"github.com/kumabox/kumabox/internal/meta"
+	metajson "github.com/kumabox/kumabox/internal/meta/json"
 )
 
 const indexSchemaVersion = "kumabox.network.index.v1"
@@ -24,6 +27,7 @@ const hostTapSchemaVersion = "kumabox.network.hostTap.v1"
 // host-tap bridge ownership. Each file has its own flock because lifecycle and
 // network commands may touch them independently.
 type Store struct {
+	engine      meta.MetaEngine
 	indexPath   string
 	indexLock   string
 	leasePath   string
@@ -55,6 +59,7 @@ type leaseIndex struct {
 func NewStore(rootDir string) *Store {
 	networkDir := filepath.Join(rootDir, "network")
 	return &Store{
+		engine:      mustOpenNetworkEngine(metajson.Namespace{Name: "networks", FilePath: filepath.Join(networkDir, "index.json"), LockPath: filepath.Join(networkDir, "index.lock"), Codec: indexCodec{}}),
 		indexPath:   filepath.Join(networkDir, "index.json"),
 		indexLock:   filepath.Join(networkDir, "index.lock"),
 		leasePath:   filepath.Join(networkDir, "leases.json"),
@@ -64,17 +69,28 @@ func NewStore(rootDir string) *Store {
 	}
 }
 
+func mustOpenNetworkEngine(namespace metajson.Namespace) meta.MetaEngine {
+	engine, err := metajson.Open(namespace)
+	if err != nil {
+		panic(fmt.Sprintf("open network metadata engine: %v", err))
+	}
+	return engine
+}
+
 // List returns provider records sorted by creation time.
 func (s *Store) List() ([]Record, error) {
-	idx, err := s.readIndex()
+	var records []Record
+	err := s.withIndex(false, func(idx *networkIndex) error {
+		records = make([]Record, 0, len(idx.Networks))
+		for _, rec := range idx.Networks {
+			if rec != nil {
+				records = append(records, *rec)
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	records := make([]Record, 0, len(idx.Networks))
-	for _, rec := range idx.Networks {
-		if rec != nil {
-			records = append(records, *rec)
-		}
 	}
 	sort.Slice(records, func(i, j int) bool {
 		if records[i].CreatedAt.Equal(records[j].CreatedAt) {
@@ -93,17 +109,7 @@ func (s *Store) UpsertRecord(rec Record) error {
 	if rec.ID == "" {
 		return fmt.Errorf("network record id must not be empty")
 	}
-	unlock, err := s.lockIndex()
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	idx, err := s.readIndex()
-	if err != nil {
-		return err
-	}
-	idx.Networks[rec.ID] = &rec
-	return s.writeIndex(idx)
+	return s.withIndex(true, func(idx *networkIndex) error { idx.Networks[rec.ID] = &rec; return nil })
 }
 
 // DeleteRecord removes a provider record.
@@ -114,17 +120,7 @@ func (s *Store) DeleteRecord(id string) error {
 	if id == "" {
 		return nil
 	}
-	unlock, err := s.lockIndex()
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	idx, err := s.readIndex()
-	if err != nil {
-		return err
-	}
-	delete(idx.Networks, id)
-	return s.writeIndex(idx)
+	return s.withIndex(true, func(idx *networkIndex) error { delete(idx.Networks, id); return nil })
 }
 
 // MarkCleanupPending records a failed provider cleanup attempt.
@@ -135,27 +131,16 @@ func (s *Store) MarkCleanupPending(id, reason string) error {
 	if id == "" {
 		return nil
 	}
-	unlock, err := s.lockIndex()
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	idx, err := s.readIndex()
-	if err != nil {
-		return err
-	}
-	rec, ok := idx.Networks[id]
-	if !ok || rec == nil {
+	return s.withIndex(true, func(idx *networkIndex) error {
+		rec, ok := idx.Networks[id]
+		if !ok || rec == nil {
+			return nil
+		}
+		now := time.Now().UTC()
+		rec.Cleanup = Cleanup{Pending: true, Reason: reason, LastAttemptAt: now.Format(time.RFC3339Nano)}
+		rec.UpdatedAt = now
 		return nil
-	}
-	now := time.Now().UTC()
-	rec.Cleanup = Cleanup{
-		Pending:       true,
-		Reason:        reason,
-		LastAttemptAt: now.Format(time.RFC3339Nano),
-	}
-	rec.UpdatedAt = now
-	return s.writeIndex(idx)
+	})
 }
 
 // Inspect returns provider state for a VM ID without VM-record comparison.
@@ -323,21 +308,43 @@ func (s *Store) DecrementHostTapRef(count int) error {
 	return s.adjustHostTapRef(-count, false)
 }
 
-func (s *Store) readIndex() (*index, error) {
-	raw, err := os.ReadFile(s.indexPath) //nolint:gosec
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return &index{
-				SchemaVersion: indexSchemaVersion,
-				Networks:      map[string]*Record{},
-			}, nil
+func (s *Store) withIndex(write bool, fn func(*networkIndex) error) error {
+	ctx := context.Background()
+	if write {
+		return s.engine.Update(ctx, meta.Scope{Write: "networks"}, meta.CommitDurable, func(writer meta.Writer) error {
+			idx, err := s.readNetworkIndex(ctx, writer)
+			if err != nil {
+				return err
+			}
+			if err := fn(idx); err != nil {
+				return err
+			}
+			raw, err := json.Marshal(idx)
+			if err != nil {
+				return fmt.Errorf("encode network index: %w", err)
+			}
+			return writer.PutRaw(ctx, "networks", networkIndexTable, networkIndexRecord, raw)
+		})
+	}
+	return s.engine.View(ctx, []string{"networks"}, func(reader meta.Reader) error {
+		idx, err := s.readNetworkIndex(ctx, reader)
+		if err != nil {
+			return err
 		}
+		return fn(idx)
+	})
+}
+
+func (s *Store) readNetworkIndex(ctx context.Context, reader meta.Reader) (*networkIndex, error) {
+	raw, ok, err := reader.GetRaw(ctx, "networks", networkIndexTable, networkIndexRecord)
+	if err != nil {
 		return nil, fmt.Errorf("read network index: %w", err)
 	}
-
-	var idx index
-	if err := json.Unmarshal(raw, &idx); err != nil {
-		return nil, fmt.Errorf("parse network index: %w", err)
+	idx := &networkIndex{SchemaVersion: indexSchemaVersion, Networks: map[string]*Record{}}
+	if ok {
+		if err := json.Unmarshal(raw, idx); err != nil {
+			return nil, fmt.Errorf("parse network index: %w", err)
+		}
 	}
 	if idx.SchemaVersion != "" && idx.SchemaVersion != indexSchemaVersion {
 		return nil, fmt.Errorf("unsupported network index schema %q", idx.SchemaVersion)
@@ -345,20 +352,7 @@ func (s *Store) readIndex() (*index, error) {
 	if idx.Networks == nil {
 		idx.Networks = map[string]*Record{}
 	}
-	return &idx, nil
-}
-
-func (s *Store) writeIndex(idx *index) error {
-	if idx.SchemaVersion == "" {
-		idx.SchemaVersion = indexSchemaVersion
-	}
-	if idx.Networks == nil {
-		idx.Networks = map[string]*Record{}
-	}
-	if err := fileutil.WriteJSONAtomic(s.indexPath, idx, ".index-*.tmp"); err != nil {
-		return fmt.Errorf("write network index: %w", err)
-	}
-	return nil
+	return idx, nil
 }
 
 func (s *Store) readLeases() (*leaseIndex, error) {
@@ -414,26 +408,6 @@ func (s *Store) lockLeases() (func(), error) {
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
 		_ = file.Close()
 		return nil, fmt.Errorf("lock network leases: %w", err)
-	}
-
-	return func() {
-		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-		_ = file.Close()
-	}, nil
-}
-
-func (s *Store) lockIndex() (func(), error) {
-	if err := os.MkdirAll(filepath.Dir(s.indexLock), 0o755); err != nil {
-		return nil, fmt.Errorf("create network index lock dir: %w", err)
-	}
-
-	file, err := os.OpenFile(s.indexLock, os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return nil, fmt.Errorf("open network index lock: %w", err)
-	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("lock network index: %w", err)
 	}
 
 	return func() {
