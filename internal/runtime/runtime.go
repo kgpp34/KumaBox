@@ -17,6 +17,7 @@ import (
 	"github.com/kumabox/kumabox/internal/lockfile"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/snapshot"
+	"github.com/kumabox/kumabox/internal/state"
 	"github.com/kumabox/kumabox/internal/storage"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -29,7 +30,7 @@ const forcedStopTimeout = 5 * time.Second
 // KumaBox is daemonless, so each command must reconcile persisted intent with
 // the current backend process state before making lifecycle decisions.
 type Runtime struct {
-	store          *vmstore.Store
+	store          state.VMState
 	backend        backend.Lifecycle
 	cfg            config.Config
 	vmLocks        *lockfile.Locker
@@ -89,7 +90,7 @@ func New(cfg config.Config) *Runtime {
 }
 
 // NewWithBackend creates a Runtime with an injected VM store and backend.
-func NewWithBackend(store *vmstore.Store, vmBackend backend.Lifecycle) *Runtime {
+func NewWithBackend(store state.VMState, vmBackend backend.Lifecycle) *Runtime {
 	return &Runtime{
 		store:          store,
 		backend:        vmBackend,
