@@ -4,39 +4,50 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
+	stdjson "encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/fileutil"
+	"github.com/kumabox/kumabox/internal/meta"
+	metajson "github.com/kumabox/kumabox/internal/meta/json"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
 // Store owns the snapshot index, payload directories, staging, and leases.
 type Store struct {
-	dataRoot  string
-	rootDir   string
-	indexPath string
-	lockPath  string
-	leaser    *leaser
+	dataRoot string
+	rootDir  string
+	engine   meta.MetaEngine
+	leaser   *leaser
 }
 
 // NewStore creates a snapshot store under rootDir.
 func NewStore(rootDir string) *Store {
 	dir := filepath.Join(rootDir, "snapshot")
 	return &Store{
-		dataRoot:  rootDir,
-		rootDir:   dir,
-		indexPath: filepath.Join(dir, "index.json"),
-		lockPath:  filepath.Join(dir, "index.lock"),
-		leaser:    newLeaser(filepath.Join(dir, "leases")),
+		dataRoot: rootDir,
+		rootDir:  dir,
+		engine: mustOpenSnapshotEngine(metajson.Namespace{
+			Name:     "snapshots",
+			FilePath: filepath.Join(dir, "index.json"),
+			LockPath: filepath.Join(dir, "index.lock"),
+			Codec:    indexCodec{},
+		}),
+		leaser: newLeaser(filepath.Join(dir, "leases")),
 	}
+}
+
+func mustOpenSnapshotEngine(namespace metajson.Namespace) meta.MetaEngine {
+	engine, err := metajson.Open(namespace)
+	if err != nil {
+		panic(fmt.Sprintf("open snapshot metadata engine: %v", err))
+	}
+	return engine
 }
 
 // Build is an exclusive pending snapshot transaction.
@@ -264,7 +275,7 @@ func (s *Store) LoadManifest(ctx context.Context, ref string) (*Manifest, error)
 		return nil, fmt.Errorf("read snapshot manifest: %w", err)
 	}
 	var manifest Manifest
-	if err := json.Unmarshal(raw, &manifest); err != nil {
+	if err := stdjson.Unmarshal(raw, &manifest); err != nil {
 		return nil, fmt.Errorf("decode snapshot manifest: %w", err)
 	}
 	if (manifest.SchemaVersion != "kumabox.snapshot.v1" && manifest.SchemaVersion != "kumabox.snapshot.v2") || manifest.ID != rec.ID {
@@ -362,43 +373,45 @@ func (s *Store) update(fn func(*snapshotIndex) error) error {
 }
 
 func (s *Store) withIndex(write bool, fn func(*snapshotIndex) error) error {
-	if err := os.MkdirAll(s.rootDir, 0o700); err != nil {
-		return fmt.Errorf("create snapshot store: %w", err)
-	}
-	lock, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec
-	if err != nil {
-		return fmt.Errorf("open snapshot index lock: %w", err)
-	}
-	defer lock.Close() //nolint:errcheck
-	mode := syscall.LOCK_SH
+	ctx := context.Background()
 	if write {
-		mode = syscall.LOCK_EX
+		return s.engine.Update(ctx, meta.Scope{Write: "snapshots"}, meta.CommitDurable, func(writer meta.Writer) error {
+			idx, err := s.readIndex(ctx, writer)
+			if err != nil {
+				return err
+			}
+			if err := fn(idx); err != nil {
+				return err
+			}
+			raw, err := stdjson.Marshal(idx)
+			if err != nil {
+				return fmt.Errorf("encode snapshot index: %w", err)
+			}
+			return writer.PutRaw(ctx, "snapshots", snapshotIndexTable, snapshotIndexRecord, raw)
+		})
 	}
-	if err := syscall.Flock(int(lock.Fd()), mode); err != nil {
-		return fmt.Errorf("lock snapshot index: %w", err)
-	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) //nolint:errcheck
-
-	idx := &snapshotIndex{}
-	raw, err := os.ReadFile(s.indexPath) //nolint:gosec
-	if err == nil {
-		if err := json.Unmarshal(raw, idx); err != nil {
-			return fmt.Errorf("decode snapshot index: %w", err)
+	return s.engine.View(ctx, []string{"snapshots"}, func(reader meta.Reader) error {
+		idx, err := s.readIndex(ctx, reader)
+		if err != nil {
+			return err
 		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read snapshot index: %w", err)
+		return fn(idx)
+	})
+}
+
+func (s *Store) readIndex(ctx context.Context, reader meta.Reader) (*snapshotIndex, error) {
+	raw, ok, err := reader.GetRaw(ctx, "snapshots", snapshotIndexTable, snapshotIndexRecord)
+	if err != nil {
+		return nil, fmt.Errorf("read snapshot index: %w", err)
+	}
+	idx := &snapshotIndex{}
+	if ok {
+		if err := stdjson.Unmarshal(raw, idx); err != nil {
+			return nil, fmt.Errorf("decode snapshot index: %w", err)
+		}
 	}
 	idx.init()
-	if err := fn(idx); err != nil {
-		return err
-	}
-	if !write {
-		return nil
-	}
-	if err := fileutil.WriteJSONAtomic(s.indexPath, idx, ".snapshot-index-*.tmp"); err != nil {
-		return fmt.Errorf("write snapshot index: %w", err)
-	}
-	return nil
+	return idx, nil
 }
 
 func newID() (string, error) {

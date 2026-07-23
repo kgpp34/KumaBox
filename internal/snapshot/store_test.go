@@ -54,6 +54,30 @@ func TestStoreReserveFinalizeAndList(t *testing.T) {
 	}
 }
 
+func TestStoreRecoversPreviousIndexGeneration(t *testing.T) {
+	store := NewStore(t.TempDir())
+	ready := createReadySnapshot(t, store, "recoverable")
+	second, err := store.Reserve(context.Background(), "transient")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Abort(); err != nil {
+		t.Fatal(err)
+	}
+
+	indexPath := filepath.Join(store.rootDir, "index.json")
+	if err := os.WriteFile(indexPath, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := store.Inspect(ready.ID)
+	if err != nil {
+		t.Fatalf("inspect recovered snapshot: %v", err)
+	}
+	if recovered.ID != ready.ID {
+		t.Fatalf("recovered ID = %s, want %s", recovered.ID, ready.ID)
+	}
+}
+
 func TestStoreReserveRejectsNameConflict(t *testing.T) {
 	t.Parallel()
 	store := NewStore(t.TempDir())
