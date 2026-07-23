@@ -2,6 +2,7 @@ package operation
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/kumabox/kumabox/internal/meta"
@@ -36,5 +37,32 @@ func TestJournalRecordsAndRecoversRunningOperation(t *testing.T) {
 	recoverable, err = journal.Recoverable(ctx)
 	if err != nil || len(recoverable) != 0 {
 		t.Fatalf("recoverable after completion = %+v, err = %v", recoverable, err)
+	}
+}
+
+func TestJournalReconcilePublishesRepairResult(t *testing.T) {
+	engine, err := meta.NewMemoryEngine(string(namespace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+	journal := NewWithEngine(engine)
+	ctx := context.Background()
+	if _, err := journal.Begin(ctx, "op-ok", "delete", "vm-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := journal.Begin(ctx, "op-fail", "network", "vm-2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.Reconcile(ctx, func(_ context.Context, record Record) error {
+		if record.ID == "op-fail" {
+			return errors.New("host cleanup pending")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if recoverable, err := journal.Recoverable(ctx); err != nil || len(recoverable) != 0 {
+		t.Fatalf("recoverable after reconcile = %+v, err = %v", recoverable, err)
 	}
 }

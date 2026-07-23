@@ -124,6 +124,32 @@ func (j *Journal) Recoverable(ctx context.Context) ([]Record, error) {
 	return records, err
 }
 
+// Reconcile lets the caller inspect each interrupted operation and decide how
+// to repair it. A successful callback publishes succeeded; an error publishes
+// failed with the callback error. The callback runs outside metadata writes so
+// it may inspect host resources without holding a database transaction.
+func (j *Journal) Reconcile(ctx context.Context, repair func(context.Context, Record) error) error {
+	if repair == nil {
+		return fmt.Errorf("operation repair callback must not be nil: %w", meta.ErrScope)
+	}
+	records, err := j.Recoverable(ctx)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		if err := repair(ctx, record); err != nil {
+			if _, markErr := j.Fail(ctx, record.ID, err.Error()); markErr != nil {
+				return fmt.Errorf("record operation %s failure: %w", record.ID, markErr)
+			}
+			continue
+		}
+		if _, err := j.Complete(ctx, record.ID); err != nil {
+			return fmt.Errorf("complete reconciled operation %s: %w", record.ID, err)
+		}
+	}
+	return nil
+}
+
 func clone(record Record) *Record {
 	if record.FinishedAt != nil {
 		finished := *record.FinishedAt
