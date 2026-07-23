@@ -35,6 +35,7 @@ type Runtime struct {
 	vmRecords      state.VMRecords
 	vmUpdater      state.VMUpdater
 	vmRestore      state.VMRestore
+	operations     state.OperationState
 	storeSet       StoreSet
 	backend        backend.Lifecycle
 	cfg            config.Config
@@ -100,12 +101,14 @@ func New(cfg config.Config) *Runtime {
 
 // NewWithBackend creates a Runtime with an injected VM store and backend.
 func NewWithBackend(store state.VMState, vmBackend backend.Lifecycle) *Runtime {
+	stores := newStoreSet(store.RootDir(), store)
 	return &Runtime{
 		vmReader:       store,
 		vmRecords:      store,
 		vmUpdater:      store,
 		vmRestore:      store,
-		storeSet:       newStoreSet(store.RootDir(), store),
+		operations:     stores.Operations,
+		storeSet:       stores,
 		backend:        vmBackend,
 		vmLocks:        lockfile.New(filepath.Join(store.RootDir(), "locks", "vms")),
 		qemuImg:        storage.NewQEMUImg("qemu-img"),
@@ -124,6 +127,7 @@ func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) *Runt
 		vmRecords:      stores.VM,
 		vmUpdater:      stores.VM,
 		vmRestore:      stores.VM,
+		operations:     stores.Operations,
 		storeSet:       stores,
 		backend:        vmBackend,
 		vmLocks:        lockfile.New(filepath.Join(stores.VM.RootDir(), "locks", "vms")),
@@ -196,14 +200,19 @@ func (r *Runtime) StartVMContext(ctx context.Context, ref string) (*vmstore.VMRe
 	if err != nil {
 		return nil, err
 	}
+	operationID, err := r.beginOperation(ctx, "vm.start", rec.ID)
+	if err != nil {
+		return nil, err
+	}
 	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
 	if err != nil {
-		return nil, fmt.Errorf("lock VM %s for start: %w", rec.ID, err)
+		return nil, r.finishOperation(ctx, operationID, fmt.Errorf("lock VM %s for start: %w", rec.ID, err))
 	}
 	defer lock.Release() //nolint:errcheck
 	metrics := newLifecycleMetrics("start", commandStarted, rec)
 	metrics.markImageResolved(commandStarted)
-	return r.startVMLocked(ctx, rec.ID, metrics)
+	result, startErr := r.startVMLocked(ctx, rec.ID, metrics)
+	return result, r.finishOperation(ctx, operationID, startErr)
 }
 
 func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecycleMetrics) (*vmstore.VMRecord, error) {
@@ -322,12 +331,17 @@ func (r *Runtime) StopVMContext(ctx context.Context, ref string, opts backend.St
 	if err != nil {
 		return nil, err
 	}
+	operationID, err := r.beginOperation(ctx, "vm.stop", rec.ID)
+	if err != nil {
+		return nil, err
+	}
 	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
 	if err != nil {
-		return nil, fmt.Errorf("lock VM %s for stop: %w", rec.ID, err)
+		return nil, r.finishOperation(ctx, operationID, fmt.Errorf("lock VM %s for stop: %w", rec.ID, err))
 	}
 	defer lock.Release() //nolint:errcheck
-	return r.stopVMLocked(ctx, rec.ID, opts)
+	result, stopErr := r.stopVMLocked(ctx, rec.ID, opts)
+	return result, r.finishOperation(ctx, operationID, stopErr)
 }
 
 func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.StopOptions) (*vmstore.VMRecord, error) {
@@ -392,11 +406,16 @@ func (r *Runtime) DeleteVM(ref string, force bool) (*vmstore.VMRecord, error) {
 
 // DeleteVMContext deletes a VM while serializing stop and cleanup under one
 // operation lock.
-func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (*vmstore.VMRecord, error) {
+func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (result *vmstore.VMRecord, resultErr error) {
 	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
+	operationID, err := r.beginOperation(ctx, "vm.delete", rec.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { resultErr = r.finishOperation(ctx, operationID, resultErr) }()
 	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
 	if err != nil {
 		return nil, fmt.Errorf("lock VM %s for delete: %w", rec.ID, err)

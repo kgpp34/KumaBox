@@ -4,6 +4,8 @@ package operation
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -41,6 +43,15 @@ type Record struct {
 type Journal struct {
 	engine     meta.MetaEngine
 	collection *meta.Collection[Record]
+}
+
+// NewID returns a process-independent operation identifier.
+func NewID() (string, error) {
+	var raw [12]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("generate operation id: %w", err)
+	}
+	return "op_" + hex.EncodeToString(raw[:]), nil
 }
 
 func New(rootDir string) *Journal {
