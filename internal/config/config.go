@@ -42,10 +42,18 @@ var defaultDNS = []string{"1.1.1.1", "8.8.8.8"}
 // paths or provider settings receive this struct explicitly so tests can use
 // isolated root/run/log directories without mutating global process state.
 type Config struct {
-	Runtime RuntimeConfig `toml:"runtime" json:"runtime"`
-	Backend BackendConfig `toml:"backend" json:"backend"`
-	Network NetworkConfig `toml:"network" json:"network"`
-	Storage StorageConfig `toml:"storage" json:"storage"`
+	Runtime  RuntimeConfig  `toml:"runtime" json:"runtime"`
+	Backend  BackendConfig  `toml:"backend" json:"backend"`
+	Network  NetworkConfig  `toml:"network" json:"network"`
+	Storage  StorageConfig  `toml:"storage" json:"storage"`
+	Metadata MetadataConfig `toml:"metadata" json:"metadata"`
+}
+
+// MetadataConfig selects the durable metadata engine. JSON remains the
+// default for compatibility; SQLite is an explicit opt-in backend.
+type MetadataConfig struct {
+	Backend string `toml:"backend" json:"backend"`
+	Path    string `toml:"path" json:"path"`
 }
 
 // StorageConfig controls host tools used to prepare durable VM disks.
@@ -103,6 +111,8 @@ type Overrides struct {
 	LogDir             string
 	CloudHypervisorBin string
 	QEMUImgBinary      string
+	MetadataBackend    string
+	MetadataPath       string
 }
 
 // Load reads config from path, applies overrides, and validates the result.
@@ -159,7 +169,8 @@ func Default() Config {
 			CNIConfigDir: defaultCNIConfigDir,
 			CNIBinDir:    defaultCNIBinDir,
 		},
-		Storage: StorageConfig{QEMUImgBinary: defaultQEMUImgBinary},
+		Storage:  StorageConfig{QEMUImgBinary: defaultQEMUImgBinary},
+		Metadata: MetadataConfig{Backend: "json"},
 	}
 }
 
@@ -193,6 +204,12 @@ func applyOverrides(cfg *Config, overrides Overrides) {
 	if overrides.QEMUImgBinary != "" {
 		cfg.Storage.QEMUImgBinary = overrides.QEMUImgBinary
 	}
+	if overrides.MetadataBackend != "" {
+		cfg.Metadata.Backend = overrides.MetadataBackend
+	}
+	if overrides.MetadataPath != "" {
+		cfg.Metadata.Path = overrides.MetadataPath
+	}
 }
 
 func validate(cfg Config) error {
@@ -213,6 +230,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.Storage.QEMUImgBinary == "" {
 		return errors.New("storage.qemu_img_binary must not be empty")
+	}
+	if cfg.Metadata.Backend != "json" && cfg.Metadata.Backend != "sqlite" {
+		return fmt.Errorf("metadata.backend must be json or sqlite")
 	}
 	if cfg.Network.Mode == "" {
 		return errors.New("network.mode must not be empty")

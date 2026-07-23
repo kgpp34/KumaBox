@@ -13,6 +13,8 @@ type rootOptions struct {
 	logDir             string
 	cloudHypervisorBin string
 	qemuImgBin         string
+	metadataBackend    string
+	metadataPath       string
 }
 
 func NewRootCommand() *cobra.Command {
@@ -31,6 +33,8 @@ func NewRootCommand() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&opts.logDir, "log-dir", "", "log directory")
 	cmd.PersistentFlags().StringVar(&opts.cloudHypervisorBin, "cloud-hypervisor-bin", "", "cloud-hypervisor binary path")
 	cmd.PersistentFlags().StringVar(&opts.qemuImgBin, "qemu-img-bin", "", "qemu-img binary path")
+	cmd.PersistentFlags().StringVar(&opts.metadataBackend, "metadata-backend", "", "metadata backend: json or sqlite")
+	cmd.PersistentFlags().StringVar(&opts.metadataPath, "metadata-path", "", "SQLite metadata database path")
 
 	cmd.AddCommand(newVersionCommand())
 	cmd.AddCommand(newDoctorCommand(opts))
@@ -63,6 +67,8 @@ func loadConfig(opts *rootOptions) (config.Config, error) {
 		LogDir:             opts.logDir,
 		CloudHypervisorBin: opts.cloudHypervisorBin,
 		QEMUImgBinary:      opts.qemuImgBin,
+		MetadataBackend:    opts.metadataBackend,
+		MetadataPath:       opts.metadataPath,
 	}
 	return config.Load(opts.configPath, overrides)
 }

@@ -44,7 +44,10 @@ type Report struct {
 // It never removes data. The report is intended for operator review and for
 // validating GC policy before destructive cleanup is implemented.
 func DryRun(cfg config.Config) (*Report, error) {
-	stores := resources.NewStoreSet(cfg.Runtime.RootDir)
+	stores, err := resources.NewStoreSetForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("open resource stores: %w", err)
+	}
 	records, err := stores.VM.List()
 	if err != nil {
 		return nil, fmt.Errorf("read VM store: %w", err)

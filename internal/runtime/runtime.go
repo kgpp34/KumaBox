@@ -16,6 +16,7 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/lockfile"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
+	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/state"
 	"github.com/kumabox/kumabox/internal/storage"
@@ -87,7 +88,11 @@ var mkfsExt4 = func(path string) ([]byte, error) {
 
 // New creates a Runtime backed by the configured Cloud Hypervisor backend.
 func New(cfg config.Config) *Runtime {
-	rt := NewWithBackend(vmstore.New(cfg.Runtime.RootDir), cloudhypervisor.NewBackend(cfg))
+	stores, err := resources.NewStoreSetForConfig(cfg)
+	if err != nil {
+		panic(fmt.Sprintf("open configured resource stores: %v", err))
+	}
+	rt := NewWithBackendAndStores(stores, cloudhypervisor.NewBackend(cfg))
 	rt.cfg = cfg
 	rt.qemuImg = storage.NewQEMUImg(cfg.Storage.QEMUImgBinary)
 	return rt
