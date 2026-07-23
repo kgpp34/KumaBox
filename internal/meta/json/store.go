@@ -55,7 +55,7 @@ func Open(definitions ...Namespace) (*Store, error) {
 	return &Store{namespaces: namespaces, subs: make(map[chan struct{}]struct{})}, nil
 }
 
-func (s *Store) View(ctx context.Context, requested []string, fn func(meta.Reader) error) error {
+func (s *Store) View(ctx context.Context, requested []meta.Namespace, fn func(meta.Reader) error) error {
 	if fn == nil {
 		return fmt.Errorf("metadata view callback must not be nil: %w", meta.ErrScope)
 	}
@@ -80,7 +80,7 @@ func (s *Store) Update(ctx context.Context, scope meta.Scope, mode meta.CommitMo
 	if fn == nil {
 		return fmt.Errorf("metadata update callback must not be nil: %w", meta.ErrScope)
 	}
-	definitions, err := s.resolve(append([]string{scope.Write}, scope.Read...), scope.Write)
+	definitions, err := s.resolve(append([]meta.Namespace{scope.Write}, scope.Read...), scope.Write)
 	if err != nil {
 		return err
 	}
@@ -167,25 +167,25 @@ func (s *Store) notify() {
 	}
 }
 
-func (s *Store) resolve(requested []string, write string) ([]Namespace, error) {
+func (s *Store) resolve(requested []meta.Namespace, write meta.Namespace) ([]Namespace, error) {
 	seen := make(map[string]struct{}, len(requested))
 	for _, name := range requested {
 		if name == "" {
 			return nil, fmt.Errorf("metadata namespace must not be empty: %w", meta.ErrScope)
 		}
-		if _, ok := s.namespaces[name]; !ok {
+		if _, ok := s.namespaces[string(name)]; !ok {
 			return nil, fmt.Errorf("metadata namespace %q is not declared: %w", name, meta.ErrScope)
 		}
-		seen[name] = struct{}{}
+		seen[string(name)] = struct{}{}
 	}
 	if write != "" {
-		if _, ok := seen[write]; !ok {
+		if _, ok := seen[string(write)]; !ok {
 			return nil, fmt.Errorf("write namespace %q is outside scope: %w", write, meta.ErrScope)
 		}
 	}
 	definitions := make([]Namespace, 0, len(seen))
 	for name := range seen {
-		definitions = append(definitions, s.namespaces[name])
+		definitions = append(definitions, s.namespaces[string(name)])
 	}
 	sort.Slice(definitions, func(i, j int) bool { return definitions[i].Name < definitions[j].Name })
 	return definitions, nil
@@ -228,15 +228,15 @@ func (s *Store) load(ctx context.Context, definitions []Namespace) (map[string]*
 	return models, nil
 }
 
-func (s *Store) commit(ctx context.Context, definitions []Namespace, models map[string]*loaded, write string, _ meta.CommitMode) error {
+func (s *Store) commit(ctx context.Context, definitions []Namespace, models map[string]*loaded, write meta.Namespace, _ meta.CommitMode) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	for _, definition := range definitions {
-		if definition.Name != write {
+		if definition.Name != string(write) {
 			continue
 		}
-		current := models[write]
+		current := models[string(write)]
 		raw, err := definition.Codec.Encode(current.model)
 		if err != nil {
 			return fmt.Errorf("encode metadata namespace %s: %w", write, err)
@@ -286,30 +286,30 @@ type reader struct {
 	allowed map[string]struct{}
 }
 
-func (r reader) GetRaw(ctx context.Context, namespace, table, id string) (stdjson.RawMessage, bool, error) {
+func (r reader) GetRaw(ctx context.Context, namespace meta.Namespace, table meta.Table, id meta.RecordID) (stdjson.RawMessage, bool, error) {
 	if err := contextErr(ctx); err != nil {
 		return nil, false, err
 	}
 	if err := r.checkRead(namespace); err != nil {
 		return nil, false, err
 	}
-	model := r.models[namespace].model
-	records := model.Tables[table]
+	model := r.models[string(namespace)].model
+	records := model.Tables[string(table)]
 	if records == nil {
 		return nil, false, nil
 	}
-	raw, ok := records[id]
+	raw, ok := records[string(id)]
 	return cloneRaw(raw), ok, nil
 }
 
-func (r reader) ScanRaw(ctx context.Context, namespace, table string, fn func(string, stdjson.RawMessage) error) error {
+func (r reader) ScanRaw(ctx context.Context, namespace meta.Namespace, table meta.Table, fn func(meta.RecordID, stdjson.RawMessage) error) error {
 	if fn == nil {
 		return fmt.Errorf("metadata scan callback must not be nil: %w", meta.ErrScope)
 	}
 	if err := r.checkRead(namespace); err != nil {
 		return err
 	}
-	records := r.models[namespace].model.Tables[table]
+	records := r.models[string(namespace)].model.Tables[string(table)]
 	ids := make([]string, 0, len(records))
 	for id := range records {
 		ids = append(ids, id)
@@ -319,15 +319,15 @@ func (r reader) ScanRaw(ctx context.Context, namespace, table string, fn func(st
 		if err := contextErr(ctx); err != nil {
 			return err
 		}
-		if err := fn(id, cloneRaw(records[id])); err != nil {
+		if err := fn(meta.RecordID(id), cloneRaw(records[id])); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (r reader) checkRead(namespace string) error {
-	if _, ok := r.allowed[namespace]; !ok {
+func (r reader) checkRead(namespace meta.Namespace) error {
+	if _, ok := r.allowed[string(namespace)]; !ok {
 		return fmt.Errorf("cannot read metadata namespace %q outside transaction scope: %w", namespace, meta.ErrScope)
 	}
 	return nil
@@ -335,39 +335,39 @@ func (r reader) checkRead(namespace string) error {
 
 type writer struct {
 	reader
-	writeNamespace string
+	writeNamespace meta.Namespace
 	dirty          bool
 }
 
-func (w *writer) PutRaw(ctx context.Context, namespace, table, id string, raw stdjson.RawMessage) error {
+func (w *writer) PutRaw(ctx context.Context, namespace meta.Namespace, table meta.Table, id meta.RecordID, raw stdjson.RawMessage) error {
 	if err := w.checkWrite(ctx, namespace, table, id); err != nil {
 		return err
 	}
 	if raw == nil || !stdjson.Valid(raw) {
 		return fmt.Errorf("metadata record %s/%s is invalid JSON: %w", table, id, meta.ErrIO)
 	}
-	model := w.models[namespace].model
+	model := w.models[string(namespace)].model
 	if model.Tables == nil {
 		model.Tables = map[string]map[string]stdjson.RawMessage{}
 	}
-	if model.Tables[table] == nil {
-		model.Tables[table] = map[string]stdjson.RawMessage{}
+	if model.Tables[string(table)] == nil {
+		model.Tables[string(table)] = map[string]stdjson.RawMessage{}
 	}
-	model.Tables[table][id] = cloneRaw(raw)
+	model.Tables[string(table)][string(id)] = cloneRaw(raw)
 	w.dirty = true
 	return nil
 }
 
-func (w *writer) DeleteRaw(ctx context.Context, namespace, table, id string) error {
+func (w *writer) DeleteRaw(ctx context.Context, namespace meta.Namespace, table meta.Table, id meta.RecordID) error {
 	if err := w.checkWrite(ctx, namespace, table, id); err != nil {
 		return err
 	}
-	delete(w.models[namespace].model.Tables[table], id)
+	delete(w.models[string(namespace)].model.Tables[string(table)], string(id))
 	w.dirty = true
 	return nil
 }
 
-func (w *writer) checkWrite(ctx context.Context, namespace, table, id string) error {
+func (w *writer) checkWrite(ctx context.Context, namespace meta.Namespace, table meta.Table, id meta.RecordID) error {
 	if err := contextErr(ctx); err != nil {
 		return err
 	}

@@ -390,7 +390,7 @@ func (s *Store) withIndex(write bool, fn func(*snapshotIndex) error) error {
 			return writer.PutRaw(ctx, "snapshots", snapshotIndexTable, snapshotIndexRecord, raw)
 		})
 	}
-	return s.engine.View(ctx, []string{"snapshots"}, func(reader meta.Reader) error {
+	return s.engine.View(ctx, []meta.Namespace{"snapshots"}, func(reader meta.Reader) error {
 		idx, err := s.readIndex(ctx, reader)
 		if err != nil {
 			return err

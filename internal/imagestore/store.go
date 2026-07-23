@@ -486,7 +486,7 @@ func (s *Store) createStagingDir(prefix string) (string, func(), error) {
 
 func (s *Store) withIndex(fn func(*imageIndex) error) error {
 	ctx := context.Background()
-	return s.engine.View(ctx, []string{"images"}, func(reader meta.Reader) error {
+	return s.engine.View(ctx, []meta.Namespace{"images"}, func(reader meta.Reader) error {
 		idx, err := s.readIndex(ctx, reader)
 		if err != nil {
 			return err

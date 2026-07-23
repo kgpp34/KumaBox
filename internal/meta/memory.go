@@ -40,7 +40,7 @@ func NewMemoryEngine(namespaces ...string) (*MemoryEngine, error) {
 	}, nil
 }
 
-func (e *MemoryEngine) View(ctx context.Context, namespaces []string, fn func(Reader) error) error {
+func (e *MemoryEngine) View(ctx context.Context, namespaces []Namespace, fn func(Reader) error) error {
 	if fn == nil {
 		return fmt.Errorf("metadata view callback must not be nil: %w", ErrScope)
 	}
@@ -65,7 +65,7 @@ func (e *MemoryEngine) Update(ctx context.Context, scope Scope, _ CommitMode, fn
 	if fn == nil {
 		return fmt.Errorf("metadata update callback must not be nil: %w", ErrScope)
 	}
-	ordered, err := e.resolveScope(append([]string{scope.Write}, scope.Read...), scope.Write)
+	ordered, err := e.resolveScope(append([]Namespace{scope.Write}, scope.Read...), scope.Write)
 	if err != nil {
 		return err
 	}
@@ -135,22 +135,22 @@ func (e *MemoryEngine) Close() error {
 	return nil
 }
 
-func (e *MemoryEngine) resolveScope(namespaces []string, write string) ([]string, error) {
+func (e *MemoryEngine) resolveScope(namespaces []Namespace, write Namespace) ([]string, error) {
 	seen := make(map[string]struct{}, len(namespaces))
 	for _, namespace := range namespaces {
 		if namespace == "" {
 			return nil, fmt.Errorf("metadata namespace must not be empty: %w", ErrScope)
 		}
-		if _, ok := e.data[namespace]; !ok {
+		if _, ok := e.data[string(namespace)]; !ok {
 			return nil, fmt.Errorf("metadata namespace %q is not declared: %w", namespace, ErrScope)
 		}
-		if _, ok := seen[namespace]; ok {
+		if _, ok := seen[string(namespace)]; ok {
 			continue
 		}
-		seen[namespace] = struct{}{}
+		seen[string(namespace)] = struct{}{}
 	}
 	if write != "" {
-		if _, ok := seen[write]; !ok {
+		if _, ok := seen[string(write)]; !ok {
 			return nil, fmt.Errorf("write namespace %q is outside scope: %w", write, ErrScope)
 		}
 	}
@@ -176,29 +176,29 @@ type memoryReader struct {
 	allowed map[string]struct{}
 }
 
-func (r memoryReader) GetRaw(ctx context.Context, namespace, table, id string) (json.RawMessage, bool, error) {
+func (r memoryReader) GetRaw(ctx context.Context, namespace Namespace, table Table, id RecordID) (json.RawMessage, bool, error) {
 	if err := contextErr(ctx); err != nil {
 		return nil, false, err
 	}
 	if err := r.checkRead(namespace); err != nil {
 		return nil, false, err
 	}
-	tableData, ok := r.data[namespace][table]
+	tableData, ok := r.data[string(namespace)][string(table)]
 	if !ok {
 		return nil, false, nil
 	}
-	raw, ok := tableData[id]
+	raw, ok := tableData[string(id)]
 	return cloneRaw(raw), ok, nil
 }
 
-func (r memoryReader) ScanRaw(ctx context.Context, namespace, table string, fn func(string, json.RawMessage) error) error {
+func (r memoryReader) ScanRaw(ctx context.Context, namespace Namespace, table Table, fn func(RecordID, json.RawMessage) error) error {
 	if fn == nil {
 		return fmt.Errorf("metadata scan callback must not be nil: %w", ErrScope)
 	}
 	if err := r.checkRead(namespace); err != nil {
 		return err
 	}
-	tableData := r.data[namespace][table]
+	tableData := r.data[string(namespace)][string(table)]
 	ids := make([]string, 0, len(tableData))
 	for id := range tableData {
 		ids = append(ids, id)
@@ -208,15 +208,15 @@ func (r memoryReader) ScanRaw(ctx context.Context, namespace, table string, fn f
 		if err := contextErr(ctx); err != nil {
 			return err
 		}
-		if err := fn(id, cloneRaw(tableData[id])); err != nil {
+		if err := fn(RecordID(id), cloneRaw(tableData[id])); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (r memoryReader) checkRead(namespace string) error {
-	if _, ok := r.allowed[namespace]; !ok {
+func (r memoryReader) checkRead(namespace Namespace) error {
+	if _, ok := r.allowed[string(namespace)]; !ok {
 		return fmt.Errorf("cannot read metadata namespace %q outside transaction scope: %w", namespace, ErrScope)
 	}
 	return nil
@@ -224,32 +224,32 @@ func (r memoryReader) checkRead(namespace string) error {
 
 type memoryWriter struct {
 	memoryReader
-	writeNamespace string
+	writeNamespace Namespace
 }
 
-func (w *memoryWriter) PutRaw(ctx context.Context, namespace, table, id string, raw json.RawMessage) error {
+func (w *memoryWriter) PutRaw(ctx context.Context, namespace Namespace, table Table, id RecordID, raw json.RawMessage) error {
 	if err := w.checkWrite(ctx, namespace, table, id); err != nil {
 		return err
 	}
 	if raw == nil {
 		return fmt.Errorf("metadata value must not be nil: %w", ErrIO)
 	}
-	if w.data[namespace][table] == nil {
-		w.data[namespace][table] = make(map[string]json.RawMessage)
+	if w.data[string(namespace)][string(table)] == nil {
+		w.data[string(namespace)][string(table)] = make(map[string]json.RawMessage)
 	}
-	w.data[namespace][table][id] = cloneRaw(raw)
+	w.data[string(namespace)][string(table)][string(id)] = cloneRaw(raw)
 	return nil
 }
 
-func (w *memoryWriter) DeleteRaw(ctx context.Context, namespace, table, id string) error {
+func (w *memoryWriter) DeleteRaw(ctx context.Context, namespace Namespace, table Table, id RecordID) error {
 	if err := w.checkWrite(ctx, namespace, table, id); err != nil {
 		return err
 	}
-	delete(w.data[namespace][table], id)
+	delete(w.data[string(namespace)][string(table)], string(id))
 	return nil
 }
 
-func (w *memoryWriter) checkWrite(ctx context.Context, namespace, table, id string) error {
+func (w *memoryWriter) checkWrite(ctx context.Context, namespace Namespace, table Table, id RecordID) error {
 	if err := contextErr(ctx); err != nil {
 		return err
 	}

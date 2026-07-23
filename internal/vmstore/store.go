@@ -503,7 +503,7 @@ func (s *Store) RootDir() string {
 
 func (s *Store) withIndex(fn func(*vmIndex) error) error {
 	ctx := context.Background()
-	return s.engine.View(ctx, []string{"vms"}, func(reader meta.Reader) error {
+	return s.engine.View(ctx, []meta.Namespace{"vms"}, func(reader meta.Reader) error {
 		idx, err := s.readIndex(ctx, reader)
 		if err != nil {
 			return err

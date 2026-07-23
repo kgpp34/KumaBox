@@ -3,16 +3,12 @@ package network
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
-	"syscall"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/kumabox/kumabox/internal/meta"
 	metajson "github.com/kumabox/kumabox/internal/meta/json"
 )
@@ -27,14 +23,15 @@ const hostTapSchemaVersion = "kumabox.network.hostTap.v1"
 // host-tap bridge ownership. Each file has its own flock because lifecycle and
 // network commands may touch them independently.
 type Store struct {
-	engine      meta.MetaEngine
-	leaseEngine meta.MetaEngine
-	indexPath   string
-	indexLock   string
-	leasePath   string
-	leaseLock   string
-	hostTapPath string
-	hostTapLock string
+	engine        meta.MetaEngine
+	leaseEngine   meta.MetaEngine
+	hostTapEngine meta.MetaEngine
+	indexPath     string
+	indexLock     string
+	leasePath     string
+	leaseLock     string
+	hostTapPath   string
+	hostTapLock   string
 }
 
 type index struct {
@@ -60,14 +57,15 @@ type leaseIndex struct {
 func NewStore(rootDir string) *Store {
 	networkDir := filepath.Join(rootDir, "network")
 	return &Store{
-		engine:      mustOpenNetworkEngine(metajson.Namespace{Name: "networks", FilePath: filepath.Join(networkDir, "index.json"), LockPath: filepath.Join(networkDir, "index.lock"), Codec: indexCodec{}}),
-		leaseEngine: mustOpenNetworkEngine(metajson.Namespace{Name: "leases", FilePath: filepath.Join(networkDir, "leases.json"), LockPath: filepath.Join(networkDir, "leases.lock"), Codec: leaseCodec{}}),
-		indexPath:   filepath.Join(networkDir, "index.json"),
-		indexLock:   filepath.Join(networkDir, "index.lock"),
-		leasePath:   filepath.Join(networkDir, "leases.json"),
-		leaseLock:   filepath.Join(networkDir, "leases.lock"),
-		hostTapPath: filepath.Join(networkDir, "host-tap.json"),
-		hostTapLock: filepath.Join(networkDir, "host-tap.lock"),
+		engine:        mustOpenNetworkEngine(metajson.Namespace{Name: "networks", FilePath: filepath.Join(networkDir, "index.json"), LockPath: filepath.Join(networkDir, "index.lock"), Codec: indexCodec{}}),
+		leaseEngine:   mustOpenNetworkEngine(metajson.Namespace{Name: "leases", FilePath: filepath.Join(networkDir, "leases.json"), LockPath: filepath.Join(networkDir, "leases.lock"), Codec: leaseCodec{}}),
+		hostTapEngine: mustOpenNetworkEngine(metajson.Namespace{Name: "host-tap", FilePath: filepath.Join(networkDir, "host-tap.json"), LockPath: filepath.Join(networkDir, "host-tap.lock"), Codec: hostTapCodec{}}),
+		indexPath:     filepath.Join(networkDir, "index.json"),
+		indexLock:     filepath.Join(networkDir, "index.lock"),
+		leasePath:     filepath.Join(networkDir, "leases.json"),
+		leaseLock:     filepath.Join(networkDir, "leases.lock"),
+		hostTapPath:   filepath.Join(networkDir, "host-tap.json"),
+		hostTapLock:   filepath.Join(networkDir, "host-tap.lock"),
 	}
 }
 
@@ -331,7 +329,7 @@ func (s *Store) withIndex(write bool, fn func(*networkIndex) error) error {
 			return writer.PutRaw(ctx, "networks", networkIndexTable, networkIndexRecord, raw)
 		})
 	}
-	return s.engine.View(ctx, []string{"networks"}, func(reader meta.Reader) error {
+	return s.engine.View(ctx, []meta.Namespace{"networks"}, func(reader meta.Reader) error {
 		idx, err := s.readNetworkIndex(ctx, reader)
 		if err != nil {
 			return err
@@ -378,7 +376,7 @@ func (s *Store) withLeases(write bool, fn func(*leaseIndex) error) error {
 			return writer.PutRaw(ctx, "leases", networkLeaseTable, networkLeaseRecord, raw)
 		})
 	}
-	return s.leaseEngine.View(ctx, []string{"leases"}, func(reader meta.Reader) error {
+	return s.leaseEngine.View(ctx, []meta.Namespace{"leases"}, func(reader meta.Reader) error {
 		leases, err := s.readLeaseIndex(ctx, reader)
 		if err != nil {
 			return err
@@ -406,84 +404,106 @@ func (s *Store) readLeaseIndex(ctx context.Context, reader meta.Reader) (*leaseI
 }
 
 func (s *Store) readHostTapState() (*HostTapState, error) {
-	raw, err := os.ReadFile(s.hostTapPath) //nolint:gosec
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read host-tap state: %w", err)
-	}
-
-	var state HostTapState
-	if err := json.Unmarshal(raw, &state); err != nil {
-		return nil, fmt.Errorf("parse host-tap state: %w", err)
-	}
-	if state.SchemaVersion != "" && state.SchemaVersion != hostTapSchemaVersion {
-		return nil, fmt.Errorf("unsupported host-tap schema %q", state.SchemaVersion)
-	}
-	if state.SchemaVersion == "" {
-		state.SchemaVersion = hostTapSchemaVersion
-	}
-	return &state, nil
+	var state *HostTapState
+	err := s.withHostTap(false, func(current **HostTapState) error {
+		state = cloneHostTapState(*current)
+		return nil
+	})
+	return state, err
 }
 
 func (s *Store) writeHostTapState(state *HostTapState) error {
-	if state.SchemaVersion == "" {
-		state.SchemaVersion = hostTapSchemaVersion
-	}
-	if err := fileutil.WriteJSONAtomic(s.hostTapPath, state, ".host-tap-*.tmp"); err != nil {
-		return fmt.Errorf("write host-tap state: %w", err)
-	}
-	return nil
+	return s.withHostTap(true, func(current **HostTapState) error {
+		*current = cloneHostTapState(state)
+		return nil
+	})
 }
 
 func (s *Store) removeHostTapState() error {
-	if err := os.Remove(s.hostTapPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove host-tap state: %w", err)
-	}
-	return nil
+	return s.withHostTap(true, func(current **HostTapState) error {
+		*current = nil
+		return nil
+	})
 }
 
 func (s *Store) adjustHostTapRef(delta int, requireState bool) error {
-	unlock, err := s.lockHostTap()
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	state, err := s.readHostTapState()
-	if err != nil {
-		return err
-	}
-	if state == nil {
-		if requireState {
-			return fmt.Errorf("host-tap state is missing")
+	return s.withHostTap(true, func(current **HostTapState) error {
+		state := *current
+		if state == nil {
+			if requireState {
+				return fmt.Errorf("host-tap state is missing")
+			}
+			return nil
 		}
+		state.RefCount += delta
+		if state.RefCount < 0 {
+			state.RefCount = 0
+		}
+		state.UpdatedAt = time.Now().UTC()
 		return nil
-	}
-	state.RefCount += delta
-	if state.RefCount < 0 {
-		state.RefCount = 0
-	}
-	state.UpdatedAt = time.Now().UTC()
-	return s.writeHostTapState(state)
+	})
 }
 
-func (s *Store) lockHostTap() (func(), error) {
-	if err := os.MkdirAll(filepath.Dir(s.hostTapLock), 0o755); err != nil {
-		return nil, fmt.Errorf("create host-tap lock dir: %w", err)
+func (s *Store) withHostTap(write bool, fn func(**HostTapState) error) error {
+	ctx := context.Background()
+	read := func(reader meta.Reader) error {
+		raw, ok, err := reader.GetRaw(ctx, "host-tap", hostTapTable, hostTapRecord)
+		if err != nil {
+			return fmt.Errorf("read host-tap state: %w", err)
+		}
+		var state *HostTapState
+		if ok {
+			var decoded HostTapState
+			if err := json.Unmarshal(raw, &decoded); err != nil {
+				return fmt.Errorf("parse host-tap state: %w", err)
+			}
+			if decoded.SchemaVersion == "" {
+				decoded.SchemaVersion = hostTapSchemaVersion
+			}
+			state = &decoded
+		}
+		return fn(&state)
 	}
+	if !write {
+		return s.hostTapEngine.View(ctx, []meta.Namespace{"host-tap"}, read)
+	}
+	return s.hostTapEngine.Update(ctx, meta.Scope{Write: "host-tap"}, meta.CommitDurable, func(writer meta.Writer) error {
+		stateFn := func(current *HostTapState, hadState bool) error {
+			if current == nil {
+				if !hadState {
+					return nil
+				}
+				return writer.DeleteRaw(ctx, "host-tap", hostTapTable, hostTapRecord)
+			}
+			raw, err := json.Marshal(current)
+			if err != nil {
+				return fmt.Errorf("encode host-tap state: %w", err)
+			}
+			return writer.PutRaw(ctx, "host-tap", hostTapTable, hostTapRecord, raw)
+		}
+		var state *HostTapState
+		hadState := false
+		if raw, ok, err := writer.GetRaw(ctx, "host-tap", hostTapTable, hostTapRecord); err != nil {
+			return err
+		} else if ok {
+			hadState = true
+			var decoded HostTapState
+			if err := json.Unmarshal(raw, &decoded); err != nil {
+				return fmt.Errorf("parse host-tap state: %w", err)
+			}
+			state = &decoded
+		}
+		if err := fn(&state); err != nil {
+			return err
+		}
+		return stateFn(state, hadState)
+	})
+}
 
-	file, err := os.OpenFile(s.hostTapLock, os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return nil, fmt.Errorf("open host-tap lock: %w", err)
+func cloneHostTapState(state *HostTapState) *HostTapState {
+	if state == nil {
+		return nil
 	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("lock host-tap: %w", err)
-	}
-
-	return func() {
-		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-		_ = file.Close()
-	}, nil
+	cloned := *state
+	return &cloned
 }

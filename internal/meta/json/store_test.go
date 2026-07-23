@@ -32,7 +32,7 @@ func TestStoreCommitsAndRollsBack(t *testing.T) {
 		t.Fatalf("rollback error = %v, want %v", err, wantErr)
 	}
 
-	if err := store.View(ctx, []string{"vm"}, func(r meta.Reader) error {
+	if err := store.View(ctx, []meta.Namespace{"vm"}, func(r meta.Reader) error {
 		if _, ok, err := r.GetRaw(ctx, "vm", "records", "vm-2"); err != nil {
 			return err
 		} else if ok {
@@ -66,7 +66,7 @@ func TestStorePreservesPreviousGenerationAndRecovers(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
 		t.Fatalf("corrupt main generation: %v", err)
 	}
-	if err := store.View(ctx, []string{"vm"}, func(r meta.Reader) error {
+	if err := store.View(ctx, []meta.Namespace{"vm"}, func(r meta.Reader) error {
 		raw, ok, err := r.GetRaw(ctx, "vm", "records", "vm-1")
 		if err != nil {
 			return err
@@ -81,7 +81,7 @@ func TestStorePreservesPreviousGenerationAndRecovers(t *testing.T) {
 	if err := put("three"); err != nil {
 		t.Fatalf("repair update: %v", err)
 	}
-	if err := store.View(ctx, []string{"vm"}, func(r meta.Reader) error {
+	if err := store.View(ctx, []meta.Namespace{"vm"}, func(r meta.Reader) error {
 		raw, _, err := r.GetRaw(ctx, "vm", "records", "vm-1")
 		if err != nil {
 			return err
@@ -98,12 +98,12 @@ func TestStorePreservesPreviousGenerationAndRecovers(t *testing.T) {
 func TestStoreEnforcesScopeAndDetachedValues(t *testing.T) {
 	store, _ := newTestStore(t)
 	ctx := context.Background()
-	if err := store.Update(ctx, meta.Scope{Write: "vm", Read: []string{"network"}}, meta.CommitDurable, func(w meta.Writer) error {
+	if err := store.Update(ctx, meta.Scope{Write: "vm", Read: []meta.Namespace{"network"}}, meta.CommitDurable, func(w meta.Writer) error {
 		return w.PutRaw(ctx, "network", "leases", "ip-1", stdjson.RawMessage(`{}`))
 	}); !errors.Is(err, meta.ErrScope) {
 		t.Fatalf("write scope error = %v, want ErrScope", err)
 	}
-	if err := store.View(ctx, []string{"vm"}, func(r meta.Reader) error {
+	if err := store.View(ctx, []meta.Namespace{"vm"}, func(r meta.Reader) error {
 		_, _, err := r.GetRaw(ctx, "network", "leases", "ip-1")
 		return err
 	}); !errors.Is(err, meta.ErrScope) {
@@ -115,7 +115,7 @@ func TestStoreEnforcesScopeAndDetachedValues(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed update: %v", err)
 	}
-	if err := store.View(ctx, []string{"vm"}, func(r meta.Reader) error {
+	if err := store.View(ctx, []meta.Namespace{"vm"}, func(r meta.Reader) error {
 		raw, _, err := r.GetRaw(ctx, "vm", "records", "vm-1")
 		if err != nil {
 			return err
@@ -125,7 +125,7 @@ func TestStoreEnforcesScopeAndDetachedValues(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("detached read: %v", err)
 	}
-	if err := store.View(ctx, []string{"vm"}, func(r meta.Reader) error {
+	if err := store.View(ctx, []meta.Namespace{"vm"}, func(r meta.Reader) error {
 		raw, _, err := r.GetRaw(ctx, "vm", "records", "vm-1")
 		if err != nil {
 			return err
@@ -149,7 +149,7 @@ func TestStoreEventsCoalesce(t *testing.T) {
 	defer release()
 	for i := 0; i < 3; i++ {
 		if err := store.Update(ctx, meta.Scope{Write: "vm"}, meta.CommitRelaxed, func(w meta.Writer) error {
-			return w.PutRaw(ctx, "vm", "records", string(rune('a'+i)), stdjson.RawMessage(`{}`))
+			return w.PutRaw(ctx, "vm", "records", meta.RecordID(string(rune('a'+i))), stdjson.RawMessage(`{}`))
 		}); err != nil {
 			t.Fatalf("update %d: %v", i, err)
 		}
@@ -172,7 +172,7 @@ func TestStoreRejectsCorruptMetadataWithoutPreviousGeneration(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.View(context.Background(), []string{"vm"}, func(meta.Reader) error { return nil }); !errors.Is(err, meta.ErrCorrupt) {
+	if err := store.View(context.Background(), []meta.Namespace{"vm"}, func(meta.Reader) error { return nil }); !errors.Is(err, meta.ErrCorrupt) {
 		t.Fatalf("corrupt error = %v, want ErrCorrupt", err)
 	}
 }

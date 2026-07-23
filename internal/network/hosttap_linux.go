@@ -62,75 +62,62 @@ func ensureHostTap(ctx context.Context, rootDir string, cfg config.NetworkConfig
 	}
 
 	store := NewStore(rootDir)
-	unlock, err := store.lockHostTap()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-
-	state, err := store.readHostTapState()
-	if err != nil {
-		return nil, err
-	}
-	if err := validateHostTapOwnership(rootDir, cfg, state); err != nil {
-		return nil, err
-	}
-
-	// Host-tap setup is intentionally idempotent. Every create/run path may call
-	// it, while the persisted owner state prevents KumaBox from adopting an
-	// unrelated bridge with the same name.
-	report := &HostTapReport{
-		Bridge:     cfg.Bridge,
-		CIDR:       cfg.CIDR,
-		Gateway:    cfg.Gateway,
-		NATBackend: cfg.NATBackend,
-	}
-	created, err := ensureBridge(cfg)
-	if err != nil {
-		return nil, err
-	}
-	if created {
-		report.Created = true
-		report.Changed = append(report.Changed, "bridge")
-	}
-	if changed, err := ensureGateway(cfg); err != nil {
-		return nil, err
-	} else if changed {
-		report.Changed = append(report.Changed, "gateway")
-	}
-	if err := setBridgeUp(cfg.Bridge); err != nil {
-		return nil, err
-	}
-	if err := ensureIPForward(ctx, runner); err != nil {
-		return nil, err
-	}
-	if backend, changed, err := ensureNAT(ctx, runner, cfg); err != nil {
-		return nil, err
-	} else {
-		report.NATBackend = backend
-		if changed {
-			report.Changed = append(report.Changed, "nat")
+	var report *HostTapReport
+	err = store.withHostTap(true, func(current **HostTapState) error {
+		state := *current
+		if err := validateHostTapOwnership(rootDir, cfg, state); err != nil {
+			return err
 		}
-	}
+		report = &HostTapReport{Bridge: cfg.Bridge, CIDR: cfg.CIDR, Gateway: cfg.Gateway, NATBackend: cfg.NATBackend}
+		created, err := ensureBridge(cfg)
+		if err != nil {
+			return err
+		}
+		if created {
+			report.Created = true
+			report.Changed = append(report.Changed, "bridge")
+		}
+		if changed, err := ensureGateway(cfg); err != nil {
+			return err
+		} else if changed {
+			report.Changed = append(report.Changed, "gateway")
+		}
+		if err := setBridgeUp(cfg.Bridge); err != nil {
+			return err
+		}
+		if err := ensureIPForward(ctx, runner); err != nil {
+			return err
+		}
+		if backend, changed, err := ensureNAT(ctx, runner, cfg); err != nil {
+			return err
+		} else {
+			report.NATBackend = backend
+			if changed {
+				report.Changed = append(report.Changed, "nat")
+			}
+		}
 
-	now := time.Now().UTC()
-	if state == nil {
-		state = &HostTapState{CreatedAt: now}
-	}
-	state.SchemaVersion = hostTapSchemaVersion
-	state.Bridge = cfg.Bridge
-	state.CIDR = cfg.CIDR
-	state.Gateway = cfg.Gateway
-	state.NATBackend = report.NATBackend
-	state.Owner = Owner{Kind: "kumabox", RootDir: rootDir}
-	state.UpdatedAt = now
-	if state.CreatedAt.IsZero() {
-		state.CreatedAt = now
-	}
-	if err := store.writeHostTapState(state); err != nil {
+		now := time.Now().UTC()
+		if state == nil {
+			state = &HostTapState{CreatedAt: now}
+		}
+		state.SchemaVersion = hostTapSchemaVersion
+		state.Bridge = cfg.Bridge
+		state.CIDR = cfg.CIDR
+		state.Gateway = cfg.Gateway
+		state.NATBackend = report.NATBackend
+		state.Owner = Owner{Kind: "kumabox", RootDir: rootDir}
+		state.UpdatedAt = now
+		if state.CreatedAt.IsZero() {
+			state.CreatedAt = now
+		}
+		*current = state
+		report.State = state
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	report.State = state
 	return report, nil
 }
 
@@ -140,46 +127,43 @@ func teardownHostTap(ctx context.Context, rootDir string, cfg config.NetworkConf
 		return nil, fmt.Errorf("resolve root dir: %w", err)
 	}
 	store := NewStore(rootDir)
-	unlock, err := store.lockHostTap()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-
-	state, err := store.readHostTapState()
-	if err != nil {
-		return nil, err
-	}
-	if state == nil {
-		return &HostTapReport{Bridge: cfg.Bridge, CIDR: cfg.CIDR, Gateway: cfg.Gateway, NATBackend: cfg.NATBackend}, nil
-	}
-	if state.Owner.Kind != "kumabox" || state.Owner.RootDir != rootDir {
-		return nil, fmt.Errorf("%w: host-tap state is owned by %s at %s", ErrNetworkConflict, state.Owner.Kind, state.Owner.RootDir)
-	}
-	if state.RefCount > 0 {
-		return nil, fmt.Errorf("%w: host-tap network still has %d reference(s)", ErrNetworkConflict, state.RefCount)
-	}
-
-	report := &HostTapReport{
-		Bridge:     state.Bridge,
-		CIDR:       state.CIDR,
-		Gateway:    state.Gateway,
-		NATBackend: state.NATBackend,
-		State:      state,
-	}
-	if err := removeNAT(ctx, runner, state.NATBackend, state.CIDR); err != nil {
-		return nil, err
-	}
-	report.Changed = append(report.Changed, "nat")
-	if exists, err := bridgeExists(state.Bridge); err != nil {
-		return nil, err
-	} else if exists {
-		if err := deleteBridge(state.Bridge); err != nil {
-			return nil, err
+	var report *HostTapReport
+	err = store.withHostTap(true, func(current **HostTapState) error {
+		state := *current
+		if state == nil {
+			report = &HostTapReport{Bridge: cfg.Bridge, CIDR: cfg.CIDR, Gateway: cfg.Gateway, NATBackend: cfg.NATBackend}
+			return nil
 		}
-		report.Changed = append(report.Changed, "bridge")
-	}
-	if err := store.removeHostTapState(); err != nil {
+		if state.Owner.Kind != "kumabox" || state.Owner.RootDir != rootDir {
+			return fmt.Errorf("%w: host-tap state is owned by %s at %s", ErrNetworkConflict, state.Owner.Kind, state.Owner.RootDir)
+		}
+		if state.RefCount > 0 {
+			return fmt.Errorf("%w: host-tap network still has %d reference(s)", ErrNetworkConflict, state.RefCount)
+		}
+
+		report = &HostTapReport{
+			Bridge:     state.Bridge,
+			CIDR:       state.CIDR,
+			Gateway:    state.Gateway,
+			NATBackend: state.NATBackend,
+			State:      state,
+		}
+		if err := removeNAT(ctx, runner, state.NATBackend, state.CIDR); err != nil {
+			return err
+		}
+		report.Changed = append(report.Changed, "nat")
+		if exists, err := bridgeExists(state.Bridge); err != nil {
+			return err
+		} else if exists {
+			if err := deleteBridge(state.Bridge); err != nil {
+				return err
+			}
+			report.Changed = append(report.Changed, "bridge")
+		}
+		*current = nil
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return report, nil

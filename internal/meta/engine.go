@@ -34,13 +34,22 @@ const (
 // namespaces it may inspect. Engines acquire declared namespaces in a stable
 // order so multi-namespace operations cannot deadlock.
 type Scope struct {
-	Write string
-	Read  []string
+	Write Namespace
+	Read  []Namespace
 }
+
+// Namespace identifies one independently locked metadata document.
+type Namespace string
+
+// Table identifies a logical collection inside a namespace.
+type Table string
+
+// RecordID identifies one record inside a table.
+type RecordID string
 
 // MetaEngine is the engine-neutral metadata transaction boundary.
 type MetaEngine interface {
-	View(context.Context, []string, func(Reader) error) error
+	View(ctx context.Context, namespaces []Namespace, fn func(Reader) error) error
 	Update(context.Context, Scope, CommitMode, func(Writer) error) error
 	Events(context.Context) (<-chan struct{}, func(), error)
 	Close() error
@@ -48,14 +57,14 @@ type MetaEngine interface {
 
 // Reader exposes detached metadata values inside one consistent view.
 type Reader interface {
-	GetRaw(context.Context, string, string, string) (json.RawMessage, bool, error)
-	ScanRaw(context.Context, string, string, func(string, json.RawMessage) error) error
+	GetRaw(ctx context.Context, namespace Namespace, table Table, id RecordID) (json.RawMessage, bool, error)
+	ScanRaw(ctx context.Context, namespace Namespace, table Table, fn func(RecordID, json.RawMessage) error) error
 }
 
 // Writer is the write-capable transaction view. All mutations are discarded
 // when the callback returns an error.
 type Writer interface {
 	Reader
-	PutRaw(context.Context, string, string, string, json.RawMessage) error
-	DeleteRaw(context.Context, string, string, string) error
+	PutRaw(ctx context.Context, namespace Namespace, table Table, id RecordID, raw json.RawMessage) error
+	DeleteRaw(ctx context.Context, namespace Namespace, table Table, id RecordID) error
 }

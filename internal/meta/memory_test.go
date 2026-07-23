@@ -28,7 +28,7 @@ func TestMemoryEngineCommitsAndRollsBack(t *testing.T) {
 		t.Fatalf("rollback error = %v, want %v", err, wantErr)
 	}
 
-	if err := engine.View(ctx, []string{"vm"}, func(r Reader) error {
+	if err := engine.View(ctx, []Namespace{"vm"}, func(r Reader) error {
 		_, ok, err := r.GetRaw(ctx, "vm", "records", "vm-2")
 		if err != nil {
 			return err
@@ -45,7 +45,7 @@ func TestMemoryEngineCommitsAndRollsBack(t *testing.T) {
 func TestMemoryEngineEnforcesWriteScope(t *testing.T) {
 	engine := newTestEngine(t)
 	ctx := context.Background()
-	err := engine.Update(ctx, Scope{Write: "vm", Read: []string{"network"}}, CommitDurable, func(w Writer) error {
+	err := engine.Update(ctx, Scope{Write: "vm", Read: []Namespace{"network"}}, CommitDurable, func(w Writer) error {
 		return w.PutRaw(ctx, "network", "leases", "10.0.0.2", json.RawMessage(`{}`))
 	})
 	if !errors.Is(err, ErrScope) {
@@ -56,7 +56,7 @@ func TestMemoryEngineEnforcesWriteScope(t *testing.T) {
 func TestMemoryEngineEnforcesReadScope(t *testing.T) {
 	engine := newTestEngine(t)
 	ctx := context.Background()
-	err := engine.View(ctx, []string{"vm"}, func(r Reader) error {
+	err := engine.View(ctx, []Namespace{"vm"}, func(r Reader) error {
 		_, _, err := r.GetRaw(ctx, "network", "leases", "10.0.0.2")
 		return err
 	})
@@ -77,15 +77,15 @@ func TestMemoryEngineDetachedValuesAndStableScan(t *testing.T) {
 		t.Fatalf("seed update: %v", err)
 	}
 
-	if err := engine.View(ctx, []string{"vm"}, func(r Reader) error {
+	if err := engine.View(ctx, []Namespace{"vm"}, func(r Reader) error {
 		raw, ok, err := r.GetRaw(ctx, "vm", "records", "a")
 		if err != nil || !ok {
 			return errors.New("record a missing")
 		}
 		raw[0] = 'X'
 		ids := make([]string, 0, 2)
-		if err := r.ScanRaw(ctx, "vm", "records", func(id string, _ json.RawMessage) error {
-			ids = append(ids, id)
+		if err := r.ScanRaw(ctx, "vm", "records", func(id RecordID, _ json.RawMessage) error {
+			ids = append(ids, string(id))
 			return nil
 		}); err != nil {
 			return err
@@ -98,7 +98,7 @@ func TestMemoryEngineDetachedValuesAndStableScan(t *testing.T) {
 		t.Fatalf("detached view: %v", err)
 	}
 
-	if err := engine.View(ctx, []string{"vm"}, func(r Reader) error {
+	if err := engine.View(ctx, []Namespace{"vm"}, func(r Reader) error {
 		raw, _, err := r.GetRaw(ctx, "vm", "records", "a")
 		if err != nil {
 			return err
@@ -123,7 +123,7 @@ func TestMemoryEngineEventsAreCoalesced(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		if err := engine.Update(ctx, Scope{Write: "vm"}, CommitRelaxed, func(w Writer) error {
-			return w.PutRaw(ctx, "vm", "records", string(rune('a'+i)), json.RawMessage(`{}`))
+			return w.PutRaw(ctx, "vm", "records", RecordID(string(rune('a'+i))), json.RawMessage(`{}`))
 		}); err != nil {
 			t.Fatalf("update %d: %v", i, err)
 		}
@@ -144,7 +144,7 @@ func TestMemoryEngineContextCancellation(t *testing.T) {
 	engine := newTestEngine(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := engine.View(ctx, []string{"vm"}, func(Reader) error { return nil }); !errors.Is(err, context.Canceled) {
+	if err := engine.View(ctx, []Namespace{"vm"}, func(Reader) error { return nil }); !errors.Is(err, context.Canceled) {
 		t.Fatalf("view error = %v, want context.Canceled", err)
 	}
 }
