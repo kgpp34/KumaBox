@@ -10,30 +10,49 @@ import (
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
-// VMState is the VM resource state API consumed by the runtime.
-//
-// The interface deliberately exposes lifecycle transitions rather than the
-// storage format. Runtime owns side effects such as VMM and network changes;
-// this API only publishes the durable VM state around those boundaries.
-type VMState interface {
-	Create(vmstore.CreateRequest) (*vmstore.VMRecord, error)
+// VMReader contains read-only VM access. Callers that only inspect state
+// should depend on this interface instead of the complete VM mutation API.
+type VMReader interface {
 	Inspect(string) (*vmstore.VMRecord, error)
-	Delete(string) error
 	List() ([]*vmstore.VMRecord, error)
 	RootDir() string
+}
 
+// VMRecords contains VM record creation and attachment mutations.
+type VMRecords interface {
+	Create(vmstore.CreateRequest) (*vmstore.VMRecord, error)
+	Delete(string) error
+	SetNetworkConfigs(string, []kbnetwork.Config) (*vmstore.VMRecord, error)
+}
+
+// VMLifecycle contains durable state changes around backend lifecycle events.
+type VMLifecycle interface {
 	MarkRunning(string, int, string) (*vmstore.VMRecord, error)
 	MarkPerformance(string, vmstore.PerformanceMetrics) (*vmstore.VMRecord, error)
-	BeginRestore(string, string, string) (*vmstore.VMRecord, error)
-	MarkRestoreFailed(string, string) (*vmstore.VMRecord, error)
-	MarkRestored(string, int, string, time.Duration) (*vmstore.VMRecord, error)
-	MarkRestoredWithMetrics(string, int, string, time.Duration, *vmstore.RestoreResult) (*vmstore.VMRecord, error)
 	MarkHibernated(string, string) (*vmstore.VMRecord, error)
 	MarkPaused(string) (*vmstore.VMRecord, error)
 	MarkResumed(string) (*vmstore.VMRecord, error)
 	MarkError(string, string) (*vmstore.VMRecord, error)
 	MarkStopped(string) (*vmstore.VMRecord, error)
-	SetNetworkConfigs(string, []kbnetwork.Config) (*vmstore.VMRecord, error)
+}
+
+// VMRestore contains durable markers for destructive and completed restores.
+type VMRestore interface {
+	BeginRestore(string, string, string) (*vmstore.VMRecord, error)
+	MarkRestoreFailed(string, string) (*vmstore.VMRecord, error)
+	MarkRestored(string, int, string, time.Duration) (*vmstore.VMRecord, error)
+	MarkRestoredWithMetrics(string, int, string, time.Duration, *vmstore.RestoreResult) (*vmstore.VMRecord, error)
+}
+
+// VMState is the complete VM resource state API consumed by the runtime.
+//
+// It is kept as a compatibility composition for existing constructors. New
+// code should depend on the narrow capability it actually uses.
+type VMState interface {
+	VMReader
+	VMRecords
+	VMLifecycle
+	VMRestore
 }
 
 var _ VMState = (*vmstore.Store)(nil)
