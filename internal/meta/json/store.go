@@ -1,0 +1,458 @@
+package json
+
+import (
+	"context"
+	stdjson "encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+
+	"github.com/kumabox/kumabox/internal/lockfile"
+	"github.com/kumabox/kumabox/internal/meta"
+)
+
+const previousSuffix = ".prev"
+
+// Namespace describes one logical metadata namespace and its legacy JSON
+// representation.
+type Namespace struct {
+	Name     string
+	FilePath string
+	LockPath string
+	Codec    Codec
+}
+
+// Store is the JSON MetaEngine. It owns no domain records; codecs and callers
+// define their table meaning.
+type Store struct {
+	namespaces map[string]Namespace
+	mu         sync.Mutex
+	subs       map[chan struct{}]struct{}
+	closed     bool
+}
+
+var _ meta.MetaEngine = (*Store)(nil)
+
+// Open validates namespace definitions without creating files.
+func Open(definitions ...Namespace) (*Store, error) {
+	if len(definitions) == 0 {
+		return nil, fmt.Errorf("JSON metadata engine requires a namespace")
+	}
+	namespaces := make(map[string]Namespace, len(definitions))
+	for _, definition := range definitions {
+		if definition.Name == "" || definition.FilePath == "" || definition.LockPath == "" || definition.Codec == nil {
+			return nil, fmt.Errorf("metadata namespace %q has incomplete definition: %w", definition.Name, meta.ErrScope)
+		}
+		if _, exists := namespaces[definition.Name]; exists {
+			return nil, fmt.Errorf("metadata namespace %q declared twice: %w", definition.Name, meta.ErrScope)
+		}
+		namespaces[definition.Name] = definition
+	}
+	return &Store{namespaces: namespaces, subs: make(map[chan struct{}]struct{})}, nil
+}
+
+func (s *Store) View(ctx context.Context, requested []string, fn func(meta.Reader) error) error {
+	if fn == nil {
+		return fmt.Errorf("metadata view callback must not be nil: %w", meta.ErrScope)
+	}
+	definitions, err := s.resolve(requested, "")
+	if err != nil {
+		return err
+	}
+	locks, err := s.acquire(ctx, definitions)
+	if err != nil {
+		return err
+	}
+	defer releaseLocks(locks)
+
+	models, err := s.load(ctx, definitions)
+	if err != nil {
+		return err
+	}
+	return fn(&reader{models: models, allowed: names(definitions)})
+}
+
+func (s *Store) Update(ctx context.Context, scope meta.Scope, mode meta.CommitMode, fn func(meta.Writer) error) error {
+	if fn == nil {
+		return fmt.Errorf("metadata update callback must not be nil: %w", meta.ErrScope)
+	}
+	definitions, err := s.resolve(append([]string{scope.Write}, scope.Read...), scope.Write)
+	if err != nil {
+		return err
+	}
+	locks, err := s.acquire(ctx, definitions)
+	if err != nil {
+		return err
+	}
+	defer releaseLocks(locks)
+
+	models, err := s.load(ctx, definitions)
+	if err != nil {
+		return err
+	}
+	writer := &writer{
+		reader:         reader{models: models, allowed: names(definitions)},
+		writeNamespace: scope.Write,
+		dirty:          false,
+	}
+	if err := fn(writer); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if writer.dirty {
+		if err := s.commit(ctx, definitions, models, scope.Write, mode); err != nil {
+			return err
+		}
+		s.notify()
+	}
+	return nil
+}
+
+func (s *Store) Events(ctx context.Context) (<-chan struct{}, func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, nil, meta.ErrClosed
+	}
+	ch := make(chan struct{}, 1)
+	s.subs[ch] = struct{}{}
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			s.mu.Lock()
+			if _, ok := s.subs[ch]; ok {
+				delete(s.subs, ch)
+				close(ch)
+			}
+			s.mu.Unlock()
+		})
+	}
+	return ch, release, nil
+}
+
+func (s *Store) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	for ch := range s.subs {
+		close(ch)
+		delete(s.subs, ch)
+	}
+	return nil
+}
+
+func (s *Store) notify() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	for ch := range s.subs {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (s *Store) resolve(requested []string, write string) ([]Namespace, error) {
+	seen := make(map[string]struct{}, len(requested))
+	for _, name := range requested {
+		if name == "" {
+			return nil, fmt.Errorf("metadata namespace must not be empty: %w", meta.ErrScope)
+		}
+		if _, ok := s.namespaces[name]; !ok {
+			return nil, fmt.Errorf("metadata namespace %q is not declared: %w", name, meta.ErrScope)
+		}
+		seen[name] = struct{}{}
+	}
+	if write != "" {
+		if _, ok := seen[write]; !ok {
+			return nil, fmt.Errorf("write namespace %q is outside scope: %w", write, meta.ErrScope)
+		}
+	}
+	definitions := make([]Namespace, 0, len(seen))
+	for name := range seen {
+		definitions = append(definitions, s.namespaces[name])
+	}
+	sort.Slice(definitions, func(i, j int) bool { return definitions[i].Name < definitions[j].Name })
+	return definitions, nil
+}
+
+func (s *Store) acquire(ctx context.Context, definitions []Namespace) ([]*lockfile.Lock, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	closed := s.closed
+	s.mu.Unlock()
+	if closed {
+		return nil, meta.ErrClosed
+	}
+	locks := make([]*lockfile.Lock, 0, len(definitions))
+	for _, definition := range definitions {
+		lock, err := lockfile.New(filepath.Dir(definition.LockPath)).Acquire(ctx, lockKey(definition.LockPath))
+		if err != nil {
+			releaseLocks(locks)
+			return nil, fmt.Errorf("lock metadata namespace %s: %w", definition.Name, err)
+		}
+		locks = append(locks, lock)
+	}
+	return locks, nil
+}
+
+func (s *Store) load(ctx context.Context, definitions []Namespace) (map[string]*loaded, error) {
+	models := make(map[string]*loaded, len(definitions))
+	for _, definition := range definitions {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		loaded, err := loadNamespace(definition)
+		if err != nil {
+			return nil, fmt.Errorf("load metadata namespace %s: %w", definition.Name, err)
+		}
+		models[definition.Name] = loaded
+	}
+	return models, nil
+}
+
+func (s *Store) commit(ctx context.Context, definitions []Namespace, models map[string]*loaded, write string, _ meta.CommitMode) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for _, definition := range definitions {
+		if definition.Name != write {
+			continue
+		}
+		current := models[write]
+		raw, err := definition.Codec.Encode(current.model)
+		if err != nil {
+			return fmt.Errorf("encode metadata namespace %s: %w", write, err)
+		}
+		if err := writeAtomic(definition.FilePath, raw, current.raw); err != nil {
+			return fmt.Errorf("commit metadata namespace %s: %w", write, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("write namespace %q was not resolved: %w", write, meta.ErrScope)
+}
+
+type loaded struct {
+	model     *Model
+	raw       []byte
+	recovered bool
+}
+
+func loadNamespace(definition Namespace) (*loaded, error) {
+	raw, err := os.ReadFile(definition.FilePath)
+	if errors.Is(err, os.ErrNotExist) {
+		model, decodeErr := definition.Codec.Decode(nil)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("initialize empty metadata namespace: %w", decodeErr)
+		}
+		return &loaded{model: model}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read metadata file: %w", err)
+	}
+	model, decodeErr := definition.Codec.Decode(raw)
+	if decodeErr == nil {
+		return &loaded{model: model, raw: append([]byte(nil), raw...)}, nil
+	}
+	previous, previousErr := os.ReadFile(definition.FilePath + previousSuffix)
+	if previousErr == nil {
+		previousModel, previousDecodeErr := definition.Codec.Decode(previous)
+		if previousDecodeErr == nil {
+			return &loaded{model: previousModel, raw: append([]byte(nil), previous...), recovered: true}, nil
+		}
+	}
+	return nil, fmt.Errorf("decode metadata file: %w: %v", meta.ErrCorrupt, decodeErr)
+}
+
+type reader struct {
+	models  map[string]*loaded
+	allowed map[string]struct{}
+}
+
+func (r reader) GetRaw(ctx context.Context, namespace, table, id string) (stdjson.RawMessage, bool, error) {
+	if err := contextErr(ctx); err != nil {
+		return nil, false, err
+	}
+	if err := r.checkRead(namespace); err != nil {
+		return nil, false, err
+	}
+	model := r.models[namespace].model
+	records := model.Tables[table]
+	if records == nil {
+		return nil, false, nil
+	}
+	raw, ok := records[id]
+	return cloneRaw(raw), ok, nil
+}
+
+func (r reader) ScanRaw(ctx context.Context, namespace, table string, fn func(string, stdjson.RawMessage) error) error {
+	if fn == nil {
+		return fmt.Errorf("metadata scan callback must not be nil: %w", meta.ErrScope)
+	}
+	if err := r.checkRead(namespace); err != nil {
+		return err
+	}
+	records := r.models[namespace].model.Tables[table]
+	ids := make([]string, 0, len(records))
+	for id := range records {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if err := contextErr(ctx); err != nil {
+			return err
+		}
+		if err := fn(id, cloneRaw(records[id])); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r reader) checkRead(namespace string) error {
+	if _, ok := r.allowed[namespace]; !ok {
+		return fmt.Errorf("cannot read metadata namespace %q outside transaction scope: %w", namespace, meta.ErrScope)
+	}
+	return nil
+}
+
+type writer struct {
+	reader
+	writeNamespace string
+	dirty          bool
+}
+
+func (w *writer) PutRaw(ctx context.Context, namespace, table, id string, raw stdjson.RawMessage) error {
+	if err := w.checkWrite(ctx, namespace, table, id); err != nil {
+		return err
+	}
+	if raw == nil || !stdjson.Valid(raw) {
+		return fmt.Errorf("metadata record %s/%s is invalid JSON: %w", table, id, meta.ErrIO)
+	}
+	model := w.models[namespace].model
+	if model.Tables == nil {
+		model.Tables = map[string]map[string]stdjson.RawMessage{}
+	}
+	if model.Tables[table] == nil {
+		model.Tables[table] = map[string]stdjson.RawMessage{}
+	}
+	model.Tables[table][id] = cloneRaw(raw)
+	w.dirty = true
+	return nil
+}
+
+func (w *writer) DeleteRaw(ctx context.Context, namespace, table, id string) error {
+	if err := w.checkWrite(ctx, namespace, table, id); err != nil {
+		return err
+	}
+	delete(w.models[namespace].model.Tables[table], id)
+	w.dirty = true
+	return nil
+}
+
+func (w *writer) checkWrite(ctx context.Context, namespace, table, id string) error {
+	if err := contextErr(ctx); err != nil {
+		return err
+	}
+	if namespace != w.writeNamespace {
+		return fmt.Errorf("cannot write metadata namespace %q from %q transaction: %w", namespace, w.writeNamespace, meta.ErrScope)
+	}
+	if table == "" || id == "" {
+		return fmt.Errorf("metadata table and id must not be empty: %w", meta.ErrScope)
+	}
+	return nil
+}
+
+func writeAtomic(path string, raw, previous []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create metadata directory: %w", err)
+	}
+	if len(previous) > 0 {
+		if err := writeFileSync(path+previousSuffix, previous, ".prev-*.tmp"); err != nil {
+			return fmt.Errorf("preserve previous metadata generation: %w", err)
+		}
+	}
+	if err := writeFileSync(path, raw, ".meta-*.tmp"); err != nil {
+		return err
+	}
+	return syncDirectory(filepath.Dir(path))
+}
+
+func writeFileSync(path string, raw []byte, pattern string) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), pattern)
+	if err != nil {
+		return fmt.Errorf("create metadata temporary file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) //nolint:errcheck
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write metadata temporary file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync metadata temporary file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close metadata temporary file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("publish metadata file: %w", err)
+	}
+	return nil
+}
+
+func syncDirectory(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open metadata directory: %w", err)
+	}
+	defer dir.Close()
+	if err := dir.Sync(); err != nil && !errors.Is(err, os.ErrInvalid) {
+		return fmt.Errorf("sync metadata directory: %w", err)
+	}
+	return nil
+}
+
+func releaseLocks(locks []*lockfile.Lock) {
+	for i := len(locks) - 1; i >= 0; i-- {
+		_ = locks[i].Release()
+	}
+}
+
+func lockKey(path string) string {
+	key := filepath.Base(path)
+	return strings.TrimSuffix(key, filepath.Ext(key))
+}
+
+func names(definitions []Namespace) map[string]struct{} {
+	allowed := make(map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		allowed[definition.Name] = struct{}{}
+	}
+	return allowed
+}
+
+func contextErr(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.Err()
+}
