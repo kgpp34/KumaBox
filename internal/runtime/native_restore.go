@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/backend"
+	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/storage"
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -52,7 +53,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	if err != nil {
 		return nil, err
 	}
-	operationID, err := r.beginOperation(ctx, "snapshot.restore-native", rec.ID)
+	operationID, err := r.beginOperation(ctx, operation.KindSnapshotRestoreVM, rec.ID)
 	if err != nil {
 		return nil, err
 	}

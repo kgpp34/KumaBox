@@ -20,6 +20,19 @@ const (
 	table     meta.Table     = "records"
 )
 
+const (
+	KindVMStart             = "vm.start"
+	KindVMStop              = "vm.stop"
+	KindVMDelete            = "vm.delete"
+	KindVMPause             = "vm.pause"
+	KindVMResume            = "vm.resume"
+	KindVMHibernate         = "vm.hibernate"
+	KindSnapshotCreateRun   = "snapshot.create-running"
+	KindSnapshotCloneNative = "snapshot.clone-native"
+	KindSnapshotRestoreDisk = "snapshot.restore-portable"
+	KindSnapshotRestoreVM   = "snapshot.restore-native"
+)
+
 type Status string
 
 const (

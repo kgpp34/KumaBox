@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/backend"
+	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -32,7 +33,7 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 	if err != nil {
 		return nil, err
 	}
-	operationID, err := r.beginOperation(ctx, "vm.hibernate", rec.ID)
+	operationID, err := r.beginOperation(ctx, operation.KindVMHibernate, rec.ID)
 	if err != nil {
 		return nil, err
 	}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/backend"
+	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -103,9 +104,9 @@ func (r *Runtime) transitionVMState(ctx context.Context, ref string, target vmst
 func liveStateOperation(target vmstore.VMState) string {
 	switch target {
 	case vmstore.StatePaused:
-		return "vm.pause"
+		return operation.KindVMPause
 	case vmstore.StateRunning:
-		return "vm.resume"
+		return operation.KindVMResume
 	default:
 		return "vm.state-transition"
 	}

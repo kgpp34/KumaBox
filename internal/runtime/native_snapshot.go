@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/backend"
+	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -23,7 +24,7 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 	if err != nil {
 		return nil, err
 	}
-	operationID, err := r.beginOperation(ctx, "snapshot.create-running", rec.ID)
+	operationID, err := r.beginOperation(ctx, operation.KindSnapshotCreateRun, rec.ID)
 	if err != nil {
 		return nil, err
 	}

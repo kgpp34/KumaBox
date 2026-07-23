@@ -9,6 +9,7 @@ import (
 	agentclient "github.com/kumabox/kumabox/internal/agent/client"
 	"github.com/kumabox/kumabox/internal/backend"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
+	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -35,7 +36,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if opts.Name == "" {
 		return nil, errors.New("clone VM name must not be empty")
 	}
-	operationID, err := r.beginOperation(ctx, "snapshot.clone-native", snapshotRef)
+	operationID, err := r.beginOperation(ctx, operation.KindSnapshotCloneNative, snapshotRef)
 	if err != nil {
 		return nil, err
 	}

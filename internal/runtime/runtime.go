@@ -16,6 +16,7 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/lockfile"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
+	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/state"
@@ -200,7 +201,7 @@ func (r *Runtime) StartVMContext(ctx context.Context, ref string) (*vmstore.VMRe
 	if err != nil {
 		return nil, err
 	}
-	operationID, err := r.beginOperation(ctx, "vm.start", rec.ID)
+	operationID, err := r.beginOperation(ctx, operation.KindVMStart, rec.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -331,7 +332,7 @@ func (r *Runtime) StopVMContext(ctx context.Context, ref string, opts backend.St
 	if err != nil {
 		return nil, err
 	}
-	operationID, err := r.beginOperation(ctx, "vm.stop", rec.ID)
+	operationID, err := r.beginOperation(ctx, operation.KindVMStop, rec.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +412,7 @@ func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (
 	if err != nil {
 		return nil, err
 	}
-	operationID, err := r.beginOperation(ctx, "vm.delete", rec.ID)
+	operationID, err := r.beginOperation(ctx, operation.KindVMDelete, rec.ID)
 	if err != nil {
 		return nil, err
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/storage"
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -37,7 +38,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	if len(opts.Networks) == 0 {
 		opts.Networks = []string{"none"}
 	}
-	operationID, err := r.beginOperation(ctx, "snapshot.restore-portable", ref)
+	operationID, err := r.beginOperation(ctx, operation.KindSnapshotRestoreDisk, ref)
 	if err != nil {
 		return nil, err
 	}
