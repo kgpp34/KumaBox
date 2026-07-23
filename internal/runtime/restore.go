@@ -38,7 +38,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 		opts.Networks = []string{"none"}
 	}
 
-	snapshotStore := r.stores.Snapshots
+	snapshotStore := r.storeSet.Snapshots
 	snapshotRec, lease, err := snapshotStore.AcquireRead(ctx, ref)
 	if err != nil {
 		return nil, err
@@ -49,7 +49,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	if err != nil {
 		return nil, err
 	}
-	image, err := r.stores.Images.Inspect(manifest.Source.ImageID)
+	image, err := r.storeSet.Images.Inspect(manifest.Source.ImageID)
 	if err != nil {
 		return nil, fmt.Errorf("BASE_IMAGE_MISSING: resolve image %s: %w", manifest.Source.ImageID, err)
 	}
@@ -57,13 +57,13 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	if err != nil {
 		return nil, err
 	}
-	rec, err := r.store.Create(req)
+	rec, err := r.vmStore.Create(req)
 	if err != nil {
 		return nil, err
 	}
 	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
 	if err != nil {
-		_ = r.store.Delete(rec.ID)
+		_ = r.vmStore.Delete(rec.ID)
 		return nil, err
 	}
 	defer lock.Release() //nolint:errcheck
@@ -72,8 +72,8 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	defer func() {
 		if !ok {
 			r.rollbackNetwork(rec)
-			_ = removeManagedDirs(rec, r.store.RootDir())
-			_ = r.store.Delete(rec.ID)
+			_ = removeManagedDirs(rec, r.vmStore.RootDir())
+			_ = r.vmStore.Delete(rec.ID)
 		}
 	}()
 	if err := restoreWritableDisks(ctx, rec, snapshotRec.DataDir, manifest, r.qemuImg); err != nil {
@@ -82,10 +82,10 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	if err := r.attachNetwork(rec); err != nil {
 		return nil, err
 	}
-	if updated, inspectErr := r.store.Inspect(rec.ID); inspectErr == nil {
+	if updated, inspectErr := r.vmStore.Inspect(rec.ID); inspectErr == nil {
 		rec = updated
 	}
-	if err := prepareStorageWithQEMUImg(ctx, rec, r.store.RootDir(), r.qemuImg); err != nil {
+	if err := prepareStorageWithQEMUImg(ctx, rec, r.vmStore.RootDir(), r.qemuImg); err != nil {
 		return nil, err
 	}
 	if err := r.backend.RenderConfig(rec); err != nil {

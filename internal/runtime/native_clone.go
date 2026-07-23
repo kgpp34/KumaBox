@@ -50,7 +50,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		return nil, errors.New("BACKEND_OPERATION_UNSUPPORTED: backend does not expose native compatibility")
 	}
 
-	snapshotStore := r.stores.Snapshots
+	snapshotStore := r.storeSet.Snapshots
 	snapshotRec, lease, err := snapshotStore.AcquireRead(ctx, snapshotRef)
 	if err != nil {
 		return nil, err
@@ -71,7 +71,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err != nil {
 		return nil, err
 	}
-	image, err := r.stores.Images.Inspect(manifest.Source.ImageID)
+	image, err := r.storeSet.Images.Inspect(manifest.Source.ImageID)
 	if err != nil {
 		return nil, fmt.Errorf("BASE_IMAGE_MISSING: resolve image %s: %w", manifest.Source.ImageID, err)
 	}
@@ -81,13 +81,13 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err != nil {
 		return nil, err
 	}
-	rec, err := r.store.Create(req)
+	rec, err := r.vmStore.Create(req)
 	if err != nil {
 		return nil, err
 	}
 	lock, err := r.vmLocks.Acquire(ctx, rec.ID)
 	if err != nil {
-		_ = r.store.Delete(rec.ID)
+		_ = r.vmStore.Delete(rec.ID)
 		return nil, fmt.Errorf("lock clone VM %s: %w", rec.ID, err)
 	}
 	defer lock.Release() //nolint:errcheck
@@ -105,14 +105,14 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 			_, _ = r.backend.StopVM(&cleanup, backend.StopOptions{Force: true})
 		}
 		r.rollbackNetwork(rec)
-		_ = removeManagedDirs(rec, r.store.RootDir())
-		_ = r.store.Delete(rec.ID)
+		_ = removeManagedDirs(rec, r.vmStore.RootDir())
+		_ = r.vmStore.Delete(rec.ID)
 	}()
 
 	if err := r.attachNetwork(rec); err != nil {
 		return nil, err
 	}
-	rec, err = r.store.Inspect(rec.ID)
+	rec, err = r.vmStore.Inspect(rec.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +127,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		return nil, err
 	}
 	defer staged.cleanup() //nolint:errcheck
-	dirty, err := r.store.BeginRestore(rec.ID, snapshotRec.ID, string(opts.Mode))
+	dirty, err := r.vmStore.BeginRestore(rec.ID, snapshotRec.ID, string(opts.Mode))
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +152,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		return nil, fmt.Errorf("verify clone guest readiness: %w", err)
 	}
 	readinessDuration := time.Since(readinessStarted)
-	cloned, err := r.store.MarkRestoredWithMetrics(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
+	cloned, err := r.vmStore.MarkRestoredWithMetrics(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
 		NativeStageDurationMs:    stageMetrics.nativeStageDuration.Milliseconds(),
 		DiskStageDurationMs:      stageMetrics.diskStageDuration.Milliseconds(),
 		DiskCommitDurationMs:     diskCommitDuration.Milliseconds(),

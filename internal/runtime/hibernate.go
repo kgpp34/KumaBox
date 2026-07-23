@@ -28,7 +28,7 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 	if opts.Name == "" {
 		return nil, errors.New("hibernate snapshot name must not be empty")
 	}
-	rec, err := r.store.Inspect(ref)
+	rec, err := r.vmStore.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +37,7 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 		return nil, fmt.Errorf("lock VM %s for hibernate: %w", rec.ID, err)
 	}
 	defer lock.Release() //nolint:errcheck
-	rec, err = r.store.Inspect(rec.ID)
+	rec, err = r.vmStore.Inspect(rec.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +58,7 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 		return nil, errors.New("BACKEND_OPERATION_UNSUPPORTED: backend does not expose native compatibility")
 	}
 
-	snapshotStore := r.stores.Snapshots
+	snapshotStore := r.storeSet.Snapshots
 	build, err := snapshotStore.Reserve(ctx, opts.Name)
 	if err != nil {
 		return nil, err
@@ -86,9 +86,9 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 		}
 		return nil, errors.Join(fmt.Errorf("terminate hibernated VMM: %w", err), recoverErr, removeErr)
 	}
-	hibernated, err := r.store.MarkHibernated(rec.ID, ready.ID)
+	hibernated, err := r.vmStore.MarkHibernated(rec.ID, ready.ID)
 	if err != nil {
-		_, _ = r.store.MarkError(rec.ID, "hibernate snapshot is durable but stopped state publication failed")
+		_, _ = r.vmStore.MarkError(rec.ID, "hibernate snapshot is durable but stopped state publication failed")
 		return nil, fmt.Errorf("publish hibernated VM state: %w", err)
 	}
 	_ = writeVMEvent(hibernated, "vm.hibernate.completed", vmstore.Observation{

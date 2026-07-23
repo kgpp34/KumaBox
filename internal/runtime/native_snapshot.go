@@ -19,7 +19,7 @@ const snapshotCleanupTimeout = 30 * time.Second
 // one pause window, then publishes the snapshot after the source VM resumes.
 func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (*snapshot.Record, error) {
 	captureStarted := time.Now()
-	rec, err := r.store.Inspect(ref)
+	rec, err := r.vmStore.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +29,7 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 	}
 	defer lock.Release() //nolint:errcheck
 
-	rec, err = r.store.Inspect(rec.ID)
+	rec, err = r.vmStore.Inspect(rec.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 		return nil, errors.New("BACKEND_OPERATION_UNSUPPORTED: backend does not expose native compatibility")
 	}
 
-	build, err := r.stores.Snapshots.Reserve(ctx, name)
+	build, err := r.storeSet.Snapshots.Reserve(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -129,10 +129,10 @@ func captureNativeWindow(ctx context.Context, snapshotter backend.NativeSnapshot
 func (r *Runtime) persistSnapshotResumeFailure(rec *vmstore.VMRecord) {
 	observation := r.backend.ObserveVM(rec)
 	if observation.State == vmstore.ObservedStatePaused {
-		_, _ = r.store.MarkPaused(rec.ID)
+		_, _ = r.vmStore.MarkPaused(rec.ID)
 		return
 	}
-	_, _ = r.store.MarkError(rec.ID, "failed to resume VM after running snapshot")
+	_, _ = r.vmStore.MarkError(rec.ID, "failed to resume VM after running snapshot")
 }
 
 func wrapOptional(operation string, err error) error {

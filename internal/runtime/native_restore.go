@@ -48,7 +48,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	}
 	opts.Mode = mode
 	restoreStarted := time.Now()
-	rec, err := r.store.Inspect(vmRef)
+	rec, err := r.vmStore.Inspect(vmRef)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +58,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	}
 	defer lock.Release() //nolint:errcheck
 
-	rec, err = r.store.Inspect(rec.ID)
+	rec, err = r.vmStore.Inspect(rec.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 		return nil, errors.New("BACKEND_OPERATION_UNSUPPORTED: backend does not expose native compatibility")
 	}
 
-	snapshotStore := r.stores.Snapshots
+	snapshotStore := r.storeSet.Snapshots
 	snapshotRec, lease, err := snapshotStore.AcquireRead(ctx, snapshotRef)
 	if err != nil {
 		return nil, err
@@ -109,12 +109,12 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 			return nil, fmt.Errorf("stop VM for restore: %w", err)
 		}
 	}
-	dirty, err := r.store.BeginRestore(rec.ID, snapshotRec.ID, string(opts.Mode))
+	dirty, err := r.vmStore.BeginRestore(rec.ID, snapshotRec.ID, string(opts.Mode))
 	if err != nil {
 		return nil, fmt.Errorf("mark restore dirty: %w", err)
 	}
 	fail := func(cause error) (*vmstore.VMRecord, error) {
-		_, markErr := r.store.MarkRestoreFailed(rec.ID, cause.Error())
+		_, markErr := r.vmStore.MarkRestoreFailed(rec.ID, cause.Error())
 		return nil, errors.Join(cause, markErr)
 	}
 	diskCommitStarted := time.Now()
@@ -137,7 +137,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 		return fail(fmt.Errorf("verify restored guest readiness: %w", err))
 	}
 	readinessDuration := time.Since(readinessStarted)
-	restored, err := r.store.MarkRestoredWithMetrics(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
+	restored, err := r.vmStore.MarkRestoredWithMetrics(rec.ID, result.PID, result.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
 		NativeStageDurationMs:    stageMetrics.nativeStageDuration.Milliseconds(),
 		DiskStageDurationMs:      stageMetrics.diskStageDuration.Milliseconds(),
 		DiskCommitDurationMs:     diskCommitDuration.Milliseconds(),

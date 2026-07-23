@@ -30,8 +30,8 @@ const forcedStopTimeout = 5 * time.Second
 // KumaBox is daemonless, so each command must reconcile persisted intent with
 // the current backend process state before making lifecycle decisions.
 type Runtime struct {
-	store          state.VMState
-	stores         StoreSet
+	vmStore        state.VMState
+	storeSet       StoreSet
 	backend        backend.Lifecycle
 	cfg            config.Config
 	vmLocks        *lockfile.Locker
@@ -42,7 +42,7 @@ type Runtime struct {
 // CreateStoppedSnapshot captures managed writable disks while holding the VM
 // operation lock for the full consistency boundary.
 func (r *Runtime) CreateStoppedSnapshot(ctx context.Context, ref, name string) (*snapshot.Record, error) {
-	rec, err := r.store.Inspect(ref)
+	rec, err := r.vmStore.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +51,7 @@ func (r *Runtime) CreateStoppedSnapshot(ctx context.Context, ref, name string) (
 		return nil, fmt.Errorf("lock VM %s for snapshot: %w", rec.ID, err)
 	}
 	defer lock.Release() //nolint:errcheck
-	rec, err = r.store.Inspect(rec.ID)
+	rec, err = r.vmStore.Inspect(rec.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +62,7 @@ func (r *Runtime) CreateStoppedSnapshot(ctx context.Context, ref, name string) (
 	if observed.State != vmstore.StateStopped {
 		return nil, fmt.Errorf("VM_NOT_STOPPED: VM %s state is %s", rec.Name, observed.State)
 	}
-	build, err := r.stores.Snapshots.Reserve(ctx, name)
+	build, err := r.storeSet.Snapshots.Reserve(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -93,8 +93,8 @@ func New(cfg config.Config) *Runtime {
 // NewWithBackend creates a Runtime with an injected VM store and backend.
 func NewWithBackend(store state.VMState, vmBackend backend.Lifecycle) *Runtime {
 	return &Runtime{
-		store:          store,
-		stores:         newStoreSet(store.RootDir(), store),
+		vmStore:        store,
+		storeSet:       newStoreSet(store.RootDir(), store),
 		backend:        vmBackend,
 		vmLocks:        lockfile.New(filepath.Join(store.RootDir(), "locks", "vms")),
 		qemuImg:        storage.NewQEMUImg("qemu-img"),
@@ -109,8 +109,8 @@ func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) *Runt
 		panic("runtime store set must include a VM store")
 	}
 	return &Runtime{
-		store:          stores.VM,
-		stores:         stores,
+		vmStore:        stores.VM,
+		storeSet:       stores,
 		backend:        vmBackend,
 		vmLocks:        lockfile.New(filepath.Join(stores.VM.RootDir(), "locks", "vms")),
 		qemuImg:        storage.NewQEMUImg("qemu-img"),
@@ -128,7 +128,7 @@ func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error)
 }
 
 func (r *Runtime) createVMContext(ctx context.Context, req vmstore.CreateRequest, metrics *lifecycleMetrics) (*vmstore.VMRecord, error) {
-	rec, err := r.store.Create(req)
+	rec, err := r.vmStore.Create(req)
 	if err != nil {
 		return nil, err
 	}
@@ -137,20 +137,20 @@ func (r *Runtime) createVMContext(ctx context.Context, req vmstore.CreateRequest
 		metrics.markImageResolved(time.Now())
 	}
 	if err := r.attachNetwork(rec); err != nil {
-		_ = r.store.Delete(rec.ID)
+		_ = r.vmStore.Delete(rec.ID)
 		return nil, err
 	}
-	if updated, err := r.store.Inspect(rec.ID); err == nil {
+	if updated, err := r.vmStore.Inspect(rec.ID); err == nil {
 		rec = updated
 	}
 	if metrics != nil {
 		metrics.bindRecord(rec)
 		metrics.markNetworkReady(time.Now())
 	}
-	if err := prepareStorageWithQEMUImg(ctx, rec, r.store.RootDir(), r.qemuImg); err != nil {
+	if err := prepareStorageWithQEMUImg(ctx, rec, r.vmStore.RootDir(), r.qemuImg); err != nil {
 		r.rollbackNetwork(rec)
-		_ = removeManagedDirs(rec, r.store.RootDir())
-		_ = r.store.Delete(rec.ID)
+		_ = removeManagedDirs(rec, r.vmStore.RootDir())
+		_ = r.vmStore.Delete(rec.ID)
 		return nil, err
 	}
 	if metrics != nil {
@@ -158,8 +158,8 @@ func (r *Runtime) createVMContext(ctx context.Context, req vmstore.CreateRequest
 	}
 	if err := r.backend.RenderConfig(rec); err != nil {
 		r.rollbackNetwork(rec)
-		_ = removeManagedDirs(rec, r.store.RootDir())
-		_ = r.store.Delete(rec.ID)
+		_ = removeManagedDirs(rec, r.vmStore.RootDir())
+		_ = r.vmStore.Delete(rec.ID)
 		return nil, err
 	}
 	return r.applyObservation(rec), nil
@@ -178,7 +178,7 @@ func (r *Runtime) StartVM(ref string) (*vmstore.VMRecord, error) {
 // operation lock. Waiting for the lock observes ctx cancellation.
 func (r *Runtime) StartVMContext(ctx context.Context, ref string) (*vmstore.VMRecord, error) {
 	commandStarted := time.Now()
-	rec, err := r.store.Inspect(ref)
+	rec, err := r.vmStore.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +196,7 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecy
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("start VM: %w", err)
 	}
-	rec, err := r.store.Inspect(ref)
+	rec, err := r.vmStore.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
@@ -211,8 +211,8 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecy
 	}
 	metrics.bindRecord(rec)
 	metrics.markNetworkReady(time.Now())
-	if err := prepareStorageWithQEMUImg(ctx, rec, r.store.RootDir(), r.qemuImg); err != nil {
-		if _, markErr := r.store.MarkError(rec.ID, err.Error()); markErr != nil {
+	if err := prepareStorageWithQEMUImg(ctx, rec, r.vmStore.RootDir(), r.qemuImg); err != nil {
+		if _, markErr := r.vmStore.MarkError(rec.ID, err.Error()); markErr != nil {
 			return nil, markErr
 		}
 		return nil, err
@@ -220,7 +220,7 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecy
 	metrics.markStorageReady(time.Now())
 
 	if err := r.backend.RenderConfig(rec); err != nil {
-		if _, markErr := r.store.MarkError(rec.ID, err.Error()); markErr != nil {
+		if _, markErr := r.vmStore.MarkError(rec.ID, err.Error()); markErr != nil {
 			return nil, markErr
 		}
 		return nil, err
@@ -232,20 +232,20 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecy
 	metrics.markVMMSpawned(time.Now())
 	result, err := r.backend.StartVM(rec)
 	if err != nil {
-		if _, markErr := r.store.MarkError(rec.ID, err.Error()); markErr != nil {
+		if _, markErr := r.vmStore.MarkError(rec.ID, err.Error()); markErr != nil {
 			return nil, markErr
 		}
 		return nil, err
 	}
 	metrics.markVMMAPIReady(time.Now())
-	started, err := r.store.MarkRunning(rec.ID, result.PID, result.APISocket)
+	started, err := r.vmStore.MarkRunning(rec.ID, result.PID, result.APISocket)
 	if err != nil {
 		return nil, err
 	}
 	if requiresAgentReadiness(started) {
 		if err := r.guestReadiness(ctx, started.VsockSocket); err != nil {
 			_, _ = r.backend.StopVM(started, backend.StopOptions{Force: true})
-			if _, markErr := r.store.MarkError(started.ID, err.Error()); markErr != nil {
+			if _, markErr := r.vmStore.MarkError(started.ID, err.Error()); markErr != nil {
 				return nil, markErr
 			}
 			return nil, err
@@ -254,7 +254,7 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecy
 		metrics.markAgentConnected(readyAt)
 		metrics.markFirstExecCompleted(readyAt)
 	}
-	updated, err := r.store.MarkPerformance(started.ID, metrics.snapshot())
+	updated, err := r.vmStore.MarkPerformance(started.ID, metrics.snapshot())
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +281,7 @@ func (r *Runtime) RunVMContext(ctx context.Context, req vmstore.CreateRequest) (
 }
 
 func (r *Runtime) startVMWithMetrics(ctx context.Context, ref string, metrics *lifecycleMetrics) (*vmstore.VMRecord, error) {
-	rec, err := r.store.Inspect(ref)
+	rec, err := r.vmStore.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +304,7 @@ func (r *Runtime) StopVM(ref string, opts backend.StopOptions) (*vmstore.VMRecor
 
 // StopVMContext stops a VM while holding its cross-process operation lock.
 func (r *Runtime) StopVMContext(ctx context.Context, ref string, opts backend.StopOptions) (*vmstore.VMRecord, error) {
-	rec, err := r.store.Inspect(ref)
+	rec, err := r.vmStore.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
@@ -320,14 +320,14 @@ func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.Sto
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("stop VM: %w", err)
 	}
-	rec, err := r.store.Inspect(ref)
+	rec, err := r.vmStore.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
 	observed := r.applyObservation(rec)
 	if (observed.State == vmstore.StateRunning || observed.State == vmstore.StatePaused) &&
 		observed.ObservedState != vmstore.ObservedStateRunning && observed.ObservedState != vmstore.ObservedStatePaused {
-		stopped, markErr := r.store.MarkStopped(observed.ID)
+		stopped, markErr := r.vmStore.MarkStopped(observed.ID)
 		if markErr != nil {
 			return nil, markErr
 		}
@@ -343,12 +343,12 @@ func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.Sto
 	}
 
 	if _, err := r.backend.StopVM(observed, opts); err != nil {
-		if _, markErr := r.store.MarkError(observed.ID, err.Error()); markErr != nil {
+		if _, markErr := r.vmStore.MarkError(observed.ID, err.Error()); markErr != nil {
 			return nil, markErr
 		}
 		return nil, err
 	}
-	stopped, err := r.store.MarkStopped(observed.ID)
+	stopped, err := r.vmStore.MarkStopped(observed.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -373,7 +373,7 @@ func (r *Runtime) DeleteVM(ref string, force bool) (*vmstore.VMRecord, error) {
 // DeleteVMContext deletes a VM while serializing stop and cleanup under one
 // operation lock.
 func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (*vmstore.VMRecord, error) {
-	rec, err := r.store.Inspect(ref)
+	rec, err := r.vmStore.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
@@ -386,7 +386,7 @@ func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("delete VM: %w", err)
 	}
-	rec, err = r.store.Inspect(rec.ID)
+	rec, err = r.vmStore.Inspect(rec.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -410,10 +410,10 @@ func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (
 		Reason:    "VM deleted",
 		CheckedAt: time.Now().UTC(),
 	})
-	if err := removeManagedDirs(observed, r.store.RootDir()); err != nil {
+	if err := removeManagedDirs(observed, r.vmStore.RootDir()); err != nil {
 		return nil, err
 	}
-	if err := r.store.Delete(observed.ID); err != nil {
+	if err := r.vmStore.Delete(observed.ID); err != nil {
 		return nil, err
 	}
 	return observed, nil
@@ -421,7 +421,7 @@ func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (
 
 // InspectVM returns a VM record with a fresh backend observation.
 func (r *Runtime) InspectVM(ref string) (*vmstore.VMRecord, error) {
-	rec, err := r.store.Inspect(ref)
+	rec, err := r.vmStore.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
@@ -432,7 +432,7 @@ func (r *Runtime) InspectVM(ref string) (*vmstore.VMRecord, error) {
 
 // ListVMs returns all VM records with fresh backend observations.
 func (r *Runtime) ListVMs() ([]*vmstore.VMRecord, error) {
-	records, err := r.store.List()
+	records, err := r.vmStore.List()
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +461,7 @@ func (r *Runtime) inspectNetwork(rec *vmstore.VMRecord) *kbnetwork.InspectResult
 	if rec == nil {
 		return nil
 	}
-	result, err := r.stores.Networks.InspectVM(rec.ID, rec.Name, rec.Network, rec.Networks, rec.NetworkConfigs)
+	result, err := r.storeSet.Networks.InspectVM(rec.ID, rec.Name, rec.Network, rec.Networks, rec.NetworkConfigs)
 	if err != nil {
 		return &kbnetwork.InspectResult{
 			VMID:       rec.ID,
@@ -625,7 +625,7 @@ func (r *Runtime) attachNetwork(rec *vmstore.VMRecord) error {
 	if len(attached) == 0 {
 		return nil
 	}
-	if _, err := r.store.SetNetworkConfigs(rec.ID, attached); err != nil {
+	if _, err := r.vmStore.SetNetworkConfigs(rec.ID, attached); err != nil {
 		rollbackNetworkConfigs(rec, r.cfg, attached)
 		return err
 	}
@@ -661,7 +661,7 @@ func (r *Runtime) attachNetworkConfig(rec *vmstore.VMRecord, selection string, i
 		_ = kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network).ReleaseIP(allocation.Config.Network.IP)
 		return nil, err
 	}
-	networkStore := r.stores.Networks
+	networkStore := r.storeSet.Networks
 	if err := networkStore.UpsertRecord(allocation.Record); err != nil {
 		_ = deleteHostTap(allocation.Record.TAP)
 		_ = kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network).ReleaseIP(allocation.Config.Network.IP)
@@ -689,7 +689,7 @@ func (r *Runtime) attachCNIConfig(rec *vmstore.VMRecord, selection string, index
 	if err != nil {
 		return nil, err
 	}
-	networkStore := r.stores.Networks
+	networkStore := r.storeSet.Networks
 	if err := networkStore.UpsertRecord(allocation.Record); err != nil {
 		_ = deleteCNI(context.Background(), r.cfg.Runtime.RootDir, r.cfg.Network, kbnetwork.CNIDeleteRequest{
 			VMID:      rec.ID,
@@ -714,7 +714,7 @@ func (r *Runtime) cleanupNetwork(rec *vmstore.VMRecord) error {
 	if rec == nil || len(rec.NetworkConfigs) == 0 {
 		return nil
 	}
-	store := r.stores.Networks
+	store := r.storeSet.Networks
 	allocator := kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network)
 	var cleanupErrs []error
 	cniCount := countCNIConfigs(rec.NetworkConfigs)
