@@ -74,6 +74,7 @@ type OperationState interface {
 	Complete(context.Context, string) (*operation.Record, error)
 	Fail(context.Context, string, string) (*operation.Record, error)
 	Recoverable(context.Context) ([]operation.Record, error)
+	Reconcile(context.Context, func(context.Context, operation.Record) error) error
 }
 
 var _ OCIState = (*ocistore.Store)(nil)
