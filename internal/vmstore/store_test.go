@@ -58,6 +58,44 @@ func TestCreateInspectList(t *testing.T) {
 	}
 }
 
+func TestStoreRecoversPreviousIndexGeneration(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	store := New(rootDir)
+	request := func(name string) CreateRequest {
+		return CreateRequest{
+			Name:     name,
+			RootDisk: "base.qcow2",
+			Kernel:   "vmlinuz",
+			Initrd:   "initrd.img",
+			RunDir:   filepath.Join(dir, "run", name),
+			LogDir:   filepath.Join(dir, "log", name),
+		}
+	}
+	first, err := store.Create(request("first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create(request("second")); err != nil {
+		t.Fatal(err)
+	}
+
+	indexPath := filepath.Join(rootDir, "backends", backendCloudHypervisor, "index.json")
+	if err := os.WriteFile(indexPath, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := store.Inspect(first.ID)
+	if err != nil {
+		t.Fatalf("inspect recovered VM: %v", err)
+	}
+	if recovered.Name != "first" {
+		t.Fatalf("recovered VM name = %q", recovered.Name)
+	}
+	if _, err := store.Inspect("second"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected previous generation without second VM, got %v", err)
+	}
+}
+
 func TestDeleteRemovesRecordAndName(t *testing.T) {
 	dir := t.TempDir()
 	store := New(filepath.Join(dir, "data"))

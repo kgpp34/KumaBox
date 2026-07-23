@@ -1,18 +1,18 @@
 package vmstore
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
+	stdjson "encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
-	"syscall"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/fileutil"
+	"github.com/kumabox/kumabox/internal/meta"
+	metajson "github.com/kumabox/kumabox/internal/meta/json"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 )
 
@@ -22,9 +22,8 @@ import (
 // sufficient for the daemonless CLI model: each command can safely update
 // records without requiring a resident coordinator process.
 type Store struct {
-	rootDir   string
-	indexPath string
-	lockPath  string
+	rootDir string
+	engine  meta.MetaEngine
 }
 
 // New returns a VM store rooted under rootDir.
@@ -34,10 +33,22 @@ type Store struct {
 func New(rootDir string) *Store {
 	backendDir := filepath.Join(rootDir, "backends", backendCloudHypervisor)
 	return &Store{
-		rootDir:   rootDir,
-		indexPath: filepath.Join(backendDir, "index.json"),
-		lockPath:  filepath.Join(backendDir, "index.lock"),
+		rootDir: rootDir,
+		engine: mustOpenEngine(metajson.Namespace{
+			Name:     "vms",
+			FilePath: filepath.Join(backendDir, "index.json"),
+			LockPath: filepath.Join(backendDir, "index.lock"),
+			Codec:    indexCodec{},
+		}),
 	}
+}
+
+func mustOpenEngine(namespace metajson.Namespace) meta.MetaEngine {
+	engine, err := metajson.Open(namespace)
+	if err != nil {
+		panic(fmt.Sprintf("open VM metadata engine: %v", err))
+	}
+	return engine
 }
 
 // CreateRequest is the normalized intent needed to create a VM record.
@@ -491,50 +502,44 @@ func (s *Store) RootDir() string {
 }
 
 func (s *Store) withIndex(fn func(*vmIndex) error) error {
-	unlock, err := s.lock()
-	if err != nil {
-		return err
-	}
-	defer unlock()
-
-	idx, err := s.load()
-	if err != nil {
-		return err
-	}
-	return fn(idx)
+	ctx := context.Background()
+	return s.engine.View(ctx, []string{"vms"}, func(reader meta.Reader) error {
+		idx, err := s.readIndex(ctx, reader)
+		if err != nil {
+			return err
+		}
+		return fn(idx)
+	})
 }
 
 func (s *Store) update(fn func(*vmIndex) error) error {
-	unlock, err := s.lock()
-	if err != nil {
-		return err
-	}
-	defer unlock()
-
-	idx, err := s.load()
-	if err != nil {
-		return err
-	}
-	if err := fn(idx); err != nil {
-		return err
-	}
-	return s.write(idx)
+	ctx := context.Background()
+	return s.engine.Update(ctx, meta.Scope{Write: "vms"}, meta.CommitDurable, func(writer meta.Writer) error {
+		idx, err := s.readIndex(ctx, writer)
+		if err != nil {
+			return err
+		}
+		if err := fn(idx); err != nil {
+			return err
+		}
+		raw, err := marshalIndex(idx)
+		if err != nil {
+			return err
+		}
+		return writer.PutRaw(ctx, "vms", vmIndexTable, vmIndexRecord, raw)
+	})
 }
 
-func (s *Store) load() (*vmIndex, error) {
-	raw, err := os.ReadFile(s.indexPath) //nolint:gosec
+func (s *Store) readIndex(ctx context.Context, reader meta.Reader) (*vmIndex, error) {
+	raw, ok, err := reader.GetRaw(ctx, "vms", vmIndexTable, vmIndexRecord)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			idx := &vmIndex{}
-			idx.init()
-			return idx, nil
-		}
 		return nil, fmt.Errorf("read VM index: %w", err)
 	}
-
-	var idx vmIndex
-	if err := json.Unmarshal(raw, &idx); err != nil {
-		return nil, fmt.Errorf("parse VM index: %w", err)
+	idx := &vmIndex{}
+	if ok {
+		if err := unmarshalIndex(raw, idx); err != nil {
+			return nil, err
+		}
 	}
 	idx.init()
 	for id, rec := range idx.VMs {
@@ -542,34 +547,22 @@ func (s *Store) load() (*vmIndex, error) {
 			return nil, fmt.Errorf("validate VM %s storage: %w", id, err)
 		}
 	}
-	return &idx, nil
+	return idx, nil
 }
 
-func (s *Store) write(idx *vmIndex) error {
-	if err := fileutil.WriteJSONAtomic(s.indexPath, idx, ".index-*.tmp"); err != nil {
-		return fmt.Errorf("write VM index: %w", err)
+func marshalIndex(idx *vmIndex) ([]byte, error) {
+	raw, err := stdjson.Marshal(idx)
+	if err != nil {
+		return nil, fmt.Errorf("encode VM index: %w", err)
+	}
+	return raw, nil
+}
+
+func unmarshalIndex(raw []byte, idx *vmIndex) error {
+	if err := stdjson.Unmarshal(raw, idx); err != nil {
+		return fmt.Errorf("parse VM index: %w", err)
 	}
 	return nil
-}
-
-func (s *Store) lock() (func(), error) {
-	if err := os.MkdirAll(filepath.Dir(s.lockPath), 0o755); err != nil {
-		return nil, fmt.Errorf("create VM index lock dir: %w", err)
-	}
-
-	file, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return nil, fmt.Errorf("open VM index lock: %w", err)
-	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("lock VM index: %w", err)
-	}
-
-	return func() {
-		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-		_ = file.Close()
-	}, nil
 }
 
 func validateCreateRequest(req CreateRequest) error {
