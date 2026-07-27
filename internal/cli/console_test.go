@@ -79,3 +79,22 @@ func TestRelayConsoleCopiesBothDirections(t *testing.T) {
 		t.Fatalf("guest output was not relayed: %q", output.String())
 	}
 }
+
+func TestIndexConsoleEscape(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+		want int
+	}{
+		{name: "missing", data: []byte("hello"), want: -1},
+		{name: "first", data: []byte{0x1d}, want: 0},
+		{name: "after output", data: []byte{'o', 'k', 0x1d, 'x'}, want: 2},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := indexConsoleEscape(test.data); got != test.want {
+				t.Fatalf("indexConsoleEscape(%q) = %d, want %d", test.data, got, test.want)
+			}
+		})
+	}
+}

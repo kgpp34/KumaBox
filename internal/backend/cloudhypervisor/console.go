@@ -14,6 +14,17 @@ import (
 
 const backendConsoleTimeout = 5 * time.Second
 
+type consoleFile struct {
+	*os.File
+}
+
+func (f *consoleFile) SetSize(rows, columns uint16) error {
+	if rows == 0 || columns == 0 {
+		return fmt.Errorf("console dimensions must be non-zero")
+	}
+	return setConsoleSize(f.Fd(), rows, columns)
+}
+
 // OpenConsole resolves the PTY allocated by Cloud Hypervisor for direct boot.
 // The PTY path is intentionally read from vm.info instead of guessed from the
 // host, because Cloud Hypervisor owns its allocation.
@@ -47,7 +58,7 @@ func (b Backend) OpenConsole(ctx context.Context, rec *vmstore.VMRecord) (io.Rea
 	if err != nil {
 		return nil, fmt.Errorf("open console PTY %s: %w", path, err)
 	}
-	return file, nil
+	return &consoleFile{File: file}, nil
 }
 
 func isPTYConsoleMode(mode string) bool {
