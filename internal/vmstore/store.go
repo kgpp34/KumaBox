@@ -486,6 +486,25 @@ func (s *Store) SetAttachedFilesystems(ref string, filesystems []AttachedFilesys
 	return updated, nil
 }
 
+func (s *Store) SetAttachedPCIDevices(ref string, devices []AttachedPCIDevice) (*VMRecord, error) {
+	var updated *VMRecord
+	err := s.update(func(idx *vmIndex) error {
+		id, err := idx.resolve(ref)
+		if err != nil {
+			return err
+		}
+		rec := idx.VMs[id]
+		rec.AttachedPCIDevices = append([]AttachedPCIDevice(nil), devices...)
+		rec.UpdatedAt = time.Now().UTC()
+		updated = cloneRecord(rec)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
 // List returns all VM records sorted by creation time.
 //
 // Each element is a defensive copy. Runtime.ListVMs may update observations on

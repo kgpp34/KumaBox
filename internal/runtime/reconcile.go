@@ -44,6 +44,8 @@ func (r *Runtime) reconcileOperation(ctx context.Context, record operation.Recor
 		return r.requireVMExists(record)
 	case operation.KindFilesystemAttach, operation.KindFilesystemDetach:
 		return r.requireVMExists(record)
+	case operation.KindPCIAttach, operation.KindPCIDetach:
+		return r.requireVMExists(record)
 	case operation.KindSnapshotCreateRun:
 		return r.requireSnapshotForVM(ctx, record, record.RelatedID)
 	case operation.KindSnapshotCloneNative:

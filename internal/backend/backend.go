@@ -59,6 +59,14 @@ type FilesystemController interface {
 	ListFilesystems(context.Context, *vmstore.VMRecord) ([]AttachedFilesystem, error)
 }
 
+type PCIDeviceSpec struct{ PCI, ID string }
+type AttachedPCIDevice struct{ ID, PCI string }
+type PCIDeviceController interface {
+	AttachPCIDevice(context.Context, *vmstore.VMRecord, PCIDeviceSpec) (AttachedPCIDevice, error)
+	DetachPCIDevice(context.Context, *vmstore.VMRecord, string) error
+	ListPCIDevices(context.Context, *vmstore.VMRecord) ([]AttachedPCIDevice, error)
+}
+
 // NativeSnapshotter captures backend-owned memory, device, and VM state into
 // an existing empty directory while the VM is paused.
 type NativeSnapshotter interface {

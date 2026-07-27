@@ -12,6 +12,7 @@ const (
 	apiVMAddNet       = "vm.add-net"
 	apiVMAddDisk      = "vm.add-disk"
 	apiVMAddFS        = "vm.add-fs"
+	apiVMAddDevice    = "vm.add-device"
 
 	backendStateRunning = "Running"
 	backendStatePaused  = "Paused"

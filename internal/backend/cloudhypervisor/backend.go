@@ -14,6 +14,7 @@ var _ backend.NativeRestorer = Backend{}
 var _ backend.NativeCloner = Backend{}
 var _ backend.DiskController = Backend{}
 var _ backend.FilesystemController = Backend{}
+var _ backend.PCIDeviceController = Backend{}
 
 type Backend struct {
 	renderer Renderer

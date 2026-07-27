@@ -25,6 +25,7 @@ type VMRecords interface {
 	SetNetworkConfigs(string, []kbnetwork.Config) (*vmstore.VMRecord, error)
 	SetAttachedDisks(string, []vmstore.AttachedDisk) (*vmstore.VMRecord, error)
 	SetAttachedFilesystems(string, []vmstore.AttachedFilesystem) (*vmstore.VMRecord, error)
+	SetAttachedPCIDevices(string, []vmstore.AttachedPCIDevice) (*vmstore.VMRecord, error)
 }
 
 // VMUpdater contains durable VM record updates. Ordinary state changes use

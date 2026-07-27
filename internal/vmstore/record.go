@@ -116,6 +116,7 @@ type VMRecord struct {
 	StorageConfigs      []StorageConfig          `json:"storageConfigs,omitempty"`
 	AttachedDisks       []AttachedDisk           `json:"attachedDisks,omitempty"`
 	AttachedFilesystems []AttachedFilesystem     `json:"attachedFilesystems,omitempty"`
+	AttachedPCIDevices  []AttachedPCIDevice      `json:"attachedPCIDevices,omitempty"`
 	NetworkConfigs      []kbnetwork.Config       `json:"networkConfigs,omitempty"`
 	Network             string                   `json:"network,omitempty"`
 	Networks            []string                 `json:"networks,omitempty"`
@@ -290,6 +291,11 @@ type AttachedFilesystem struct {
 	Socket string `json:"socket"`
 }
 
+type AttachedPCIDevice struct {
+	ID  string `json:"id"`
+	PCI string `json:"pci"`
+}
+
 // EffectiveRole returns Role or its legacy Type equivalent.
 func (c StorageConfig) EffectiveRole() StorageRole {
 	if c.Role != "" {
@@ -447,6 +453,7 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 	copied.StorageConfigs = cloneStorageConfigs(rec.StorageConfigs)
 	copied.AttachedDisks = append([]AttachedDisk(nil), rec.AttachedDisks...)
 	copied.AttachedFilesystems = append([]AttachedFilesystem(nil), rec.AttachedFilesystems...)
+	copied.AttachedPCIDevices = append([]AttachedPCIDevice(nil), rec.AttachedPCIDevices...)
 	copied.Networks = cloneStrings(rec.Networks)
 	copied.NetworkConfigs = cloneNetworkConfigs(rec.NetworkConfigs)
 	copied.NetworkStatus = cloneNetworkStatus(rec.NetworkStatus)
