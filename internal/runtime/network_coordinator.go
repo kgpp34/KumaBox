@@ -10,4 +10,5 @@ type networkCoordinator struct {
 
 func (r *Runtime) initNetworkCoordinator() {
 	r.network = &networkCoordinator{Runtime: r}
+	r.storage = &storageCoordinator{Runtime: r}
 }

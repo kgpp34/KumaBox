@@ -43,6 +43,7 @@ type Runtime struct {
 	qemuImg        *storage.QEMUImg
 	guestReadiness func(context.Context, string) error
 	network        *networkCoordinator
+	storage        *storageCoordinator
 }
 
 // CreateStoppedSnapshot captures managed writable disks while holding the VM
@@ -183,9 +184,9 @@ func (r *Runtime) createVMContext(ctx context.Context, req vmstore.CreateRequest
 		metrics.bindRecord(rec)
 		metrics.markNetworkReady(time.Now())
 	}
-	if err := prepareStorageWithQEMUImg(ctx, rec, r.vmReader.RootDir(), r.qemuImg); err != nil {
+	if err := r.storage.prepare(ctx, rec); err != nil {
 		r.network.rollbackNetwork(rec)
-		_ = removeManagedDirs(rec, r.vmReader.RootDir())
+		_ = r.storage.removeManagedDirs(rec)
 		_ = r.vmRecords.Delete(rec.ID)
 		return nil, err
 	}
@@ -194,13 +195,13 @@ func (r *Runtime) createVMContext(ctx context.Context, req vmstore.CreateRequest
 	}
 	if err := r.backend.RenderConfig(rec); err != nil {
 		r.network.rollbackNetwork(rec)
-		_ = removeManagedDirs(rec, r.vmReader.RootDir())
+		_ = r.storage.removeManagedDirs(rec)
 		_ = r.vmRecords.Delete(rec.ID)
 		return nil, err
 	}
 	if err := r.recordVMImageReference(ctx, rec); err != nil {
 		r.network.rollbackNetwork(rec)
-		_ = removeManagedDirs(rec, r.vmReader.RootDir())
+		_ = r.storage.removeManagedDirs(rec)
 		_ = r.vmRecords.Delete(rec.ID)
 		return nil, fmt.Errorf("record VM image reference: %w", err)
 	}
@@ -258,7 +259,7 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecy
 	}
 	metrics.bindRecord(rec)
 	metrics.markNetworkReady(time.Now())
-	if err := prepareStorageWithQEMUImg(ctx, rec, r.vmReader.RootDir(), r.qemuImg); err != nil {
+	if err := r.storage.prepare(ctx, rec); err != nil {
 		if _, markErr := r.vmUpdater.SetError(rec.ID, err.Error()); markErr != nil {
 			return nil, markErr
 		}
@@ -476,7 +477,7 @@ func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (
 		Reason:    "VM deleted",
 		CheckedAt: time.Now().UTC(),
 	})
-	if err := removeManagedDirs(observed, r.vmReader.RootDir()); err != nil {
+	if err := r.storage.removeManagedDirs(observed); err != nil {
 		return nil, err
 	}
 	if err := r.vmRecords.Delete(observed.ID); err != nil {

@@ -11,6 +11,18 @@ import (
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
+type storageCoordinator struct {
+	*Runtime
+}
+
+func (s *storageCoordinator) prepare(ctx context.Context, rec *vmstore.VMRecord) error {
+	return prepareStorageWithQEMUImg(ctx, rec, s.vmReader.RootDir(), s.qemuImg)
+}
+
+func (s *storageCoordinator) removeManagedDirs(rec *vmstore.VMRecord) error {
+	return removeManagedDirs(rec, s.vmReader.RootDir())
+}
+
 func removeManagedDirs(rec *vmstore.VMRecord, rootDir string) error {
 	storageDir := filepath.Join(rootDir, "storage", "vms", rec.ID)
 	for _, dir := range []string{rec.RunDir, rec.LogDir, storageDir} {

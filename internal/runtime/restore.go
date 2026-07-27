@@ -86,7 +86,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	defer func() {
 		if !ok {
 			r.network.rollbackNetwork(rec)
-			_ = removeManagedDirs(rec, r.vmReader.RootDir())
+			_ = r.storage.removeManagedDirs(rec)
 			_ = r.vmRecords.Delete(rec.ID)
 		}
 	}()
@@ -99,7 +99,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	if updated, inspectErr := r.vmReader.Inspect(rec.ID); inspectErr == nil {
 		rec = updated
 	}
-	if err := prepareStorageWithQEMUImg(ctx, rec, r.vmReader.RootDir(), r.qemuImg); err != nil {
+	if err := r.storage.prepare(ctx, rec); err != nil {
 		return nil, err
 	}
 	if err := r.backend.RenderConfig(rec); err != nil {
