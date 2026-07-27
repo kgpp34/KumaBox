@@ -147,10 +147,10 @@ func TestCreateNormalizesManagedDataDisks(t *testing.T) {
 	store := New(rootDir)
 	rec, err := store.Create(CreateRequest{
 		Name: "data-disks", Kernel: "vmlinuz", Initrd: "initrd",
-		Image: &ImageRef{ID: "img_oci", Name: "oci", BootMode: "direct"},
+		Image:          &ImageRef{ID: "img_oci", Name: "oci", BootMode: "direct"},
 		StorageConfigs: []StorageConfig{{ID: "layer0", Role: StorageRoleLayer, Path: filepath.Join(rootDir, "layer.erofs"), Readonly: true, Format: FormatRaw, Filesystem: FilesystemEROFS}, {ID: "cow", Role: StorageRoleCOW, Format: FormatRaw, Filesystem: FilesystemEXT4, VirtualSizeBytes: 64 << 20, Base: &StorageBase{Family: BaseFamilyOCI, ImageID: "img_oci", Digest: "sha256:manifest", LayerDigests: []string{"sha256:layer"}}}},
-		DataDisks: []DataDiskRequest{{Name: "workspace", SizeBytes: 16 << 20}},
-		RunDir: filepath.Join(rootDir, "run"), LogDir: filepath.Join(rootDir, "log"),
+		DataDisks:      []DataDiskRequest{{Name: "workspace", SizeBytes: 16 << 20}},
+		RunDir:         filepath.Join(rootDir, "run"), LogDir: filepath.Join(rootDir, "log"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +174,7 @@ func TestCreateRejectsInvalidManagedDataDisk(t *testing.T) {
 	_, err := store.Create(CreateRequest{
 		Name: "invalid-data", Kernel: "vmlinuz", Initrd: "initrd", RootDisk: filepath.Join(rootDir, "root.raw"),
 		DataDisks: []DataDiskRequest{{Name: "bad.name", SizeBytes: 16 << 20}},
-		RunDir: filepath.Join(rootDir, "run"), LogDir: filepath.Join(rootDir, "log"),
+		RunDir:    filepath.Join(rootDir, "run"), LogDir: filepath.Join(rootDir, "log"),
 	})
 	if err == nil {
 		t.Fatal("Create() error = nil, want invalid data disk error")
