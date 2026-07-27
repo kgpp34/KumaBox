@@ -16,6 +16,7 @@ source="auto"
 mkfs_erofs="mkfs.erofs"
 timeout="120s"
 skip_base_build=0
+skip_image_build=0
 use_sudo=false
 metadata_backend=json
 metadata_path=
@@ -42,6 +43,7 @@ Options:
   --mkfs-erofs PATH          mkfs.erofs binary path, defaults to mkfs.erofs
   --timeout DURATION         agent timeout, defaults to 120s
   --skip-base-build          use existing local OCI base image
+  --skip-image-build         use an existing managed image without rebuilding it
   --sudo                     run kumabox and root-owned file reads through sudo
   --metadata-backend VALUE   metadata backend: json or sqlite
   --metadata-path PATH       SQLite metadata path
@@ -124,6 +126,7 @@ while [[ $# -gt 0 ]]; do
     --mkfs-erofs) require_value "$1" "${2:-}"; mkfs_erofs="$2"; shift 2 ;;
     --timeout) require_value "$1" "${2:-}"; timeout="$2"; shift 2 ;;
     --skip-base-build) skip_base_build=1; shift ;;
+    --skip-image-build) skip_image_build=1; shift ;;
     --sudo) use_sudo=true; shift ;;
     --metadata-backend) require_value "$1" "${2:-}"; metadata_backend="$2"; shift 2 ;;
     --metadata-path) require_value "$1" "${2:-}"; metadata_path="$2"; shift 2 ;;
@@ -188,7 +191,9 @@ kb() {
 
 cleanup() {
   kb delete "$vm_name" --force >/dev/null 2>&1 || true
-  kb image rm "$image_name" >/dev/null 2>&1 || true
+  if [[ "$skip_image_build" -eq 0 ]]; then
+    kb image rm "$image_name" >/dev/null 2>&1 || true
+  fi
 }
 
 build_base_image() {
@@ -231,14 +236,22 @@ scripts/linux/env-check.sh \
   --qemu-img "$qemu_img_path" \
   --strict
 
-step "build OCI image"
-image_json="$(kb image build "$ref" \
-  --name "$image_name" \
-  --platform "$platform" \
-  --source "$source" \
-  --mkfs-erofs "$mkfs_erofs" \
-  --json)"
-printf '%s\n' "$image_json"
+if [[ "$skip_image_build" -eq 1 ]]; then
+  step "use existing managed OCI image"
+  kb image inspect "$image_name" --json >/dev/null || {
+    echo "managed image not found: $image_name" >&2
+    exit 1
+  }
+else
+  step "build OCI image"
+  image_json="$(kb image build "$ref" \
+    --name "$image_name" \
+    --platform "$platform" \
+    --source "$source" \
+    --mkfs-erofs "$mkfs_erofs" \
+    --json)"
+  printf '%s\n' "$image_json"
+fi
 
 step "run OCI VM"
 run_start_ms="$(now_ms)"

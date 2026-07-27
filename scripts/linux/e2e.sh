@@ -130,7 +130,7 @@ run_suite() {
   printf '\n==> E2E suite: %s\n' "$suite"
   case "$suite" in
     oci)
-      "${prefix[@]}" "$script_dir/verify.sh" "$suite" "${common_args[@]}" --image-name "$image" --skip-base-build --sudo
+      "${prefix[@]}" "$script_dir/verify.sh" "$suite" "${common_args[@]}" --image-name "$image" --skip-base-build --skip-image-build --sudo
       ;;
     boot)
       suite_args=(
