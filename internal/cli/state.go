@@ -20,7 +20,11 @@ func newPauseCommand(opts *rootOptions) *cobra.Command {
 			if err := config.EnsureRuntimeDirs(cfg); err != nil {
 				return err
 			}
-			rec, err := kbruntime.New(cfg).PauseVM(cmd.Context(), args[0])
+			rt, err := kbruntime.New(cfg)
+			if err != nil {
+				return err
+			}
+			rec, err := rt.PauseVM(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
@@ -42,7 +46,11 @@ func newResumeCommand(opts *rootOptions) *cobra.Command {
 			if err := config.EnsureRuntimeDirs(cfg); err != nil {
 				return err
 			}
-			rec, err := kbruntime.New(cfg).ResumeVM(cmd.Context(), args[0])
+			rt, err := kbruntime.New(cfg)
+			if err != nil {
+				return err
+			}
+			rec, err := rt.ResumeVM(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}

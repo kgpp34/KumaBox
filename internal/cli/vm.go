@@ -43,7 +43,10 @@ func newCreateCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 
-			rt := kbruntime.New(cfg)
+			rt, err := kbruntime.New(cfg)
+			if err != nil {
+				return err
+			}
 			req, err := newCreateRequest(flags, args, cfg)
 			if err != nil {
 				return err
@@ -77,7 +80,10 @@ func newRunCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 
-			rt := kbruntime.New(cfg)
+			rt, err := kbruntime.New(cfg)
+			if err != nil {
+				return err
+			}
 			req, err := newCreateRequest(flags, args, cfg)
 			if err != nil {
 				return err
@@ -111,7 +117,10 @@ func newStartCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rt := kbruntime.New(cfg)
+			rt, err := kbruntime.New(cfg)
+			if err != nil {
+				return err
+			}
 			rec, err := rt.StartVMContext(cmd.Context(), args[0])
 			if err != nil {
 				return err
@@ -138,7 +147,10 @@ func newStopCommand(opts *rootOptions) *cobra.Command {
 			if timeout <= 0 && cfg.Backend.CloudHypervisor.StopTimeoutMS > 0 {
 				timeout = time.Duration(cfg.Backend.CloudHypervisor.StopTimeoutMS) * time.Millisecond
 			}
-			rt := kbruntime.New(cfg)
+			rt, err := kbruntime.New(cfg)
+			if err != nil {
+				return err
+			}
 			rec, err := rt.StopVMContext(cmd.Context(), args[0], backend.StopOptions{
 				Timeout: timeout,
 				Force:   force,
@@ -167,7 +179,10 @@ func newInspectCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rt := kbruntime.New(cfg)
+			rt, err := kbruntime.New(cfg)
+			if err != nil {
+				return err
+			}
 			rec, err := rt.InspectVM(args[0])
 			if err != nil {
 				return err
@@ -200,7 +215,10 @@ func newLogsCommand(opts *rootOptions) *cobra.Command {
 			if !kbruntime.ValidLogSource(source) {
 				return errInvalidLogSource(source)
 			}
-			rt := kbruntime.New(cfg)
+			rt, err := kbruntime.New(cfg)
+			if err != nil {
+				return err
+			}
 			logs, err := rt.LogsVM(args[0], kbruntime.LogOptions{
 				Tail:   tail,
 				Source: source,
@@ -233,7 +251,10 @@ func newDeleteCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rt := kbruntime.New(cfg)
+			rt, err := kbruntime.New(cfg)
+			if err != nil {
+				return err
+			}
 			rec, err := rt.DeleteVMContext(cmd.Context(), args[0], force)
 			if err != nil {
 				return err
@@ -515,7 +536,10 @@ func newPSCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rt := kbruntime.New(cfg)
+			rt, err := kbruntime.New(cfg)
+			if err != nil {
+				return err
+			}
 			records, err := rt.ListVMs()
 			if err != nil {
 				return err

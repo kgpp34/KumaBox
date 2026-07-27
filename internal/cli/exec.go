@@ -29,7 +29,10 @@ func newExecCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rt := kbruntime.New(cfg)
+			rt, err := kbruntime.New(cfg)
+			if err != nil {
+				return err
+			}
 			rec, err := rt.InspectVM(args[0])
 			if err != nil {
 				return err

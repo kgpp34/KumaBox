@@ -19,7 +19,11 @@ func newHibernateCommand(opts *rootOptions) *cobra.Command {
 			if err := config.EnsureRuntimeDirs(cfg); err != nil {
 				return err
 			}
-			result, err := kbruntime.New(cfg).HibernateVM(cmd.Context(), args[0], kbruntime.HibernateOptions{Name: name})
+			rt, err := kbruntime.New(cfg)
+			if err != nil {
+				return err
+			}
+			result, err := rt.HibernateVM(cmd.Context(), args[0], kbruntime.HibernateOptions{Name: name})
 			if err != nil {
 				return err
 			}

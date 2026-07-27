@@ -22,7 +22,11 @@ func newCloneCommand(opts *rootOptions) *cobra.Command {
 			if err := config.EnsureRuntimeDirs(cfg); err != nil {
 				return err
 			}
-			rec, err := kbruntime.New(cfg).CloneNativeSnapshot(cmd.Context(), args[0], kbruntime.NativeCloneOptions{
+			rt, err := kbruntime.New(cfg)
+			if err != nil {
+				return err
+			}
+			rec, err := rt.CloneNativeSnapshot(cmd.Context(), args[0], kbruntime.NativeCloneOptions{
 				Name: name, Networks: networks, Mode: kbruntime.RestoreMode(mode),
 			})
 			if err != nil {

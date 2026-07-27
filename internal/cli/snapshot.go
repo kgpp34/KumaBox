@@ -35,7 +35,11 @@ func newSnapshotVerifyCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			manifest, err := kbruntime.New(cfg).VerifyNativeSnapshot(cmd.Context(), args[0], vmRef)
+			rt, err := kbruntime.New(cfg)
+			if err != nil {
+				return err
+			}
+			manifest, err := rt.VerifyNativeSnapshot(cmd.Context(), args[0], vmRef)
 			if err != nil {
 				return err
 			}
@@ -66,7 +70,11 @@ func newSnapshotRestoreCommand(opts *rootOptions) *cobra.Command {
 			if err := config.EnsureRuntimeDirs(cfg); err != nil {
 				return err
 			}
-			rec, err := kbruntime.New(cfg).RestoreSnapshot(cmd.Context(), args[0], kbruntime.RestoreOptions{
+			rt, err := kbruntime.New(cfg)
+			if err != nil {
+				return err
+			}
+			rec, err := rt.RestoreSnapshot(cmd.Context(), args[0], kbruntime.RestoreOptions{
 				Name:     name,
 				CPUs:     cpus,
 				Networks: normalizedNetworkFlags(networks),
@@ -152,7 +160,10 @@ func newSnapshotCreateCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rt := kbruntime.New(cfg)
+			rt, err := kbruntime.New(cfg)
+			if err != nil {
+				return err
+			}
 			var rec *snapshot.Record
 			switch snapshotType {
 			case "disk":

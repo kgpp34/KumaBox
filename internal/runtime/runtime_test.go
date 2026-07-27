@@ -1032,6 +1032,20 @@ func testRuntimeConfig(rootDir string) config.Config {
 	return cfg
 }
 
+func TestNewReturnsConfiguredStoreError(t *testing.T) {
+	cfg := testRuntimeConfig(t.TempDir())
+	cfg.Metadata.Backend = "sqlite"
+	cfg.Metadata.Path = t.TempDir()
+
+	rt, err := New(cfg)
+	if err == nil {
+		t.Fatal("New succeeded with a directory as the SQLite database path")
+	}
+	if rt != nil {
+		t.Fatalf("runtime = %#v, want nil on construction failure", rt)
+	}
+}
+
 func withDeleteHostTap(t *testing.T, fn func(string) error) {
 	t.Helper()
 	previous := deleteHostTap

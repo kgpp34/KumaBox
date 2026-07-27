@@ -26,6 +26,8 @@ import (
 
 const forcedStopTimeout = 5 * time.Second
 
+const defaultQEMUImgBinary = "qemu-img"
+
 // Runtime coordinates VM lifecycle operations across the store, backend, and
 // host-side providers.
 //
@@ -99,15 +101,18 @@ var mkfsExt4 = func(path string) ([]byte, error) {
 }
 
 // New creates a Runtime backed by the configured Cloud Hypervisor backend.
-func New(cfg config.Config) *Runtime {
+func New(cfg config.Config) (*Runtime, error) {
 	stores, err := resources.NewStoreSetForConfig(cfg)
 	if err != nil {
-		panic(fmt.Sprintf("open configured resource stores: %v", err))
+		return nil, fmt.Errorf("open configured resource stores: %w", err)
 	}
-	rt := NewWithBackendAndStores(stores, cloudhypervisor.NewBackend(cfg))
+	rt, err := NewWithBackendAndStores(stores, cloudhypervisor.NewBackend(cfg))
+	if err != nil {
+		return nil, err
+	}
 	rt.cfg = cfg
 	rt.qemuImg = storage.NewQEMUImg(cfg.Storage.QEMUImgBinary)
-	return rt
+	return rt, nil
 }
 
 // NewWithBackend creates a Runtime with an injected VM store and backend.
@@ -122,16 +127,16 @@ func NewWithBackend(store state.VMState, vmBackend backend.Lifecycle) *Runtime {
 		storeSet:       stores,
 		backend:        vmBackend,
 		vmLocks:        lockfile.New(filepath.Join(store.RootDir(), "locks", "vms")),
-		qemuImg:        storage.NewQEMUImg("qemu-img"),
+		qemuImg:        storage.NewQEMUImg(defaultQEMUImgBinary),
 		guestReadiness: verifyGuestExecReadiness,
 	}
 }
 
 // NewWithBackendAndStores creates a Runtime with an explicit resource-store
 // composition. This is the seam used when switching metadata engines.
-func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) *Runtime {
+func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) (*Runtime, error) {
 	if stores.VM == nil {
-		panic("runtime store set must include a VM store")
+		return nil, errors.New("runtime store set must include a VM store")
 	}
 	return &Runtime{
 		vmReader:       stores.VM,
@@ -142,9 +147,9 @@ func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) *Runt
 		storeSet:       stores,
 		backend:        vmBackend,
 		vmLocks:        lockfile.New(filepath.Join(stores.VM.RootDir(), "locks", "vms")),
-		qemuImg:        storage.NewQEMUImg("qemu-img"),
+		qemuImg:        storage.NewQEMUImg(defaultQEMUImgBinary),
 		guestReadiness: verifyGuestExecReadiness,
-	}
+	}, nil
 }
 
 // CreateVM creates a VM record and renders its backend configuration.
