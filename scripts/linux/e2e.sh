@@ -15,19 +15,21 @@ root_dir=/tmp/kumabox-p0/data
 run_dir=/tmp/kumabox-p0/run
 log_dir=/tmp/kumabox-p0/logs
 image=p3-agent-image-v3
+network=cni:default
 storage=64M
 metadata_backend=json
 metadata_path=
 use_sudo=false
 skip_unit=false
 keep_failed=true
+skip_hotplug=false
 
 usage() {
   cat <<'EOF'
 Usage: scripts/linux/e2e.sh [options]
 
 Runs the complete Linux validation sequence in order:
-  unit -> managed OCI boot/exec -> CNI datapath -> snapshot/restore/clone
+  unit -> OCI boot/exec/disk -> CNI datapath -> snapshot/restore/clone -> hotplug
 
 Defaults match the standard KumaBox validation layout:
   root: /tmp/kumabox-p0/data
@@ -42,12 +44,14 @@ Options:
   --run-dir PATH
   --log-dir PATH
   --image NAME
+  --network NETWORK
   --storage SIZE
   --metadata-backend json|sqlite
   --metadata-path PATH       SQLite path; defaults to ROOT/metadata/kumabox.db
   --skip-unit
   --sudo
   --cleanup-on-success
+  --skip-hotplug
 EOF
 }
 
@@ -64,12 +68,14 @@ while (($#)); do
     --run-dir) require_value "$1" "${2:-}"; run_dir=$2; shift 2 ;;
     --log-dir) require_value "$1" "${2:-}"; log_dir=$2; shift 2 ;;
     --image) require_value "$1" "${2:-}"; image=$2; shift 2 ;;
+    --network) require_value "$1" "${2:-}"; network=$2; shift 2 ;;
     --storage) require_value "$1" "${2:-}"; storage=$2; shift 2 ;;
     --metadata-backend) require_value "$1" "${2:-}"; metadata_backend=$2; shift 2 ;;
     --metadata-path) require_value "$1" "${2:-}"; metadata_path=$2; shift 2 ;;
     --skip-unit) skip_unit=true; shift ;;
     --sudo) use_sudo=true; shift ;;
     --cleanup-on-success) keep_failed=false; shift ;;
+    --skip-hotplug) skip_hotplug=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -126,8 +132,47 @@ run_suite() {
     oci)
       "${prefix[@]}" "$script_dir/verify.sh" "$suite" "${common_args[@]}" --image-name "$image" --skip-base-build --sudo
       ;;
+    boot)
+      suite_args=(
+        --kumabox "$kumabox"
+        --cloud-hypervisor "$cloud_hypervisor"
+        --qemu-img "$qemu_img"
+        --root-dir "$root_dir"
+        --run-dir "$run_dir"
+        --log-dir "$log_dir"
+        --image-name "$image"
+        --network "$network"
+        --storage "$storage"
+        --metadata-backend "$metadata_backend"
+        --skip-build
+        --skip-image-build
+      )
+      if [[ -n "$metadata_path" ]]; then
+        suite_args+=(--metadata-path "$metadata_path")
+      fi
+      "${prefix[@]}" "$script_dir/verify-oci-boot-disk.sh" "${suite_args[@]}"
+      ;;
     cni|snapshot)
       "${prefix[@]}" "$script_dir/verify.sh" "$suite" "${common_args[@]}" --image "$image" --sudo
+      ;;
+    hotplug)
+      suite_args=(
+        --kumabox "$kumabox"
+        --cloud-hypervisor "$cloud_hypervisor"
+        --qemu-img "$qemu_img"
+        --root-dir "$root_dir"
+        --run-dir "$run_dir"
+        --log-dir "$log_dir"
+        --image "$image"
+        --network "$network"
+        --storage "$storage"
+        --metadata-backend "$metadata_backend"
+        --sudo
+      )
+      if [[ -n "$metadata_path" ]]; then
+        suite_args+=(--metadata-path "$metadata_path")
+      fi
+      "${prefix[@]}" "$script_dir/verify-p8-hotplug.sh" "${suite_args[@]}"
       ;;
     *)
       echo "unknown E2E suite: $suite" >&2
@@ -142,8 +187,12 @@ if [[ "$skip_unit" != true ]]; then
 fi
 
 run_suite oci
+run_suite boot
 run_suite cni
 run_suite snapshot
+if [[ "$skip_hotplug" != true ]]; then
+  run_suite hotplug
+fi
 
 if [[ "$keep_failed" == false ]]; then
   printf '\n==> cleanup after successful E2E\n'

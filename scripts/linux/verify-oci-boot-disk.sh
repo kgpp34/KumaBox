@@ -6,6 +6,8 @@ set -Eeuo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 kumabox_path="$repo_dir/bin/kumabox"
+cloud_hypervisor_path="cloud-hypervisor"
+qemu_img_path="qemu-img"
 root_dir="/tmp/kumabox-p0/data"
 run_dir="/tmp/kumabox-p0/run"
 log_dir="/tmp/kumabox-p0/logs"
@@ -15,6 +17,11 @@ network="${NETWORK:-cni:cocoon}"
 vm_name="oci-disk-parity"
 storage="64M"
 console_copy="/tmp/kumabox-oci-disk-parity-console.log"
+metadata_backend=json
+metadata_path=
+skip_build=false
+skip_image_build=false
+remove_image=false
 
 die() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -22,10 +29,17 @@ die() {
 }
 
 kb() {
+	local metadata_args=(--metadata-backend "$metadata_backend")
+	if [ -n "$metadata_path" ]; then
+		metadata_args+=(--metadata-path "$metadata_path")
+	fi
 	as_root "$kumabox_path" \
     --root-dir "$root_dir" \
     --run-dir "$run_dir" \
     --log-dir "$log_dir" \
+    --cloud-hypervisor-bin "$cloud_hypervisor_path" \
+    --qemu-img-bin "$qemu_img_path" \
+    "${metadata_args[@]}" \
     "$@"
 }
 
@@ -47,6 +61,42 @@ build_project() {
 	make build
 }
 
+require_value() {
+	[ -n "${2:-}" ] || die "$1 requires a value"
+}
+
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+	--kumabox) require_value "$1" "${2:-}"; kumabox_path="$2"; shift 2 ;;
+	--cloud-hypervisor) require_value "$1" "${2:-}"; cloud_hypervisor_path="$2"; shift 2 ;;
+	--qemu-img) require_value "$1" "${2:-}"; qemu_img_path="$2"; shift 2 ;;
+	--root-dir) require_value "$1" "${2:-}"; root_dir="$2"; shift 2 ;;
+	--run-dir) require_value "$1" "${2:-}"; run_dir="$2"; shift 2 ;;
+	--log-dir) require_value "$1" "${2:-}"; log_dir="$2"; shift 2 ;;
+	--image-name) require_value "$1" "${2:-}"; image_name="$2"; shift 2 ;;
+	--image-ref) require_value "$1" "${2:-}"; image_ref="$2"; shift 2 ;;
+	--network) require_value "$1" "${2:-}"; network="$2"; shift 2 ;;
+	--name) require_value "$1" "${2:-}"; vm_name="$2"; shift 2 ;;
+	--storage) require_value "$1" "${2:-}"; storage="$2"; shift 2 ;;
+	--metadata-backend) require_value "$1" "${2:-}"; metadata_backend="$2"; shift 2 ;;
+	--metadata-path) require_value "$1" "${2:-}"; metadata_path="$2"; shift 2 ;;
+	--skip-build) skip_build=true; shift ;;
+	--skip-image-build) skip_image_build=true; shift ;;
+	-h|--help)
+		printf '%s\n' 'Usage: verify-oci-boot-disk.sh [options]' \
+			'  --kumabox PATH --cloud-hypervisor PATH --qemu-img PATH' \
+			'  --root-dir PATH --run-dir PATH --log-dir PATH' \
+			'  --image-name NAME --image-ref REF --network NETWORK --name VM' \
+			'  --storage SIZE --metadata-backend json|sqlite --metadata-path PATH' \
+			'  --skip-build --skip-image-build'
+		exit 0
+		;;
+	*) die "unknown option: $1" ;;
+	esac
+done
+
+[ "$metadata_backend" = json ] || [ "$metadata_backend" = sqlite ] || die "metadata backend must be json or sqlite"
+
 print_run_failure_context() {
 	set +e
 	printf '\n==> failure context: VM inspect\n' >&2
@@ -66,22 +116,33 @@ require_command() {
 }
 
 require_command jq
-require_command make
-require_command cloud-hypervisor
+require_command "$cloud_hypervisor_path"
+require_command "$qemu_img_path"
 cd "$repo_dir"
 
 printf '==> build host binary and Linux guest agent\n'
-build_project
+if [ "$skip_build" = true ]; then
+	printf '%s\n' 'state: using current host binary and guest agent'
+else
+	require_command make
+	build_project
+fi
 
 printf '==> remove old verification VM\n'
 kb delete "$vm_name" --force >/dev/null 2>&1 || true
 
-printf '==> rebuild managed OCI image\n'
-kb image build "$image_ref" \
-  --source daemon \
-  --name "$image_name" \
-  --platform linux/amd64 \
-  --progress >/dev/null
+if [ "$skip_image_build" = true ]; then
+	printf '==> use existing managed OCI image\n'
+	kb image inspect "$image_name" --json >/dev/null || die "managed image not found: $image_name"
+else
+	printf '==> rebuild managed OCI image\n'
+	kb image build "$image_ref" \
+		--source daemon \
+		--name "$image_name" \
+		--platform linux/amd64 \
+		--progress >/dev/null
+	remove_image=true
+fi
 
 printf '==> run VM\n'
 run_json="$(kb run "$image_name" \
@@ -169,8 +230,10 @@ hostname="$(kb exec "$vm_name" -- hostname)"
 printf '==> delete verification VM\n'
 kb delete "$vm_name" --force | jq .
 
-printf '==> remove temporary verification image\n'
-kb image rm "$image_name" >/dev/null
+if [ "$remove_image" = true ]; then
+	printf '==> remove temporary verification image\n'
+	kb image rm "$image_name" >/dev/null
+fi
 
 printf '\nPASS: OCI boot, disk identity, overlay and COW verification completed\n'
 printf 'console log: %s\n' "$console_copy"
