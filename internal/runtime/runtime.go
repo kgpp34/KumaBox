@@ -2,13 +2,10 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/kumabox/kumabox/internal/backend"
@@ -538,142 +535,6 @@ func (r *Runtime) inspectNetwork(rec *vmstore.VMRecord) *kbnetwork.InspectResult
 		}
 	}
 	return result
-}
-
-type eventRecord struct {
-	Time          time.Time             `json:"time"`
-	Type          string                `json:"type"`
-	VMID          string                `json:"vmId"`
-	VMName        string                `json:"vmName"`
-	State         vmstore.VMState       `json:"state"`
-	ObservedState vmstore.ObservedState `json:"observedState"`
-	Reason        string                `json:"reason,omitempty"`
-	PID           int                   `json:"pid,omitempty"`
-	APISocket     string                `json:"apiSocket,omitempty"`
-}
-
-func writeVMEvent(rec *vmstore.VMRecord, eventType string, obs vmstore.Observation) (err error) {
-	if rec.LogDir == "" {
-		return nil
-	}
-	if err := os.MkdirAll(rec.LogDir, 0o755); err != nil {
-		return fmt.Errorf("create VM log dir: %w", err)
-	}
-
-	path := filepath.Join(rec.LogDir, "events.log")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return fmt.Errorf("open events log: %w", err)
-	}
-	defer func() {
-		if closeErr := file.Close(); err == nil && closeErr != nil {
-			err = fmt.Errorf("close VM events log: %w", closeErr)
-		}
-	}()
-
-	event := eventRecord{
-		Time:          obs.CheckedAt,
-		Type:          eventType,
-		VMID:          rec.ID,
-		VMName:        rec.Name,
-		State:         rec.State,
-		ObservedState: obs.State,
-		Reason:        obs.Reason,
-		PID:           rec.PID,
-		APISocket:     rec.APISocket,
-	}
-	if err := json.NewEncoder(file).Encode(event); err != nil {
-		return fmt.Errorf("write events log: %w", err)
-	}
-	return nil
-}
-
-func removeManagedDirs(rec *vmstore.VMRecord, rootDir string) error {
-	storageDir := filepath.Join(rootDir, "storage", "vms", rec.ID)
-	for _, dir := range []string{rec.RunDir, rec.LogDir, storageDir} {
-		if dir == "" {
-			continue
-		}
-		if err := os.RemoveAll(dir); err != nil {
-			return fmt.Errorf("remove managed directory %s: %w", dir, err)
-		}
-	}
-	return nil
-}
-
-func prepareStorage(rec *vmstore.VMRecord, rootDir string) error {
-	return prepareStorageWithQEMUImg(context.Background(), rec, rootDir, storage.NewQEMUImg("qemu-img"))
-}
-
-func prepareStorageWithQEMUImg(ctx context.Context, rec *vmstore.VMRecord, rootDir string, qemuImg *storage.QEMUImg) error {
-	if err := vmstore.ValidateStorageContract(rec, rootDir); err != nil {
-		return err
-	}
-	for _, cfg := range rec.StorageConfigs {
-		switch cfg.EffectiveRole() {
-		case vmstore.StorageRoleLayer:
-			if cfg.Path == "" {
-				return fmt.Errorf("storage layer %s path must not be empty", cfg.ID)
-			}
-			info, err := os.Stat(cfg.Path)
-			if err != nil {
-				return fmt.Errorf("stat storage layer %s: %w", cfg.ID, err)
-			}
-			if info.IsDir() {
-				return fmt.Errorf("storage layer %s must be a file: %s", cfg.ID, cfg.Path)
-			}
-		case vmstore.StorageRoleCOW:
-			if cfg.Base != nil && cfg.Base.Family == "cloudimg" {
-				if err := qemuImg.EnsureOverlay(ctx, storage.OverlaySpec{
-					Path:       cfg.Path,
-					BasePath:   cfg.Base.Path,
-					BaseFormat: cfg.Base.Format,
-				}); err != nil {
-					return fmt.Errorf("prepare cloud image COW %s: %w", cfg.ID, err)
-				}
-				continue
-			}
-			if err := prepareCOW(cfg); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func prepareCOW(cfg vmstore.StorageConfig) error {
-	if cfg.Path == "" {
-		return fmt.Errorf("COW storage path must not be empty")
-	}
-	sizeBytes := cfg.EffectiveVirtualSize()
-	if sizeBytes <= 0 {
-		return fmt.Errorf("COW storage %s size must be positive", cfg.ID)
-	}
-	if info, err := os.Stat(cfg.Path); err == nil && info.Mode().IsRegular() && info.Size() == sizeBytes {
-		return nil
-	} else if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("stat COW storage %s: %w", cfg.ID, err)
-	}
-	if err := os.MkdirAll(filepath.Dir(cfg.Path), 0o755); err != nil {
-		return fmt.Errorf("create COW storage dir: %w", err)
-	}
-	file, err := os.OpenFile(cfg.Path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o600) //nolint:gosec
-	if err != nil {
-		return fmt.Errorf("create COW storage %s: %w", cfg.ID, err)
-	}
-	if err := file.Truncate(sizeBytes); err != nil {
-		_ = file.Close()
-		return fmt.Errorf("size COW storage %s: %w", cfg.ID, err)
-	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close COW storage %s: %w", cfg.ID, err)
-	}
-	out, err := mkfsExt4(cfg.Path)
-	if err != nil {
-		_ = os.Remove(cfg.Path)
-		return fmt.Errorf("mkfs.ext4 COW storage %s: %w: %s", cfg.ID, err, strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
 func (r *Runtime) attachNetwork(rec *vmstore.VMRecord) (resultErr error) {
