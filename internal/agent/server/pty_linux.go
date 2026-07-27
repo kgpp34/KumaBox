@@ -43,7 +43,9 @@ func handleTTYExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.Fram
 	cmd.Stdin = slave
 	cmd.Stdout = slave
 	cmd.Stderr = slave
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: int(slave.Fd())}
+	// Ctty is an index into the child's stdin/stdout/stderr file list, not
+	// the parent's PTY file descriptor.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 	if err := cmd.Start(); err != nil {
 		writeStreamError(rw, request.ID, protocol.ErrorExecFailed, err.Error())
 		return
@@ -71,6 +73,7 @@ func handleTTYExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.Fram
 	}()
 
 	outputErrs := make(chan error, 1)
+	outputDone := make(chan error, 1)
 	go func() {
 		buf := make([]byte, streamChunkSize)
 		for {
@@ -78,14 +81,16 @@ func handleTTYExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.Fram
 			if n > 0 {
 				if _, writeErr := (&streamOutputWriter{writer: writer, id: request.ID, frameType: protocol.FrameStdout, stream: protocol.StreamStdout}).Write(buf[:n]); writeErr != nil {
 					outputErrs <- writeErr
+					outputDone <- writeErr
 					return
 				}
 			}
 			if readErr != nil {
 				if errors.Is(readErr, syscall.EIO) || errors.Is(readErr, io.EOF) {
-					outputErrs <- nil
+					outputDone <- nil
 				} else {
 					outputErrs <- readErr
+					outputDone <- readErr
 				}
 				return
 			}
@@ -132,6 +137,7 @@ func handleTTYExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.Fram
 				return
 			}
 		case waitErr := <-waitErrs:
+			<-outputDone
 			exitCode := 0
 			if waitErr != nil {
 				exitCode = commandExitCode(waitErr)
