@@ -196,11 +196,12 @@ func repairNetworkCandidate(ctx context.Context, cfg config.Config, store state.
 		if rec.ID != candidate.Path && rec.TAP != candidate.Path {
 			continue
 		}
-		if rec.Provider == kbnetwork.ProviderHostTap {
+		switch rec.Provider {
+		case kbnetwork.ProviderHostTap:
 			if err := kbnetwork.DeleteHostTap(rec.TAP); err != nil {
 				return fmt.Errorf("delete stale tap %s: %w", rec.TAP, err)
 			}
-		} else if rec.Provider == kbnetwork.ProviderCNI {
+		case kbnetwork.ProviderCNI:
 			if err := kbnetwork.DeleteCNI(ctx, cfg.Runtime.RootDir, cfg.Network, kbnetwork.CNIDeleteRequest{VMID: rec.VMID, Network: rec.Network, IfName: rec.IfName, TAP: rec.TAP, NetNSPath: rec.NetnsPath}); err != nil {
 				return fmt.Errorf("delete stale CNI network %s: %w", rec.ID, err)
 			}
