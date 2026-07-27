@@ -42,6 +42,7 @@ type Runtime struct {
 	vmLocks        *lockfile.Locker
 	qemuImg        *storage.QEMUImg
 	guestReadiness func(context.Context, string) error
+	network        *networkCoordinator
 }
 
 // CreateStoppedSnapshot captures managed writable disks while holding the VM
@@ -115,7 +116,7 @@ func New(cfg config.Config) (*Runtime, error) {
 // NewWithBackend creates a Runtime with an injected VM store and backend.
 func NewWithBackend(store state.VMState, vmBackend backend.Lifecycle) *Runtime {
 	stores := newStoreSet(store.RootDir(), store)
-	return &Runtime{
+	rt := &Runtime{
 		vmReader:       store,
 		vmRecords:      store,
 		vmUpdater:      store,
@@ -127,6 +128,8 @@ func NewWithBackend(store state.VMState, vmBackend backend.Lifecycle) *Runtime {
 		qemuImg:        storage.NewQEMUImg(defaultQEMUImgBinary),
 		guestReadiness: verifyGuestExecReadiness,
 	}
+	rt.initNetworkCoordinator()
+	return rt
 }
 
 // NewWithBackendAndStores creates a Runtime with an explicit resource-store
@@ -135,7 +138,7 @@ func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) (*Run
 	if stores.VM == nil {
 		return nil, errors.New("runtime store set must include a VM store")
 	}
-	return &Runtime{
+	rt := &Runtime{
 		vmReader:       stores.VM,
 		vmRecords:      stores.VM,
 		vmUpdater:      stores.VM,
@@ -146,7 +149,9 @@ func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) (*Run
 		vmLocks:        lockfile.New(filepath.Join(stores.VM.RootDir(), "locks", "vms")),
 		qemuImg:        storage.NewQEMUImg(defaultQEMUImgBinary),
 		guestReadiness: verifyGuestExecReadiness,
-	}, nil
+	}
+	rt.initNetworkCoordinator()
+	return rt, nil
 }
 
 // CreateVM creates a VM record and renders its backend configuration.
@@ -167,7 +172,7 @@ func (r *Runtime) createVMContext(ctx context.Context, req vmstore.CreateRequest
 		metrics.bindRecord(rec)
 		metrics.markImageResolved(time.Now())
 	}
-	if err := r.attachNetwork(rec); err != nil {
+	if err := r.network.attachNetwork(rec); err != nil {
 		_ = r.vmRecords.Delete(rec.ID)
 		return nil, err
 	}
@@ -179,7 +184,7 @@ func (r *Runtime) createVMContext(ctx context.Context, req vmstore.CreateRequest
 		metrics.markNetworkReady(time.Now())
 	}
 	if err := prepareStorageWithQEMUImg(ctx, rec, r.vmReader.RootDir(), r.qemuImg); err != nil {
-		r.rollbackNetwork(rec)
+		r.network.rollbackNetwork(rec)
 		_ = removeManagedDirs(rec, r.vmReader.RootDir())
 		_ = r.vmRecords.Delete(rec.ID)
 		return nil, err
@@ -188,13 +193,13 @@ func (r *Runtime) createVMContext(ctx context.Context, req vmstore.CreateRequest
 		metrics.markStorageReady(time.Now())
 	}
 	if err := r.backend.RenderConfig(rec); err != nil {
-		r.rollbackNetwork(rec)
+		r.network.rollbackNetwork(rec)
 		_ = removeManagedDirs(rec, r.vmReader.RootDir())
 		_ = r.vmRecords.Delete(rec.ID)
 		return nil, err
 	}
 	if err := r.recordVMImageReference(ctx, rec); err != nil {
-		r.rollbackNetwork(rec)
+		r.network.rollbackNetwork(rec)
 		_ = removeManagedDirs(rec, r.vmReader.RootDir())
 		_ = r.vmRecords.Delete(rec.ID)
 		return nil, fmt.Errorf("record VM image reference: %w", err)
@@ -459,7 +464,7 @@ func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (
 		}
 	}
 
-	if err := r.cleanupNetwork(observed); err != nil {
+	if err := r.network.cleanupNetwork(observed); err != nil {
 		return nil, err
 	}
 	if err := r.removeVMReferences(ctx, observed.ID); err != nil {
@@ -487,7 +492,7 @@ func (r *Runtime) InspectVM(ref string) (*vmstore.VMRecord, error) {
 		return nil, err
 	}
 	observed := r.applyObservation(rec)
-	observed.NetworkStatus = r.inspectNetwork(observed)
+	observed.NetworkStatus = r.network.inspectNetwork(observed)
 	return observed, nil
 }
 
@@ -518,7 +523,7 @@ func (r *Runtime) applyObservation(rec *vmstore.VMRecord) *vmstore.VMRecord {
 	return rec
 }
 
-func (r *Runtime) inspectNetwork(rec *vmstore.VMRecord) *kbnetwork.InspectResult {
+func (r *networkCoordinator) inspectNetwork(rec *vmstore.VMRecord) *kbnetwork.InspectResult {
 	if rec == nil {
 		return nil
 	}
@@ -537,7 +542,7 @@ func (r *Runtime) inspectNetwork(rec *vmstore.VMRecord) *kbnetwork.InspectResult
 	return result
 }
 
-func (r *Runtime) attachNetwork(rec *vmstore.VMRecord) (resultErr error) {
+func (r *networkCoordinator) attachNetwork(rec *vmstore.VMRecord) (resultErr error) {
 	operationID, err := r.beginOperation(context.Background(), operation.KindNetworkAttach, rec.ID)
 	if err != nil {
 		return err
@@ -566,7 +571,7 @@ func (r *Runtime) attachNetwork(rec *vmstore.VMRecord) (resultErr error) {
 	return nil
 }
 
-func (r *Runtime) attachNetworkConfig(rec *vmstore.VMRecord, selection string, index int) (*kbnetwork.Allocation, error) {
+func (r *networkCoordinator) attachNetworkConfig(rec *vmstore.VMRecord, selection string, index int) (*kbnetwork.Allocation, error) {
 	if kbnetwork.IsCNISelection(selection) {
 		return r.attachCNIConfig(rec, selection, index)
 	}
@@ -610,7 +615,7 @@ func (r *Runtime) attachNetworkConfig(rec *vmstore.VMRecord, selection string, i
 	return allocation, nil
 }
 
-func (r *Runtime) attachCNIConfig(rec *vmstore.VMRecord, selection string, index int) (*kbnetwork.Allocation, error) {
+func (r *networkCoordinator) attachCNIConfig(rec *vmstore.VMRecord, selection string, index int) (*kbnetwork.Allocation, error) {
 	if err := config.EnsureRuntimeDirs(r.cfg); err != nil {
 		return nil, err
 	}
@@ -637,14 +642,14 @@ func (r *Runtime) attachCNIConfig(rec *vmstore.VMRecord, selection string, index
 	return allocation, nil
 }
 
-func (r *Runtime) rollbackNetwork(rec *vmstore.VMRecord) {
+func (r *networkCoordinator) rollbackNetwork(rec *vmstore.VMRecord) {
 	if rec == nil {
 		return
 	}
 	rollbackNetworkConfigs(rec, r.cfg, rec.NetworkConfigs)
 }
 
-func (r *Runtime) cleanupNetwork(rec *vmstore.VMRecord) (resultErr error) {
+func (r *networkCoordinator) cleanupNetwork(rec *vmstore.VMRecord) (resultErr error) {
 	operationID, err := r.beginOperation(context.Background(), operation.KindNetworkCleanup, rec.ID)
 	if err != nil {
 		return err

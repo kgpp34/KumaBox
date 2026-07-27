@@ -85,7 +85,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	ok := false
 	defer func() {
 		if !ok {
-			r.rollbackNetwork(rec)
+			r.network.rollbackNetwork(rec)
 			_ = removeManagedDirs(rec, r.vmReader.RootDir())
 			_ = r.vmRecords.Delete(rec.ID)
 		}
@@ -93,7 +93,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	if err := restoreWritableDisks(ctx, rec, snapshotRec.DataDir, manifest, r.qemuImg); err != nil {
 		return nil, err
 	}
-	if err := r.attachNetwork(rec); err != nil {
+	if err := r.network.attachNetwork(rec); err != nil {
 		return nil, err
 	}
 	if updated, inspectErr := r.vmReader.Inspect(rec.ID); inspectErr == nil {

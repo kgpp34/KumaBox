@@ -118,12 +118,12 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 			cleanup.APISocket = backendResult.APISocket
 			_, _ = r.backend.StopVM(&cleanup, backend.StopOptions{Force: true})
 		}
-		r.rollbackNetwork(rec)
+		r.network.rollbackNetwork(rec)
 		_ = removeManagedDirs(rec, r.vmReader.RootDir())
 		_ = r.vmRecords.Delete(rec.ID)
 	}()
 
-	if err := r.attachNetwork(rec); err != nil {
+	if err := r.network.attachNetwork(rec); err != nil {
 		return nil, err
 	}
 	rec, err = r.vmReader.Inspect(rec.ID)
