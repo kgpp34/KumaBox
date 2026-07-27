@@ -17,6 +17,9 @@ network="${NETWORK:-cni:cocoon}"
 vm_name="oci-disk-parity"
 storage="64M"
 console_copy="/tmp/kumabox-oci-disk-parity-console.log"
+console_pid=
+console_input_pid=
+console_tmp_dir=
 metadata_backend=json
 metadata_path=
 skip_build=false
@@ -111,6 +114,34 @@ print_run_failure_context() {
 	fi
 }
 
+stop_console_capture() {
+	if [ -n "$console_pid" ]; then
+		kill "$console_pid" >/dev/null 2>&1 || true
+		wait "$console_pid" >/dev/null 2>&1 || true
+		console_pid=
+	fi
+	if [ -n "$console_input_pid" ]; then
+		kill "$console_input_pid" >/dev/null 2>&1 || true
+		wait "$console_input_pid" >/dev/null 2>&1 || true
+		console_input_pid=
+	fi
+	if [ -n "$console_tmp_dir" ]; then
+		rm -rf "$console_tmp_dir"
+		console_tmp_dir=
+	fi
+}
+
+capture_console() {
+	console_tmp_dir="$(mktemp -d /tmp/kumabox-console.XXXXXX)"
+	local fifo="$console_tmp_dir/input"
+	mkfifo "$fifo"
+	# Keep stdin open so the console relay remains attached while the guest boots.
+	tail -f /dev/null >"$fifo" &
+	console_input_pid=$!
+	kb console "$vm_name" <"$fifo" >"$console_copy" 2>"$console_tmp_dir/stderr" &
+	console_pid=$!
+}
+
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "missing command: $1"
 }
@@ -119,6 +150,7 @@ require_command jq
 require_command "$cloud_hypervisor_path"
 require_command "$qemu_img_path"
 cd "$repo_dir"
+trap stop_console_capture EXIT
 
 printf '==> build host binary and Linux guest agent\n'
 if [ "$skip_build" = true ]; then
@@ -158,12 +190,18 @@ state="$(printf '%s\n' "$run_json" | jq -r '.state')"
 console_log="$(printf '%s\n' "$run_json" | jq -r '.logDir')/console.log"
 [ "$state" = running ] || die "VM state is $state"
 
+printf '==> capture live console\n'
+capture_console
+
 printf '==> wait for guest agent\n'
 kb agent ping "$vm_name" --timeout 120s | jq .
+stop_console_capture
 
 printf '==> preserve console log\n'
-as_root cp "$console_log" "$console_copy"
-as_root chmod 0644 "$console_copy"
+if [ -f "$console_log" ]; then
+	as_root cp "$console_log" "$console_copy"
+	as_root chmod 0644 "$console_copy"
+fi
 
 printf '==> console boot log\n'
 cat "$console_copy"
