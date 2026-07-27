@@ -73,6 +73,18 @@ type PCIDeviceController interface {
 	ListPCIDevices(context.Context, *vmstore.VMRecord) ([]AttachedPCIDevice, error)
 }
 
+// DeviceState is the backend's live view of runtime-hotplugged devices.
+type DeviceState struct {
+	Disks       []AttachedDisk
+	Filesystems []AttachedFilesystem
+	PCIDevices  []AttachedPCIDevice
+}
+
+// DeviceInspector reads live device state without changing the VM.
+type DeviceInspector interface {
+	InspectDevices(context.Context, *vmstore.VMRecord) (DeviceState, error)
+}
+
 // NativeSnapshotter captures backend-owned memory, device, and VM state into
 // an existing empty directory while the VM is paused.
 type NativeSnapshotter interface {

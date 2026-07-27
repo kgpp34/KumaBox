@@ -16,6 +16,7 @@ var _ backend.DiskController = Backend{}
 var _ backend.FilesystemController = Backend{}
 var _ backend.PCIDeviceController = Backend{}
 var _ backend.ConsoleController = Backend{}
+var _ backend.DeviceInspector = Backend{}
 
 type Backend struct {
 	renderer Renderer

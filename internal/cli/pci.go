@@ -64,6 +64,21 @@ func newPCIDeviceCommand(opts *rootOptions) *cobra.Command {
 		}
 		return writeJSON(cmd.OutOrStdout(), devices)
 	}}
-	cmd.AddCommand(attach, detach, list)
+	state := &cobra.Command{Use: "state VM", Short: "Refresh and show live hotplug device state", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := loadConfig(opts)
+		if err != nil {
+			return err
+		}
+		rt, err := kbruntime.New(cfg)
+		if err != nil {
+			return err
+		}
+		rec, err := rt.RefreshDeviceState(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		return writeJSON(cmd.OutOrStdout(), rec)
+	}}
+	cmd.AddCommand(attach, detach, list, state)
 	return cmd
 }
