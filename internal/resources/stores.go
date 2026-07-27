@@ -47,10 +47,11 @@ func NewStoreSetForConfig(cfg config.Config) (StoreSet, error) {
 	if err != nil {
 		return StoreSet{}, fmt.Errorf("open configured metadata backend: %w", err)
 	}
+	vm := vmstore.NewWithEngine(cfg.Runtime.RootDir, engine)
 	return StoreSet{
-		VM:         vmstore.NewWithEngine(cfg.Runtime.RootDir, engine),
+		VM:         vm,
 		Images:     imagestore.NewWithEngine(cfg.Runtime.RootDir, engine),
-		Snapshots:  snapshot.NewStoreWithEngine(cfg.Runtime.RootDir, engine),
+		Snapshots:  snapshot.NewStoreWithEngineAndVMReader(cfg.Runtime.RootDir, engine, vm),
 		Networks:   kbnetwork.NewStoreWithEngines(cfg.Runtime.RootDir, engine, engine, engine),
 		OCI:        ocistore.NewWithEngine(cfg.Runtime.RootDir, engine),
 		Operations: operation.NewWithEngine(engine),
@@ -75,10 +76,11 @@ func sqliteDefinitions() []metasqlite.Namespace {
 
 // NewStoreSet creates the default JSON-backed resource stores.
 func NewStoreSet(rootDir string) StoreSet {
+	vm := vmstore.New(rootDir)
 	return StoreSet{
-		VM:         vmstore.New(rootDir),
+		VM:         vm,
 		Images:     imagestore.New(rootDir),
-		Snapshots:  snapshot.NewStore(rootDir),
+		Snapshots:  snapshot.NewStoreWithVMReader(rootDir, vm),
 		Networks:   kbnetwork.NewStore(rootDir),
 		OCI:        ocistore.New(rootDir),
 		Operations: operation.New(rootDir),

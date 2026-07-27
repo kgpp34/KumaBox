@@ -24,6 +24,9 @@ type Store struct {
 	rootDir  string
 	engine   meta.MetaEngine
 	leaser   *leaser
+	vmReader interface {
+		List() ([]*vmstore.VMRecord, error)
+	}
 }
 
 var snapshotIndexCollection = meta.NewCollection[snapshotIndex]("snapshots", snapshotIndexTable)
@@ -40,10 +43,28 @@ func NewStore(rootDir string) *Store {
 	return NewStoreWithEngine(rootDir, engine)
 }
 
+// NewStoreWithVMReader creates the default JSON snapshot store with an
+// injected read-only VM dependency.
+func NewStoreWithVMReader(rootDir string, vmReader interface {
+	List() ([]*vmstore.VMRecord, error)
+}) *Store {
+	store := NewStore(rootDir)
+	store.vmReader = vmReader
+	return store
+}
+
 // NewStoreWithEngine creates a snapshot store with an injected metadata engine.
 func NewStoreWithEngine(rootDir string, engine meta.MetaEngine) *Store {
+	return NewStoreWithEngineAndVMReader(rootDir, engine, vmstore.New(rootDir))
+}
+
+// NewStoreWithEngineAndVMReader creates a snapshot store with an injected
+// read-only VM dependency used for dependency checks during deletion.
+func NewStoreWithEngineAndVMReader(rootDir string, engine meta.MetaEngine, vmReader interface {
+	List() ([]*vmstore.VMRecord, error)
+}) *Store {
 	dir := filepath.Join(rootDir, "snapshot")
-	return &Store{dataRoot: rootDir, rootDir: dir, engine: engine, leaser: newLeaser(filepath.Join(dir, "leases"))}
+	return &Store{dataRoot: rootDir, rootDir: dir, engine: engine, leaser: newLeaser(filepath.Join(dir, "leases")), vmReader: vmReader}
 }
 
 // MetadataEngine exposes the persistence boundary to migration tools.
@@ -356,7 +377,10 @@ func (s *Store) Remove(ref string) (*Record, error) {
 }
 
 func (s *Store) snapshotDependency(snapshotID string) (bool, string, error) {
-	records, err := vmstore.New(s.dataRoot).List()
+	if s.vmReader == nil {
+		return false, "", errors.New("snapshot dependency reader is not configured")
+	}
+	records, err := s.vmReader.List()
 	if err != nil {
 		return false, "", fmt.Errorf("inspect snapshot dependencies: %w", err)
 	}
