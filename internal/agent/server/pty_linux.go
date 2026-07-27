@@ -159,7 +159,7 @@ func openPTY(rows, columns uint16) (*os.File, *os.File, error) {
 			_ = unix.Close(masterFD)
 		}
 	}()
-	if err := unix.IoctlSetInt(masterFD, ptyUnlock, 0); err != nil {
+	if err := unix.IoctlSetPointerInt(masterFD, ptyUnlock, 0); err != nil {
 		return nil, nil, err
 	}
 	ptyNumber, err := unix.IoctlGetInt(masterFD, ptyGetNumber)

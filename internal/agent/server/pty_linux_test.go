@@ -38,11 +38,13 @@ func TestHandleConnTTYExecUsesPTYAndMergesOutput(t *testing.T) {
 	for exitCode < 0 {
 		frame, err := decoder.ReadFrame()
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("read agent frame: %v (output=%q, exit=%d)", err, output.String(), exitCode)
 		}
 		switch frame.Type {
 		case protocol.FrameStdout:
 			output.Write(frame.Data)
+		case protocol.FrameError:
+			t.Fatalf("guest PTY failed: %s: %s", frame.Code, frame.Message)
 		case protocol.FrameExit:
 			exitCode = frame.ExitCode
 		}
