@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -46,38 +47,37 @@ func newExecCommand(opts *rootOptions) *cobra.Command {
 			if timeout <= 0 {
 				timeout = agentclient.DefaultPingTimeout
 			}
-			stdin, err := readOptionalStdin(cmd.InOrStdin())
+			stdin, err := optionalStdin(cmd.InOrStdin())
 			if err != nil {
 				return err
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
-			resp, err := agentclient.Exec(ctx, rec.VsockSocket, agentclient.ExecRequest{
+			var stdout, stderr bytes.Buffer
+			outWriter, errWriter := cmd.OutOrStdout(), cmd.ErrOrStderr()
+			if jsonOutput {
+				outWriter, errWriter = &stdout, &stderr
+			}
+			code, err := agentclient.ExecStream(ctx, rec.VsockSocket, agentclient.ExecRequest{
 				Args:    args[1:],
 				Env:     env,
 				WorkDir: workdir,
-				Stdin:   stdin,
-			})
+			}, stdin, outWriter, errWriter)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				if err := writeJSON(cmd.OutOrStdout(), resp); err != nil {
-					return err
-				}
-			} else {
-				if _, err := cmd.OutOrStdout().Write(resp.Stdout); err != nil {
-					return err
-				}
-				if _, err := cmd.ErrOrStderr().Write(resp.Stderr); err != nil {
+				if err := writeJSON(cmd.OutOrStdout(), agentclient.ExecResponse{
+					OK:       code == 0,
+					ExitCode: code,
+					Stdout:   stdout.Bytes(),
+					Stderr:   stderr.Bytes(),
+				}); err != nil {
 					return err
 				}
 			}
-			if resp.ExitCode != 0 {
-				return commandExitError{code: resp.ExitCode}
-			}
-			if !resp.OK {
-				return fmt.Errorf("AGENT_EXEC_FAILED: %s", resp.Error)
+			if code != 0 {
+				return commandExitError{code: code}
 			}
 			return nil
 		},
@@ -89,7 +89,7 @@ func newExecCommand(opts *rootOptions) *cobra.Command {
 	return cmd
 }
 
-func readOptionalStdin(r io.Reader) ([]byte, error) {
+func optionalStdin(r io.Reader) (io.Reader, error) {
 	if file, ok := r.(*os.File); ok {
 		info, err := file.Stat()
 		if err != nil {
@@ -99,9 +99,5 @@ func readOptionalStdin(r io.Reader) ([]byte, error) {
 			return nil, nil
 		}
 	}
-	raw, err := io.ReadAll(r)
-	if err != nil {
-		return nil, fmt.Errorf("read stdin: %w", err)
-	}
-	return raw, nil
+	return r, nil
 }

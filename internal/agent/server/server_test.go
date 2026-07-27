@@ -3,9 +3,12 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/kumabox/kumabox/internal/agent/protocol"
 )
 
 type memoryConn struct {
@@ -40,6 +43,69 @@ func TestHandleConnRespondsToHello(t *testing.T) {
 	if slices.Contains(resp.Capabilities, "freeze") || slices.Contains(resp.Capabilities, "thaw") {
 		t.Fatalf("capabilities = %v, freeze/thaw must not be advertised", resp.Capabilities)
 	}
+	if !slices.Contains(resp.Capabilities, "exec-stream") {
+		t.Fatalf("capabilities = %v, want exec-stream", resp.Capabilities)
+	}
+}
+
+func TestHandleConnStreamExecForwardsStreamsAndExit(t *testing.T) {
+	t.Parallel()
+
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close() //nolint:errcheck
+	serverDone := make(chan struct{})
+	go func() {
+		handleConn(serverConn)
+		_ = serverConn.Close()
+		close(serverDone)
+	}()
+
+	request := protocolFrameExec("sh", "-c", "cat; printf err >&2; exit 7")
+	writeDone := make(chan error, 1)
+	go func() {
+		if err := protocol.WriteFrame(clientConn, request); err != nil {
+			writeDone <- err
+			return
+		}
+		if err := protocol.WriteFrame(clientConn, protocolFrameStdin(request.ID, []byte("hello"), false)); err != nil {
+			writeDone <- err
+			return
+		}
+		writeDone <- protocol.WriteFrame(clientConn, protocolFrameStdin(request.ID, nil, true))
+	}()
+
+	decoder := protocol.NewDecoder(clientConn)
+	var stdout, stderr bytes.Buffer
+	exitCode := -1
+	for exitCode < 0 {
+		frame, err := decoder.ReadFrame()
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch frame.Type {
+		case protocol.FrameStdout:
+			stdout.Write(frame.Data)
+		case protocol.FrameStderr:
+			stderr.Write(frame.Data)
+		case protocol.FrameExit:
+			exitCode = frame.ExitCode
+		}
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatal(err)
+	}
+	if exitCode != 7 || stdout.String() != "hello" || stderr.String() != "err" {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", exitCode, stdout.String(), stderr.String())
+	}
+	<-serverDone
+}
+
+func protocolFrameExec(args ...string) protocol.Frame {
+	return protocol.Frame{Version: protocol.VersionV1, Type: protocol.FrameExec, ID: "stream-test", Args: args}
+}
+
+func protocolFrameStdin(id string, data []byte, end bool) protocol.Frame {
+	return protocol.Frame{Version: protocol.VersionV1, Type: protocol.FrameStdin, ID: id, Stream: protocol.StreamStdin, Data: data, End: end}
 }
 
 func TestHandleConnRejectsUnsupportedRequest(t *testing.T) {

@@ -73,6 +73,7 @@ type Frame struct {
 
 	Stream Stream `json:"stream,omitempty"`
 	Data   []byte `json:"data,omitempty"`
+	End    bool   `json:"end,omitempty"`
 
 	Rows    uint16 `json:"rows,omitempty"`
 	Columns uint16 `json:"columns,omitempty"`
@@ -99,9 +100,17 @@ func (f Frame) Validate() error {
 		if len(f.Args) == 0 || f.Args[0] == "" {
 			return fmt.Errorf("%w: exec args must not be empty", ErrorInvalidRequest)
 		}
-	case FrameStdin, FrameStdout, FrameStderr:
-		if f.Stream != StreamStdin && f.Stream != StreamStdout && f.Stream != StreamStderr {
-			return fmt.Errorf("%w: frame %q has invalid stream %q", ErrorInvalidFrame, f.Type, f.Stream)
+	case FrameStdin:
+		if f.Stream != StreamStdin {
+			return fmt.Errorf("%w: frame %q requires stdin stream", ErrorInvalidFrame, f.Type)
+		}
+	case FrameStdout:
+		if f.Stream != StreamStdout {
+			return fmt.Errorf("%w: frame %q requires stdout stream", ErrorInvalidFrame, f.Type)
+		}
+	case FrameStderr:
+		if f.Stream != StreamStderr {
+			return fmt.Errorf("%w: frame %q requires stderr stream", ErrorInvalidFrame, f.Type)
 		}
 	case FrameResize:
 		if f.Rows == 0 || f.Columns == 0 {

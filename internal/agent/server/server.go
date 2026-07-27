@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/kumabox/kumabox/internal/agent/protocol"
 )
@@ -23,8 +24,11 @@ const (
 var capabilities = []string{
 	string(protocol.CapabilityHello),
 	string(protocol.CapabilityExec),
+	string(protocol.CapabilityExecStream),
 	string(protocol.CapabilityIdentity),
 }
+
+const streamChunkSize = 32 * 1024
 
 type helloRequest struct {
 	Type protocol.RequestType `json:"type"`
@@ -88,6 +92,27 @@ func handleConn(rw io.ReadWriter) {
 		writeResponse(rw, helloResponse{OK: false, Error: err.Error()})
 		return
 	}
+	var envelope struct {
+		Version string `json:"version"`
+		Type    string `json:"type"`
+	}
+	if err := json.Unmarshal([]byte(line), &envelope); err == nil && envelope.Version == protocol.VersionV1 {
+		var first protocol.Frame
+		if err := json.Unmarshal([]byte(line), &first); err != nil {
+			writeStreamError(rw, "unknown", protocol.ErrorInvalidFrame, "invalid JSON frame")
+			return
+		}
+		if err := first.Validate(); err != nil {
+			writeStreamError(rw, first.ID, protocol.ErrorInvalidFrame, err.Error())
+			return
+		}
+		if first.Type != protocol.FrameExec {
+			writeStreamError(rw, first.ID, protocol.ErrorInvalidRequest, "first stream frame must be exec")
+			return
+		}
+		handleStreamExec(reader, rw, first)
+		return
+	}
 	var req helloRequest
 	if err := json.Unmarshal([]byte(line), &req); err != nil {
 		writeResponse(rw, helloResponse{OK: false, Error: "invalid request"})
@@ -103,6 +128,156 @@ func handleConn(rw io.ReadWriter) {
 	default:
 		writeResponse(rw, helloResponse{OK: false, Error: "unsupported request"})
 	}
+}
+
+func handleStreamExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.Frame) {
+	if request.TTY {
+		writeStreamError(rw, request.ID, protocol.ErrorCapabilityMissing, "TTY exec is not supported by this protocol handler")
+		return
+	}
+	if request.User != "" {
+		writeStreamError(rw, request.ID, protocol.ErrorCapabilityMissing, "user selection is not supported by this protocol handler")
+		return
+	}
+
+	cmd := exec.Command(request.Args[0], request.Args[1:]...) //nolint:gosec
+	cmd.Dir = request.WorkDir
+	cmd.Env = append(os.Environ(), environmentPairs(request.Env)...)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		writeStreamError(rw, request.ID, protocol.ErrorExecFailed, err.Error())
+		return
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		writeStreamError(rw, request.ID, protocol.ErrorExecFailed, err.Error())
+		return
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		writeStreamError(rw, request.ID, protocol.ErrorExecFailed, err.Error())
+		return
+	}
+	if err := cmd.Start(); err != nil {
+		writeStreamError(rw, request.ID, protocol.ErrorExecFailed, err.Error())
+		return
+	}
+
+	writer := &streamWriter{writer: rw}
+	if err := writer.Write(protocol.Frame{Version: protocol.VersionV1, Type: protocol.FrameReady, ID: request.ID}); err != nil {
+		_ = cmd.Process.Kill()
+		return
+	}
+
+	var outputWG sync.WaitGroup
+	outputWG.Add(2)
+	go func() {
+		defer outputWG.Done()
+		forwardOutput(writer, request.ID, protocol.FrameStdout, protocol.StreamStdout, stdout)
+	}()
+	go func() {
+		defer outputWG.Done()
+		forwardOutput(writer, request.ID, protocol.FrameStderr, protocol.StreamStderr, stderr)
+	}()
+
+	decoder := protocol.NewDecoder(reader)
+	inputClosed := false
+	for !inputClosed {
+		frame, readErr := decoder.ReadFrame()
+		if readErr != nil {
+			_ = cmd.Process.Kill()
+			return
+		}
+		if frame.ID != request.ID {
+			_ = writer.Write(protocol.Frame{Version: protocol.VersionV1, Type: protocol.FrameError, ID: request.ID, Code: protocol.ErrorInvalidFrame, Message: "stdin frame has unexpected exec id"})
+			_ = cmd.Process.Kill()
+			return
+		}
+		switch frame.Type {
+		case protocol.FrameStdin:
+			if _, writeErr := stdin.Write(frame.Data); writeErr != nil {
+				_ = cmd.Process.Kill()
+				return
+			}
+			if frame.End {
+				_ = stdin.Close()
+				inputClosed = true
+			}
+		default:
+			_ = writer.Write(protocol.Frame{Version: protocol.VersionV1, Type: protocol.FrameError, ID: request.ID, Code: protocol.ErrorInvalidFrame, Message: "non-stdin frame received before stdin ended"})
+			_ = cmd.Process.Kill()
+			return
+		}
+	}
+
+	waitErr := cmd.Wait()
+	outputWG.Wait()
+	exitCode := 0
+	if waitErr != nil {
+		exitCode = commandExitCode(waitErr)
+	}
+	_ = writer.Write(protocol.Frame{Version: protocol.VersionV1, Type: protocol.FrameExit, ID: request.ID, ExitCode: exitCode})
+}
+
+func forwardOutput(writer *streamWriter, id string, frameType protocol.FrameType, stream protocol.Stream, reader io.Reader) {
+	buffer := make([]byte, streamChunkSize)
+	for {
+		n, err := reader.Read(buffer)
+		if n > 0 {
+			data := append([]byte(nil), buffer[:n]...)
+			if writeErr := writer.Write(protocol.Frame{Version: protocol.VersionV1, Type: frameType, ID: id, Stream: stream, Data: data}); writeErr != nil {
+				return
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+func environmentPairs(values map[string]string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(values))
+	for key, value := range values {
+		result = append(result, key+"="+value)
+	}
+	return result
+}
+
+func commandExitCode(err error) int {
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		if code := exitErr.ExitCode(); code >= 0 {
+			return code
+		}
+		return 128
+	}
+	return 127
+}
+
+type streamWriter struct {
+	mu     sync.Mutex
+	writer io.Writer
+}
+
+func (w *streamWriter) Write(frame protocol.Frame) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return protocol.WriteFrame(w.writer, frame)
+}
+
+func writeStreamError(w io.Writer, id string, code protocol.ErrorCode, message string) {
+	if id == "" {
+		id = "unknown"
+	}
+	_ = protocol.WriteFrame(w, protocol.Frame{
+		Version: protocol.VersionV1,
+		Type:    protocol.FrameError,
+		ID:      id,
+		Code:    code,
+		Message: message,
+	})
 }
 
 func handleIdentity(w io.Writer, raw []byte) {

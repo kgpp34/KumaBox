@@ -2,15 +2,19 @@ package client
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kumabox/kumabox/internal/agent/protocol"
 )
 
 func TestPingUsesHybridVsockHandshake(t *testing.T) {
@@ -69,6 +73,87 @@ func TestPingUsesHybridVsockHandshake(t *testing.T) {
 		t.Fatalf("capabilities = %v, want identity", resp.Capabilities)
 	}
 	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExecStreamForwardsInputOutputAndExitCode(t *testing.T) {
+	t.Parallel()
+
+	socketPath := testSocketPath(t)
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close() //nolint:errcheck
+
+	serverErr := make(chan error, 1)
+	go func() {
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
+			serverErr <- acceptErr
+			return
+		}
+		defer conn.Close() //nolint:errcheck
+		reader := bufio.NewReader(conn)
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil || line != "CONNECT 1024\n" {
+			serverErr <- errors.New("invalid CONNECT")
+			return
+		}
+		if _, writeErr := conn.Write([]byte("OK 1024\n")); writeErr != nil {
+			serverErr <- writeErr
+			return
+		}
+		decoder := protocol.NewDecoder(reader)
+		execFrame, frameErr := decoder.ReadFrame()
+		if frameErr != nil || execFrame.Type != protocol.FrameExec || execFrame.Env["FOO"] != "bar" {
+			serverErr <- fmt.Errorf("exec frame = %+v, error = %v", execFrame, frameErr)
+			return
+		}
+		if err := protocol.WriteFrame(conn, protocol.Frame{Version: protocol.VersionV1, Type: protocol.FrameReady, ID: execFrame.ID}); err != nil {
+			serverErr <- err
+			return
+		}
+		var input bytes.Buffer
+		for {
+			frame, readErr := decoder.ReadFrame()
+			if readErr != nil {
+				serverErr <- readErr
+				return
+			}
+			if frame.Type != protocol.FrameStdin {
+				serverErr <- fmt.Errorf("unexpected frame: %+v", frame)
+				return
+			}
+			input.Write(frame.Data)
+			if frame.End {
+				break
+			}
+		}
+		if err := protocol.WriteFrame(conn, protocol.Frame{Version: protocol.VersionV1, Type: protocol.FrameStdout, ID: execFrame.ID, Stream: protocol.StreamStdout, Data: input.Bytes()}); err != nil {
+			serverErr <- err
+			return
+		}
+		if err := protocol.WriteFrame(conn, protocol.Frame{Version: protocol.VersionV1, Type: protocol.FrameStderr, ID: execFrame.ID, Stream: protocol.StreamStderr, Data: []byte("warning\n")}); err != nil {
+			serverErr <- err
+			return
+		}
+		serverErr <- protocol.WriteFrame(conn, protocol.Frame{Version: protocol.VersionV1, Type: protocol.FrameExit, ID: execFrame.ID, ExitCode: 9})
+	}()
+
+	var stdout, stderr bytes.Buffer
+	code, err := ExecStream(context.Background(), socketPath, ExecRequest{
+		Args: []string{"cat"},
+		Env:  []string{"FOO=bar"},
+	}, strings.NewReader("hello"), &stdout, &stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 9 || stdout.String() != "hello" || stderr.String() != "warning\n" {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if err := <-serverErr; err != nil {
 		t.Fatal(err)
 	}
 }

@@ -35,6 +35,23 @@ func TestFrameRoundTrip(t *testing.T) {
 	}
 }
 
+func TestFrameRoundTripPreservesStdinEnd(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	want := Frame{Version: VersionV1, Type: FrameStdin, ID: "exec-1", Stream: StreamStdin, End: true}
+	if err := WriteFrame(&buf, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadFrame(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.End || got.Stream != StreamStdin {
+		t.Fatalf("frame = %+v", got)
+	}
+}
+
 func TestFrameValidation(t *testing.T) {
 	t.Parallel()
 

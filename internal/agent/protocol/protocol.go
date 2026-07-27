@@ -17,8 +17,9 @@ type Capability string
 const CapabilityIdentity Capability = "identity"
 
 const (
-	CapabilityHello Capability = "hello"
-	CapabilityExec  Capability = "exec"
+	CapabilityHello      Capability = "hello"
+	CapabilityExec       Capability = "exec"
+	CapabilityExecStream Capability = "exec-stream"
 )
 
 // AgentPort is the vsock port used by the guest agent.
