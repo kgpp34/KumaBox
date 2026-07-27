@@ -14,7 +14,7 @@ qemu_img=qemu-img
 root_dir=/tmp/kumabox-p0/data
 run_dir=/tmp/kumabox-p0/run
 log_dir=/tmp/kumabox-p0/logs
-image=p3-agent-image-v3
+image=p6-agent-image
 network=cni:default
 storage=64M
 metadata_backend=json
@@ -183,7 +183,15 @@ run_suite() {
 
 if [[ "$skip_unit" != true ]]; then
   printf '\n==> E2E suite: unit\n'
-  (cd "$repo_root" && GOTOOLCHAIN=local go test ./... -count=1)
+  if [[ "$(id -u)" -eq 0 ]]; then
+    [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != root ]] || {
+      echo 'cannot run unit tests as root: invoke with sudo from the development user' >&2
+      exit 1
+    }
+    sudo -iu "$SUDO_USER" bash -lc "cd '$repo_root' && GOTOOLCHAIN=local go test ./... -count=1"
+  else
+    (cd "$repo_root" && GOTOOLCHAIN=local go test ./... -count=1)
+  fi
 fi
 
 run_suite oci
