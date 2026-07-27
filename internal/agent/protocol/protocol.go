@@ -20,6 +20,7 @@ const (
 	CapabilityHello      Capability = "hello"
 	CapabilityExec       Capability = "exec"
 	CapabilityExecStream Capability = "exec-stream"
+	CapabilityExecTTY    Capability = "exec-tty"
 )
 
 // AgentPort is the vsock port used by the guest agent.

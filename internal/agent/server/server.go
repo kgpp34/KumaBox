@@ -25,6 +25,7 @@ var capabilities = []string{
 	string(protocol.CapabilityHello),
 	string(protocol.CapabilityExec),
 	string(protocol.CapabilityExecStream),
+	string(protocol.CapabilityExecTTY),
 	string(protocol.CapabilityIdentity),
 }
 
@@ -132,7 +133,7 @@ func handleConn(rw io.ReadWriter) {
 
 func handleStreamExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.Frame) {
 	if request.TTY {
-		writeStreamError(rw, request.ID, protocol.ErrorCapabilityMissing, "TTY exec is not supported by this protocol handler")
+		handleTTYExec(reader, rw, request)
 		return
 	}
 	if request.User != "" {

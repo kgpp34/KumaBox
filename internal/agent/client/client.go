@@ -21,6 +21,7 @@ const (
 	hybridVsockReplyMax = 256
 	DefaultPingTimeout  = 60 * time.Second
 	CapabilityExec      = protocol.CapabilityExec
+	CapabilityExecTTY   = protocol.CapabilityExecTTY
 	CapabilityIdentity  = protocol.CapabilityIdentity
 )
 
@@ -60,6 +61,20 @@ type ExecResponse struct {
 	Stdout   []byte `json:"stdout,omitempty"`
 	Stderr   []byte `json:"stderr,omitempty"`
 	Error    string `json:"error,omitempty"`
+}
+
+// TTYSize is a terminal window size update for an interactive exec session.
+type TTYSize struct {
+	Rows    uint16
+	Columns uint16
+}
+
+// TTYOptions controls terminal updates exchanged during an interactive exec.
+type TTYOptions struct {
+	Rows    uint16
+	Columns uint16
+	Resize  <-chan TTYSize
+	Signals <-chan string
 }
 
 // IdentityRequest describes the host-assigned identity a restored clone must

@@ -34,6 +34,7 @@ require (
 	github.com/vbatts/tar-split v0.11.6 // indirect
 	golang.org/x/sync v0.10.0
 	golang.org/x/sys v0.29.0
+	golang.org/x/term v0.27.0
 	modernc.org/libc v1.61.13 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.8.2 // indirect
