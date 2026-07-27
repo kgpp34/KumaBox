@@ -14,7 +14,10 @@ import (
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
-const diskIDPrefix = "kumabox-disk-"
+const (
+	diskIDPrefix       = "kumabox-disk-"
+	cloudHypervisorRaw = "Raw"
+)
 
 func (b Backend) AttachDisk(ctx context.Context, rec *vmstore.VMRecord, spec backend.DiskSpec) (backend.AttachedDisk, error) {
 	if rec == nil {
@@ -50,7 +53,7 @@ func (b Backend) AttachDisk(ctx context.Context, rec *vmstore.VMRecord, spec bac
 	if spec.DirectIO != nil {
 		direct = *spec.DirectIO
 	}
-	body := map[string]any{"id": id, "path": spec.Path, "readonly": spec.ReadOnly, "direct": direct, "image_type": "raw", "serial": spec.Name}
+	body := map[string]any{"id": id, "path": spec.Path, "readonly": spec.ReadOnly, "direct": direct, "image_type": cloudHypervisorRaw, "serial": spec.Name}
 	if _, err := doAPIOnce(ctx, rec.APISocket, backendAPIRequestTimeout, http.MethodPut, apiVMAddDisk, mustJSON(body), http.StatusOK, http.StatusNoContent); err != nil {
 		return backend.AttachedDisk{}, err
 	}
