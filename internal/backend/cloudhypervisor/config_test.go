@@ -256,6 +256,24 @@ func TestRenderConfigUsesConfiguredDiskIOPolicy(t *testing.T) {
 	}
 }
 
+func TestDirectBootConsoleCmdlineUsesPTYConsole(t *testing.T) {
+	tests := map[string]struct {
+		input string
+		want  string
+	}{
+		"serial console":  {input: "console=ttyS0 loglevel=3", want: "console=hvc0 loglevel=3"},
+		"other console":   {input: "console=ttyAMA0 rw", want: "console=hvc0 rw"},
+		"missing console": {input: "loglevel=3 rw", want: "console=hvc0 loglevel=3 rw"},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := directBootConsoleCmdline(test.input); got != test.want {
+				t.Fatalf("console cmdline = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func boolPtr(value bool) *bool { return &value }
 
 func TestRenderConfigIncludesNetworkDevice(t *testing.T) {

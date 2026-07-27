@@ -463,7 +463,7 @@ func kernelCmdline(rec *vmstore.VMRecord) string {
 		cmdline = defaultKernelCmdline
 	}
 	if rec.Firmware == "" {
-		cmdline = strings.Replace(cmdline, "console=ttyS0", "console=hvc0", 1)
+		cmdline = directBootConsoleCmdline(cmdline)
 	}
 	layers := make([]string, 0)
 	cow := ""
@@ -486,6 +486,17 @@ func kernelCmdline(rec *vmstore.VMRecord) string {
 		cmdline += directBootNetworkCmdline(rec)
 	}
 	return cmdline
+}
+
+func directBootConsoleCmdline(cmdline string) string {
+	fields := strings.Fields(cmdline)
+	for index, field := range fields {
+		if strings.HasPrefix(field, "console=") {
+			fields[index] = "console=hvc0"
+			return strings.Join(fields, " ")
+		}
+	}
+	return strings.Join(append([]string{"console=hvc0"}, fields...), " ")
 }
 
 func consoleMode(rec *vmstore.VMRecord) string {
