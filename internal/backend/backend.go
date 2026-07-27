@@ -8,6 +8,7 @@ import (
 	"context"
 	"time"
 
+	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -39,6 +40,12 @@ type DiskController interface {
 	AttachDisk(context.Context, *vmstore.VMRecord, DiskSpec) (AttachedDisk, error)
 	DetachDisk(context.Context, *vmstore.VMRecord, string) error
 	ListDisks(context.Context, *vmstore.VMRecord) ([]AttachedDisk, error)
+}
+
+// NetworkController changes virtio-net devices on a running VM.
+type NetworkController interface {
+	AttachNetwork(context.Context, *vmstore.VMRecord, kbnetwork.Config) error
+	DetachNetwork(context.Context, *vmstore.VMRecord, kbnetwork.Config) error
 }
 
 // NativeSnapshotter captures backend-owned memory, device, and VM state into

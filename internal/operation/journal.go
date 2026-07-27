@@ -29,6 +29,7 @@ const (
 	KindVMHibernate         = "vm.hibernate"
 	KindNetworkAttach       = "network.attach"
 	KindNetworkCleanup      = "network.cleanup"
+	KindNetworkResize       = "network.resize"
 	KindDiskAttach          = "disk.attach"
 	KindDiskDetach          = "disk.detach"
 	KindSnapshotCreateRun   = "snapshot.create-running"

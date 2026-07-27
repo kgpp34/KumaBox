@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
+	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -20,6 +21,28 @@ func newNetworkCommand(opts *rootOptions) *cobra.Command {
 	cmd.AddCommand(newNetworkInspectCommand(opts))
 	cmd.AddCommand(newNetworkSetupCommand(opts))
 	cmd.AddCommand(newNetworkTeardownCommand(opts))
+	cmd.AddCommand(newNetworkResizeCommand(opts))
+	return cmd
+}
+
+func newNetworkResizeCommand(opts *rootOptions) *cobra.Command {
+	var count int
+	cmd := &cobra.Command{Use: "resize VM", Short: "Resize NICs on a running VM", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := loadConfig(opts)
+		if err != nil {
+			return err
+		}
+		rt, err := kbruntime.New(cfg)
+		if err != nil {
+			return err
+		}
+		rec, err := rt.ResizeNetwork(cmd.Context(), args[0], count)
+		if err != nil {
+			return err
+		}
+		return writeJSON(cmd.OutOrStdout(), rec)
+	}}
+	cmd.Flags().IntVar(&count, "nics", 1, "target NIC count")
 	return cmd
 }
 

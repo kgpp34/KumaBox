@@ -38,6 +38,8 @@ func (r *Runtime) reconcileOperation(ctx context.Context, record operation.Recor
 		return r.requireNetworkAttached(record)
 	case operation.KindNetworkCleanup:
 		return r.requireNetworkClean(record)
+	case operation.KindNetworkResize:
+		return r.requireVMExists(record)
 	case operation.KindDiskAttach, operation.KindDiskDetach:
 		return r.requireVMExists(record)
 	case operation.KindSnapshotCreateRun:
