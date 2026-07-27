@@ -447,6 +447,25 @@ func (s *Store) SetNetworkConfigs(ref string, configs []kbnetwork.Config) (*VMRe
 	return updated, nil
 }
 
+func (s *Store) SetAttachedDisks(ref string, disks []AttachedDisk) (*VMRecord, error) {
+	var updated *VMRecord
+	err := s.update(func(idx *vmIndex) error {
+		id, err := idx.resolve(ref)
+		if err != nil {
+			return err
+		}
+		rec := idx.VMs[id]
+		rec.AttachedDisks = append([]AttachedDisk(nil), disks...)
+		rec.UpdatedAt = time.Now().UTC()
+		updated = cloneRecord(rec)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
 // List returns all VM records sorted by creation time.
 //
 // Each element is a defensive copy. Runtime.ListVMs may update observations on

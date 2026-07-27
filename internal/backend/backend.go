@@ -18,6 +18,29 @@ type StateController interface {
 	ResumeVM(context.Context, *vmstore.VMRecord) error
 }
 
+// DiskSpec identifies an externally owned raw disk to hot-plug.
+type DiskSpec struct {
+	Path     string
+	Name     string
+	ReadOnly bool
+	DirectIO *bool
+}
+
+type AttachedDisk struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	ReadOnly bool   `json:"readonly,omitempty"`
+}
+
+// DiskController is implemented by backends that support runtime virtio-blk
+// hotplug. The backing file is never owned by the controller.
+type DiskController interface {
+	AttachDisk(context.Context, *vmstore.VMRecord, DiskSpec) (AttachedDisk, error)
+	DetachDisk(context.Context, *vmstore.VMRecord, string) error
+	ListDisks(context.Context, *vmstore.VMRecord) ([]AttachedDisk, error)
+}
+
 // NativeSnapshotter captures backend-owned memory, device, and VM state into
 // an existing empty directory while the VM is paused.
 type NativeSnapshotter interface {

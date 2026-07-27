@@ -40,6 +40,17 @@ func (e *APIError) Error() string {
 type vmInfo struct {
 	State      string                     `json:"state"`
 	DeviceTree map[string]json.RawMessage `json:"device_tree"`
+	Config     vmInfoConfig               `json:"config"`
+}
+
+type vmInfoConfig struct {
+	Disks []vmInfoDisk `json:"disks"`
+}
+type vmInfoDisk struct {
+	ID       string `json:"id"`
+	Path     string `json:"path"`
+	ReadOnly bool   `json:"readonly"`
+	Serial   string `json:"serial"`
 }
 
 func socketHTTPClient(socketPath string, timeout time.Duration) *http.Client {

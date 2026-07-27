@@ -113,6 +113,7 @@ type VMRecord struct {
 	MemoryBytes        int64                    `json:"memoryBytes"`
 	Metadata           *Metadata                `json:"metadata,omitempty"`
 	StorageConfigs     []StorageConfig          `json:"storageConfigs,omitempty"`
+	AttachedDisks      []AttachedDisk           `json:"attachedDisks,omitempty"`
 	NetworkConfigs     []kbnetwork.Config       `json:"networkConfigs,omitempty"`
 	Network            string                   `json:"network,omitempty"`
 	Networks           []string                 `json:"networks,omitempty"`
@@ -274,6 +275,13 @@ type DataDiskRequest struct {
 	DirectIO   *bool
 }
 
+type AttachedDisk struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	ReadOnly bool   `json:"readonly,omitempty"`
+}
+
 // EffectiveRole returns Role or its legacy Type equivalent.
 func (c StorageConfig) EffectiveRole() StorageRole {
 	if c.Role != "" {
@@ -428,6 +436,7 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 	}
 	copied.Image = cloneImageRef(rec.Image)
 	copied.StorageConfigs = cloneStorageConfigs(rec.StorageConfigs)
+	copied.AttachedDisks = append([]AttachedDisk(nil), rec.AttachedDisks...)
 	copied.Networks = cloneStrings(rec.Networks)
 	copied.NetworkConfigs = cloneNetworkConfigs(rec.NetworkConfigs)
 	copied.NetworkStatus = cloneNetworkStatus(rec.NetworkStatus)

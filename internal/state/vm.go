@@ -23,6 +23,7 @@ type VMRecords interface {
 	Create(vmstore.CreateRequest) (*vmstore.VMRecord, error)
 	Delete(string) error
 	SetNetworkConfigs(string, []kbnetwork.Config) (*vmstore.VMRecord, error)
+	SetAttachedDisks(string, []vmstore.AttachedDisk) (*vmstore.VMRecord, error)
 }
 
 // VMUpdater contains durable VM record updates. Ordinary state changes use

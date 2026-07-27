@@ -29,6 +29,8 @@ const (
 	KindVMHibernate         = "vm.hibernate"
 	KindNetworkAttach       = "network.attach"
 	KindNetworkCleanup      = "network.cleanup"
+	KindDiskAttach          = "disk.attach"
+	KindDiskDetach          = "disk.detach"
 	KindSnapshotCreateRun   = "snapshot.create-running"
 	KindSnapshotCloneNative = "snapshot.clone-native"
 	KindSnapshotRestoreDisk = "snapshot.restore-portable"

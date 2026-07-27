@@ -10,6 +10,7 @@ const (
 	apiVMShutdown     = "vm.shutdown"
 	apiVMRemoveDevice = "vm.remove-device"
 	apiVMAddNet       = "vm.add-net"
+	apiVMAddDisk      = "vm.add-disk"
 
 	backendStateRunning = "Running"
 	backendStatePaused  = "Paused"
