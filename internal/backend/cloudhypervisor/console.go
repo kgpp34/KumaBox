@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -28,7 +29,7 @@ func (b Backend) OpenConsole(ctx context.Context, rec *vmstore.VMRecord) (io.Rea
 		return nil, fmt.Errorf("query VM console: %w", err)
 	}
 	path := info.Config.Console.File
-	if path == "" || info.Config.Console.Mode != "pty" {
+	if path == "" || !isPTYConsoleMode(info.Config.Console.Mode) {
 		return nil, fmt.Errorf("VM %s has no PTY console (mode=%s)", rec.Name, info.Config.Console.Mode)
 	}
 	fileInfo, err := os.Stat(path)
@@ -47,4 +48,8 @@ func (b Backend) OpenConsole(ctx context.Context, rec *vmstore.VMRecord) (io.Rea
 		return nil, fmt.Errorf("open console PTY %s: %w", path, err)
 	}
 	return file, nil
+}
+
+func isPTYConsoleMode(mode string) bool {
+	return strings.EqualFold(strings.TrimSpace(mode), "pty")
 }
