@@ -226,7 +226,10 @@ fi
 
 step "clean previous OCI exec state"
 cleanup
-"${remove_cmd[@]}" "$root_dir" "$run_dir" "$log_dir"
+# Keep the managed content store and metadata database intact. In particular,
+# SQLite metadata is commonly located below root_dir/metadata; removing the
+# whole root here would delete the image index immediately before verification.
+"${remove_cmd[@]}" "$run_dir" "$log_dir"
 "${mkdir_cmd[@]}" "$root_dir" "$run_dir" "$log_dir"
 
 step "environment checks"
