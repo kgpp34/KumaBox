@@ -143,17 +143,10 @@ func handleStreamExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.F
 	cmd := exec.Command(request.Args[0], request.Args[1:]...) //nolint:gosec
 	cmd.Dir = request.WorkDir
 	cmd.Env = append(os.Environ(), environmentPairs(request.Env)...)
+	writer := &streamWriter{writer: rw}
+	cmd.Stdout = &streamOutputWriter{writer: writer, id: request.ID, frameType: protocol.FrameStdout, stream: protocol.StreamStdout}
+	cmd.Stderr = &streamOutputWriter{writer: writer, id: request.ID, frameType: protocol.FrameStderr, stream: protocol.StreamStderr}
 	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		writeStreamError(rw, request.ID, protocol.ErrorExecFailed, err.Error())
-		return
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		writeStreamError(rw, request.ID, protocol.ErrorExecFailed, err.Error())
-		return
-	}
-	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		writeStreamError(rw, request.ID, protocol.ErrorExecFailed, err.Error())
 		return
@@ -163,22 +156,10 @@ func handleStreamExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.F
 		return
 	}
 
-	writer := &streamWriter{writer: rw}
 	if err := writer.Write(protocol.Frame{Version: protocol.VersionV1, Type: protocol.FrameReady, ID: request.ID}); err != nil {
 		_ = cmd.Process.Kill()
 		return
 	}
-
-	var outputWG sync.WaitGroup
-	outputWG.Add(2)
-	go func() {
-		defer outputWG.Done()
-		forwardOutput(writer, request.ID, protocol.FrameStdout, protocol.StreamStdout, stdout)
-	}()
-	go func() {
-		defer outputWG.Done()
-		forwardOutput(writer, request.ID, protocol.FrameStderr, protocol.StreamStderr, stderr)
-	}()
 
 	decoder := protocol.NewDecoder(reader)
 	inputClosed := false
@@ -211,28 +192,11 @@ func handleStreamExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.F
 	}
 
 	waitErr := cmd.Wait()
-	outputWG.Wait()
 	exitCode := 0
 	if waitErr != nil {
 		exitCode = commandExitCode(waitErr)
 	}
 	_ = writer.Write(protocol.Frame{Version: protocol.VersionV1, Type: protocol.FrameExit, ID: request.ID, ExitCode: exitCode})
-}
-
-func forwardOutput(writer *streamWriter, id string, frameType protocol.FrameType, stream protocol.Stream, reader io.Reader) {
-	buffer := make([]byte, streamChunkSize)
-	for {
-		n, err := reader.Read(buffer)
-		if n > 0 {
-			data := append([]byte(nil), buffer[:n]...)
-			if writeErr := writer.Write(protocol.Frame{Version: protocol.VersionV1, Type: frameType, ID: id, Stream: stream, Data: data}); writeErr != nil {
-				return
-			}
-		}
-		if err != nil {
-			return
-		}
-	}
 }
 
 func environmentPairs(values map[string]string) []string {
@@ -265,6 +229,33 @@ func (w *streamWriter) Write(frame protocol.Frame) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return protocol.WriteFrame(w.writer, frame)
+}
+
+type streamOutputWriter struct {
+	writer    *streamWriter
+	id        string
+	frameType protocol.FrameType
+	stream    protocol.Stream
+}
+
+func (w *streamOutputWriter) Write(data []byte) (int, error) {
+	total := 0
+	for len(data) > 0 {
+		chunkSize := min(len(data), streamChunkSize)
+		chunk := append([]byte(nil), data[:chunkSize]...)
+		if err := w.writer.Write(protocol.Frame{
+			Version: protocol.VersionV1,
+			Type:    w.frameType,
+			ID:      w.id,
+			Stream:  w.stream,
+			Data:    chunk,
+		}); err != nil {
+			return total, err
+		}
+		total += chunkSize
+		data = data[chunkSize:]
+	}
+	return total, nil
 }
 
 func writeStreamError(w io.Writer, id string, code protocol.ErrorCode, message string) {
