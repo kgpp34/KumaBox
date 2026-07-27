@@ -12,20 +12,26 @@ import (
 
 func newGCCommand(opts *rootOptions) *cobra.Command {
 	var dryRun bool
+	var repair bool
 	var jsonOutput bool
 
 	cmd := &cobra.Command{
 		Use:   "gc",
 		Short: "Inspect garbage-collection candidates",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !dryRun {
-				return fmt.Errorf("gc currently supports --dry-run only")
+			if !dryRun && !repair {
+				return fmt.Errorf("choose --dry-run or --repair")
 			}
 			cfg, err := loadConfig(opts)
 			if err != nil {
 				return err
 			}
-			report, err := kbgc.DryRun(cfg)
+			var report *kbgc.Report
+			if repair {
+				report, err = kbgc.Repair(cfg)
+			} else {
+				report, err = kbgc.DryRun(cfg)
+			}
 			if err != nil {
 				return err
 			}
@@ -37,6 +43,7 @@ func newGCCommand(opts *rootOptions) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show candidates without deleting anything")
+	cmd.Flags().BoolVar(&repair, "repair", false, "remove safe orphan resources and retry stale network cleanup")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
 	return cmd
 }

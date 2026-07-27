@@ -253,6 +253,33 @@ func TestDryRunReportsOnlyManagedCandidates(t *testing.T) {
 	}
 }
 
+func TestRepairRemovesOrphanManagedStorage(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Runtime.RootDir = filepath.Join(dir, "data")
+	cfg.Runtime.RunDir = filepath.Join(dir, "run")
+	cfg.Runtime.LogDir = filepath.Join(dir, "log")
+	orphan := filepath.Join(cfg.Runtime.RootDir, "storage", "vms", "kb_orphan")
+	if err := os.MkdirAll(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, "cow.ext4"), []byte("orphan"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Repair(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatalf("orphan storage still exists, stat error = %v", err)
+	}
+	assertCandidate(t, report, orphan, "orphan_vm_storage")
+	if report.DryRun {
+		t.Fatal("repair report is marked dry-run")
+	}
+}
+
 func TestDryRunReportsImageCandidates(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.Default()

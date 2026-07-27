@@ -1,8 +1,5 @@
-// Package gc identifies KumaBox-managed files that are safe candidates for
-// cleanup.
-//
-// The current phase is dry-run only. It reports stale runtime files and orphaned
-// managed directories without deleting anything.
+// Package gc identifies and repairs KumaBox-managed resources that are no
+// longer owned by a live VM.
 package gc
 
 import (
@@ -38,6 +35,8 @@ type Report struct {
 	DryRun     bool        `json:"dryRun"`
 	CheckedAt  time.Time   `json:"checkedAt"`
 	Candidates []Candidate `json:"candidates"`
+	Repaired   []Candidate `json:"repaired,omitempty"`
+	Skipped    []Candidate `json:"skipped,omitempty"`
 }
 
 // DryRun scans VM, runtime, log, and image state for orphaned managed files.
@@ -130,6 +129,88 @@ func DryRun(cfg config.Config) (*Report, error) {
 		return report.Candidates[i].Path < report.Candidates[j].Path
 	})
 	return report, nil
+}
+
+// Repair rescans before acting, then removes only candidates inside managed
+// roots. Network records are cleaned only when their VM is gone; drift on a
+// live VM is reported and left for explicit reconciliation.
+func Repair(cfg config.Config) (*Report, error) {
+	report, err := DryRun(cfg)
+	if err != nil {
+		return nil, err
+	}
+	stores, err := resources.NewStoreSetForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("open resource stores for repair: %w", err)
+	}
+	networkRecords, err := stores.Networks.List()
+	if err != nil {
+		return nil, fmt.Errorf("read network records for repair: %w", err)
+	}
+	report.DryRun = false
+	for _, candidate := range report.Candidates {
+		if candidate.Component == "network" {
+			if err := repairNetworkCandidate(context.Background(), cfg, stores.Networks, networkRecords, candidate); err != nil {
+				return nil, err
+			}
+			if candidate.Type == "network_drift" {
+				report.Skipped = append(report.Skipped, candidate)
+			} else {
+				report.Repaired = append(report.Repaired, candidate)
+			}
+			continue
+		}
+		if !managedCandidatePath(cfg, candidate.Path) {
+			report.Skipped = append(report.Skipped, candidate)
+			continue
+		}
+		if err := os.RemoveAll(candidate.Path); err != nil {
+			return nil, fmt.Errorf("repair %s: %w", candidate.Path, err)
+		}
+		report.Repaired = append(report.Repaired, candidate)
+	}
+	return report, nil
+}
+
+func managedCandidatePath(cfg config.Config, path string) bool {
+	if path == "" || !filepath.IsAbs(path) {
+		return false
+	}
+	for _, root := range []string{cfg.Runtime.RootDir, cfg.Runtime.RunDir, cfg.Runtime.LogDir} {
+		rel, err := filepath.Rel(root, path)
+		if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+func repairNetworkCandidate(ctx context.Context, cfg config.Config, store state.NetworkState, records []kbnetwork.Record, candidate Candidate) error {
+	if candidate.Type == "orphan_lease" {
+		return kbnetwork.NewAllocator(cfg.Runtime.RootDir, cfg.Network).ReleaseIP(candidate.Path)
+	}
+	if candidate.Type == "network_drift" {
+		return nil
+	}
+	for _, rec := range records {
+		if rec.ID != candidate.Path && rec.TAP != candidate.Path {
+			continue
+		}
+		if rec.Provider == kbnetwork.ProviderHostTap {
+			if err := kbnetwork.DeleteHostTap(rec.TAP); err != nil {
+				return fmt.Errorf("delete stale tap %s: %w", rec.TAP, err)
+			}
+		} else if rec.Provider == kbnetwork.ProviderCNI {
+			if err := kbnetwork.DeleteCNI(ctx, cfg.Runtime.RootDir, cfg.Network, kbnetwork.CNIDeleteRequest{VMID: rec.VMID, Network: rec.Network, IfName: rec.IfName, TAP: rec.TAP, NetNSPath: rec.NetnsPath}); err != nil {
+				return fmt.Errorf("delete stale CNI network %s: %w", rec.ID, err)
+			}
+		}
+		if err := kbnetwork.NewAllocator(cfg.Runtime.RootDir, cfg.Network).ReleaseIP(firstString(rec.IPs)); err != nil {
+			return err
+		}
+		return store.DeleteRecord(rec.ID)
+	}
+	return nil
 }
 
 func snapshotGCCandidates(
