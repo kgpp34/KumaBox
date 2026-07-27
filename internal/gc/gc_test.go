@@ -569,6 +569,67 @@ func TestDryRunFailsWhenNetworkLeasesAreCorrupt(t *testing.T) {
 	}
 }
 
+func TestNetworkCandidatesDetectDriftAndOrphanLease(t *testing.T) {
+	t.Parallel()
+	vm := &vmstore.VMRecord{
+		ID: "vm-live",
+		NetworkConfigs: []kbnetwork.Config{{
+			ID: "net-live", TAP: "tap-live", MAC: "02:00:00:00:00:01",
+			Backend: kbnetwork.ProviderHostTap, BridgeDev: "kumabox0",
+			Network: &kbnetwork.GuestInfo{IP: "10.88.0.2", Gateway: "10.88.0.1"},
+		}},
+	}
+	records := []kbnetwork.Record{
+		{ID: "net-live", VMID: "vm-live", TAP: "tap-live", MAC: "02:00:00:00:00:99", Provider: kbnetwork.ProviderHostTap, BridgeDev: "kumabox0", IPs: []string{"10.88.0.2/16"}, Gateway: "10.88.0.1"},
+		{ID: "net-missing-vm", VMID: "vm-gone", TAP: "tap-gone", Provider: kbnetwork.ProviderHostTap},
+	}
+	leases := map[string]kbnetwork.Lease{
+		"10.88.0.99": {VMID: "vm-gone", TAP: "tap-gone"},
+		"10.88.0.2":  {VMID: "vm-live", TAP: "tap-live"},
+	}
+	candidates := networkCandidates([]*vmstore.VMRecord{vm}, records, leases)
+	assertCandidateList(t, candidates, "net-live", "network_drift")
+	assertCandidateList(t, candidates, "tap-gone", "stale_tap")
+	assertCandidateList(t, candidates, "10.88.0.99", "orphan_lease")
+	assertNoCandidateList(t, candidates, "10.88.0.2")
+}
+
+func TestImageCandidatesProtectIndexedAndLiveImages(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	cloudimg := filepath.Join(root, "cloudimg")
+	for _, name := range []string{"staging/import-1", "img-indexed", "img-live", "img-orphan"} {
+		if err := os.MkdirAll(filepath.Join(cloudimg, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	images := []*imagestore.ImageRecord{{ID: "img-indexed"}}
+	candidates := imageCandidates(root, images, map[string]struct{}{"img-live": {}})
+	assertCandidateList(t, candidates, filepath.Join(cloudimg, "staging/import-1"), "image_staging_dir")
+	assertCandidateList(t, candidates, filepath.Join(cloudimg, "img-orphan"), "orphan_image_dir")
+	assertNoCandidateList(t, candidates, filepath.Join(cloudimg, "img-indexed"))
+	assertNoCandidateList(t, candidates, filepath.Join(cloudimg, "img-live"))
+}
+
+func assertCandidateList(t *testing.T, candidates []Candidate, path, typ string) {
+	t.Helper()
+	for _, candidate := range candidates {
+		if candidate.Path == path && candidate.Type == typ {
+			return
+		}
+	}
+	t.Fatalf("missing candidate %s %s in %+v", typ, path, candidates)
+}
+
+func assertNoCandidateList(t *testing.T, candidates []Candidate, path string) {
+	t.Helper()
+	for _, candidate := range candidates {
+		if candidate.Path == path {
+			t.Fatalf("unexpected candidate for %s: %+v", path, candidate)
+		}
+	}
+}
+
 func assertCandidate(t *testing.T, report *Report, path string, typ string) {
 	t.Helper()
 	for _, candidate := range report.Candidates {
