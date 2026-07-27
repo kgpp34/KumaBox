@@ -6,6 +6,7 @@ package backend
 
 import (
 	"context"
+	"io"
 	"time"
 
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
@@ -17,6 +18,11 @@ import (
 type StateController interface {
 	PauseVM(context.Context, *vmstore.VMRecord) error
 	ResumeVM(context.Context, *vmstore.VMRecord) error
+}
+
+// ConsoleController opens the live guest console stream for an interactive VM.
+type ConsoleController interface {
+	OpenConsole(context.Context, *vmstore.VMRecord) (io.ReadWriteCloser, error)
 }
 
 // DiskSpec identifies an externally owned raw disk to hot-plug.

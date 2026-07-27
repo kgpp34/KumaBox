@@ -217,7 +217,6 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 	apiSocket := filepath.Join(rec.RunDir, "ch.sock")
 	stdoutLog := filepath.Join(rec.LogDir, "cloud-hypervisor.stdout.log")
 	stderrLog := filepath.Join(rec.LogDir, "cloud-hypervisor.stderr.log")
-	serialLog := filepath.Join(rec.LogDir, "console.log")
 	cpus := vmCPUs(rec)
 
 	args := []string{
@@ -242,7 +241,11 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 			args = append(args, diskArg(disk))
 		}
 	}
-	args = append(args, "--serial", "file="+serialLog, "--console", "off")
+	if rec.Firmware == "" {
+		args = append(args, "--serial", "off", "--console", "pty")
+	} else {
+		args = append(args, "--serial", "file="+filepath.Join(rec.LogDir, "console.log"), "--console", "off")
+	}
 	nets := newNets(rec)
 	if len(nets) > 0 {
 		args = append(args, "--net")
@@ -284,8 +287,7 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		Disks:        disks,
 		Nets:         nets,
 		Vsock:        vsock,
-		Serial:       Serial{Path: serialLog},
-		Console:      Console{Mode: "off"},
+		Console:      Console{Mode: consoleMode(rec)},
 		Args:         args,
 		Annotations: Annotations{
 			VMID:   rec.ID,
@@ -460,6 +462,9 @@ func kernelCmdline(rec *vmstore.VMRecord) string {
 	if cmdline == "" {
 		cmdline = defaultKernelCmdline
 	}
+	if rec.Firmware == "" {
+		cmdline = strings.Replace(cmdline, "console=ttyS0", "console=hvc0", 1)
+	}
 	layers := make([]string, 0)
 	cow := ""
 	for _, cfg := range rec.StorageConfigs {
@@ -481,6 +486,13 @@ func kernelCmdline(rec *vmstore.VMRecord) string {
 		cmdline += directBootNetworkCmdline(rec)
 	}
 	return cmdline
+}
+
+func consoleMode(rec *vmstore.VMRecord) string {
+	if rec != nil && rec.Firmware == "" {
+		return "pty"
+	}
+	return "off"
 }
 
 func directBootNetworkCmdline(rec *vmstore.VMRecord) string {

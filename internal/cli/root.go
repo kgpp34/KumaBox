@@ -49,6 +49,7 @@ func NewRootCommand() *cobra.Command {
 	cmd.AddCommand(newHibernateCommand(opts))
 	cmd.AddCommand(newInspectCommand(opts))
 	cmd.AddCommand(newLogsCommand(opts))
+	cmd.AddCommand(newConsoleCommand(opts))
 	cmd.AddCommand(newDeleteCommand(opts))
 	cmd.AddCommand(newGCCommand(opts))
 	cmd.AddCommand(newImageCommand(opts))

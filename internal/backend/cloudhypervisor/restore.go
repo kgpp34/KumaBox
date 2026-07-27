@@ -170,8 +170,22 @@ func patchRestoreConfig(path string, rec *vmstore.VMRecord, rebindNetworkTaps bo
 			return nil, err
 		}
 	}
-	if err := patchRawPath(config, "serial", "file", filepath.Join(rec.LogDir, "console.log")); err != nil {
-		return nil, err
+	if serial, found := config["serial"]; found {
+		var serialConfig map[string]json.RawMessage
+		if err := json.Unmarshal(serial, &serialConfig); err != nil {
+			return nil, fmt.Errorf("decode serial: %w", err)
+		}
+		var mode string
+		if rawMode, ok := serialConfig["mode"]; ok {
+			if err := json.Unmarshal(rawMode, &mode); err != nil {
+				return nil, fmt.Errorf("decode serial mode: %w", err)
+			}
+		}
+		if strings.EqualFold(mode, "file") {
+			if err := patchRawPath(config, "serial", "file", filepath.Join(rec.LogDir, "console.log")); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if rec.VsockSocket != "" {
 		if err := patchRawPath(config, "vsock", "socket", rec.VsockSocket); err != nil {

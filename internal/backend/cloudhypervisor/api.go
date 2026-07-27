@@ -47,6 +47,7 @@ type vmInfoConfig struct {
 	Disks   []vmInfoDisk   `json:"disks"`
 	Fs      []vmInfoFS     `json:"fs"`
 	Devices []vmInfoDevice `json:"devices"`
+	Console vmInfoConsole  `json:"console"`
 }
 type vmInfoDisk struct {
 	ID       string `json:"id"`
@@ -62,6 +63,11 @@ type vmInfoFS struct {
 type vmInfoDevice struct {
 	ID   string `json:"id"`
 	Path string `json:"path"`
+}
+
+type vmInfoConsole struct {
+	Mode string `json:"mode"`
+	File string `json:"file"`
 }
 
 func socketHTTPClient(socketPath string, timeout time.Duration) *http.Client {

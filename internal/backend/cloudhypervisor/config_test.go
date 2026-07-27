@@ -216,7 +216,7 @@ func TestRenderConfigSupportsOCIStorageDisks(t *testing.T) {
 	if rendered.Disks[1].Readonly || rendered.Disks[1].Serial != "kumabox-cow" {
 		t.Fatalf("cow disk = %+v", rendered.Disks[1])
 	}
-	wantCmdline := "console=ttyS0 kumabox.layers=kumabox-layer0 kumabox.cow=kumabox-cow kumabox.hostname=oci net.ifnames=0 ip=10.88.0.2::10.88.0.1:255.255.0.0:oci:eth0:off:1.1.1.1:8.8.8.8"
+	wantCmdline := "console=hvc0 kumabox.layers=kumabox-layer0 kumabox.cow=kumabox-cow kumabox.hostname=oci net.ifnames=0 ip=10.88.0.2::10.88.0.1:255.255.0.0:oci:eth0:off:1.1.1.1:8.8.8.8"
 	if rendered.Kernel == nil || rendered.Kernel.Cmdline != wantCmdline {
 		t.Fatalf("kernel = %+v", rendered.Kernel)
 	}
