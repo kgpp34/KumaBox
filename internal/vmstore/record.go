@@ -23,6 +23,7 @@ const (
 	FormatQCOW2      = "qcow2"
 	FilesystemEXT4   = "ext4"
 	FilesystemEROFS  = "erofs"
+	FilesystemNone   = "none"
 	StorageIDCOW     = "cow"
 	StorageIDCidata  = "cidata"
 	StorageSerialCOW = "kumabox-cow"
@@ -253,12 +254,24 @@ type StorageConfig struct {
 	Format           string       `json:"format,omitempty"`
 	Serial           string       `json:"serial,omitempty"`
 	Filesystem       string       `json:"filesystem,omitempty"`
+	MountPoint       string       `json:"mountPoint,omitempty"`
 	VirtualSizeBytes int64        `json:"virtualSizeBytes,omitempty"`
 	Base             *StorageBase `json:"base,omitempty"`
 	Type             string       `json:"type,omitempty"`      // Legacy P3 field.
 	ImageType        string       `json:"imageType,omitempty"` // Legacy P3 field.
 	SourceLayer      string       `json:"sourceLayer,omitempty"`
 	SizeBytes        int64        `json:"sizeBytes,omitempty"` // Legacy P3 field.
+}
+
+// DataDiskRequest describes a managed writable disk created together with a VM.
+// The VM record stores the normalized result as a StorageConfig.
+type DataDiskRequest struct {
+	Name       string
+	SizeBytes  int64
+	Filesystem string
+	MountPoint string
+	MountSet   bool
+	DirectIO   *bool
 }
 
 // EffectiveRole returns Role or its legacy Type equivalent.
@@ -318,6 +331,11 @@ func newRecord(id string, req CreateRequest, rootDir string, now time.Time) (*VM
 	network := primaryNetwork(networks)
 	cpus := normalizeCPUs(req.CPUs)
 	storageConfigs := normalizeStorageConfigs(req.StorageConfigs, rootDir, id)
+	dataConfigs, err := normalizeDataDisks(req.DataDisks, rootDir, id)
+	if err != nil {
+		return nil, err
+	}
+	storageConfigs = append(storageConfigs, dataConfigs...)
 	if overlay := cloudImageRootOverlay(storageConfigs); overlay != "" {
 		rootDisk = overlay
 	}
@@ -473,6 +491,77 @@ func normalizeStorageConfigs(configs []StorageConfig, rootDir, vmID string) []St
 		normalized = append(normalized, cfg)
 	}
 	return normalized
+}
+
+func normalizeDataDisks(disks []DataDiskRequest, rootDir, vmID string) ([]StorageConfig, error) {
+	if len(disks) == 0 {
+		return nil, nil
+	}
+	configs := make([]StorageConfig, 0, len(disks))
+	seen := make(map[string]struct{}, len(disks))
+	for i, disk := range disks {
+		if err := validateDataDiskRequest(disk); err != nil {
+			return nil, fmt.Errorf("data disk %d: %w", i, err)
+		}
+		if _, exists := seen[disk.Name]; exists {
+			return nil, fmt.Errorf("duplicate data disk name %q", disk.Name)
+		}
+		seen[disk.Name] = struct{}{}
+		filesystem := disk.Filesystem
+		if filesystem == "" {
+			filesystem = FilesystemEXT4
+		}
+		id := "data-" + disk.Name
+		mountPoint := disk.MountPoint
+		if !disk.MountSet && filesystem != FilesystemNone {
+			mountPoint = "/mnt/" + disk.Name
+		}
+		configs = append(configs, StorageConfig{
+			ID: id, Role: StorageRoleData,
+			Path:     filepath.Join(rootDir, "storage", "vms", vmID, id+".raw"),
+			Readonly: false, DirectIO: disk.DirectIO, Format: FormatRaw,
+			Serial: disk.Name, Filesystem: filesystem, MountPoint: mountPoint,
+			VirtualSizeBytes: disk.SizeBytes,
+		})
+	}
+	return configs, nil
+}
+
+func validateDataDiskRequest(disk DataDiskRequest) error {
+	if !validStorageName(disk.Name) {
+		return fmt.Errorf("name %q must start with a letter and contain only letters, digits, '_' or '-'", disk.Name)
+	}
+	if disk.SizeBytes < 16<<20 {
+		return fmt.Errorf("size must be at least 16MiB")
+	}
+	filesystem := disk.Filesystem
+	if filesystem == "" {
+		filesystem = FilesystemEXT4
+	}
+	if filesystem != FilesystemEXT4 && filesystem != FilesystemNone {
+		return fmt.Errorf("filesystem %q is unsupported", filesystem)
+	}
+	if disk.MountPoint != "" {
+		if !filepath.IsAbs(disk.MountPoint) || disk.MountPoint == "/" || strings.ContainsAny(disk.MountPoint, "\x00\n") {
+			return fmt.Errorf("mount point %q must be an absolute non-root path", disk.MountPoint)
+		}
+	}
+	if filesystem == FilesystemNone && disk.MountPoint != "" {
+		return fmt.Errorf("mount point requires a filesystem")
+	}
+	return nil
+}
+
+func validStorageName(value string) bool {
+	if len(value) == 0 || len(value) > 20 || value[0] < 'a' || value[0] > 'z' {
+		return false
+	}
+	for _, char := range value[1:] {
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '_' && char != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 func cloudImageRootOverlay(configs []StorageConfig) string {

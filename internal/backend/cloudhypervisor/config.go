@@ -147,6 +147,7 @@ func (r Renderer) RenderConfig(rec *vmstore.VMRecord) error {
 			Hostname:   rec.Name,
 			Username:   "kumabox",
 			Networks:   metadataNetworks(rec),
+			Mounts:     metadataMounts(rec),
 		}); err != nil {
 			return fmt.Errorf("render NoCloud metadata: %w", err)
 		}
@@ -160,6 +161,25 @@ func (r Renderer) RenderConfig(rec *vmstore.VMRecord) error {
 		return fmt.Errorf("write Cloud Hypervisor config: %w", err)
 	}
 	return nil
+}
+
+func metadataMounts(rec *vmstore.VMRecord) []metadata.Mount {
+	if rec == nil {
+		return nil
+	}
+	mounts := make([]metadata.Mount, 0)
+	for _, storage := range rec.StorageConfigs {
+		if storage.EffectiveRole() != vmstore.StorageRoleData || storage.MountPoint == "" || storage.Filesystem == "" || storage.Filesystem == vmstore.FilesystemNone {
+			continue
+		}
+		mounts = append(mounts, metadata.Mount{
+			Device:     "/dev/disk/by-id/virtio-" + storage.Serial,
+			MountPoint: storage.MountPoint,
+			Filesystem: storage.Filesystem,
+			Options:    "defaults,nofail",
+		})
+	}
+	return mounts
 }
 
 func validateNetworkQueues(rec *vmstore.VMRecord) error {

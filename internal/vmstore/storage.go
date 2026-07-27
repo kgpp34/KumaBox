@@ -110,6 +110,15 @@ func validateStorageShape(storage StorageConfig, role StorageRole) error {
 		if format != FormatRaw && format != FormatQCOW2 {
 			return storageError("data storage %q must use raw or qcow2 format", storage.ID)
 		}
+		if storage.Filesystem != FilesystemEXT4 && storage.Filesystem != FilesystemNone {
+			return storageError("data storage %q must use ext4 or none filesystem", storage.ID)
+		}
+		if storage.Filesystem == FilesystemNone && storage.MountPoint != "" {
+			return storageError("data storage %q with filesystem none cannot have a mount point", storage.ID)
+		}
+		if storage.MountPoint != "" && (!filepath.IsAbs(storage.MountPoint) || storage.MountPoint == "/" || strings.ContainsAny(storage.MountPoint, "\x00\n")) {
+			return storageError("data storage %q mount point must be an absolute non-root path", storage.ID)
+		}
 	case StorageRoleCidata:
 		if format != FormatRaw {
 			return storageError("cidata storage %q must use raw format", storage.ID)

@@ -71,7 +71,49 @@ func prepareStorageWithQEMUImg(ctx context.Context, rec *vmstore.VMRecord, rootD
 			if err := prepareCOW(cfg); err != nil {
 				return err
 			}
+		case vmstore.StorageRoleData:
+			if err := prepareDataDisk(cfg); err != nil {
+				return err
+			}
 		}
+	}
+	return nil
+}
+
+func prepareDataDisk(cfg vmstore.StorageConfig) error {
+	if cfg.Path == "" {
+		return fmt.Errorf("data storage path must not be empty")
+	}
+	sizeBytes := cfg.EffectiveVirtualSize()
+	if sizeBytes < 16<<20 {
+		return fmt.Errorf("data storage %s size must be at least 16MiB", cfg.ID)
+	}
+	if info, err := os.Stat(cfg.Path); err == nil && info.Mode().IsRegular() && info.Size() == sizeBytes {
+		return nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("stat data storage %s: %w", cfg.ID, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cfg.Path), 0o755); err != nil {
+		return fmt.Errorf("create data storage dir: %w", err)
+	}
+	file, err := os.OpenFile(cfg.Path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o600) //nolint:gosec
+	if err != nil {
+		return fmt.Errorf("create data storage %s: %w", cfg.ID, err)
+	}
+	if err := file.Truncate(sizeBytes); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("size data storage %s: %w", cfg.ID, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close data storage %s: %w", cfg.ID, err)
+	}
+	if cfg.Filesystem == "" || cfg.Filesystem == vmstore.FilesystemNone {
+		return nil
+	}
+	out, err := mkfsExt4(cfg.Path)
+	if err != nil {
+		_ = os.Remove(cfg.Path)
+		return fmt.Errorf("mkfs.ext4 data storage %s: %w: %s", cfg.ID, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

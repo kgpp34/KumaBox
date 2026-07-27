@@ -12,15 +12,16 @@ import (
 )
 
 type createVMFlags struct {
-	name     string
-	rootDisk string
-	kernel   string
-	initrd   string
-	firmware string
-	cpus     int
-	memory   string
-	storage  string
-	networks []string
+	name      string
+	rootDisk  string
+	kernel    string
+	initrd    string
+	firmware  string
+	cpus      int
+	memory    string
+	storage   string
+	dataDisks []string
+	networks  []string
 }
 
 func addCreateVMFlags(cmd *cobra.Command, flags *createVMFlags) {
@@ -32,6 +33,7 @@ func addCreateVMFlags(cmd *cobra.Command, flags *createVMFlags) {
 	cmd.Flags().IntVar(&flags.cpus, "cpus", 1, "number of vCPUs")
 	cmd.Flags().StringVar(&flags.memory, "memory", "512M", "guest memory size, for example 512M or 2G")
 	cmd.Flags().StringVar(&flags.storage, "storage", "", "per-VM writable COW size for OCI images, for example 4G")
+	cmd.Flags().StringArrayVar(&flags.dataDisks, "data-disk", nil, "managed data disk: size=20G,name=workspace,fstype=ext4,mount=/workspace")
 	cmd.Flags().StringArrayVar(&flags.networks, "network", nil, "network attachment, repeatable: none, default, host-tap, cni, or cni:NAME")
 	_ = cmd.MarkFlagRequired("name")
 }
@@ -51,7 +53,11 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 		if flags.rootDisk == "" {
 			return vmstore.CreateRequest{}, fmt.Errorf("either IMAGE or --root-disk is required")
 		}
-		return vmstore.CreateRequest{Name: flags.name, RootDisk: flags.rootDisk, Kernel: flags.kernel, Initrd: flags.initrd, Firmware: flags.firmware, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedNetworkFlags(flags.networks), RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}, nil
+		dataDisks, err := parseDataDisks(flags.dataDisks)
+		if err != nil {
+			return vmstore.CreateRequest{}, err
+		}
+		return vmstore.CreateRequest{Name: flags.name, RootDisk: flags.rootDisk, Kernel: flags.kernel, Initrd: flags.initrd, Firmware: flags.firmware, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedNetworkFlags(flags.networks), DataDisks: dataDisks, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}, nil
 	}
 	if flags.rootDisk != "" || flags.kernel != "" || flags.initrd != "" || flags.firmware != "" {
 		return vmstore.CreateRequest{}, fmt.Errorf("IMAGE cannot be combined with --root-disk, --kernel, --initrd, or --firmware")
@@ -80,7 +86,11 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 	if !strings.HasPrefix(digest, "sha256:") {
 		digest = "sha256:" + digest
 	}
-	req := vmstore.CreateRequest{Name: flags.name, RootDisk: image.RootDisk.Path, Kernel: image.Boot.Kernel, Initrd: image.Boot.Initrd, Firmware: image.Boot.Firmware, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedNetworkFlags(flags.networks), Image: &vmstore.ImageRef{ID: image.ID, Name: image.Name, RootDisk: image.RootDisk.Path, BootMode: image.Boot.Mode, Digest: digest}, StorageConfigs: []vmstore.StorageConfig{{ID: "root", Role: vmstore.StorageRoleCOW, Format: vmstore.FormatQCOW2, VirtualSizeBytes: image.RootDisk.VirtualSizeBytes, Base: &vmstore.StorageBase{Family: "cloudimg", ImageID: image.ID, Digest: digest, Format: image.RootDisk.Format, Path: image.RootDisk.Path}}}, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}
+	dataDisks, err := parseDataDisks(flags.dataDisks)
+	if err != nil {
+		return vmstore.CreateRequest{}, err
+	}
+	req := vmstore.CreateRequest{Name: flags.name, RootDisk: image.RootDisk.Path, Kernel: image.Boot.Kernel, Initrd: image.Boot.Initrd, Firmware: image.Boot.Firmware, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedNetworkFlags(flags.networks), DataDisks: dataDisks, Image: &vmstore.ImageRef{ID: image.ID, Name: image.Name, RootDisk: image.RootDisk.Path, BootMode: image.Boot.Mode, Digest: digest}, StorageConfigs: []vmstore.StorageConfig{{ID: "root", Role: vmstore.StorageRoleCOW, Format: vmstore.FormatQCOW2, VirtualSizeBytes: image.RootDisk.VirtualSizeBytes, Base: &vmstore.StorageBase{Family: "cloudimg", ImageID: image.ID, Digest: digest, Format: image.RootDisk.Format, Path: image.RootDisk.Path}}}, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}
 	if req.Firmware == "" && (req.Kernel == "" || req.Initrd == "") {
 		return vmstore.CreateRequest{}, fmt.Errorf("image %q has no usable boot configuration", args[0])
 	}
@@ -120,5 +130,113 @@ func newOCIImageCreateRequest(flags createVMFlags, image *imagestore.ImageRecord
 		layerDigests = append(layerDigests, layer.Digest)
 	}
 	storageConfigs = append(storageConfigs, vmstore.StorageConfig{ID: vmstore.StorageIDCOW, Role: vmstore.StorageRoleCOW, Format: vmstore.FormatRaw, Serial: vmstore.StorageSerialCOW, Filesystem: vmstore.FilesystemEXT4, VirtualSizeBytes: cowSize, Base: &vmstore.StorageBase{Family: vmstore.BaseFamilyOCI, ImageID: image.ID, Digest: manifestDigest, LayerDigests: append([]string(nil), layerDigests...)}})
-	return vmstore.CreateRequest{Name: flags.name, Kernel: image.Boot.Kernel, Initrd: image.Boot.Initrd, KernelCmdline: image.Boot.Cmdline, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedOCIImageNetworkFlags(flags.networks, cfg), StorageConfigs: storageConfigs, Image: &vmstore.ImageRef{ID: image.ID, Name: image.Name, RootDisk: image.RootDisk.Path, BootMode: image.Boot.Mode, Digest: manifestDigest, LayerDigests: append([]string(nil), layerDigests...)}, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}, nil
+	dataDisks, err := parseDataDisks(flags.dataDisks)
+	if err != nil {
+		return vmstore.CreateRequest{}, err
+	}
+	return vmstore.CreateRequest{Name: flags.name, Kernel: image.Boot.Kernel, Initrd: image.Boot.Initrd, KernelCmdline: image.Boot.Cmdline, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedOCIImageNetworkFlags(flags.networks, cfg), DataDisks: dataDisks, StorageConfigs: storageConfigs, Image: &vmstore.ImageRef{ID: image.ID, Name: image.Name, RootDisk: image.RootDisk.Path, BootMode: image.Boot.Mode, Digest: manifestDigest, LayerDigests: append([]string(nil), layerDigests...)}, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}, nil
+}
+
+func parseDataDisks(values []string) ([]vmstore.DataDiskRequest, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	result := make([]vmstore.DataDiskRequest, 0, len(values))
+	usedNames := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			key, val, ok := strings.Cut(strings.TrimSpace(part), "=")
+			if ok && strings.TrimSpace(key) == "name" && strings.TrimSpace(val) != "" {
+				usedNames[strings.TrimSpace(val)] = struct{}{}
+			}
+		}
+	}
+	for _, value := range values {
+		var disk vmstore.DataDiskRequest
+		seenKeys := make(map[string]struct{})
+		for _, part := range strings.Split(value, ",") {
+			key, val, ok := strings.Cut(strings.TrimSpace(part), "=")
+			if !ok || (strings.TrimSpace(val) == "" && strings.TrimSpace(key) != "mount") {
+				return nil, fmt.Errorf("--data-disk expects key=value fields: %q", value)
+			}
+			key = strings.TrimSpace(key)
+			if _, exists := seenKeys[key]; exists {
+				return nil, fmt.Errorf("--data-disk field %q repeated", key)
+			}
+			seenKeys[key] = struct{}{}
+			switch key {
+			case "name":
+				disk.Name = strings.TrimSpace(val)
+			case "size":
+				size, err := parsePositiveByteSize("--data-disk size", val)
+				if err != nil {
+					return nil, err
+				}
+				if size < 16<<20 {
+					return nil, fmt.Errorf("--data-disk size %s is below the 16M minimum", val)
+				}
+				disk.SizeBytes = size
+			case "fstype":
+				disk.Filesystem = strings.TrimSpace(val)
+				if disk.Filesystem != vmstore.FilesystemEXT4 && disk.Filesystem != vmstore.FilesystemNone {
+					return nil, fmt.Errorf("--data-disk: unsupported fstype %q", disk.Filesystem)
+				}
+			case "mount":
+				disk.MountPoint = strings.TrimSpace(val)
+				disk.MountSet = true
+			case "directio":
+				parsed, err := parseOptionalBool(val)
+				if err != nil {
+					return nil, fmt.Errorf("--data-disk directio: %w", err)
+				}
+				disk.DirectIO = parsed
+			default:
+				return nil, fmt.Errorf("--data-disk has unknown field %q", key)
+			}
+		}
+		explicitName := disk.Name != ""
+		if disk.Name == "" {
+			for index := 1; ; index++ {
+				candidate := fmt.Sprintf("data%d", index)
+				if _, exists := usedNames[candidate]; !exists {
+					disk.Name = candidate
+					usedNames[candidate] = struct{}{}
+					break
+				}
+			}
+		}
+		if explicitName && countDataDiskName(values, disk.Name) > 1 {
+			return nil, fmt.Errorf("--data-disk name %q duplicated", disk.Name)
+		}
+		result = append(result, disk)
+	}
+	return result, nil
+}
+
+func countDataDiskName(values []string, name string) int {
+	count := 0
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			key, val, ok := strings.Cut(strings.TrimSpace(part), "=")
+			if ok && strings.TrimSpace(key) == "name" && strings.TrimSpace(val) == name {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func parseOptionalBool(value string) (*bool, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "on", "true", "yes":
+		parsed := true
+		return &parsed, nil
+	case "off", "false", "no":
+		parsed := false
+		return &parsed, nil
+	case "auto":
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("expected on, off, or auto")
+	}
 }

@@ -77,6 +77,7 @@ type CreateRequest struct {
 	Network        string
 	Networks       []string
 	StorageConfigs []StorageConfig
+	DataDisks      []DataDiskRequest
 	RunDir         string
 	LogDir         string
 }

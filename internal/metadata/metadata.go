@@ -25,6 +25,15 @@ type Config struct {
 	Hostname   string
 	Username   string
 	Networks   []Network
+	Mounts     []Mount
+}
+
+// Mount describes one cloud-init mount entry for a managed data disk.
+type Mount struct {
+	Device     string
+	MountPoint string
+	Filesystem string
+	Options    string
 }
 
 // Network describes one guest interface in cloud-init network-config format.
@@ -60,6 +69,12 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
 ssh_pwauth: false
+{{- if .Mounts}}
+mounts:
+{{- range .Mounts}}
+  - ["{{.Device}}", "{{.MountPoint}}", "{{.Filesystem}}", "{{.Options}}", "0", "2"]
+{{- end}}
+{{- end}}
 `))
 
 	networkConfigTemplate = template.Must(template.New("network-config").Parse(`version: 2

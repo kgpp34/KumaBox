@@ -141,3 +141,42 @@ func TestCreatePlacesCOWInDurableOwnerDirectory(t *testing.T) {
 		t.Fatalf("COW path = %s, want %s", rec.StorageConfigs[1].Path, want)
 	}
 }
+
+func TestCreateNormalizesManagedDataDisks(t *testing.T) {
+	rootDir := t.TempDir()
+	store := New(rootDir)
+	rec, err := store.Create(CreateRequest{
+		Name: "data-disks", Kernel: "vmlinuz", Initrd: "initrd",
+		Image: &ImageRef{ID: "img_oci", Name: "oci", BootMode: "direct"},
+		StorageConfigs: []StorageConfig{{ID: "layer0", Role: StorageRoleLayer, Path: filepath.Join(rootDir, "layer.erofs"), Readonly: true, Format: FormatRaw, Filesystem: FilesystemEROFS}, {ID: "cow", Role: StorageRoleCOW, Format: FormatRaw, Filesystem: FilesystemEXT4, VirtualSizeBytes: 64 << 20, Base: &StorageBase{Family: BaseFamilyOCI, ImageID: "img_oci", Digest: "sha256:manifest", LayerDigests: []string{"sha256:layer"}}}},
+		DataDisks: []DataDiskRequest{{Name: "workspace", SizeBytes: 16 << 20}},
+		RunDir: filepath.Join(rootDir, "run"), LogDir: filepath.Join(rootDir, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.StorageConfigs) != 3 {
+		t.Fatalf("storage count = %d, want 3", len(rec.StorageConfigs))
+	}
+	disk := rec.StorageConfigs[2]
+	if disk.ID != "data-workspace" || disk.Serial != "workspace" || disk.MountPoint != "/mnt/workspace" || disk.Filesystem != FilesystemEXT4 {
+		t.Fatalf("data disk = %+v", disk)
+	}
+	wantPath := filepath.Join(rootDir, "storage", "vms", rec.ID, "data-workspace.raw")
+	if disk.Path != wantPath {
+		t.Fatalf("data disk path = %s, want %s", disk.Path, wantPath)
+	}
+}
+
+func TestCreateRejectsInvalidManagedDataDisk(t *testing.T) {
+	rootDir := t.TempDir()
+	store := New(rootDir)
+	_, err := store.Create(CreateRequest{
+		Name: "invalid-data", Kernel: "vmlinuz", Initrd: "initrd", RootDisk: filepath.Join(rootDir, "root.raw"),
+		DataDisks: []DataDiskRequest{{Name: "bad.name", SizeBytes: 16 << 20}},
+		RunDir: filepath.Join(rootDir, "run"), LogDir: filepath.Join(rootDir, "log"),
+	})
+	if err == nil {
+		t.Fatal("Create() error = nil, want invalid data disk error")
+	}
+}

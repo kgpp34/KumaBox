@@ -71,6 +71,21 @@ func TestRenderStaticNetworkConfig(t *testing.T) {
 	}
 }
 
+func TestRenderManagedDataDiskMount(t *testing.T) {
+	rendered, err := Render(Config{
+		InstanceID: "kb_test", Hostname: "data", Mounts: []Mount{{Device: "/dev/disk/by-id/virtio-workspace", MountPoint: "/mnt/workspace", Filesystem: "ext4", Options: "defaults,nofail"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	userData := string(rendered.UserData)
+	for _, want := range []string{"mounts:", "/dev/disk/by-id/virtio-workspace", "/mnt/workspace", "defaults,nofail"} {
+		if !strings.Contains(userData, want) {
+			t.Fatalf("user-data missing %q:\n%s", want, userData)
+		}
+	}
+}
+
 func TestWriteNoCloudImage(t *testing.T) {
 	var buf bytes.Buffer
 	if err := WriteNoCloudImage(&buf, Config{
