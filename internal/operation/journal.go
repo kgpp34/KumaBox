@@ -32,6 +32,8 @@ const (
 	KindNetworkResize       = "network.resize"
 	KindDiskAttach          = "disk.attach"
 	KindDiskDetach          = "disk.detach"
+	KindFilesystemAttach    = "filesystem.attach"
+	KindFilesystemDetach    = "filesystem.detach"
 	KindSnapshotCreateRun   = "snapshot.create-running"
 	KindSnapshotCloneNative = "snapshot.clone-native"
 	KindSnapshotRestoreDisk = "snapshot.restore-portable"

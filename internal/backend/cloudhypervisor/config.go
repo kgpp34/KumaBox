@@ -65,7 +65,8 @@ type CPUs struct {
 }
 
 type Memory struct {
-	Size int64 `json:"size"`
+	Size   int64 `json:"size"`
+	Shared bool  `json:"shared,omitempty"`
 }
 
 // Disk is one block device passed to Cloud Hypervisor.
@@ -222,7 +223,7 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 	args := []string{
 		"--api-socket", apiSocket,
 		"--cpus", fmt.Sprintf("boot=%d", cpus),
-		"--memory", fmt.Sprintf("size=%d", vmMemoryBytes(rec)),
+		"--memory", memoryArg(rec),
 	}
 	cmdline := kernelCmdline(rec)
 	if rec.Firmware != "" {
@@ -279,7 +280,7 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		StderrLog:    stderrLog,
 		NetnsPath:    netnsPath(rec),
 		CPUs:         CPUs{Boot: cpus},
-		Memory:       Memory{Size: vmMemoryBytes(rec)},
+		Memory:       Memory{Size: vmMemoryBytes(rec), Shared: rec.SharedMemory},
 		Disks:        disks,
 		Nets:         nets,
 		Vsock:        vsock,
@@ -322,6 +323,14 @@ func vmCPUs(rec *vmstore.VMRecord) int {
 
 func vmMemoryBytes(rec *vmstore.VMRecord) int64 {
 	return rec.EffectiveMemoryBytes()
+}
+
+func memoryArg(rec *vmstore.VMRecord) string {
+	value := fmt.Sprintf("size=%d", vmMemoryBytes(rec))
+	if rec.SharedMemory {
+		value += ",shared=on"
+	}
+	return value
 }
 
 func netnsPath(rec *vmstore.VMRecord) string {

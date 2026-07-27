@@ -78,6 +78,7 @@ type CreateRequest struct {
 	Networks       []string
 	StorageConfigs []StorageConfig
 	DataDisks      []DataDiskRequest
+	SharedMemory   bool
 	RunDir         string
 	LogDir         string
 }
@@ -456,6 +457,25 @@ func (s *Store) SetAttachedDisks(ref string, disks []AttachedDisk) (*VMRecord, e
 		}
 		rec := idx.VMs[id]
 		rec.AttachedDisks = append([]AttachedDisk(nil), disks...)
+		rec.UpdatedAt = time.Now().UTC()
+		updated = cloneRecord(rec)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+func (s *Store) SetAttachedFilesystems(ref string, filesystems []AttachedFilesystem) (*VMRecord, error) {
+	var updated *VMRecord
+	err := s.update(func(idx *vmIndex) error {
+		id, err := idx.resolve(ref)
+		if err != nil {
+			return err
+		}
+		rec := idx.VMs[id]
+		rec.AttachedFilesystems = append([]AttachedFilesystem(nil), filesystems...)
 		rec.UpdatedAt = time.Now().UTC()
 		updated = cloneRecord(rec)
 		return nil

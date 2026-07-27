@@ -12,16 +12,17 @@ import (
 )
 
 type createVMFlags struct {
-	name      string
-	rootDisk  string
-	kernel    string
-	initrd    string
-	firmware  string
-	cpus      int
-	memory    string
-	storage   string
-	dataDisks []string
-	networks  []string
+	name         string
+	rootDisk     string
+	kernel       string
+	initrd       string
+	firmware     string
+	cpus         int
+	memory       string
+	storage      string
+	dataDisks    []string
+	sharedMemory bool
+	networks     []string
 }
 
 func addCreateVMFlags(cmd *cobra.Command, flags *createVMFlags) {
@@ -34,6 +35,7 @@ func addCreateVMFlags(cmd *cobra.Command, flags *createVMFlags) {
 	cmd.Flags().StringVar(&flags.memory, "memory", "512M", "guest memory size, for example 512M or 2G")
 	cmd.Flags().StringVar(&flags.storage, "storage", "", "per-VM writable COW size for OCI images, for example 4G")
 	cmd.Flags().StringArrayVar(&flags.dataDisks, "data-disk", nil, "managed data disk: size=20G,name=workspace,fstype=ext4,mount=/workspace")
+	cmd.Flags().BoolVar(&flags.sharedMemory, "shared-memory", false, "enable shared guest memory for virtio-fs")
 	cmd.Flags().StringArrayVar(&flags.networks, "network", nil, "network attachment, repeatable: none, default, host-tap, cni, or cni:NAME")
 	_ = cmd.MarkFlagRequired("name")
 }
@@ -57,7 +59,7 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 		if err != nil {
 			return vmstore.CreateRequest{}, err
 		}
-		return vmstore.CreateRequest{Name: flags.name, RootDisk: flags.rootDisk, Kernel: flags.kernel, Initrd: flags.initrd, Firmware: flags.firmware, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedNetworkFlags(flags.networks), DataDisks: dataDisks, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}, nil
+		return vmstore.CreateRequest{Name: flags.name, RootDisk: flags.rootDisk, Kernel: flags.kernel, Initrd: flags.initrd, Firmware: flags.firmware, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedNetworkFlags(flags.networks), DataDisks: dataDisks, SharedMemory: flags.sharedMemory, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}, nil
 	}
 	if flags.rootDisk != "" || flags.kernel != "" || flags.initrd != "" || flags.firmware != "" {
 		return vmstore.CreateRequest{}, fmt.Errorf("IMAGE cannot be combined with --root-disk, --kernel, --initrd, or --firmware")
@@ -90,7 +92,7 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 	if err != nil {
 		return vmstore.CreateRequest{}, err
 	}
-	req := vmstore.CreateRequest{Name: flags.name, RootDisk: image.RootDisk.Path, Kernel: image.Boot.Kernel, Initrd: image.Boot.Initrd, Firmware: image.Boot.Firmware, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedNetworkFlags(flags.networks), DataDisks: dataDisks, Image: &vmstore.ImageRef{ID: image.ID, Name: image.Name, RootDisk: image.RootDisk.Path, BootMode: image.Boot.Mode, Digest: digest}, StorageConfigs: []vmstore.StorageConfig{{ID: "root", Role: vmstore.StorageRoleCOW, Format: vmstore.FormatQCOW2, VirtualSizeBytes: image.RootDisk.VirtualSizeBytes, Base: &vmstore.StorageBase{Family: "cloudimg", ImageID: image.ID, Digest: digest, Format: image.RootDisk.Format, Path: image.RootDisk.Path}}}, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}
+	req := vmstore.CreateRequest{Name: flags.name, RootDisk: image.RootDisk.Path, Kernel: image.Boot.Kernel, Initrd: image.Boot.Initrd, Firmware: image.Boot.Firmware, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedNetworkFlags(flags.networks), DataDisks: dataDisks, SharedMemory: flags.sharedMemory, Image: &vmstore.ImageRef{ID: image.ID, Name: image.Name, RootDisk: image.RootDisk.Path, BootMode: image.Boot.Mode, Digest: digest}, StorageConfigs: []vmstore.StorageConfig{{ID: "root", Role: vmstore.StorageRoleCOW, Format: vmstore.FormatQCOW2, VirtualSizeBytes: image.RootDisk.VirtualSizeBytes, Base: &vmstore.StorageBase{Family: "cloudimg", ImageID: image.ID, Digest: digest, Format: image.RootDisk.Format, Path: image.RootDisk.Path}}}, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}
 	if req.Firmware == "" && (req.Kernel == "" || req.Initrd == "") {
 		return vmstore.CreateRequest{}, fmt.Errorf("image %q has no usable boot configuration", args[0])
 	}
@@ -134,7 +136,7 @@ func newOCIImageCreateRequest(flags createVMFlags, image *imagestore.ImageRecord
 	if err != nil {
 		return vmstore.CreateRequest{}, err
 	}
-	return vmstore.CreateRequest{Name: flags.name, Kernel: image.Boot.Kernel, Initrd: image.Boot.Initrd, KernelCmdline: image.Boot.Cmdline, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedOCIImageNetworkFlags(flags.networks, cfg), DataDisks: dataDisks, StorageConfigs: storageConfigs, Image: &vmstore.ImageRef{ID: image.ID, Name: image.Name, RootDisk: image.RootDisk.Path, BootMode: image.Boot.Mode, Digest: manifestDigest, LayerDigests: append([]string(nil), layerDigests...)}, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}, nil
+	return vmstore.CreateRequest{Name: flags.name, Kernel: image.Boot.Kernel, Initrd: image.Boot.Initrd, KernelCmdline: image.Boot.Cmdline, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedOCIImageNetworkFlags(flags.networks, cfg), DataDisks: dataDisks, SharedMemory: flags.sharedMemory, StorageConfigs: storageConfigs, Image: &vmstore.ImageRef{ID: image.ID, Name: image.Name, RootDisk: image.RootDisk.Path, BootMode: image.Boot.Mode, Digest: manifestDigest, LayerDigests: append([]string(nil), layerDigests...)}, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}, nil
 }
 
 func parseDataDisks(values []string) ([]vmstore.DataDiskRequest, error) {

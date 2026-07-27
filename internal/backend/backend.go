@@ -48,6 +48,17 @@ type NetworkController interface {
 	DetachNetwork(context.Context, *vmstore.VMRecord, kbnetwork.Config) error
 }
 
+type FilesystemSpec struct {
+	Socket, Tag          string
+	NumQueues, QueueSize int
+}
+type AttachedFilesystem struct{ ID, Tag, Socket string }
+type FilesystemController interface {
+	AttachFilesystem(context.Context, *vmstore.VMRecord, FilesystemSpec) (AttachedFilesystem, error)
+	DetachFilesystem(context.Context, *vmstore.VMRecord, string) error
+	ListFilesystems(context.Context, *vmstore.VMRecord) ([]AttachedFilesystem, error)
+}
+
 // NativeSnapshotter captures backend-owned memory, device, and VM state into
 // an existing empty directory while the VM is paused.
 type NativeSnapshotter interface {

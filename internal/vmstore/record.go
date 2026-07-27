@@ -87,45 +87,47 @@ type Observation struct {
 // indexes, such as host-tap leases, remain outside the VM index and are linked
 // by NetworkConfigs.
 type VMRecord struct {
-	ID                 string                   `json:"id"`
-	Name               string                   `json:"name"`
-	Backend            string                   `json:"backend"`
-	State              VMState                  `json:"state"`
-	ObservedState      ObservedState            `json:"observedState,omitempty"`
-	ObservedReason     string                   `json:"observedReason,omitempty"`
-	ObservedAt         *time.Time               `json:"observedAt,omitempty"`
-	PID                int                      `json:"pid,omitempty"`
-	APISocket          string                   `json:"apiSocket,omitempty"`
-	VsockSocket        string                   `json:"vsockSocket,omitempty"`
-	Error              string                   `json:"error,omitempty"`
-	Restore            *RestoreStatus           `json:"restore,omitempty"`
-	LastRestore        *RestoreResult           `json:"lastRestore,omitempty"`
-	Performance        *PerformanceMetrics      `json:"performance,omitempty"`
-	SnapshotDependency *SnapshotDependency      `json:"snapshotDependency,omitempty"`
-	Hibernate          *HibernateStatus         `json:"hibernate,omitempty"`
-	RootDisk           string                   `json:"rootDisk"`
-	Kernel             string                   `json:"kernel,omitempty"`
-	Initrd             string                   `json:"initrd,omitempty"`
-	KernelCmdline      string                   `json:"kernelCmdline,omitempty"`
-	Firmware           string                   `json:"firmware,omitempty"`
-	Image              *ImageRef                `json:"image,omitempty"`
-	CPUs               int                      `json:"cpus"`
-	MemoryBytes        int64                    `json:"memoryBytes"`
-	Metadata           *Metadata                `json:"metadata,omitempty"`
-	StorageConfigs     []StorageConfig          `json:"storageConfigs,omitempty"`
-	AttachedDisks      []AttachedDisk           `json:"attachedDisks,omitempty"`
-	NetworkConfigs     []kbnetwork.Config       `json:"networkConfigs,omitempty"`
-	Network            string                   `json:"network,omitempty"`
-	Networks           []string                 `json:"networks,omitempty"`
-	NetworkStatus      *kbnetwork.InspectResult `json:"networkStatus,omitempty"`
-	RunDir             string                   `json:"runDir"`
-	LogDir             string                   `json:"logDir"`
-	Config             string                   `json:"config"`
-	CreatedAt          time.Time                `json:"createdAt"`
-	UpdatedAt          time.Time                `json:"updatedAt"`
-	StartedAt          *time.Time               `json:"startedAt,omitempty"`
-	StoppedAt          *time.Time               `json:"stoppedAt,omitempty"`
-	FirstBooted        bool                     `json:"firstBooted,omitempty"`
+	ID                  string                   `json:"id"`
+	Name                string                   `json:"name"`
+	Backend             string                   `json:"backend"`
+	State               VMState                  `json:"state"`
+	ObservedState       ObservedState            `json:"observedState,omitempty"`
+	ObservedReason      string                   `json:"observedReason,omitempty"`
+	ObservedAt          *time.Time               `json:"observedAt,omitempty"`
+	PID                 int                      `json:"pid,omitempty"`
+	APISocket           string                   `json:"apiSocket,omitempty"`
+	VsockSocket         string                   `json:"vsockSocket,omitempty"`
+	Error               string                   `json:"error,omitempty"`
+	Restore             *RestoreStatus           `json:"restore,omitempty"`
+	LastRestore         *RestoreResult           `json:"lastRestore,omitempty"`
+	Performance         *PerformanceMetrics      `json:"performance,omitempty"`
+	SnapshotDependency  *SnapshotDependency      `json:"snapshotDependency,omitempty"`
+	Hibernate           *HibernateStatus         `json:"hibernate,omitempty"`
+	RootDisk            string                   `json:"rootDisk"`
+	Kernel              string                   `json:"kernel,omitempty"`
+	Initrd              string                   `json:"initrd,omitempty"`
+	KernelCmdline       string                   `json:"kernelCmdline,omitempty"`
+	Firmware            string                   `json:"firmware,omitempty"`
+	Image               *ImageRef                `json:"image,omitempty"`
+	CPUs                int                      `json:"cpus"`
+	MemoryBytes         int64                    `json:"memoryBytes"`
+	SharedMemory        bool                     `json:"sharedMemory,omitempty"`
+	Metadata            *Metadata                `json:"metadata,omitempty"`
+	StorageConfigs      []StorageConfig          `json:"storageConfigs,omitempty"`
+	AttachedDisks       []AttachedDisk           `json:"attachedDisks,omitempty"`
+	AttachedFilesystems []AttachedFilesystem     `json:"attachedFilesystems,omitempty"`
+	NetworkConfigs      []kbnetwork.Config       `json:"networkConfigs,omitempty"`
+	Network             string                   `json:"network,omitempty"`
+	Networks            []string                 `json:"networks,omitempty"`
+	NetworkStatus       *kbnetwork.InspectResult `json:"networkStatus,omitempty"`
+	RunDir              string                   `json:"runDir"`
+	LogDir              string                   `json:"logDir"`
+	Config              string                   `json:"config"`
+	CreatedAt           time.Time                `json:"createdAt"`
+	UpdatedAt           time.Time                `json:"updatedAt"`
+	StartedAt           *time.Time               `json:"startedAt,omitempty"`
+	StoppedAt           *time.Time               `json:"stoppedAt,omitempty"`
+	FirstBooted         bool                     `json:"firstBooted,omitempty"`
 }
 
 // RestoreStatus is the durable recovery marker for an in-place native
@@ -282,6 +284,12 @@ type AttachedDisk struct {
 	ReadOnly bool   `json:"readonly,omitempty"`
 }
 
+type AttachedFilesystem struct {
+	ID     string `json:"id"`
+	Tag    string `json:"tag"`
+	Socket string `json:"socket"`
+}
+
 // EffectiveRole returns Role or its legacy Type equivalent.
 func (c StorageConfig) EffectiveRole() StorageRole {
 	if c.Role != "" {
@@ -360,6 +368,7 @@ func newRecord(id string, req CreateRequest, rootDir string, now time.Time) (*VM
 		Image:          cloneImageRef(req.Image),
 		CPUs:           cpus,
 		MemoryBytes:    normalizeMemoryBytes(req.MemoryBytes),
+		SharedMemory:   req.SharedMemory,
 		StorageConfigs: storageConfigs,
 		Network:        network,
 		Networks:       cloneStrings(networks),
@@ -437,6 +446,7 @@ func cloneRecord(rec *VMRecord) *VMRecord {
 	copied.Image = cloneImageRef(rec.Image)
 	copied.StorageConfigs = cloneStorageConfigs(rec.StorageConfigs)
 	copied.AttachedDisks = append([]AttachedDisk(nil), rec.AttachedDisks...)
+	copied.AttachedFilesystems = append([]AttachedFilesystem(nil), rec.AttachedFilesystems...)
 	copied.Networks = cloneStrings(rec.Networks)
 	copied.NetworkConfigs = cloneNetworkConfigs(rec.NetworkConfigs)
 	copied.NetworkStatus = cloneNetworkStatus(rec.NetworkStatus)

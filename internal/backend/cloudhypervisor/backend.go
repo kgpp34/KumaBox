@@ -13,6 +13,7 @@ var _ backend.NativeHostInspector = Backend{}
 var _ backend.NativeRestorer = Backend{}
 var _ backend.NativeCloner = Backend{}
 var _ backend.DiskController = Backend{}
+var _ backend.FilesystemController = Backend{}
 
 type Backend struct {
 	renderer Renderer
