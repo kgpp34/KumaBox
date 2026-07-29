@@ -15,6 +15,7 @@ root_dir=/tmp/kumabox-p0/data
 run_dir=/tmp/kumabox-p0/run
 log_dir=/tmp/kumabox-p0/logs
 image=p6-agent-image
+image_ref=kumabox/ubuntu:24.04-p6
 network=cni:default
 storage=64M
 metadata_backend=json
@@ -23,6 +24,7 @@ use_sudo=false
 skip_unit=false
 keep_failed=true
 skip_hotplug=false
+rebuild_image=false
 
 usage() {
   cat <<'EOF'
@@ -44,6 +46,7 @@ Options:
   --run-dir PATH
   --log-dir PATH
   --image NAME
+  --image-ref REF             OCI ref used with --rebuild-image
   --network NETWORK
   --storage SIZE
   --metadata-backend json|sqlite
@@ -52,6 +55,7 @@ Options:
   --sudo
   --cleanup-on-success
   --skip-hotplug
+  --rebuild-image             rebuild the managed OCI image before boot suites
 EOF
 }
 
@@ -68,6 +72,7 @@ while (($#)); do
     --run-dir) require_value "$1" "${2:-}"; run_dir=$2; shift 2 ;;
     --log-dir) require_value "$1" "${2:-}"; log_dir=$2; shift 2 ;;
     --image) require_value "$1" "${2:-}"; image=$2; shift 2 ;;
+    --image-ref) require_value "$1" "${2:-}"; image_ref=$2; shift 2 ;;
     --network) require_value "$1" "${2:-}"; network=$2; shift 2 ;;
     --storage) require_value "$1" "${2:-}"; storage=$2; shift 2 ;;
     --metadata-backend) require_value "$1" "${2:-}"; metadata_backend=$2; shift 2 ;;
@@ -76,6 +81,7 @@ while (($#)); do
     --sudo) use_sudo=true; shift ;;
     --cleanup-on-success) keep_failed=false; shift ;;
     --skip-hotplug) skip_hotplug=true; shift ;;
+    --rebuild-image) rebuild_image=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -130,7 +136,11 @@ run_suite() {
   printf '\n==> E2E suite: %s\n' "$suite"
   case "$suite" in
     oci)
-      "${prefix[@]}" "$script_dir/verify.sh" "$suite" "${common_args[@]}" --image-name "$image" --skip-base-build --skip-image-build --sudo
+      suite_args=("${common_args[@]}" --image-name "$image" --image-ref "$image_ref" --skip-base-build --sudo)
+      if [[ "$rebuild_image" != true ]]; then
+        suite_args+=(--skip-image-build)
+      fi
+      "${prefix[@]}" "$script_dir/verify.sh" "$suite" "${suite_args[@]}"
       ;;
     boot)
       suite_args=(
@@ -141,6 +151,7 @@ run_suite() {
         --run-dir "$run_dir"
         --log-dir "$log_dir"
         --image-name "$image"
+        --image-ref "$image_ref"
         --network "$network"
         --storage "$storage"
         --metadata-backend "$metadata_backend"
