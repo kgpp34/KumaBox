@@ -19,7 +19,6 @@ image_ref=kumabox/ubuntu:24.04-p6
 network=cni:default
 storage=64M
 metadata_backend=json
-metadata_path=
 use_sudo=false
 skip_unit=false
 keep_failed=true
@@ -43,15 +42,11 @@ Options:
   --kumabox PATH
   --cloud-hypervisor PATH
   --qemu-img PATH
-  --root-dir PATH
-  --run-dir PATH
-  --log-dir PATH
   --image NAME
   --image-ref REF             OCI ref used with --rebuild-image
   --network NETWORK
   --storage SIZE
   --metadata-backend json|sqlite
-  --metadata-path PATH       SQLite path; defaults to ROOT/metadata/kumabox.db
   --skip-unit
   --sudo
   --cleanup-on-success
@@ -70,15 +65,15 @@ while (($#)); do
     --kumabox) require_value "$1" "${2:-}"; kumabox=$2; shift 2 ;;
     --cloud-hypervisor) require_value "$1" "${2:-}"; cloud_hypervisor=$2; shift 2 ;;
     --qemu-img) require_value "$1" "${2:-}"; qemu_img=$2; shift 2 ;;
-    --root-dir) require_value "$1" "${2:-}"; root_dir=$2; shift 2 ;;
-    --run-dir) require_value "$1" "${2:-}"; run_dir=$2; shift 2 ;;
-    --log-dir) require_value "$1" "${2:-}"; log_dir=$2; shift 2 ;;
+    --root-dir|--run-dir|--log-dir|--metadata-path)
+      echo "$1 is not configurable for the E2E suite; use KumaBox system defaults" >&2
+      exit 2
+      ;;
     --image) require_value "$1" "${2:-}"; image=$2; shift 2 ;;
     --image-ref) require_value "$1" "${2:-}"; image_ref=$2; shift 2 ;;
     --network) require_value "$1" "${2:-}"; network=$2; shift 2 ;;
     --storage) require_value "$1" "${2:-}"; storage=$2; shift 2 ;;
     --metadata-backend) require_value "$1" "${2:-}"; metadata_backend=$2; shift 2 ;;
-    --metadata-path) require_value "$1" "${2:-}"; metadata_path=$2; shift 2 ;;
     --skip-unit) skip_unit=true; shift ;;
     --sudo) use_sudo=true; shift ;;
     --cleanup-on-success) keep_failed=false; shift ;;
@@ -109,21 +104,15 @@ common_args=(
   --kumabox "$kumabox"
   --cloud-hypervisor "$cloud_hypervisor"
   --qemu-img "$qemu_img"
-  --root-dir "$root_dir"
-  --run-dir "$run_dir"
-  --log-dir "$log_dir"
   --storage "$storage"
   --metadata-backend "$metadata_backend"
 )
-if [[ -n "$metadata_path" ]]; then
-  common_args+=(--metadata-path "$metadata_path")
-fi
 
 print_failure_context() {
   local status=$?
   [[ $status -eq 0 ]] && return
   printf '\n==> E2E failure context\n' >&2
-  printf 'root_dir=%s\nrun_dir=%s\nlog_dir=%s\n' "$root_dir" "$run_dir" "$log_dir" >&2
+  printf 'root_dir=/var/lib/kumabox\nrun_dir=/run/kumabox\nlog_dir=/var/log/kumabox\n' >&2
   if [[ -d "$run_dir/vms" ]]; then
     find "$run_dir/vms" -maxdepth 2 -type f \( -name console.log -o -name cloud-hypervisor.stderr.log -o -name cloud-hypervisor.json \) -print >&2 || true
   fi
@@ -186,9 +175,6 @@ run_suite() {
         --kumabox "$kumabox"
         --cloud-hypervisor "$cloud_hypervisor"
         --qemu-img "$qemu_img"
-        --root-dir "$root_dir"
-        --run-dir "$run_dir"
-        --log-dir "$log_dir"
         --image-name "$image"
         --image-ref "$image_ref"
         --network "$network"
@@ -197,9 +183,6 @@ run_suite() {
         --skip-build
         --skip-image-build
       )
-      if [[ -n "$metadata_path" ]]; then
-        suite_args+=(--metadata-path "$metadata_path")
-      fi
       "${prefix[@]}" "$script_dir/verify-oci-boot-disk.sh" "${suite_args[@]}"
       ;;
     cni|snapshot)
@@ -210,18 +193,12 @@ run_suite() {
         --kumabox "$kumabox"
         --cloud-hypervisor "$cloud_hypervisor"
         --qemu-img "$qemu_img"
-        --root-dir "$root_dir"
-        --run-dir "$run_dir"
-        --log-dir "$log_dir"
         --image "$image"
         --network "$network"
         --storage "$storage"
         --metadata-backend "$metadata_backend"
         --sudo
       )
-      if [[ -n "$metadata_path" ]]; then
-        suite_args+=(--metadata-path "$metadata_path")
-      fi
       "${prefix[@]}" "$script_dir/verify-p8-hotplug.sh" "${suite_args[@]}"
       ;;
     *)
