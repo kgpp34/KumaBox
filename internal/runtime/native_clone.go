@@ -136,7 +136,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err := r.backend.RenderConfig(rec); err != nil {
 		return nil, fmt.Errorf("render clone launch config: %w", err)
 	}
-	staged, stageMetrics, err := stageNativeRestore(ctx, snapshotRec, manifest, rec, string(opts.Mode))
+	staged, stageMetrics, err := stageNativeRestore(ctx, snapshotRec, manifest, rec)
 	if err != nil {
 		return nil, err
 	}

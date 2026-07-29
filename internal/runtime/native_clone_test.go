@@ -41,8 +41,17 @@ func TestCloneNativeSnapshotCreatesIndependentRunningVM(t *testing.T) {
 			if rec.ID == source.ID || rec.Restore == nil || mode != "copy" {
 				t.Fatalf("clone backend record = %+v", rec)
 			}
-			if _, err := os.Stat(filepath.Join(nativeDir, "memory-range-0")); err != nil {
+			memoryPath := filepath.Join(nativeDir, "memory-range-0")
+			memoryInfo, err := os.Stat(memoryPath)
+			if err != nil {
 				t.Fatal(err)
+			}
+			sourceInfo, err := os.Stat(filepath.Join(ready.DataDir, snapshot.NativePayloadDir, "memory-range-0"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !os.SameFile(sourceInfo, memoryInfo) {
+				t.Fatal("copy clone copied native memory before Cloud Hypervisor restore")
 			}
 			return &backend.StartResult{PID: 9876, APISocket: filepath.Join(rec.RunDir, "ch.sock")}, nil
 		},

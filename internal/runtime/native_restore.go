@@ -105,7 +105,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	if err := r.backend.RenderConfig(rec); err != nil {
 		return nil, fmt.Errorf("render restore launch config: %w", err)
 	}
-	staged, stageMetrics, err := stageNativeRestore(ctx, snapshotRec, manifest, rec, string(opts.Mode))
+	staged, stageMetrics, err := stageNativeRestore(ctx, snapshotRec, manifest, rec)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +171,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	return r.applyObservation(restored), nil
 }
 
-func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manifest *snapshot.Manifest, rec *vmstore.VMRecord, mode string) (*stagedRestore, restoreStageMetrics, error) {
+func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manifest *snapshot.Manifest, rec *vmstore.VMRecord) (*stagedRestore, restoreStageMetrics, error) {
 	var metrics restoreStageMetrics
 	nativeStageStarted := time.Now()
 	root := filepath.Join(rec.RunDir, ".restore-staging")
@@ -195,7 +195,9 @@ func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manif
 		}
 		source := filepath.Join(snapshotRec.DataDir, filepath.FromSlash(file.Path))
 		destination := filepath.Join(nativeDir, filepath.Base(file.Path))
-		if restoreModePinsSnapshot(RestoreMode(mode)) && snapshot.IsNativeMemoryFile(file.Path) {
+		// Cloud Hypervisor owns eager-copy versus delayed paging. The host must
+		// not make a second full copy before vm.restore in either case.
+		if snapshot.IsNativeMemoryFile(file.Path) {
 			if err := linkNativeMemory(source, destination); err != nil {
 				return nil, metrics, fmt.Errorf("link native memory payload %s: %w", file.Path, err)
 			}
