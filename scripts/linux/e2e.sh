@@ -89,13 +89,7 @@ fi
 
 step() { printf '\n==> %s\n' "$1"; }
 kb() { "${run[@]}" "$kumabox" --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" --metadata-backend "$metadata_backend" "$@"; }
-kb_preserve_failed_clone() {
-  if ((${#run[@]})); then
-    "${run[@]}" env KUMABOX_PRESERVE_FAILED_CLONE=1 "$kumabox" --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" --metadata-backend "$metadata_backend" "$@"
-    return
-  fi
-  KUMABOX_PRESERVE_FAILED_CLONE=1 "$kumabox" --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" --metadata-backend "$metadata_backend" "$@"
-}
+host() { "${run[@]}" "$@"; }
 
 names=(e2e-exec e2e-boot e2e-cni e2e-stopped-source e2e-stopped-restored e2e-native-source e2e-native-clone e2e-hotplug)
 snapshots=(e2e-stopped e2e-stopped-import e2e-native)
@@ -112,6 +106,10 @@ failure_context() {
   [[ $status -eq 0 ]] && return
   printf '\n==> E2E failure context\n' >&2
   kb ps --json 2>/dev/null >&2 || true
+	printf '\n==> retained native clone record\n' >&2
+	kb inspect e2e-native-clone --json 2>&1 >&2 || true
+	printf '\n==> retained native clone diagnostics\n' >&2
+	find /var/lib/kumabox/diagnostics/native-clone -maxdepth 2 -type f -print -exec sh -c 'printf "\\n--- %s ---\\n" "$1"; tail -n 160 "$1"' _ {} \; 2>/dev/null >&2 || true
   find /var/log/kumabox/vms -maxdepth 2 -type f \( -name console.log -o -name cloud-hypervisor.stderr.log \) -print 2>/dev/null >&2 || true
   if [[ -n ${native_debug_dir:-} && -d "$native_debug_dir" ]]; then
     printf '\n==> preserved E2E diagnostics\n' >&2
@@ -119,6 +117,60 @@ failure_context() {
   fi
 }
 trap failure_context EXIT
+
+capture_native_clone_debug() {
+  local vm_json="$native_debug_dir/clone-vm.json"
+  local api_socket run_dir log_dir netns_path tap pid console_path
+  kb inspect e2e-native-clone --json >"$vm_json" 2>&1 || return 0
+  run_dir=$(jq -r '.runDir // empty' "$vm_json")
+  log_dir=$(jq -r '.logDir // empty' "$vm_json")
+  api_socket=$(jq -r '.apiSocket // empty' "$vm_json")
+  netns_path=$(jq -r '.networkConfigs[0].netnsPath // empty' "$vm_json")
+  tap=$(jq -r '.networkConfigs[0].tap // empty' "$vm_json")
+  pid=$(jq -r '.pid // empty' "$vm_json")
+
+  {
+    printf 'captured_at=%s\n' "$(date -u +%FT%TZ)"
+    printf 'run_dir=%s\nlog_dir=%s\napi_socket=%s\nnetns_path=%s\ntap=%s\npid=%s\n' "$run_dir" "$log_dir" "$api_socket" "$netns_path" "$tap" "$pid"
+    df -h /var/lib/kumabox /var/log/kumabox
+    findmnt -T /var/lib/kumabox/run -o TARGET,SOURCE,FSTYPE,OPTIONS
+  } >"$native_debug_dir/clone-host-state.txt" 2>&1 || true
+
+  if [[ -n "$run_dir" && -d "$run_dir" ]]; then
+    host cp "$run_dir/cloud-hypervisor.json" "$native_debug_dir/cloud-hypervisor.json" 2>/dev/null || true
+    host find -L "$run_dir" -maxdepth 3 -type f -printf '%n %s %p -> %l\n' | sort >"$native_debug_dir/run-files.txt" 2>&1 || true
+    if [[ -d "$run_dir/.restore-staging/native" ]]; then
+      host find -L "$run_dir/.restore-staging/native" -maxdepth 1 -type f -printf '%n %s %p -> %l\n' | sort >"$native_debug_dir/staged-memory.txt" 2>&1 || true
+    fi
+  fi
+  if [[ -n "$pid" && "$pid" != 0 ]]; then
+    host ps -fp "$pid" >"$native_debug_dir/vmm-process.txt" 2>&1 || true
+    host sh -c 'tr "\\0" " " <"$1"' sh "/proc/$pid/cmdline" >"$native_debug_dir/vmm-command.txt" 2>&1 || true
+  fi
+  if [[ -n "$tap" ]]; then
+    host ip -d link show "$tap" >"$native_debug_dir/tap-link.txt" 2>&1 || true
+  fi
+  if [[ -n "$netns_path" && -e "$netns_path" ]]; then
+    host ip netns exec "$netns_path" ip -d link show >"$native_debug_dir/netns-links.txt" 2>&1 || true
+    host ip netns exec "$netns_path" ip route show >"$native_debug_dir/netns-routes.txt" 2>&1 || true
+  fi
+  if [[ -n "$api_socket" && -S "$api_socket" ]]; then
+    host curl --silent --show-error --unix-socket "$api_socket" http://localhost/api/v1/vm.info >"$native_debug_dir/vm-info.json" 2>"$native_debug_dir/vm-info.err" || true
+    console_path=$(jq -r '.config.console.file // empty' "$native_debug_dir/vm-info.json" 2>/dev/null || true)
+    if [[ -n "$console_path" && -r "$console_path" ]]; then
+      host timeout 2s dd if="$console_path" iflag=nonblock status=none >"$native_debug_dir/console-pty.log" 2>"$native_debug_dir/console-pty.err" || true
+    fi
+  fi
+  if [[ -n "$log_dir" && -d "$log_dir" ]]; then
+    {
+      for log in "$log_dir"/cloud-hypervisor.stderr.log "$log_dir"/cloud-hypervisor.stdout.log "$log_dir"/console.log; do
+        [[ -f "$log" ]] || continue
+        printf '\n--- %s ---\n' "$log"
+        tail -n 240 "$log"
+      done
+    } >"$native_debug_dir/live-logs.txt" 2>&1 || true
+  fi
+}
 
 build_image() {
   step "build guest agent and OCI image"
@@ -131,7 +183,14 @@ build_image() {
   sudo -u "$build_user" -H env GOOS=linux GOARCH=amd64 CGO_ENABLED=0 "$go_bin" build -o "$agent" "$repo_dir/cmd/agent"
   sudo -u "$build_user" -H docker build --platform linux/amd64 --network=host -f "$context/24.04/Dockerfile" -t "$image_ref" "$context"
   rm -f "$agent"
-  kb image rm "$image" >/dev/null 2>&1 || true
+  if kb image inspect "$image" --json >/dev/null 2>&1; then
+    if ! kb image rm "$image" >/dev/null; then
+      printf 'cannot replace managed image %q because it is still referenced; remove the listed VMs or rerun E2E after its cleanup succeeds:\n' "$image" >&2
+      kb image inspect "$image" --json >&2 || true
+      kb ps --json >&2 || true
+      exit 1
+    fi
+  fi
   kb image build "$image_ref" --source daemon --name "$image" --platform linux/amd64 --json | jq .
 }
 
@@ -228,29 +287,13 @@ fi
 # while that wait is active because normal rollback removes its runtime and log
 # directories after a failure.
 clone_output="$native_debug_dir/clone.out"
-kb_preserve_failed_clone clone "$native_snapshot" --name e2e-native-clone --network "$network" --restore-mode ondemand >"$clone_output" 2>&1 &
+kb clone "$native_snapshot" --name e2e-native-clone --network "$network" --restore-mode ondemand >"$clone_output" 2>&1 &
 clone_pid=$!
 clone_seen=false
 for _ in $(seq 1 210); do
   if kb inspect e2e-native-clone --json >"$native_debug_dir/clone-vm.json" 2>/dev/null; then
     clone_seen=true
-    clone_run_dir=$(jq -r '.runDir // empty' "$native_debug_dir/clone-vm.json")
-    clone_log_dir=$(jq -r '.logDir // empty' "$native_debug_dir/clone-vm.json")
-    if [[ -n "$clone_run_dir" && -d "$clone_run_dir" ]]; then
-      cp "$clone_run_dir/cloud-hypervisor.json" "$native_debug_dir/cloud-hypervisor.json" 2>/dev/null || true
-      if [[ -d "$clone_run_dir/.restore-staging/native" ]]; then
-        find -L "$clone_run_dir/.restore-staging/native" -maxdepth 1 -type f -printf '%n %s %p -> %l\n' | sort >"$native_debug_dir/staged-memory.txt" 2>&1 || true
-      fi
-    fi
-    if [[ -n "$clone_log_dir" && -d "$clone_log_dir" ]]; then
-      {
-        for log in "$clone_log_dir"/cloud-hypervisor.stderr.log "$clone_log_dir"/cloud-hypervisor.stdout.log "$clone_log_dir"/console.log; do
-          [[ -f "$log" ]] || continue
-          printf '\n--- %s ---\n' "$log"
-          tail -n 120 "$log"
-        done
-      } >"$native_debug_dir/live-logs.txt" 2>&1 || true
-    fi
+    capture_native_clone_debug
   fi
   if ! kill -0 "$clone_pid" 2>/dev/null; then
     break
@@ -267,6 +310,15 @@ if ! wait "$clone_pid"; then
     sed -n '1,200p' "$native_debug_dir/staged-memory.txt"
     printf '\n--- live logs ---\n'
     sed -n '1,300p' "$native_debug_dir/live-logs.txt"
+	printf '\n--- VMM API state ---\n'
+	sed -n '1,320p' "$native_debug_dir/vm-info.json"
+	printf '\n--- VMM process ---\n'
+	sed -n '1,120p' "$native_debug_dir/vmm-command.txt"
+	printf '\n--- TAP and netns ---\n'
+	sed -n '1,160p' "$native_debug_dir/tap-link.txt"
+	sed -n '1,240p' "$native_debug_dir/netns-links.txt"
+	printf '\n--- PTY console ---\n'
+	sed -n '1,240p' "$native_debug_dir/console-pty.log"
   } >"$native_debug_dir/clone-debug.txt" 2>&1 || true
   printf 'native clone failed:\n%s\n' "$clone_error" >&2
   printf 'native clone diagnostics: %s\n' "$native_debug_dir" >&2

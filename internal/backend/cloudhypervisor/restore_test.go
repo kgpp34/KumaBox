@@ -61,7 +61,7 @@ func TestPatchRestoreConfigPreservesBackendFields(t *testing.T) {
 	}
 }
 
-func TestPatchRestoreConfigRebindsCloneTapWithoutChangingGuestIdentity(t *testing.T) {
+func TestPatchRestoreConfigUsesTransientCloneTapWithoutChangingGuestIdentity(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 	raw := `{
@@ -72,6 +72,7 @@ func TestPatchRestoreConfigRebindsCloneTapWithoutChangingGuestIdentity(t *testin
 		t.Fatal(err)
 	}
 	rec := &vmstore.VMRecord{
+		ID:             "kb_1234567890abcdef",
 		StorageConfigs: []vmstore.StorageConfig{{ID: "cow", Path: "/new/cow.raw"}},
 		NetworkConfigs: []kbnetwork.Config{{TAP: "kbtapclone", MAC: "02:00:00:00:00:02"}},
 	}
@@ -83,11 +84,18 @@ func TestPatchRestoreConfigRebindsCloneTapWithoutChangingGuestIdentity(t *testin
 	if err := json.Unmarshal(patched["net"], &nets); err != nil {
 		t.Fatal(err)
 	}
-	if len(nets) != 1 || nets[0]["tap"] != "kbtapclone" {
+	if len(nets) != 1 || nets[0]["tap"] != "rmkb_12345-0" {
 		t.Fatalf("patched networks = %#v", nets)
 	}
 	if nets[0]["id"] != "snapshot-net0" || nets[0]["mac"] != "02:00:00:00:00:01" {
 		t.Fatalf("snapshot guest identity changed before restore: %#v", nets[0])
+	}
+}
+
+func TestCloneRestoreTAPNameFitsLinuxInterfaceLimit(t *testing.T) {
+	name := cloneRestoreTAPName("kb_1234567890abcdef", 12)
+	if name != "rmkb_12345-12" || len(name) > 15 {
+		t.Fatalf("clone restore TAP = %q", name)
 	}
 }
 

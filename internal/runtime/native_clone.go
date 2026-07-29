@@ -22,7 +22,6 @@ const (
 	cloneIdentityTimeout        = 90 * time.Second
 	cloneIdentityAttemptTimeout = 5 * time.Second
 	cloneIdentityRetryInterval  = 500 * time.Millisecond
-	preserveFailedCloneEnv      = "KUMABOX_PRESERVE_FAILED_CLONE"
 )
 
 var configureGuestIdentity = configureCloneIdentity
@@ -128,10 +127,13 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 				resultErr = fmt.Errorf("%w; native clone diagnostics: %s", resultErr, diagnosticDir)
 			}
 		}
-		if os.Getenv(preserveFailedCloneEnv) == "1" {
-			if resultErr != nil {
-				_, _ = r.vmRestore.FailRestore(rec.ID, resultErr.Error())
-			}
+		// A native restore can fail after its destructive disk boundary. Keep
+		// the VM and its provider attachments in an explicit error state so an
+		// operator can inspect the exact launch config and diagnostics, then
+		// delete it deliberately. Removing the record here made clone failures
+		// indistinguishable from successful cleanup.
+		if resultErr != nil {
+			_, _ = r.vmRestore.FailRestore(rec.ID, resultErr.Error())
 			return
 		}
 		r.network.rollbackNetwork(rec)

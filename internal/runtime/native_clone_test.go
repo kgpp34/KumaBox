@@ -90,7 +90,7 @@ func TestCloneNativeSnapshotCreatesIndependentRunningVM(t *testing.T) {
 	}
 }
 
-func TestCloneNativeSnapshotRollsBackFailedBackend(t *testing.T) {
+func TestCloneNativeSnapshotPreservesFailedBackend(t *testing.T) {
 	rt, store, _, ready := newNativeCloneRuntime(t)
 	cloneErr := errors.New("injected clone failure")
 	rt.backend = backendFake{
@@ -102,8 +102,12 @@ func TestCloneNativeSnapshotRollsBackFailedBackend(t *testing.T) {
 	if _, err := rt.CloneNativeSnapshot(context.Background(), ready.ID, NativeCloneOptions{Name: "failed-clone", Networks: []string{"none"}}); !errors.Is(err, cloneErr) {
 		t.Fatalf("clone error = %v", err)
 	}
-	if _, err := store.Inspect("failed-clone"); !errors.Is(err, vmstore.ErrNotFound) {
-		t.Fatalf("failed clone record remains: %v", err)
+	preserved, err := store.Inspect("failed-clone")
+	if err != nil {
+		t.Fatalf("inspect failed clone: %v", err)
+	}
+	if preserved.State != vmstore.StateError || preserved.Restore == nil || preserved.Restore.State != "failed" {
+		t.Fatalf("failed clone = %+v", preserved)
 	}
 	diagnosticRoot := filepath.Join(store.RootDir(), "diagnostics", "native-clone")
 	entries, err := os.ReadDir(diagnosticRoot)
@@ -119,28 +123,6 @@ func TestCloneNativeSnapshotRollsBackFailedBackend(t *testing.T) {
 	failure, err := os.ReadFile(filepath.Join(diagnosticDir, "failure.txt"))
 	if err != nil || !strings.Contains(string(failure), cloneErr.Error()) {
 		t.Fatalf("diagnostic failure = %q, err=%v", failure, err)
-	}
-}
-
-func TestCloneNativeSnapshotPreservesFailedCloneWhenRequested(t *testing.T) {
-	t.Setenv(preserveFailedCloneEnv, "1")
-	rt, store, _, ready := newNativeCloneRuntime(t)
-	cloneErr := errors.New("injected clone failure")
-	rt.backend = backendFake{
-		render: func(*vmstore.VMRecord) error { return nil },
-		clone: func(context.Context, *vmstore.VMRecord, string, string) (*backend.StartResult, error) {
-			return nil, cloneErr
-		},
-	}
-	if _, err := rt.CloneNativeSnapshot(context.Background(), ready.ID, NativeCloneOptions{Name: "preserved-clone", Networks: []string{"none"}}); !errors.Is(err, cloneErr) {
-		t.Fatalf("clone error = %v", err)
-	}
-	preserved, err := store.Inspect("preserved-clone")
-	if err != nil {
-		t.Fatalf("inspect preserved clone: %v", err)
-	}
-	if preserved.State != vmstore.StateError || preserved.Restore == nil || preserved.Restore.State != "failed" {
-		t.Fatalf("preserved clone = %+v", preserved)
 	}
 }
 

@@ -14,7 +14,6 @@ import (
 
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/fileutil"
-	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -35,7 +34,7 @@ func (b Backend) RestoreVM(ctx context.Context, rec *vmstore.VMRecord, sourceDir
 // the clone's provider allocations, and only then resumes guest execution.
 func (b Backend) CloneVM(ctx context.Context, rec *vmstore.VMRecord, sourceDir, mode string) (*backend.StartResult, error) {
 	return b.restoreNativeVM(ctx, rec, sourceDir, mode, nativeRestorePlan{
-		rebindNetworkTaps: true,
+		useCloneRestoreTaps: true,
 		beforeResume: func(client *http.Client, config map[string]json.RawMessage) error {
 			return hotSwapCloneNetworks(ctx, client, config, rec)
 		},
@@ -43,8 +42,8 @@ func (b Backend) CloneVM(ctx context.Context, rec *vmstore.VMRecord, sourceDir, 
 }
 
 type nativeRestorePlan struct {
-	rebindNetworkTaps bool
-	beforeResume      func(*http.Client, map[string]json.RawMessage) error
+	useCloneRestoreTaps bool
+	beforeResume        func(*http.Client, map[string]json.RawMessage) error
 }
 
 func (b Backend) restoreNativeVM(ctx context.Context, rec *vmstore.VMRecord, sourceDir, mode string, plan nativeRestorePlan) (_ *backend.StartResult, err error) {
@@ -55,7 +54,7 @@ func (b Backend) restoreNativeVM(ctx context.Context, rec *vmstore.VMRecord, sou
 	if err != nil {
 		return nil, fmt.Errorf("read backend launch config: %w", err)
 	}
-	nativeConfig, err := patchRestoreConfig(filepath.Join(sourceDir, snapshot.NativeConfigFile), rec, plan.rebindNetworkTaps)
+	nativeConfig, err := patchRestoreConfig(filepath.Join(sourceDir, snapshot.NativeConfigFile), rec, plan.useCloneRestoreTaps)
 	if err != nil {
 		return nil, fmt.Errorf("patch native restore config: %w", err)
 	}
@@ -135,7 +134,7 @@ func reapInterruptedRestore(cfg Config) error {
 
 // patchRestoreConfig preserves backend-owned and future fields while replacing
 // only host-local paths. Device order and identities were checked by preflight.
-func patchRestoreConfig(path string, rec *vmstore.VMRecord, rebindNetworkTaps bool) (map[string]json.RawMessage, error) {
+func patchRestoreConfig(path string, rec *vmstore.VMRecord, useCloneRestoreTaps bool) (map[string]json.RawMessage, error) {
 	raw, err := os.ReadFile(path) //nolint:gosec
 	if err != nil {
 		return nil, err
@@ -165,8 +164,8 @@ func patchRestoreConfig(path string, rec *vmstore.VMRecord, rebindNetworkTaps bo
 		return nil, fmt.Errorf("encode disks: %w", err)
 	}
 	config["disks"] = patchedDisks
-	if rebindNetworkTaps {
-		if err := patchCloneNetworkTaps(config, rec.NetworkConfigs); err != nil {
+	if useCloneRestoreTaps {
+		if err := patchCloneRestoreTaps(config, rec); err != nil {
 			return nil, err
 		}
 	}
@@ -198,29 +197,28 @@ func patchRestoreConfig(path string, rec *vmstore.VMRecord, rebindNetworkTaps bo
 	return config, nil
 }
 
-// patchCloneNetworkTaps replaces only the host-side TAP names needed by
-// vm.restore. Snapshot device IDs and guest MACs remain unchanged until the
-// paused VM can safely replace those devices before resume.
-func patchCloneNetworkTaps(config map[string]json.RawMessage, target []kbnetwork.Config) error {
+// patchCloneRestoreTaps replaces the snapshot TAPs with names that are unique
+// to this restore. Cloud Hypervisor owns these transient TAPs until the guest
+// ACKs device eject; only then can hotSwapCloneNetworks attach the clone's
+// provider-owned CNI TAPs. Reusing provider TAPs here races with hot-add and
+// can leave the restored guest's virtio and vsock devices unstable.
+func patchCloneRestoreTaps(config map[string]json.RawMessage, rec *vmstore.VMRecord) error {
 	raw, found := config["net"]
 	if !found || string(raw) == "null" {
-		if len(target) == 0 {
+		if len(rec.NetworkConfigs) == 0 {
 			return nil
 		}
-		return fmt.Errorf("SNAPSHOT_INCOMPATIBLE: snapshot has 0 NICs, clone has %d", len(target))
+		return fmt.Errorf("SNAPSHOT_INCOMPATIBLE: snapshot has 0 NICs, clone has %d", len(rec.NetworkConfigs))
 	}
 	var nets []map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &nets); err != nil {
 		return fmt.Errorf("decode snapshot networks: %w", err)
 	}
-	if len(nets) != len(target) {
-		return fmt.Errorf("SNAPSHOT_INCOMPATIBLE: snapshot has %d NICs, clone has %d", len(nets), len(target))
+	if len(nets) != len(rec.NetworkConfigs) {
+		return fmt.Errorf("SNAPSHOT_INCOMPATIBLE: snapshot has %d NICs, clone has %d", len(nets), len(rec.NetworkConfigs))
 	}
 	for i := range nets {
-		if target[i].TAP == "" {
-			return fmt.Errorf("clone NIC %d has no TAP", i)
-		}
-		if err := setRawField(nets[i], "tap", target[i].TAP); err != nil {
+		if err := setRawField(nets[i], "tap", cloneRestoreTAPName(rec.ID, i)); err != nil {
 			return err
 		}
 	}
@@ -230,6 +228,14 @@ func patchCloneNetworkTaps(config map[string]json.RawMessage, target []kbnetwork
 	}
 	config["net"] = patched
 	return nil
+}
+
+func cloneRestoreTAPName(vmID string, index int) string {
+	const prefix = "rm"
+	if len(vmID) > 8 {
+		vmID = vmID[:8]
+	}
+	return fmt.Sprintf("%s%s-%d", prefix, vmID, index)
 }
 
 func hotSwapCloneNetworks(ctx context.Context, client *http.Client, config map[string]json.RawMessage, rec *vmstore.VMRecord) error {
