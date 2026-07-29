@@ -312,6 +312,34 @@ if [[ "$env_out" != "bar" ]]; then
   exit 1
 fi
 
+step "exec security policy"
+root_uid="$(kb exec --user root "$vm_name" -- id -u)"
+printf 'state: rootUid=%s\n' "$root_uid"
+if [[ "$root_uid" != "0" ]]; then
+  echo "explicit root execution failed: uid=$root_uid" >&2
+  exit 1
+fi
+
+set +e
+unsupported_user_output="$(kb exec --user nobody "$vm_name" -- true 2>&1)"
+unsupported_user_status=$?
+set -e
+printf 'state: unsupportedUserStatus=%s\n' "$unsupported_user_status"
+if [[ "$unsupported_user_status" -eq 0 || "$unsupported_user_output" != *"USER_UNSUPPORTED"* ]]; then
+  echo "unsupported user policy was not enforced" >&2
+  exit 1
+fi
+
+set +e
+denied_env_output="$(kb exec --env LD_PRELOAD=/tmp/blocked.so "$vm_name" -- true 2>&1)"
+denied_env_status=$?
+set -e
+printf 'state: deniedEnvStatus=%s\n' "$denied_env_status"
+if [[ "$denied_env_status" -eq 0 || "$denied_env_output" != *"ENV_DENIED"* ]]; then
+  echo "denied environment policy was not enforced" >&2
+  exit 1
+fi
+
 step "exec non-zero exit"
 set +e
 kb exec "$vm_name" -- sh -c 'echo expected-error >&2; exit 7' >/tmp/kumabox-exec-stdout.$$ 2>/tmp/kumabox-exec-stderr.$$
