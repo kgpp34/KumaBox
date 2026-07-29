@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.22+">
+  <img src="https://img.shields.io/badge/Go-1.24.4%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.24.4+">
   <img src="https://img.shields.io/badge/platform-Linux-FCC624?logo=linux&logoColor=black" alt="Linux">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
   <a href="https://github.com/kgpp34/KumaBox/actions/workflows/ci.yml"><img src="https://github.com/kgpp34/KumaBox/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -64,7 +64,7 @@ The CLI is the control plane. Durable records allow later commands to inspect an
 | --- | --- |
 | Host | Linux with hardware virtualization enabled |
 | Virtualization | KVM available at `/dev/kvm` with read/write permission |
-| Go | Go 1.22 or newer (building from source) |
+| Go | Go 1.24.4 or newer (building from source) |
 | VMM | `cloud-hypervisor` available on `PATH` or supplied by flag/config |
 | Disk tooling | `qemu-img` available on `PATH` or supplied by flag/config |
 | Host networking | `/dev/net/tun`, `ip`, root privileges, and `iptables` or `nft` |

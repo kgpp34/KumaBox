@@ -1,6 +1,6 @@
 module github.com/kumabox/kumabox
 
-go 1.22.0
+go 1.24.4
 
 require (
 	github.com/containernetworking/cni v1.2.3
