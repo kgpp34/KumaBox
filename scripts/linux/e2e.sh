@@ -89,6 +89,13 @@ fi
 
 step() { printf '\n==> %s\n' "$1"; }
 kb() { "${run[@]}" "$kumabox" --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" --metadata-backend "$metadata_backend" "$@"; }
+kb_preserve_failed_clone() {
+  if ((${#run[@]})); then
+    "${run[@]}" env KUMABOX_PRESERVE_FAILED_CLONE=1 "$kumabox" --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" --metadata-backend "$metadata_backend" "$@"
+    return
+  fi
+  KUMABOX_PRESERVE_FAILED_CLONE=1 "$kumabox" --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" --metadata-backend "$metadata_backend" "$@"
+}
 
 names=(e2e-exec e2e-boot e2e-cni e2e-stopped-source e2e-stopped-restored e2e-native-source e2e-native-clone e2e-hotplug)
 snapshots=(e2e-stopped e2e-stopped-import e2e-native)
@@ -221,7 +228,7 @@ fi
 # while that wait is active because normal rollback removes its runtime and log
 # directories after a failure.
 clone_output="$native_debug_dir/clone.out"
-kb clone "$native_snapshot" --name e2e-native-clone --network "$network" --restore-mode ondemand >"$clone_output" 2>&1 &
+kb_preserve_failed_clone clone "$native_snapshot" --name e2e-native-clone --network "$network" --restore-mode ondemand >"$clone_output" 2>&1 &
 clone_pid=$!
 clone_seen=false
 for _ in $(seq 1 210); do

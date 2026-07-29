@@ -22,6 +22,7 @@ const (
 	cloneIdentityTimeout        = 90 * time.Second
 	cloneIdentityAttemptTimeout = 5 * time.Second
 	cloneIdentityRetryInterval  = 500 * time.Millisecond
+	preserveFailedCloneEnv      = "KUMABOX_PRESERVE_FAILED_CLONE"
 )
 
 var configureGuestIdentity = configureCloneIdentity
@@ -116,16 +117,22 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		if committed {
 			return
 		}
-		if resultErr != nil {
-			if diagnosticDir := r.preserveNativeCloneDiagnostics(rec, snapshotRec, resultErr); diagnosticDir != "" {
-				resultErr = fmt.Errorf("%w; native clone diagnostics: %s", resultErr, diagnosticDir)
-			}
-		}
 		if backendResult != nil {
 			cleanup := *rec
 			cleanup.PID = backendResult.PID
 			cleanup.APISocket = backendResult.APISocket
 			_, _ = r.backend.StopVM(&cleanup, backend.StopOptions{Force: true})
+		}
+		if resultErr != nil {
+			if diagnosticDir := r.preserveNativeCloneDiagnostics(rec, snapshotRec, resultErr); diagnosticDir != "" {
+				resultErr = fmt.Errorf("%w; native clone diagnostics: %s", resultErr, diagnosticDir)
+			}
+		}
+		if os.Getenv(preserveFailedCloneEnv) == "1" {
+			if resultErr != nil {
+				_, _ = r.vmRestore.FailRestore(rec.ID, resultErr.Error())
+			}
+			return
 		}
 		r.network.rollbackNetwork(rec)
 		_ = r.storage.removeManagedDirs(rec)

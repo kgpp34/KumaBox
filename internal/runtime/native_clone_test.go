@@ -122,6 +122,28 @@ func TestCloneNativeSnapshotRollsBackFailedBackend(t *testing.T) {
 	}
 }
 
+func TestCloneNativeSnapshotPreservesFailedCloneWhenRequested(t *testing.T) {
+	t.Setenv(preserveFailedCloneEnv, "1")
+	rt, store, _, ready := newNativeCloneRuntime(t)
+	cloneErr := errors.New("injected clone failure")
+	rt.backend = backendFake{
+		render: func(*vmstore.VMRecord) error { return nil },
+		clone: func(context.Context, *vmstore.VMRecord, string, string) (*backend.StartResult, error) {
+			return nil, cloneErr
+		},
+	}
+	if _, err := rt.CloneNativeSnapshot(context.Background(), ready.ID, NativeCloneOptions{Name: "preserved-clone", Networks: []string{"none"}}); !errors.Is(err, cloneErr) {
+		t.Fatalf("clone error = %v", err)
+	}
+	preserved, err := store.Inspect("preserved-clone")
+	if err != nil {
+		t.Fatalf("inspect preserved clone: %v", err)
+	}
+	if preserved.State != vmstore.StateError || preserved.Restore == nil || preserved.Restore.State != "failed" {
+		t.Fatalf("preserved clone = %+v", preserved)
+	}
+}
+
 func TestCloneNativeSnapshotPinsDelayedMemoryPayload(t *testing.T) {
 	tests := []struct {
 		name string
