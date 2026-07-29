@@ -174,7 +174,7 @@ run_suite() {
   printf '\n==> E2E suite: %s\n' "$suite"
   case "$suite" in
     oci)
-      suite_args=("${common_args[@]}" --image-name "$image" --image-ref "$image_ref" --sudo)
+      suite_args=("${common_args[@]}" --image-name "$image" --ref "$image_ref" --sudo)
       [[ -n "$go_bin_override" ]] && suite_args+=(--go-bin "$go_bin_override")
       if [[ "$rebuild_image" != true ]]; then
         suite_args+=(--skip-base-build --skip-image-build)
