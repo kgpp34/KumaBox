@@ -230,6 +230,9 @@ func TestDryRunReportsOnlyManagedCandidates(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(rec.RunDir, "ch.pid"), []byte("123\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(rec.RunDir, "vsock.uds"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	orphanRun := filepath.Join(cfg.Runtime.RunDir, "vms", "orphan")
 	orphanLog := filepath.Join(cfg.Runtime.LogDir, "vms", "orphan")
 	if err := os.MkdirAll(orphanRun, 0o755); err != nil {
@@ -244,6 +247,7 @@ func TestDryRunReportsOnlyManagedCandidates(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCandidate(t, report, filepath.Join(rec.RunDir, "ch.pid"), "stale_runtime_file")
+	assertCandidate(t, report, filepath.Join(rec.RunDir, "vsock.uds"), "stale_agent_socket")
 	assertCandidate(t, report, orphanRun, "orphan_run_dir")
 	assertCandidate(t, report, orphanLog, "orphan_log_dir")
 	for _, candidate := range report.Candidates {

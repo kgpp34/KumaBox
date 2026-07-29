@@ -562,13 +562,17 @@ func staleRuntimeFiles(rec *vmstore.VMRecord) []Candidate {
 		return nil
 	}
 	var candidates []Candidate
-	for _, name := range []string{"ch.pid", "ch.sock"} {
+	for _, name := range []string{"ch.pid", "ch.sock", "vsock.uds"} {
 		path := filepath.Join(rec.RunDir, name)
 		if _, err := os.Stat(path); err == nil {
+			typ := "stale_runtime_file"
+			if name == "vsock.uds" {
+				typ = "stale_agent_socket"
+			}
 			candidates = append(candidates, Candidate{
 				Component: "runtime",
 				Path:      path,
-				Type:      "stale_runtime_file",
+				Type:      typ,
 				Reason:    fmt.Sprintf("VM %s is %s but runtime file remains", rec.ID, rec.State),
 			})
 		}
