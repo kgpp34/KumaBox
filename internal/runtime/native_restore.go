@@ -25,8 +25,9 @@ type NativeRestoreOptions struct {
 }
 
 type stagedRestore struct {
-	nativeDir string
-	disks     []stagedRestoreDisk
+	nativeDir      string
+	preserveNative bool
+	disks          []stagedRestoreDisk
 }
 
 type stagedRestoreDisk struct {
@@ -161,6 +162,9 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	if err := r.recordVMSnapshotReference(ctx, restored.ID, snapshotRec.ID); err != nil {
 		return nil, fmt.Errorf("record restore snapshot reference: %w", err)
 	}
+	if restoreModePinsSnapshot(opts.Mode) {
+		staged.retainNativePayload()
+	}
 	_ = writeVMEvent(restored, "snapshot.restore.completed", vmstore.Observation{
 		State: vmstore.ObservedStateRunning, Reason: "native snapshot " + snapshotRec.ID + " restored", CheckedAt: time.Now().UTC(),
 	})
@@ -281,13 +285,22 @@ func (s *stagedRestore) cleanup() error {
 	if s == nil {
 		return nil
 	}
-	errs := []error{os.RemoveAll(filepath.Dir(s.nativeDir))}
+	var errs []error
+	if !s.preserveNative {
+		errs = append(errs, os.RemoveAll(filepath.Dir(s.nativeDir)))
+	}
 	for _, disk := range s.disks {
 		if err := os.Remove(disk.staged); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func (s *stagedRestore) retainNativePayload() {
+	if s != nil {
+		s.preserveNative = true
+	}
 }
 
 func syncDirectory(path string) (err error) {

@@ -180,6 +180,9 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err := r.recordVMSnapshotReference(ctx, cloned.ID, snapshotRec.ID); err != nil {
 		return nil, fmt.Errorf("record clone snapshot reference: %w", err)
 	}
+	if restoreModePinsSnapshot(opts.Mode) {
+		staged.retainNativePayload()
+	}
 	committed = true
 	_ = writeVMEvent(cloned, "snapshot.clone.completed", vmstore.Observation{
 		State: vmstore.ObservedStateRunning, Reason: "cloned from native snapshot " + snapshotRec.ID, CheckedAt: time.Now().UTC(),

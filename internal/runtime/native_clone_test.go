@@ -75,6 +75,9 @@ func TestCloneNativeSnapshotCreatesIndependentRunningVM(t *testing.T) {
 	if cloned.LastRestore == nil || cloned.LastRestore.DiskStageDurationMs < 0 || cloned.LastRestore.IdentityDurationMs < 0 || cloned.LastRestore.ReadinessDurationMs < 0 {
 		t.Fatalf("clone metrics = %+v", cloned.LastRestore)
 	}
+	if _, err := os.Stat(filepath.Join(cloned.RunDir, ".restore-staging")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("copy clone retained native staging: %v", err)
+	}
 }
 
 func TestCloneNativeSnapshotRollsBackFailedBackend(t *testing.T) {
@@ -94,43 +97,57 @@ func TestCloneNativeSnapshotRollsBackFailedBackend(t *testing.T) {
 	}
 }
 
-func TestCloneNativeSnapshotPinsMmapPayload(t *testing.T) {
-	rt, store, _, ready := newNativeCloneRuntime(t)
-	rt.guestReadiness = func(context.Context, string) error { return nil }
-	originalIdentity := configureGuestIdentity
-	configureGuestIdentity = func(context.Context, string, *vmstore.VMRecord) error { return nil }
-	defer func() { configureGuestIdentity = originalIdentity }()
+func TestCloneNativeSnapshotPinsDelayedMemoryPayload(t *testing.T) {
+	tests := []struct {
+		name string
+		mode RestoreMode
+	}{
+		{name: "ondemand", mode: RestoreModeOnDemand},
+		{name: "mmap", mode: RestoreModeMmap},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rt, store, _, ready := newNativeCloneRuntime(t)
+			rt.guestReadiness = func(context.Context, string) error { return nil }
+			originalIdentity := configureGuestIdentity
+			configureGuestIdentity = func(context.Context, string, *vmstore.VMRecord) error { return nil }
+			defer func() { configureGuestIdentity = originalIdentity }()
 
-	rt.backend = backendFake{
-		nativeHost: func(context.Context, *vmstore.VMRecord) (backend.NativeHost, error) {
-			return backend.NativeHost{
-				BackendName: "cloud-hypervisor", BackendVersion: "test", SnapshotFormat: "cloud-hypervisor-native-v1",
-				Architecture: "test", CPUVendor: "test", RestoreModes: []string{"copy", "mmap"},
-			}, nil
-		},
-		render: func(*vmstore.VMRecord) error { return nil },
-		clone: func(_ context.Context, rec *vmstore.VMRecord, _ string, mode string) (*backend.StartResult, error) {
-			if mode != "mmap" {
-				t.Fatalf("backend mode = %q", mode)
+			rt.backend = backendFake{
+				nativeHost: func(context.Context, *vmstore.VMRecord) (backend.NativeHost, error) {
+					return backend.NativeHost{
+						BackendName: "cloud-hypervisor", BackendVersion: "test", SnapshotFormat: "cloud-hypervisor-native-v1",
+						Architecture: "test", CPUVendor: "test", RestoreModes: []string{"copy", string(test.mode)},
+					}, nil
+				},
+				render: func(*vmstore.VMRecord) error { return nil },
+				clone: func(_ context.Context, rec *vmstore.VMRecord, _ string, mode string) (*backend.StartResult, error) {
+					if mode != string(test.mode) {
+						t.Fatalf("backend mode = %q, want %q", mode, test.mode)
+					}
+					return &backend.StartResult{PID: 9876, APISocket: filepath.Join(rec.RunDir, "ch.sock")}, nil
+				},
+				observe: func(*vmstore.VMRecord) vmstore.Observation {
+					return vmstore.Observation{State: vmstore.ObservedStateRunning, CheckedAt: time.Now().UTC()}
+				},
 			}
-			return &backend.StartResult{PID: 9876, APISocket: filepath.Join(rec.RunDir, "ch.sock")}, nil
-		},
-		observe: func(*vmstore.VMRecord) vmstore.Observation {
-			return vmstore.Observation{State: vmstore.ObservedStateRunning, CheckedAt: time.Now().UTC()}
-		},
-	}
 
-	cloned, err := rt.CloneNativeSnapshot(context.Background(), ready.ID, NativeCloneOptions{
-		Name: "mmap-clone", Networks: []string{"none"}, Mode: "mmap",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cloned.SnapshotDependency == nil || cloned.SnapshotDependency.SnapshotID != ready.ID || cloned.SnapshotDependency.Mode != "mmap" {
-		t.Fatalf("snapshot dependency = %+v", cloned.SnapshotDependency)
-	}
-	if _, err := snapshot.NewStore(store.RootDir()).Remove(ready.ID); !errors.Is(err, snapshot.ErrInUse) {
-		t.Fatalf("remove mmap snapshot error = %v", err)
+			cloned, err := rt.CloneNativeSnapshot(context.Background(), ready.ID, NativeCloneOptions{
+				Name: test.name + "-clone", Networks: []string{"none"}, Mode: test.mode,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cloned.SnapshotDependency == nil || cloned.SnapshotDependency.SnapshotID != ready.ID || cloned.SnapshotDependency.Mode != string(test.mode) {
+				t.Fatalf("snapshot dependency = %+v", cloned.SnapshotDependency)
+			}
+			if _, err := os.Stat(filepath.Join(cloned.RunDir, ".restore-staging", snapshot.NativePayloadDir, "memory-range-0")); err != nil {
+				t.Fatalf("%s clone discarded delayed memory payload: %v", test.mode, err)
+			}
+			if _, err := snapshot.NewStore(store.RootDir()).Remove(ready.ID); !errors.Is(err, snapshot.ErrInUse) {
+				t.Fatalf("remove %s snapshot error = %v", test.mode, err)
+			}
+		})
 	}
 }
 
