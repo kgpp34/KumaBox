@@ -16,6 +16,8 @@ storage=64M
 metadata_backend=sqlite
 go_bin=${GO_BIN:-}
 keep=false
+fs_socket=
+pci_bdf=
 
 usage() {
   cat <<'EOF'
@@ -37,6 +39,8 @@ Options:
   --storage SIZE
   --metadata-backend json|sqlite
   --go-bin PATH
+  --fs-socket PATH             verify virtio-fs attach/detach with this socket
+  --pci BDF                    verify VFIO attach/detach with this host PCI device
   --keep                       preserve E2E VMs and snapshots after success
 EOF
 }
@@ -54,6 +58,8 @@ while (($#)); do
     --storage) require_value "$1" "${2:-}"; storage=$2; shift 2 ;;
     --metadata-backend) require_value "$1" "${2:-}"; metadata_backend=$2; shift 2 ;;
     --go-bin) require_value "$1" "${2:-}"; go_bin=$2; shift 2 ;;
+    --fs-socket) require_value "$1" "${2:-}"; fs_socket=$2; shift 2 ;;
+    --pci) require_value "$1" "${2:-}"; pci_bdf=$2; shift 2 ;;
     --keep) keep=true; shift ;;
     -h|--help) usage; exit 0 ;;
     --root-dir|--run-dir|--log-dir|--metadata-path)
@@ -181,6 +187,17 @@ kb disk detach e2e-hotplug --name e2e-data >/dev/null
 kb device state e2e-hotplug | jq -e '(.attachedDisks // []) | length == 0' >/dev/null
 kb network resize e2e-hotplug --nics 2 >/dev/null
 kb network resize e2e-hotplug --nics 1 >/dev/null
+if [[ -n "$fs_socket" ]]; then
+  [[ -S "$fs_socket" ]] || { echo "virtio-fs socket is not available: $fs_socket" >&2; exit 1; }
+  kb fs attach e2e-hotplug --socket "$fs_socket" --tag e2e-share >/dev/null
+  kb device state e2e-hotplug | jq -e '.attachedFilesystems | any(.[]; .tag == "e2e-share")' >/dev/null
+  kb fs detach e2e-hotplug --tag e2e-share >/dev/null
+fi
+if [[ -n "$pci_bdf" ]]; then
+  kb device attach e2e-hotplug --pci "$pci_bdf" --id e2e-pci >/dev/null
+  kb device state e2e-hotplug | jq -e '.attachedPCIDevices | any(.[]; .id == "e2e-pci")' >/dev/null
+  kb device detach e2e-hotplug --id e2e-pci >/dev/null
+fi
 kb delete e2e-hotplug --force >/dev/null
 
 [[ "$keep" == true ]] || cleanup
