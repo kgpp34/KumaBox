@@ -114,7 +114,7 @@ build_image() {
   local context="$repo_dir/oci-images/ubuntu"
   local agent="$context/kumabox-agent-linux-amd64"
   sudo -u "$build_user" -H env GOOS=linux GOARCH=amd64 CGO_ENABLED=0 "$go_bin" build -o "$agent" "$repo_dir/cmd/agent"
-  sudo -u "$build_user" -H docker build --platform linux/amd64 -f "$context/24.04/Dockerfile" -t "$image_ref" "$context"
+  sudo -u "$build_user" -H docker build --platform linux/amd64 --network=host -f "$context/24.04/Dockerfile" -t "$image_ref" "$context"
   rm -f "$agent"
   kb image rm "$image" >/dev/null 2>&1 || true
   kb image build "$image_ref" --source daemon --name "$image" --platform linux/amd64 --json | jq .
@@ -133,7 +133,13 @@ wait_agent e2e-exec
 [[ $(kb exec e2e-exec -- uname -n) == e2e-exec ]]
 [[ $(printf 'roundtrip' | kb exec e2e-exec -- cat) == roundtrip ]]
 [[ $(kb exec --env FOO=bar e2e-exec -- sh -c 'printf %s "$FOO"') == bar ]]
-if kb exec --user nobody e2e-exec -- true 2>&1 | grep -q USER_UNSUPPORTED; then :; else echo "guest user policy was not enforced" >&2; exit 1; fi
+if unsupported_user_output=$(kb exec --user nobody e2e-exec -- true 2>&1); then
+  printf 'guest user policy was not enforced: command unexpectedly succeeded\n' >&2
+  exit 1
+elif [[ "$unsupported_user_output" != *USER_UNSUPPORTED* ]]; then
+  printf 'guest user policy returned an unexpected error:\n%s\n' "$unsupported_user_output" >&2
+  exit 1
+fi
 kb delete e2e-exec --force >/dev/null
 
 step "OCI overlay boot"
