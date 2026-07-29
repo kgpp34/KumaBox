@@ -37,8 +37,10 @@ func TestHandleConnRespondsToHello(t *testing.T) {
 	if !resp.OK || resp.Version != Version || resp.OS == "" || resp.Hostname == "" {
 		t.Fatalf("response = %+v", resp)
 	}
-	if !slices.Contains(resp.Capabilities, "identity") {
-		t.Fatalf("capabilities = %v, want identity", resp.Capabilities)
+	for _, capability := range []string{"hello", "exec", "exec-stream", "exec-tty", "identity"} {
+		if !slices.Contains(resp.Capabilities, capability) {
+			t.Fatalf("capabilities = %v, want %s", resp.Capabilities, capability)
+		}
 	}
 	if slices.Contains(resp.Capabilities, "freeze") || slices.Contains(resp.Capabilities, "thaw") {
 		t.Fatalf("capabilities = %v, freeze/thaw must not be advertised", resp.Capabilities)

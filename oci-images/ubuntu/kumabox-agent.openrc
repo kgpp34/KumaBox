@@ -1,0 +1,13 @@
+#!/sbin/openrc-run
+
+name="kumabox-agent"
+description="KumaBox guest agent"
+command="/usr/local/bin/kumabox-agent"
+command_args="serve"
+command_user="root:root"
+command_background="false"
+
+depend() {
+	need localmount
+	after bootmisc
+}

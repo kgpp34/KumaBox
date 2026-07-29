@@ -1,5 +1,5 @@
 [Unit]
-Description=KumaBox agent
+Description=KumaBox agent (vsock command exec)
 Documentation=https://github.com/kumabox/kumabox
 
 [Service]

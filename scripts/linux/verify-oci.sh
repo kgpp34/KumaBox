@@ -199,7 +199,8 @@ cleanup() {
 build_base_image() {
   local context_dir=oci-images/ubuntu
   local dockerfile=$context_dir/24.04/Dockerfile
-  local agent_binary=$context_dir/kumabox-agent-linux-amd64
+  local agent_binary_amd64=$context_dir/kumabox-agent-linux-amd64
+  local agent_binary_arm64=$context_dir/kumabox-agent-linux-arm64
 
   for binary in docker go; do
     command -v "$binary" >/dev/null 2>&1 || {
@@ -210,14 +211,15 @@ build_base_image() {
   [[ -f $dockerfile ]] || { echo "OCI base Dockerfile is missing: $dockerfile" >&2; return 1; }
 
   step "build Linux guest agent"
-  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$agent_binary" ./cmd/agent
+  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$agent_binary_amd64" ./cmd/agent
+  GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "$agent_binary_arm64" ./cmd/agent
 
   step "build KumaBox-compatible OCI base image"
   if ! docker build --platform "$platform" -f "$dockerfile" -t "$ref" "$context_dir"; then
-    rm -f "$agent_binary"
+    rm -f "$agent_binary_amd64" "$agent_binary_arm64"
     return 1
   fi
-  rm -f "$agent_binary"
+  rm -f "$agent_binary_amd64" "$agent_binary_arm64"
 }
 
 if [[ "$skip_base_build" -eq 0 ]]; then
