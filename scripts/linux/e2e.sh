@@ -16,6 +16,7 @@ storage=64M
 metadata_backend=sqlite
 go_bin=${GO_BIN:-}
 keep=false
+rebuild_image=false
 fs_socket=
 pci_bdf=
 
@@ -39,6 +40,7 @@ Options:
   --storage SIZE
   --metadata-backend json|sqlite
   --go-bin PATH
+  --rebuild-image             rebuild and re-import the managed OCI image
   --fs-socket PATH             verify virtio-fs attach/detach with this socket
   --pci BDF                    verify VFIO attach/detach with this host PCI device
   --keep                       preserve E2E VMs and snapshots after success
@@ -58,6 +60,7 @@ while (($#)); do
     --storage) require_value "$1" "${2:-}"; storage=$2; shift 2 ;;
     --metadata-backend) require_value "$1" "${2:-}"; metadata_backend=$2; shift 2 ;;
     --go-bin) require_value "$1" "${2:-}"; go_bin=$2; shift 2 ;;
+    --rebuild-image) rebuild_image=true; shift ;;
     --fs-socket) require_value "$1" "${2:-}"; fs_socket=$2; shift 2 ;;
     --pci) require_value "$1" "${2:-}"; pci_bdf=$2; shift 2 ;;
     --keep) keep=true; shift ;;
@@ -120,12 +123,20 @@ build_image() {
   kb image build "$image_ref" --source daemon --name "$image" --platform linux/amd64 --json | jq .
 }
 
+ensure_image() {
+  if [[ "$rebuild_image" == false ]] && kb image inspect "$image" --json >/dev/null 2>&1; then
+    step "reuse managed OCI image: $image"
+    return
+  fi
+  build_image
+}
+
 wait_agent() { kb agent ping "$1" --timeout 90s >/dev/null; }
 run_vm() { kb run "$image" --name "$1" --network "$2" --storage "$storage"; }
 
 step "clean previous E2E resources"
 cleanup
-build_image
+ensure_image
 
 step "OCI boot and guest exec"
 run_vm e2e-exec none | jq .
