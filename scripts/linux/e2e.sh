@@ -129,6 +129,14 @@ print_failure_context() {
   fi
   printf 'failed state is preserved for inspection.\n' >&2
 }
+
+user_go_path() {
+  local user="$1"
+  local shell_path
+  shell_path="$(getent passwd "$user" | cut -d: -f7)"
+  [[ -x "$shell_path" ]] || shell_path=/bin/bash
+  sudo -u "$user" -H "$shell_path" -lic 'command -v go' 2>/dev/null
+}
 trap print_failure_context EXIT
 
 run_suite() {
@@ -199,7 +207,13 @@ if [[ "$skip_unit" != true ]]; then
       echo 'cannot run unit tests as root: invoke with sudo from the development user' >&2
       exit 1
     }
-    sudo -iu "$SUDO_USER" bash -lc "cd '$repo_root' && GOTOOLCHAIN=local go test ./... -count=1"
+    build_go="$(user_go_path "$SUDO_USER")"
+    [[ -x "$build_go" ]] || {
+      echo "cannot find Go in $SUDO_USER login environment" >&2
+      exit 1
+    }
+    build_path="$(dirname "$build_go"):${PATH:-/usr/bin:/bin}"
+    sudo -u "$SUDO_USER" -H env PATH="$build_path" bash -lc "cd '$repo_root' && GOTOOLCHAIN=local go test ./... -count=1"
   else
     (cd "$repo_root" && GOTOOLCHAIN=local go test ./... -count=1)
   fi

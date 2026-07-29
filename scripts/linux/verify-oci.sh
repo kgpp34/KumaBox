@@ -214,10 +214,15 @@ build_base_image() {
 			echo "base image build must run as the development user, not root" >&2
 			return 1
 		}
-		local build_command
-		printf -v build_command 'cd %q && command -v go >/dev/null && command -v docker >/dev/null && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %q ./cmd/agent && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o %q ./cmd/agent && docker build --platform %q -f %q -t %q %q' \
-			"$repo_dir" "$repo_dir/$agent_binary_amd64" "$repo_dir/$agent_binary_arm64" "$platform" "$repo_dir/$dockerfile" "$ref" "$repo_dir/$context_dir"
-		sudo -iu "$build_user" bash -lc "$build_command"
+		local build_shell build_go build_path build_command
+		build_shell="$(getent passwd "$build_user" | cut -d: -f7)"
+		[[ -x "$build_shell" ]] || build_shell=/bin/bash
+		build_go="$(sudo -u "$build_user" -H "$build_shell" -lic 'command -v go' 2>/dev/null)"
+		[[ -x "$build_go" ]] || { echo "cannot find Go in $build_user login environment" >&2; return 1; }
+		build_path="$(dirname "$build_go"):${PATH:-/usr/bin:/bin}"
+		printf -v build_command 'cd %q && PATH=%q command -v docker >/dev/null && PATH=%q GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %q ./cmd/agent && PATH=%q GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o %q ./cmd/agent && PATH=%q docker build --platform %q -f %q -t %q %q' \
+			"$repo_dir" "$build_path" "$build_path" "$repo_dir/$agent_binary_amd64" "$build_path" "$repo_dir/$agent_binary_arm64" "$build_path" "$platform" "$repo_dir/$dockerfile" "$ref" "$repo_dir/$context_dir"
+		sudo -u "$build_user" -H env PATH="$build_path" bash -lc "$build_command"
 	else
 		command -v go >/dev/null 2>&1 || { echo "go is required to build the KumaBox OCI base image" >&2; return 1; }
 		command -v docker >/dev/null 2>&1 || { echo "docker is required to build the KumaBox OCI base image" >&2; return 1; }
