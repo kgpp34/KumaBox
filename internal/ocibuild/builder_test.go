@@ -204,6 +204,52 @@ func TestDecodeOCIImageConfigOmitsMissingFields(t *testing.T) {
 	}
 }
 
+func TestInspectAgentProfileDetectsEmbeddedAgent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	layerPath := filepath.Join(dir, "layer.tar")
+	layerBytes := plainTar(t, map[string]string{
+		"usr/local/bin/kumabox-agent":              "agent",
+		"etc/systemd/system/kumabox-agent.service": "unit",
+	})
+	if err := os.WriteFile(layerPath, layerBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	profile, err := New(dir).inspectAgentProfile([]ocistore.BlobRecord{{
+		Path:      layerPath,
+		MediaType: "application/vnd.oci.image.layer.v1.tar",
+	}}, "required")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.Injection != "embedded" || profile.BinaryPath == "" || profile.ServicePath == "" {
+		t.Fatalf("profile = %+v", profile)
+	}
+	if len(profile.Capabilities) != 5 {
+		t.Fatalf("capabilities = %v", profile.Capabilities)
+	}
+}
+
+func TestInspectAgentProfileRejectsRequiredAgentWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	layerPath := filepath.Join(dir, "layer.tar")
+	if err := os.WriteFile(layerPath, plainTar(t, map[string]string{"etc/os-release": "ID=ubuntu"}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := New(dir).inspectAgentProfile([]ocistore.BlobRecord{{
+		Path:      layerPath,
+		MediaType: "application/vnd.oci.image.layer.v1.tar",
+	}}, "required")
+	if err == nil || !strings.Contains(err.Error(), "AGENT_INJECTION_FAILED") {
+		t.Fatalf("error = %v, want AGENT_INJECTION_FAILED", err)
+	}
+}
+
 func gzipTar(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 

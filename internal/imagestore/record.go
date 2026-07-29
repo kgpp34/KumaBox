@@ -99,18 +99,39 @@ type OCI struct {
 	BuiltAt        time.Time      `json:"builtAt"`
 }
 
+const (
+	AgentName                 = "kumabox-agent"
+	AgentBinaryPath           = "/usr/local/bin/kumabox-agent"
+	AgentServicePath          = "/etc/systemd/system/kumabox-agent.service"
+	AgentProfileAuto          = "auto"
+	AgentProfileRequired      = "required"
+	AgentInjectionEmbedded    = "embedded"
+	AgentInjectionUnsupported = "unsupported"
+)
+
+// AgentProfile records how the guest agent is provided by an image.
+type AgentProfile struct {
+	Name         string   `json:"name"`
+	Version      string   `json:"version,omitempty"`
+	Injection    string   `json:"injection"`
+	BinaryPath   string   `json:"binaryPath,omitempty"`
+	ServicePath  string   `json:"servicePath,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
+}
+
 // ImageRecord is the persisted metadata for one managed image.
 type ImageRecord struct {
-	SchemaVersion string    `json:"schemaVersion"`
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	Source        Source    `json:"source"`
-	RootDisk      RootDisk  `json:"rootDisk"`
-	Boot          Boot      `json:"boot"`
-	OS            OS        `json:"os"`
-	OCI           *OCI      `json:"oci,omitempty"`
-	CreatedAt     time.Time `json:"createdAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	SchemaVersion string        `json:"schemaVersion"`
+	ID            string        `json:"id"`
+	Name          string        `json:"name"`
+	Source        Source        `json:"source"`
+	RootDisk      RootDisk      `json:"rootDisk"`
+	Boot          Boot          `json:"boot"`
+	OS            OS            `json:"os"`
+	OCI           *OCI          `json:"oci,omitempty"`
+	Agent         *AgentProfile `json:"agent,omitempty"`
+	CreatedAt     time.Time     `json:"createdAt"`
+	UpdatedAt     time.Time     `json:"updatedAt"`
 }
 
 func cloneRecord(rec *ImageRecord) *ImageRecord {
@@ -118,6 +139,7 @@ func cloneRecord(rec *ImageRecord) *ImageRecord {
 		return nil
 	}
 	copied := *rec
+	copied.Agent = cloneAgentProfile(rec.Agent)
 	if rec.OCI != nil {
 		oci := *rec.OCI
 		oci.ImageConfig = cloneOCIImageConfig(rec.OCI.ImageConfig)
@@ -131,6 +153,15 @@ func cloneRecord(rec *ImageRecord) *ImageRecord {
 		}
 		copied.OCI = &oci
 	}
+	return &copied
+}
+
+func cloneAgentProfile(profile *AgentProfile) *AgentProfile {
+	if profile == nil {
+		return nil
+	}
+	copied := *profile
+	copied.Capabilities = append([]string(nil), profile.Capabilities...)
 	return &copied
 }
 

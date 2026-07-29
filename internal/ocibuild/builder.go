@@ -28,6 +28,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/kumabox/kumabox/internal/agent/protocol"
 	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/ocistore"
@@ -38,13 +39,14 @@ const ociCmdlineTemplate = "console=ttyS0 loglevel=3 clocksource=kvm-clock reboo
 
 // BuildRequest describes an OCI image build.
 type BuildRequest struct {
-	Name        string
-	Ref         string
-	Platform    string
-	Source      string
-	MkfsEROFS   string
-	Concurrency int
-	Progress    func(ocistore.ProgressEvent)
+	Name         string
+	Ref          string
+	Platform     string
+	Source       string
+	MkfsEROFS    string
+	Concurrency  int
+	AgentProfile string
+	Progress     func(ocistore.ProgressEvent)
 }
 
 // Builder converts OCI layers into shared EROFS blobs and publishes an image record.
@@ -173,6 +175,10 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 	if err != nil {
 		return nil, err
 	}
+	agent, err := b.inspectAgentProfile(pull.Layers, req.AgentProfile)
+	if err != nil {
+		return nil, err
+	}
 
 	return b.images.Create(imagestore.CreateRequest{
 		Name: req.Name,
@@ -184,7 +190,8 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 			Family:  "linux",
 			Profile: "oci-erofs",
 		},
-		Boot: boot,
+		Agent: agent,
+		Boot:  boot,
 		OCI: &imagestore.OCI{
 			Ref:       pull.Ref,
 			Source:    pull.Source,
@@ -200,7 +207,7 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 				SizeBytes: pull.Config.SizeBytes,
 			},
 			ImageConfig:    imageConfig,
-			AgentInjection: "deferred",
+			AgentInjection: agent.Injection,
 			Layers:         layers,
 			BuiltAt:        time.Now().UTC(),
 		},
@@ -260,6 +267,86 @@ func decodeOCIImageConfig(configPath string) (imagestore.OCIImageConfig, error) 
 		cfg.Labels = value
 	}
 	return cfg, nil
+}
+
+func (b *Builder) inspectAgentProfile(layers []ocistore.BlobRecord, mode string) (*imagestore.AgentProfile, error) {
+	if mode == "" {
+		mode = imagestore.AgentProfileAuto
+	}
+	if mode != imagestore.AgentProfileAuto && mode != imagestore.AgentProfileRequired && mode != imagestore.AgentInjectionEmbedded && mode != imagestore.AgentInjectionUnsupported {
+		return nil, fmt.Errorf("AGENT_PROFILE_INVALID: %q", mode)
+	}
+	if mode == imagestore.AgentInjectionUnsupported {
+		return &imagestore.AgentProfile{
+			Name:      imagestore.AgentName,
+			Injection: imagestore.AgentInjectionUnsupported,
+		}, nil
+	}
+
+	var binaryFound, serviceFound bool
+	for _, layer := range layers {
+		in, err := os.Open(layer.Path) //nolint:gosec
+		if err != nil {
+			return nil, fmt.Errorf("open agent profile layer: %w", err)
+		}
+		reader, closeReader, err := layerTarReader(layer.MediaType, in)
+		if err != nil {
+			_ = in.Close()
+			return nil, err
+		}
+		tr := tar.NewReader(reader)
+		for {
+			hdr, nextErr := tr.Next()
+			if errors.Is(nextErr, io.EOF) {
+				break
+			}
+			if nextErr != nil {
+				closeReader()
+				_ = in.Close()
+				return nil, fmt.Errorf("scan agent profile layer: %w", nextErr)
+			}
+			if hdr.Typeflag != tar.TypeReg {
+				continue
+			}
+			switch normalizeLayerPath(hdr.Name) {
+			case strings.TrimPrefix(imagestore.AgentBinaryPath, "/"):
+				binaryFound = true
+			case strings.TrimPrefix(imagestore.AgentServicePath, "/"):
+				serviceFound = true
+			}
+		}
+		closeReader()
+		if err := in.Close(); err != nil {
+			return nil, fmt.Errorf("close agent profile layer: %w", err)
+		}
+	}
+
+	if !binaryFound || !serviceFound {
+		if mode == imagestore.AgentProfileRequired || mode == imagestore.AgentInjectionEmbedded {
+			return nil, fmt.Errorf("AGENT_INJECTION_FAILED: image must contain %s and %s", imagestore.AgentBinaryPath, imagestore.AgentServicePath)
+		}
+		return &imagestore.AgentProfile{
+			Name:      imagestore.AgentName,
+			Injection: imagestore.AgentInjectionUnsupported,
+		}, nil
+	}
+	return &imagestore.AgentProfile{
+		Name:        imagestore.AgentName,
+		Injection:   imagestore.AgentInjectionEmbedded,
+		BinaryPath:  imagestore.AgentBinaryPath,
+		ServicePath: imagestore.AgentServicePath,
+		Capabilities: []string{
+			string(protocol.CapabilityHello),
+			string(protocol.CapabilityExec),
+			string(protocol.CapabilityExecStream),
+			string(protocol.CapabilityExecTTY),
+			string(protocol.CapabilityIdentity),
+		},
+	}, nil
+}
+
+func normalizeLayerPath(name string) string {
+	return strings.TrimPrefix(path.Clean(strings.TrimPrefix(name, "/")), "./")
 }
 
 func decodeConfigStringSlice(config map[string]json.RawMessage, key string) (*[]string, bool, error) {

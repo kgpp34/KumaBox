@@ -64,6 +64,7 @@ type CreateRequest struct {
 	RootDisk RootDisk
 	Boot     Boot
 	OS       OS
+	Agent    *AgentProfile
 	OCI      *OCI
 }
 
@@ -150,6 +151,7 @@ func (s *Store) Create(req CreateRequest) (*ImageRecord, error) {
 			RootDisk:      req.RootDisk,
 			Boot:          req.Boot,
 			OS:            req.OS,
+			Agent:         cloneAgentProfile(req.Agent),
 			OCI:           cloneOCI(req.OCI),
 			CreatedAt:     now,
 			UpdatedAt:     now,
@@ -426,6 +428,7 @@ func (s *Store) commitImportedImage(req CreateRequest, stagedDisk string) (*Imag
 			},
 			Boot:      req.Boot,
 			OS:        req.OS,
+			Agent:     cloneAgentProfile(req.Agent),
 			OCI:       cloneOCI(req.OCI),
 			CreatedAt: now,
 			UpdatedAt: now,

@@ -77,6 +77,7 @@ func newImageBuildCommand(opts *rootOptions) *cobra.Command {
 	var source string
 	var mkfsEROFS string
 	var concurrency int
+	var agentProfile string
 	var progress bool
 
 	cmd := &cobra.Command{
@@ -117,13 +118,14 @@ func newImageBuildCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 			rec, err := ocibuild.NewWithStores(cfg.Runtime.RootDir, stores.OCI, stores.Images).Build(cmd.Context(), ocibuild.BuildRequest{
-				Name:        name,
-				Ref:         args[0],
-				Platform:    platform,
-				Source:      source,
-				MkfsEROFS:   mkfsEROFS,
-				Concurrency: concurrency,
-				Progress:    cliOCIProgress(cmd, progress),
+				Name:         name,
+				Ref:          args[0],
+				Platform:     platform,
+				Source:       source,
+				MkfsEROFS:    mkfsEROFS,
+				Concurrency:  concurrency,
+				AgentProfile: agentProfile,
+				Progress:     cliOCIProgress(cmd, progress),
 			})
 			if err != nil {
 				return err
@@ -136,6 +138,7 @@ func newImageBuildCommand(opts *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&source, "source", "auto", "OCI source: auto, registry, or daemon")
 	cmd.Flags().StringVar(&mkfsEROFS, "mkfs-erofs", "mkfs.erofs", "mkfs.erofs binary path")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "maximum concurrent OCI layer conversions; 0 uses host CPU count")
+	cmd.Flags().StringVar(&agentProfile, "agent-profile", imagestore.AgentProfileAuto, "guest agent profile: auto, required, embedded, or unsupported")
 	cmd.Flags().BoolVar(&progress, "progress", false, "print OCI import progress to stderr")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "resolve OCI metadata without publishing an image")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
