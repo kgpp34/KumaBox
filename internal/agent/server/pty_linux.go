@@ -4,6 +4,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -25,8 +27,12 @@ const (
 )
 
 func handleTTYExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.Frame) {
-	if request.User != "" {
-		writeStreamError(rw, request.ID, protocol.ErrorCapabilityMissing, "user selection is not supported by this protocol handler")
+	if err := validateUser(request.User); err != nil {
+		writeStreamError(rw, request.ID, protocol.ErrorUserUnsupported, err.Error())
+		return
+	}
+	if err := validateEnvironment(request.Env, agentPolicy.deniedEnv); err != nil {
+		writeStreamError(rw, request.ID, protocol.ErrorEnvDenied, err.Error())
 		return
 	}
 	master, slave, err := openPTY(request.Rows, request.Columns)
@@ -37,15 +43,18 @@ func handleTTYExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.Fram
 	defer master.Close() //nolint:errcheck
 	defer slave.Close()  //nolint:errcheck
 
-	cmd := exec.Command(request.Args[0], request.Args[1:]...) //nolint:gosec
+	ctx, cancel := context.WithTimeout(context.Background(), agentPolicy.timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, request.Args[0], request.Args[1:]...) //nolint:gosec
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Dir = request.WorkDir
-	cmd.Env = append(os.Environ(), environmentPairs(request.Env)...)
+	cmd.Env = mergeEnvironment(request.Env)
 	cmd.Stdin = slave
 	cmd.Stdout = slave
 	cmd.Stderr = slave
 	// Ctty is an index into the child's stdin/stdout/stderr file list, not
 	// the parent's PTY file descriptor.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setpgid: true, Setctty: true, Ctty: 0}
 	if err := cmd.Start(); err != nil {
 		writeStreamError(rw, request.ID, protocol.ErrorExecFailed, err.Error())
 		return
@@ -74,12 +83,13 @@ func handleTTYExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.Fram
 
 	outputErrs := make(chan error, 1)
 	outputDone := make(chan error, 1)
+	output := &outputBudget{limit: agentPolicy.maxOutput}
 	go func() {
 		buf := make([]byte, streamChunkSize)
 		for {
 			n, readErr := master.Read(buf)
 			if n > 0 {
-				if _, writeErr := (&streamOutputWriter{writer: writer, id: request.ID, frameType: protocol.FrameStdout, stream: protocol.StreamStdout}).Write(buf[:n]); writeErr != nil {
+				if _, writeErr := (&streamOutputWriter{writer: writer, id: request.ID, frameType: protocol.FrameStdout, stream: protocol.StreamStdout, budget: output}).Write(buf[:n]); writeErr != nil {
 					outputErrs <- writeErr
 					outputDone <- writeErr
 					return
@@ -101,6 +111,12 @@ func handleTTYExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.Fram
 	go func() { waitErrs <- cmd.Wait() }()
 	for {
 		select {
+		case <-ctx.Done():
+			killProcessTree(cmd)
+			if ctx.Err() == context.DeadlineExceeded {
+				writeStreamError(rw, request.ID, protocol.ErrorExecTimeout, "execution exceeded policy timeout")
+			}
+			return
 		case frame := <-frames:
 			if frame.ID != request.ID {
 				_ = cmd.Process.Kill()
@@ -133,7 +149,10 @@ func handleTTYExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.Fram
 			return
 		case outputErr := <-outputErrs:
 			if outputErr != nil {
-				_ = cmd.Process.Kill()
+				killProcessTree(cmd)
+				if output.exceeded() {
+					writeStreamError(rw, request.ID, protocol.ErrorOutputLimit, "execution output exceeded policy limit")
+				}
 				return
 			}
 		case waitErr := <-waitErrs:

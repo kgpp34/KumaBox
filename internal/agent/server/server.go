@@ -4,14 +4,17 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kumabox/kumabox/internal/agent/protocol"
 )
@@ -28,6 +31,10 @@ var capabilities = []string{
 	string(protocol.CapabilityExecTTY),
 	string(protocol.CapabilityIdentity),
 }
+
+var agentPolicy = policyFromEnvironment()
+
+var auditLog = log.New(os.Stderr, "kumabox-agent: ", log.LstdFlags)
 
 const streamChunkSize = 32 * 1024
 
@@ -50,6 +57,7 @@ type execRequest struct {
 	Env     []string             `json:"env,omitempty"`
 	WorkDir string               `json:"workdir,omitempty"`
 	Stdin   []byte               `json:"stdin,omitempty"`
+	User    string               `json:"user,omitempty"`
 }
 
 type execResponse struct {
@@ -136,17 +144,26 @@ func handleStreamExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.F
 		handleTTYExec(reader, rw, request)
 		return
 	}
-	if request.User != "" {
-		writeStreamError(rw, request.ID, protocol.ErrorCapabilityMissing, "user selection is not supported by this protocol handler")
+	if err := validateUser(request.User); err != nil {
+		writeStreamError(rw, request.ID, protocol.ErrorUserUnsupported, err.Error())
+		return
+	}
+	if err := validateEnvironment(request.Env, agentPolicy.deniedEnv); err != nil {
+		writeStreamError(rw, request.ID, protocol.ErrorEnvDenied, err.Error())
 		return
 	}
 
-	cmd := exec.Command(request.Args[0], request.Args[1:]...) //nolint:gosec
+	ctx, cancel := context.WithTimeout(context.Background(), agentPolicy.timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, request.Args[0], request.Args[1:]...) //nolint:gosec
+	cmd.WaitDelay = 2 * time.Second
+	configureProcess(cmd)
 	cmd.Dir = request.WorkDir
-	cmd.Env = append(os.Environ(), environmentPairs(request.Env)...)
+	cmd.Env = mergeEnvironment(request.Env)
 	writer := &streamWriter{writer: rw}
-	cmd.Stdout = &streamOutputWriter{writer: writer, id: request.ID, frameType: protocol.FrameStdout, stream: protocol.StreamStdout}
-	cmd.Stderr = &streamOutputWriter{writer: writer, id: request.ID, frameType: protocol.FrameStderr, stream: protocol.StreamStderr}
+	output := &outputBudget{limit: agentPolicy.maxOutput}
+	cmd.Stdout = &streamOutputWriter{writer: writer, id: request.ID, frameType: protocol.FrameStdout, stream: protocol.StreamStdout, budget: output}
+	cmd.Stderr = &streamOutputWriter{writer: writer, id: request.ID, frameType: protocol.FrameStderr, stream: protocol.StreamStderr, budget: output}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		writeStreamError(rw, request.ID, protocol.ErrorExecFailed, err.Error())
@@ -156,6 +173,10 @@ func handleStreamExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.F
 		writeStreamError(rw, request.ID, protocol.ErrorExecFailed, err.Error())
 		return
 	}
+	processDone := monitorProcess(ctx, cmd)
+	defer close(processDone)
+	startedAt := time.Now()
+	auditLog.Printf("exec start command=%q user=%q", request.Args[0], effectiveUser(request.User))
 
 	if err := writer.Write(protocol.Frame{Version: protocol.VersionV1, Type: protocol.FrameReady, ID: request.ID}); err != nil {
 		_ = cmd.Process.Kill()
@@ -193,22 +214,53 @@ func handleStreamExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.F
 	}
 
 	waitErr := cmd.Wait()
+	if ctx.Err() != nil {
+		killProcessTree(cmd)
+	}
 	exitCode := 0
 	if waitErr != nil {
 		exitCode = commandExitCode(waitErr)
 	}
+	if ctx.Err() == context.DeadlineExceeded {
+		exitCode = 124
+		_ = writer.Write(protocol.Frame{Version: protocol.VersionV1, Type: protocol.FrameError, ID: request.ID, Code: protocol.ErrorExecTimeout, Message: "execution exceeded policy timeout"})
+	}
+	if output.exceeded() {
+		exitCode = 124
+		_ = writer.Write(protocol.Frame{Version: protocol.VersionV1, Type: protocol.FrameError, ID: request.ID, Code: protocol.ErrorOutputLimit, Message: "execution output exceeded policy limit"})
+	}
+	auditLog.Printf("exec end command=%q user=%q exit=%d duration_ms=%d", request.Args[0], effectiveUser(request.User), exitCode, time.Since(startedAt).Milliseconds())
 	_ = writer.Write(protocol.Frame{Version: protocol.VersionV1, Type: protocol.FrameExit, ID: request.ID, ExitCode: exitCode})
 }
 
-func environmentPairs(values map[string]string) []string {
+func mergeEnvironment(values map[string]string) []string {
 	if len(values) == 0 {
-		return nil
+		return os.Environ()
 	}
-	result := make([]string, 0, len(values))
+	merged := make(map[string]string, len(os.Environ())+len(values))
+	for _, pair := range os.Environ() {
+		key, value, ok := strings.Cut(pair, "=")
+		if ok {
+			if _, exists := merged[key]; !exists {
+				merged[key] = value
+			}
+		}
+	}
 	for key, value := range values {
+		merged[key] = value
+	}
+	result := make([]string, 0, len(merged))
+	for key, value := range merged {
 		result = append(result, key+"="+value)
 	}
 	return result
+}
+
+func effectiveUser(user string) string {
+	if user == "" {
+		return "root"
+	}
+	return user
 }
 
 func commandExitCode(err error) int {
@@ -237,9 +289,13 @@ type streamOutputWriter struct {
 	id        string
 	frameType protocol.FrameType
 	stream    protocol.Stream
+	budget    *outputBudget
 }
 
 func (w *streamOutputWriter) Write(data []byte) (int, error) {
+	if !w.budget.reserve(int64(len(data))) {
+		return 0, fmt.Errorf("%w: maximum output is %d bytes", protocol.ErrorOutputLimit, w.budget.limit)
+	}
 	total := 0
 	for len(data) > 0 {
 		chunkSize := min(len(data), streamChunkSize)
@@ -257,6 +313,30 @@ func (w *streamOutputWriter) Write(data []byte) (int, error) {
 		data = data[chunkSize:]
 	}
 	return total, nil
+}
+
+type outputBudget struct {
+	mu          sync.Mutex
+	limit       int64
+	used        int64
+	wasExceeded bool
+}
+
+func (b *outputBudget) reserve(size int64) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.used+size > b.limit {
+		b.wasExceeded = true
+		return false
+	}
+	b.used += size
+	return true
+}
+
+func (b *outputBudget) exceeded() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.wasExceeded
 }
 
 func writeStreamError(w io.Writer, id string, code protocol.ErrorCode, message string) {
@@ -306,29 +386,95 @@ func handleExec(w io.Writer, raw []byte) {
 		writeResponse(w, execResponse{OK: false, ExitCode: 127, Error: "exec args must not be empty"})
 		return
 	}
+	if err := validateUser(req.User); err != nil {
+		writeResponse(w, execResponse{OK: false, ExitCode: 126, Error: err.Error()})
+		return
+	}
+	env, err := environmentMapFromPairs(req.Env)
+	if err != nil {
+		writeResponse(w, execResponse{OK: false, ExitCode: 126, Error: err.Error()})
+		return
+	}
+	if err := validateEnvironment(env, agentPolicy.deniedEnv); err != nil {
+		writeResponse(w, execResponse{OK: false, ExitCode: 126, Error: err.Error()})
+		return
+	}
 
-	cmd := exec.Command(req.Args[0], req.Args[1:]...) //nolint:gosec
+	ctx, cancel := context.WithTimeout(context.Background(), agentPolicy.timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, req.Args[0], req.Args[1:]...) //nolint:gosec
+	cmd.WaitDelay = 2 * time.Second
+	configureProcess(cmd)
 	cmd.Dir = req.WorkDir
-	cmd.Env = append(os.Environ(), req.Env...)
+	cmd.Env = mergeEnvironment(env)
 	cmd.Stdin = bytes.NewReader(req.Stdin)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := &limitedBuffer{limit: agentPolicy.maxOutput}
+	stderr := &limitedBuffer{limit: agentPolicy.maxOutput}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	resp := execResponse{OK: true}
-	if err := cmd.Run(); err != nil {
+	startedAt := time.Now()
+	auditLog.Printf("exec start command=%q user=%q", req.Args[0], effectiveUser(req.User))
+	if startErr := cmd.Start(); startErr != nil {
 		resp.OK = false
-		resp.Error = err.Error()
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			resp.ExitCode = exitErr.ExitCode()
-		} else {
-			resp.ExitCode = 127
+		resp.Error = startErr.Error()
+		resp.ExitCode = 127
+	} else {
+		processDone := monitorProcess(ctx, cmd)
+		waitErr := cmd.Wait()
+		close(processDone)
+		if waitErr != nil {
+			resp.OK = false
+			resp.Error = waitErr.Error()
+			if exitErr, ok := waitErr.(*exec.ExitError); ok {
+				resp.ExitCode = exitErr.ExitCode()
+			} else {
+				resp.ExitCode = 127
+			}
 		}
+	}
+	if ctx.Err() == context.DeadlineExceeded {
+		resp.OK, resp.ExitCode, resp.Error = false, 124, "EXEC_TIMEOUT: execution exceeded policy timeout"
+	}
+	if stdout.exceeded || stderr.exceeded {
+		resp.OK, resp.ExitCode, resp.Error = false, 124, "OUTPUT_LIMIT: execution output exceeded policy limit"
 	}
 	resp.Stdout = stdout.Bytes()
 	resp.Stderr = stderr.Bytes()
+	auditLog.Printf("exec end command=%q user=%q exit=%d duration_ms=%d", req.Args[0], effectiveUser(req.User), resp.ExitCode, time.Since(startedAt).Milliseconds())
 	writeResponse(w, resp)
+}
+
+func environmentMapFromPairs(values []string) (map[string]string, error) {
+	result := make(map[string]string, len(values))
+	for _, pair := range values {
+		key, value, ok := strings.Cut(pair, "=")
+		if !ok || key == "" || strings.ContainsRune(key, '\x00') || strings.ContainsRune(value, '\x00') {
+			return nil, fmt.Errorf("%w: environment must be KEY=VALUE", protocol.ErrorEnvDenied)
+		}
+		result[key] = value
+	}
+	return result, nil
+}
+
+type limitedBuffer struct {
+	bytes.Buffer
+	limit    int64
+	exceeded bool
+}
+
+func (b *limitedBuffer) Write(data []byte) (int, error) {
+	remaining := b.limit - int64(b.Len())
+	if remaining <= 0 {
+		b.exceeded = true
+		return 0, fmt.Errorf("%w", protocol.ErrorOutputLimit)
+	}
+	if int64(len(data)) > remaining {
+		data = data[:int(remaining)]
+		b.exceeded = true
+	}
+	return b.Buffer.Write(data)
 }
 
 func writeResponse(w io.Writer, resp any) {

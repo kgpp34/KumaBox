@@ -46,6 +46,7 @@ func ExecStream(ctx context.Context, socketPath string, req ExecRequest, stdin i
 		Args:    req.Args,
 		Env:     env,
 		WorkDir: req.WorkDir,
+		User:    req.User,
 	}); err != nil {
 		return 127, fmt.Errorf("%w: write exec frame: %v", ErrNotReady, err)
 	}

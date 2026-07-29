@@ -21,6 +21,7 @@ import (
 func newExecCommand(opts *rootOptions) *cobra.Command {
 	var env []string
 	var workdir string
+	var user string
 	var timeout time.Duration
 	var jsonOutput bool
 	var interactive bool
@@ -69,7 +70,7 @@ func newExecCommand(opts *rootOptions) *cobra.Command {
 					return fmt.Errorf("--json cannot be combined with --tty")
 				}
 				return runTTYExec(ctx, cmd, rec.VsockSocket, agentclient.ExecRequest{
-					Args: args[1:], Env: env, WorkDir: workdir,
+					Args: args[1:], Env: env, WorkDir: workdir, User: user,
 				}, stdin)
 			}
 			var stdout, stderr bytes.Buffer
@@ -81,6 +82,7 @@ func newExecCommand(opts *rootOptions) *cobra.Command {
 				Args:    args[1:],
 				Env:     env,
 				WorkDir: workdir,
+				User:    user,
 			}, stdin, outWriter, errWriter)
 			if err != nil {
 				return err
@@ -103,6 +105,7 @@ func newExecCommand(opts *rootOptions) *cobra.Command {
 	}
 	cmd.Flags().StringArrayVarP(&env, "env", "e", nil, "environment variable in KEY=VALUE form")
 	cmd.Flags().StringVarP(&workdir, "workdir", "w", "", "working directory inside the guest")
+	cmd.Flags().StringVar(&user, "user", "", "guest user (root is currently supported)")
 	cmd.Flags().DurationVar(&timeout, "timeout", agentclient.DefaultPingTimeout, "agent exec timeout")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "print exec result as JSON")
 	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "keep stdin open for the guest command")

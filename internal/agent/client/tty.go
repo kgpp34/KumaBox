@@ -39,6 +39,7 @@ func ExecTTY(ctx context.Context, socketPath string, req ExecRequest, stdin io.R
 		Args:    req.Args,
 		Env:     env,
 		WorkDir: req.WorkDir,
+		User:    req.User,
 		TTY:     true,
 		Rows:    options.Rows,
 		Columns: options.Columns,

@@ -55,6 +55,10 @@ const (
 	ErrorExecFailed         ErrorCode = "EXEC_FAILED"
 	ErrorAgentUnavailable   ErrorCode = "AGENT_UNAVAILABLE"
 	ErrorCapabilityMissing  ErrorCode = "CAPABILITY_MISSING"
+	ErrorUserUnsupported    ErrorCode = "USER_UNSUPPORTED"
+	ErrorEnvDenied          ErrorCode = "ENV_DENIED"
+	ErrorExecTimeout        ErrorCode = "EXEC_TIMEOUT"
+	ErrorOutputLimit        ErrorCode = "OUTPUT_LIMIT"
 )
 
 // Frame is the typed wire envelope for a streaming agent session. Fields are

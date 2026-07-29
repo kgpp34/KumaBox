@@ -53,6 +53,7 @@ type ExecRequest struct {
 	Env     []string `json:"env,omitempty"`
 	WorkDir string   `json:"workdir,omitempty"`
 	Stdin   []byte   `json:"stdin,omitempty"`
+	User    string   `json:"user,omitempty"`
 }
 
 type ExecResponse struct {
