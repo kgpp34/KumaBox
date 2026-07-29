@@ -176,8 +176,11 @@ wait_agent e2e-hotplug
 disk=/var/lib/kumabox/e2e-hotplug.raw
 "${run[@]}" truncate -s 8M "$disk"
 kb disk attach e2e-hotplug --path "$disk" --name e2e-data >/dev/null
-kb disk list e2e-hotplug | jq -e 'any(.[]; .id == "e2-data" or .serial == "e2e-data")' >/dev/null
+kb device state e2e-hotplug | jq -e '.attachedDisks | any(.[]; .name == "e2e-data")' >/dev/null
 kb disk detach e2e-hotplug --name e2e-data >/dev/null
+kb device state e2e-hotplug | jq -e '(.attachedDisks // []) | length == 0' >/dev/null
+kb network resize e2e-hotplug --nics 2 >/dev/null
+kb network resize e2e-hotplug --nics 1 >/dev/null
 kb delete e2e-hotplug --force >/dev/null
 
 [[ "$keep" == true ]] || cleanup
