@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,6 +104,21 @@ func TestCloneNativeSnapshotRollsBackFailedBackend(t *testing.T) {
 	}
 	if _, err := store.Inspect("failed-clone"); !errors.Is(err, vmstore.ErrNotFound) {
 		t.Fatalf("failed clone record remains: %v", err)
+	}
+	diagnosticRoot := filepath.Join(store.RootDir(), "diagnostics", "native-clone")
+	entries, err := os.ReadDir(diagnosticRoot)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("native clone diagnostics = %v, entries=%v", err, entries)
+	}
+	diagnosticDir := filepath.Join(diagnosticRoot, entries[0].Name())
+	for _, name := range []string{"failure.txt", "vm.json", "snapshot.json"} {
+		if _, statErr := os.Stat(filepath.Join(diagnosticDir, name)); statErr != nil {
+			t.Fatalf("diagnostic %s: %v", name, statErr)
+		}
+	}
+	failure, err := os.ReadFile(filepath.Join(diagnosticDir, "failure.txt"))
+	if err != nil || !strings.Contains(string(failure), cloneErr.Error()) {
+		t.Fatalf("diagnostic failure = %q, err=%v", failure, err)
 	}
 }
 

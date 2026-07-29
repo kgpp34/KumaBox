@@ -2,8 +2,12 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	agentclient "github.com/kumabox/kumabox/internal/agent/client"
@@ -112,6 +116,11 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		if committed {
 			return
 		}
+		if resultErr != nil {
+			if diagnosticDir := r.preserveNativeCloneDiagnostics(rec, snapshotRec, resultErr); diagnosticDir != "" {
+				resultErr = fmt.Errorf("%w; native clone diagnostics: %s", resultErr, diagnosticDir)
+			}
+		}
 		if backendResult != nil {
 			cleanup := *rec
 			cleanup.PID = backendResult.PID
@@ -188,6 +197,87 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		State: vmstore.ObservedStateRunning, Reason: "cloned from native snapshot " + snapshotRec.ID, CheckedAt: time.Now().UTC(),
 	})
 	return r.applyObservation(cloned), nil
+}
+
+const nativeCloneDiagnosticTailBytes = 64 << 10
+
+// preserveNativeCloneDiagnostics retains bounded host-side evidence before a
+// failed clone is rolled back. Clone rollback intentionally removes the VM's
+// run and log directories, so this must run before stopping the VMM.
+func (r *Runtime) preserveNativeCloneDiagnostics(rec *vmstore.VMRecord, snapshotRec *snapshot.Record, cause error) string {
+	if rec == nil || r.vmReader == nil {
+		return ""
+	}
+	dir := filepath.Join(r.vmReader.RootDir(), "diagnostics", "native-clone", rec.ID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return ""
+	}
+	writeNativeCloneDiagnosticJSON(filepath.Join(dir, "vm.json"), rec)
+	if snapshotRec != nil {
+		writeNativeCloneDiagnosticJSON(filepath.Join(dir, "snapshot.json"), snapshotRec)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "failure.txt"), []byte(cause.Error()+"\n"), 0o600)
+	copyNativeCloneDiagnostic(filepath.Join(dir, "cloud-hypervisor.json"), rec.Config)
+	writeNativeCloneStagingDiagnostic(filepath.Join(dir, "staging-memory.txt"), filepath.Join(rec.RunDir, ".restore-staging", snapshot.NativePayloadDir))
+	for _, name := range []string{"cloud-hypervisor.stderr.log", "cloud-hypervisor.stdout.log", "console.log"} {
+		copyNativeCloneDiagnosticTail(filepath.Join(dir, name), filepath.Join(rec.LogDir, name))
+	}
+	return dir
+}
+
+func writeNativeCloneDiagnosticJSON(path string, value any) {
+	raw, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, append(raw, '\n'), 0o600)
+}
+
+func copyNativeCloneDiagnostic(destination, source string) {
+	if source == "" {
+		return
+	}
+	raw, err := os.ReadFile(source) //nolint:gosec
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(destination, raw, 0o600)
+}
+
+func copyNativeCloneDiagnosticTail(destination, source string) {
+	raw, err := os.ReadFile(source) //nolint:gosec
+	if err != nil {
+		return
+	}
+	if len(raw) > nativeCloneDiagnosticTailBytes {
+		raw = raw[len(raw)-nativeCloneDiagnosticTailBytes:]
+	}
+	_ = os.WriteFile(destination, raw, 0o600)
+}
+
+func writeNativeCloneStagingDiagnostic(destination, stagingDir string) {
+	entries, err := os.ReadDir(stagingDir)
+	if err != nil {
+		return
+	}
+	var output strings.Builder
+	for _, entry := range entries {
+		path := filepath.Join(stagingDir, entry.Name())
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		output.WriteString(fmt.Sprintf("name=%s size=%d mode=%s", entry.Name(), info.Size(), info.Mode()))
+		if info.Mode()&os.ModeSymlink != 0 {
+			if target, err := os.Readlink(path); err == nil {
+				output.WriteString(fmt.Sprintf(" target=%s", target))
+			}
+		}
+		output.WriteString("\n")
+	}
+	if output.Len() > 0 {
+		_ = os.WriteFile(destination, []byte(output.String()), 0o600)
+	}
 }
 
 func cloneNetworkSelections(requested []string, nicCount int) ([]string, error) {
