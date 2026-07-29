@@ -21,6 +21,7 @@ keep=false
 rebuild_image=false
 fs_socket=
 pci_bdf=
+native_clone_id=
 
 usage() {
   cat <<'EOF'
@@ -146,7 +147,11 @@ failure_context() {
   printf '\n==> E2E failure context\n' >&2
   kb ps --json 2>/dev/null >&2 || true
 	printf '\n==> retained native clone record\n' >&2
-	kb inspect e2e-native-clone --json 2>&1 >&2 || true
+	if [[ -n ${native_clone_id:-} ]]; then
+		kb inspect "$native_clone_id" --json 2>&1 >&2 || true
+	else
+		kb inspect e2e-native-clone --json 2>&1 >&2 || true
+	fi
 	printf '\n==> retained native clone diagnostics\n' >&2
 	find /var/lib/kumabox/diagnostics/native-clone -maxdepth 2 -type f -print -exec sh -c 'printf "\\n--- %s ---\\n" "$1"; tail -n 160 "$1"' _ {} \; 2>/dev/null >&2 || true
   find /var/log/kumabox/vms -maxdepth 2 -type f \( -name console.log -o -name cloud-hypervisor.stderr.log \) -print 2>/dev/null >&2 || true
@@ -161,6 +166,10 @@ capture_native_clone_debug() {
   local vm_json="$native_debug_dir/clone-vm.json"
   local api_socket run_dir log_dir netns_path tap pid console_path
   kb inspect e2e-native-clone --json >"$vm_json" 2>&1 || return 0
+  native_clone_id=$(jq -r '.id // empty' "$vm_json")
+  if [[ -n "$native_clone_id" ]]; then
+    printf '%s\n' "$native_clone_id" >"$native_debug_dir/clone-vm-id"
+  fi
   run_dir=$(jq -r '.runDir // empty' "$vm_json")
   log_dir=$(jq -r '.logDir // empty' "$vm_json")
   api_socket=$(jq -r '.apiSocket // empty' "$vm_json")
@@ -302,15 +311,21 @@ wait_agent e2e-stopped-restored
 kb delete e2e-stopped-source --force >/dev/null
 kb delete e2e-stopped-restored --force >/dev/null
 
-step "native snapshot clone"
+step "native snapshot capture and clone"
 # Native snapshots contain guest memory. Keep this scenario small so it is
 # safe on hosts whose /run is a constrained tmpfs.
+native_debug_dir=$(mktemp -d "${TMPDIR:-/tmp}/kumabox-e2e-native-clone.XXXXXX")
 run_vm e2e-native-source "$network" "$native_snapshot_memory" >/dev/null
 wait_agent e2e-native-source
 kb exec e2e-native-source -- sh -c 'printf native > /var/tmp/e2e-native; sync' >/dev/null
-native_snapshot=$(kb snapshot create e2e-native-source --name e2e-native --type running | jq -r .id)
-native_debug_dir=$(mktemp -d "${TMPDIR:-/tmp}/kumabox-e2e-native-clone.XXXXXX")
 kb inspect e2e-native-source --json >"$native_debug_dir/source-vm.json" 2>&1 || true
+snapshot_output="$native_debug_dir/snapshot-create.out"
+if ! kb snapshot create e2e-native-source --name e2e-native --type running >"$snapshot_output" 2>&1; then
+  printf 'native snapshot capture failed:\n' >&2
+  cat "$snapshot_output" >&2
+  exit 1
+fi
+native_snapshot=$(jq -r .id "$snapshot_output")
 kb snapshot inspect "$native_snapshot" --json >"$native_debug_dir/snapshot.json" 2>&1 || true
 snapshot_data_dir=$(jq -r '.dataDir // empty' "$native_debug_dir/snapshot.json" 2>/dev/null || true)
 if [[ -n "$snapshot_data_dir" ]]; then
@@ -333,7 +348,7 @@ clone_seen=false
 for _ in $(seq 1 210); do
   if kb inspect e2e-native-clone --json >"$native_debug_dir/clone-vm.json" 2>/dev/null; then
     clone_seen=true
-    capture_native_clone_debug
+    capture_native_clone_debug || true
   fi
   if ! kill -0 "$clone_pid" 2>/dev/null; then
     break

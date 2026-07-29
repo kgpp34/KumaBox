@@ -116,13 +116,9 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		if committed {
 			return
 		}
-		if backendResult != nil {
-			cleanup := *rec
-			cleanup.PID = backendResult.PID
-			cleanup.APISocket = backendResult.APISocket
-			_, _ = r.backend.StopVM(&cleanup, backend.StopOptions{Force: true})
-		}
 		if resultErr != nil {
+			// Capture the live VMM files before StopVM removes sockets and
+			// backend-owned runtime state.
 			diagnosticDir, diagnosticErr := r.preserveNativeCloneDiagnostics(rec, snapshotRec, resultErr)
 			if diagnosticDir != "" {
 				resultErr = fmt.Errorf("%w; native clone diagnostics: %s", resultErr, diagnosticDir)
@@ -130,6 +126,12 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 			if diagnosticErr != nil {
 				resultErr = errors.Join(resultErr, fmt.Errorf("preserve native clone diagnostics: %w", diagnosticErr))
 			}
+		}
+		if backendResult != nil {
+			cleanup := *rec
+			cleanup.PID = backendResult.PID
+			cleanup.APISocket = backendResult.APISocket
+			_, _ = r.backend.StopVM(&cleanup, backend.StopOptions{Force: true})
 		}
 		// A native restore can fail after its destructive disk boundary. Keep
 		// the VM and its provider attachments in an explicit error state so an
