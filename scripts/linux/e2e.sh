@@ -6,6 +6,7 @@ set -Eeuo pipefail
 # hotplug flows in one isolated run.
 
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+cd "$repo_dir"
 kumabox="$repo_dir/bin/kumabox"
 cloud_hypervisor=cloud-hypervisor
 qemu_img=qemu-img
@@ -73,7 +74,6 @@ while (($#)); do
 done
 
 [[ "$metadata_backend" == json || "$metadata_backend" == sqlite ]] || { echo "--metadata-backend must be json or sqlite" >&2; exit 2; }
-[[ -x "$kumabox" ]] || { echo "kumabox is not executable: $kumabox" >&2; exit 1; }
 command -v "$cloud_hypervisor" >/dev/null || { echo "cloud-hypervisor is required" >&2; exit 1; }
 command -v "$qemu_img" >/dev/null || { echo "qemu-img is required" >&2; exit 1; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 1; }
@@ -90,6 +90,45 @@ fi
 step() { printf '\n==> %s\n' "$1"; }
 kb() { "${run[@]}" "$kumabox" --cloud-hypervisor-bin "$cloud_hypervisor" --qemu-img-bin "$qemu_img" --metadata-backend "$metadata_backend" "$@"; }
 host() { "${run[@]}" "$@"; }
+
+resolve_go_binary() {
+  if [[ -z "$go_bin" ]]; then
+    if [[ $(id -u) -eq 0 ]]; then
+      go_bin=$(sudo -u "$build_user" -H sh -lc 'command -v go' 2>/dev/null || true)
+    else
+      go_bin=$(command -v go || true)
+    fi
+  fi
+  [[ -x "$go_bin" ]] || {
+    echo "Go binary is required; pass --go-bin \$(go env GOROOT)/bin/go" >&2
+    exit 1
+  }
+  "$go_bin" version | grep -Eq 'go1\.24\.[4-9]|go1\.(2[5-9]|[3-9][0-9])\.' || {
+    echo "Go 1.24.4 or newer is required: $("$go_bin" version)" >&2
+    exit 1
+  }
+}
+
+build_host_binary() {
+  resolve_go_binary
+  local commit build_time ldflags
+  commit=$(git -C "$repo_dir" rev-parse --short HEAD)
+  build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  ldflags="-X github.com/kumabox/kumabox/internal/version.Version=0.0.0-dev -X github.com/kumabox/kumabox/internal/version.Commit=$commit -X github.com/kumabox/kumabox/internal/version.BuildTime=$build_time"
+  mkdir -p "$(dirname "$kumabox")"
+  if [[ $(id -u) -eq 0 ]]; then
+    sudo -u "$build_user" -H "$go_bin" build -ldflags "$ldflags" -o "$kumabox" ./cmd/kumabox
+  else
+    "$go_bin" build -ldflags "$ldflags" -o "$kumabox" ./cmd/kumabox
+  fi
+  local binary_commit
+  binary_commit=$("$kumabox" version --json | jq -r '.commit')
+  [[ "$binary_commit" == "$commit" ]] || {
+    echo "host binary commit mismatch: source=$commit binary=$binary_commit" >&2
+    exit 1
+  }
+  printf 'host binary: commit=%s path=%s\n' "$binary_commit" "$kumabox"
+}
 
 names=(e2e-exec e2e-boot e2e-cni e2e-stopped-source e2e-stopped-restored e2e-native-source e2e-native-clone e2e-hotplug)
 snapshots=(e2e-stopped e2e-stopped-import e2e-native)
@@ -174,9 +213,7 @@ capture_native_clone_debug() {
 
 build_image() {
   step "build guest agent and OCI image"
-  [[ -n "$go_bin" ]] || go_bin=$(command -v go || true)
-  [[ -x "$go_bin" ]] || { echo "Go binary is required; pass --go-bin \$(go env GOROOT)/bin/go" >&2; exit 1; }
-  "$go_bin" version | grep -Eq 'go1\.24\.[4-9]|go1\.(2[5-9]|[3-9][0-9])\.' || { echo "Go 1.24.4 or newer is required" >&2; exit 1; }
+  resolve_go_binary
   command -v docker >/dev/null || { echo "docker is required to build $image_ref" >&2; exit 1; }
   local context="$repo_dir/oci-images/ubuntu"
   local agent="$context/kumabox-agent-linux-amd64"
@@ -211,6 +248,9 @@ run_vm() {
   fi
   kb "${args[@]}"
 }
+
+step "build current host binary"
+build_host_binary
 
 step "clean previous E2E resources"
 cleanup

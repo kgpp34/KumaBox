@@ -123,8 +123,12 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 			_, _ = r.backend.StopVM(&cleanup, backend.StopOptions{Force: true})
 		}
 		if resultErr != nil {
-			if diagnosticDir := r.preserveNativeCloneDiagnostics(rec, snapshotRec, resultErr); diagnosticDir != "" {
+			diagnosticDir, diagnosticErr := r.preserveNativeCloneDiagnostics(rec, snapshotRec, resultErr)
+			if diagnosticDir != "" {
 				resultErr = fmt.Errorf("%w; native clone diagnostics: %s", resultErr, diagnosticDir)
+			}
+			if diagnosticErr != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("preserve native clone diagnostics: %w", diagnosticErr))
 			}
 		}
 		// A native restore can fail after its destructive disk boundary. Keep
@@ -133,7 +137,9 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		// delete it deliberately. Removing the record here made clone failures
 		// indistinguishable from successful cleanup.
 		if resultErr != nil {
-			_, _ = r.vmRestore.FailRestore(rec.ID, resultErr.Error())
+			if _, markErr := r.vmRestore.FailRestore(rec.ID, resultErr.Error()); markErr != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("preserve failed clone state: %w", markErr))
+			}
 			return
 		}
 		r.network.rollbackNetwork(rec)
@@ -213,33 +219,43 @@ const nativeCloneDiagnosticTailBytes = 64 << 10
 // preserveNativeCloneDiagnostics retains bounded host-side evidence before a
 // failed clone is rolled back. Clone rollback intentionally removes the VM's
 // run and log directories, so this must run before stopping the VMM.
-func (r *Runtime) preserveNativeCloneDiagnostics(rec *vmstore.VMRecord, snapshotRec *snapshot.Record, cause error) string {
+func (r *Runtime) preserveNativeCloneDiagnostics(rec *vmstore.VMRecord, snapshotRec *snapshot.Record, cause error) (string, error) {
 	if rec == nil || r.vmReader == nil {
-		return ""
+		return "", errors.New("VM record or reader is nil")
 	}
 	dir := filepath.Join(r.vmReader.RootDir(), "diagnostics", "native-clone", rec.ID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return ""
+		return "", fmt.Errorf("create %s: %w", dir, err)
 	}
-	writeNativeCloneDiagnosticJSON(filepath.Join(dir, "vm.json"), rec)
+	var diagnosticErrs []error
+	if err := writeNativeCloneDiagnosticJSON(filepath.Join(dir, "vm.json"), rec); err != nil {
+		diagnosticErrs = append(diagnosticErrs, err)
+	}
 	if snapshotRec != nil {
-		writeNativeCloneDiagnosticJSON(filepath.Join(dir, "snapshot.json"), snapshotRec)
+		if err := writeNativeCloneDiagnosticJSON(filepath.Join(dir, "snapshot.json"), snapshotRec); err != nil {
+			diagnosticErrs = append(diagnosticErrs, err)
+		}
 	}
-	_ = os.WriteFile(filepath.Join(dir, "failure.txt"), []byte(cause.Error()+"\n"), 0o600)
+	if err := os.WriteFile(filepath.Join(dir, "failure.txt"), []byte(cause.Error()+"\n"), 0o600); err != nil {
+		diagnosticErrs = append(diagnosticErrs, fmt.Errorf("write failure diagnostic: %w", err))
+	}
 	copyNativeCloneDiagnostic(filepath.Join(dir, "cloud-hypervisor.json"), rec.Config)
 	writeNativeCloneStagingDiagnostic(filepath.Join(dir, "staging-memory.txt"), filepath.Join(rec.RunDir, ".restore-staging", snapshot.NativePayloadDir))
 	for _, name := range []string{"cloud-hypervisor.stderr.log", "cloud-hypervisor.stdout.log", "console.log"} {
 		copyNativeCloneDiagnosticTail(filepath.Join(dir, name), filepath.Join(rec.LogDir, name))
 	}
-	return dir
+	return dir, errors.Join(diagnosticErrs...)
 }
 
-func writeNativeCloneDiagnosticJSON(path string, value any) {
+func writeNativeCloneDiagnosticJSON(path string, value any) error {
 	raw, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
-		return
+		return fmt.Errorf("encode %s: %w", filepath.Base(path), err)
 	}
-	_ = os.WriteFile(path, append(raw, '\n'), 0o600)
+	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", filepath.Base(path), err)
+	}
+	return nil
 }
 
 func copyNativeCloneDiagnostic(destination, source string) {
