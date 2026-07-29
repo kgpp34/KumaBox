@@ -136,9 +136,9 @@ run_suite() {
   printf '\n==> E2E suite: %s\n' "$suite"
   case "$suite" in
     oci)
-      suite_args=("${common_args[@]}" --image-name "$image" --image-ref "$image_ref" --skip-base-build --sudo)
+      suite_args=("${common_args[@]}" --image-name "$image" --image-ref "$image_ref" --sudo)
       if [[ "$rebuild_image" != true ]]; then
-        suite_args+=(--skip-image-build)
+        suite_args+=(--skip-base-build --skip-image-build)
       fi
       "${prefix[@]}" "$script_dir/verify.sh" "$suite" "${suite_args[@]}"
       ;;

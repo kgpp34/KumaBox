@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_dir=$(cd -- "$script_dir/../.." && pwd)
+
 kumabox_path="./bin/kumabox"
 cloud_hypervisor_path="cloud-hypervisor"
 qemu_img_path="qemu-img"
@@ -202,24 +205,27 @@ build_base_image() {
   local agent_binary_amd64=$context_dir/kumabox-agent-linux-amd64
   local agent_binary_arm64=$context_dir/kumabox-agent-linux-arm64
 
-  for binary in docker go; do
-    command -v "$binary" >/dev/null 2>&1 || {
-      echo "$binary is required to build the KumaBox OCI base image" >&2
-      return 1
-    }
-  done
-  [[ -f $dockerfile ]] || { echo "OCI base Dockerfile is missing: $dockerfile" >&2; return 1; }
+	[[ -f $dockerfile ]] || { echo "OCI base Dockerfile is missing: $dockerfile" >&2; return 1; }
 
-  step "build Linux guest agent"
-  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$agent_binary_amd64" ./cmd/agent
-  GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "$agent_binary_arm64" ./cmd/agent
-
-  step "build KumaBox-compatible OCI base image"
-  if ! docker build --platform "$platform" -f "$dockerfile" -t "$ref" "$context_dir"; then
-    rm -f "$agent_binary_amd64" "$agent_binary_arm64"
-    return 1
-  fi
-  rm -f "$agent_binary_amd64" "$agent_binary_arm64"
+	step "build Linux guest agent"
+	if [[ "$(id -u)" -eq 0 ]]; then
+		local build_user="${SUDO_USER:-}"
+		[[ -n "$build_user" && "$build_user" != root ]] || {
+			echo "base image build must run as the development user, not root" >&2
+			return 1
+		}
+		local build_command
+		printf -v build_command 'cd %q && command -v go >/dev/null && command -v docker >/dev/null && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %q ./cmd/agent && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o %q ./cmd/agent && docker build --platform %q -f %q -t %q %q' \
+			"$repo_dir" "$repo_dir/$agent_binary_amd64" "$repo_dir/$agent_binary_arm64" "$platform" "$repo_dir/$dockerfile" "$ref" "$repo_dir/$context_dir"
+		sudo -iu "$build_user" bash -lc "$build_command"
+	else
+		command -v go >/dev/null 2>&1 || { echo "go is required to build the KumaBox OCI base image" >&2; return 1; }
+		command -v docker >/dev/null 2>&1 || { echo "docker is required to build the KumaBox OCI base image" >&2; return 1; }
+		GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$agent_binary_amd64" ./cmd/agent
+		GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "$agent_binary_arm64" ./cmd/agent
+		docker build --platform "$platform" -f "$dockerfile" -t "$ref" "$context_dir"
+	fi
+	rm -f "$agent_binary_amd64" "$agent_binary_arm64"
 }
 
 if [[ "$skip_base_build" -eq 0 ]]; then
