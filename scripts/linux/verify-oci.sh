@@ -9,6 +9,15 @@ user_go_path() {
 	local shell_path candidate version_command version_output alternate_shell
 	shell_path="$(getent passwd "$user" | cut -d: -f7)"
 	[[ -x "$shell_path" ]] || shell_path=/bin/bash
+	if [[ -n "$go_bin_override" ]]; then
+		printf -v version_command '%q version' "$go_bin_override"
+		version_output="$(sudo -u "$user" -H "$shell_path" -ic "$version_command" 2>/dev/null || true)"
+		if printf '%s\n' "$version_output" | grep -Eq 'go1\.24\.([4-9]|[1-9][0-9])([[:space:]]|$)|go1\.(2[5-9]|[3-9][0-9])([.[:space:]]|$)'; then
+			printf '%s\n' "$go_bin_override"
+			return 0
+		fi
+		return 1
+	fi
 	while IFS= read -r candidate; do
 		printf -v version_command '%q version' "$candidate"
 		version_output="$(sudo -u "$user" -H "$shell_path" -ic "$version_command" 2>/dev/null || true)"
@@ -49,6 +58,7 @@ skip_image_build=0
 use_sudo=false
 metadata_backend=json
 metadata_path=
+go_bin_override=
 script_status=1
 tail_pid=""
 
@@ -76,6 +86,7 @@ Options:
   --sudo                     run kumabox and root-owned file reads through sudo
   --metadata-backend VALUE   metadata backend: json or sqlite
   --metadata-path PATH       SQLite metadata path
+  --go-bin PATH              Go 1.24.4+ binary used for base image builds
 
 Verifies OCI exec MVP:
 build OCI image -> run VM -> wait for agent -> execute hostname/stdin/env/failing
@@ -159,6 +170,7 @@ while [[ $# -gt 0 ]]; do
     --sudo) use_sudo=true; shift ;;
     --metadata-backend) require_value "$1" "${2:-}"; metadata_backend="$2"; shift 2 ;;
     --metadata-path) require_value "$1" "${2:-}"; metadata_path="$2"; shift 2 ;;
+    --go-bin) require_value "$1" "${2:-}"; go_bin_override="$2"; shift 2 ;;
     -h|--help) script_status=0; usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac

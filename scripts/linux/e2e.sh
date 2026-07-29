@@ -25,6 +25,7 @@ skip_unit=false
 keep_failed=true
 skip_hotplug=false
 rebuild_image=false
+go_bin_override=
 
 usage() {
   cat <<'EOF'
@@ -56,6 +57,7 @@ Options:
   --cleanup-on-success
   --skip-hotplug
   --rebuild-image             rebuild the managed OCI image before boot suites
+  --go-bin PATH               Go 1.24.4+ binary from the development user
 EOF
 }
 
@@ -82,6 +84,7 @@ while (($#)); do
     --cleanup-on-success) keep_failed=false; shift ;;
     --skip-hotplug) skip_hotplug=true; shift ;;
     --rebuild-image) rebuild_image=true; shift ;;
+    --go-bin) require_value "$1" "${2:-}"; go_bin_override=$2; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -135,6 +138,15 @@ user_go_path() {
   local shell_path candidate version_command version_output alternate_shell
   shell_path="$(getent passwd "$user" | cut -d: -f7)"
   [[ -x "$shell_path" ]] || shell_path=/bin/bash
+  if [[ -n "$go_bin_override" ]]; then
+    printf -v version_command '%q version' "$go_bin_override"
+    version_output="$(sudo -u "$user" -H "$shell_path" -ic "$version_command" 2>/dev/null || true)"
+    if printf '%s\n' "$version_output" | grep -Eq 'go1\.24\.([4-9]|[1-9][0-9])([[:space:]]|$)|go1\.(2[5-9]|[3-9][0-9])([.[:space:]]|$)'; then
+      printf '%s\n' "$go_bin_override"
+      return 0
+    fi
+    return 1
+  fi
   while IFS= read -r candidate; do
     printf -v version_command '%q version' "$candidate"
     version_output="$(sudo -u "$user" -H "$shell_path" -ic "$version_command" 2>/dev/null || true)"
@@ -163,6 +175,7 @@ run_suite() {
   case "$suite" in
     oci)
       suite_args=("${common_args[@]}" --image-name "$image" --image-ref "$image_ref" --sudo)
+      [[ -n "$go_bin_override" ]] && suite_args+=(--go-bin "$go_bin_override")
       if [[ "$rebuild_image" != true ]]; then
         suite_args+=(--skip-base-build --skip-image-build)
       fi
