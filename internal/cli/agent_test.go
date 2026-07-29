@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +22,7 @@ func TestInspectAgentStatusReportsStoppedVM(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	view := inspectAgentStatus(t.Context(), &vmstore.VMRecord{
+	view := inspectAgentStatus(context.Background(), &vmstore.VMRecord{
 		ID:     "kb_test",
 		Name:   "stopped",
 		State:  vmstore.StateStopped,
