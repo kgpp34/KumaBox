@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/kumabox/kumabox/internal/reference"
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -56,14 +55,5 @@ func (r *Runtime) removeVMReferences(ctx context.Context, vmID string) error {
 	if r.storeSet.References == nil {
 		return nil
 	}
-	records, err := r.storeSet.References.ListSource(ctx, referenceKindVM, vmID)
-	if err != nil {
-		return err
-	}
-	for _, record := range records {
-		if err := r.storeSet.References.Delete(ctx, record.ID); err != nil {
-			return fmt.Errorf("delete VM reference %s: %w", record.ID, err)
-		}
-	}
-	return nil
+	return r.storeSet.References.DeleteSource(ctx, referenceKindVM, vmID)
 }

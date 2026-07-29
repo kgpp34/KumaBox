@@ -85,6 +85,7 @@ var _ OperationState = (*operation.Journal)(nil)
 type ReferenceState interface {
 	Upsert(context.Context, reference.Record) error
 	Delete(context.Context, string) error
+	DeleteSource(context.Context, string, string) error
 	ListTarget(context.Context, string, string) ([]reference.Record, error)
 	ListSource(context.Context, string, string) ([]reference.Record, error)
 }

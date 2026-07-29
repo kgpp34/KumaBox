@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -19,6 +20,7 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
+	"github.com/kumabox/kumabox/internal/reference"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -892,6 +894,46 @@ func TestImageRemoveRejectsReferencedImage(t *testing.T) {
 	}
 	if removed.ID != image.ID {
 		t.Fatalf("removed id = %s, want %s", removed.ID, image.ID)
+	}
+}
+
+func TestImageRemovePrunesDanglingExplicitReferences(t *testing.T) {
+	rootDir := t.TempDir()
+	basePath := filepath.Join(rootDir, "cloudimg", "img_test", "base.qcow2")
+	if err := os.MkdirAll(filepath.Dir(basePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(basePath, []byte("base"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	image, err := imagestore.New(rootDir).Create(imagestore.CreateRequest{
+		Name:   "ubuntu",
+		Source: imagestore.Source{Type: "test", URI: "fixtures/ubuntu.img"},
+		RootDisk: imagestore.RootDisk{
+			Path: basePath, Format: "qcow2", VirtualSizeBytes: 1024 * 1024, SHA256: strings.Repeat("a", 64),
+		},
+		Boot: imagestore.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
+		OS:   imagestore.OS{Family: "ubuntu", Profile: "ubuntu-cloudimg"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	references := reference.New(rootDir)
+	if err := references.Upsert(context.Background(), reference.Record{
+		ID: "snapshot-image:deleted", SourceKind: "snapshot", SourceID: "deleted",
+		TargetKind: "image", TargetID: image.ID, Mode: "base",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rm := newTestRootCommand(rootDir)
+	rm.SetArgs([]string{"image", "rm", image.ID})
+	if err := rm.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	remaining, err := references.ListTarget(context.Background(), "image", image.ID)
+	if err != nil || len(remaining) != 0 {
+		t.Fatalf("dangling references = %+v, err=%v", remaining, err)
 	}
 }
 

@@ -269,6 +269,11 @@ func newSnapshotRMCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if stores.References != nil {
+				if err := stores.References.DeleteSource(cmd.Context(), "snapshot", rec.ID); err != nil {
+					return fmt.Errorf("remove snapshot references: %w", err)
+				}
+			}
 			return writeJSON(cmd.OutOrStdout(), rec)
 		},
 	}

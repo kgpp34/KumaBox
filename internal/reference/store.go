@@ -68,6 +68,31 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	})
 }
 
+// DeleteSource removes every relationship owned by one durable resource in a
+// single metadata transaction.
+func (s *Store) DeleteSource(ctx context.Context, kind, id string) error {
+	if kind == "" || id == "" {
+		return fmt.Errorf("reference source identity is incomplete: %w", meta.ErrScope)
+	}
+	return s.engine.Update(ctx, meta.Scope{Write: namespace}, meta.CommitDurable, func(writer meta.Writer) error {
+		var ids []meta.RecordID
+		if err := s.collection.Scan(ctx, writer, func(recordID meta.RecordID, record *Record) error {
+			if record.SourceKind == kind && record.SourceID == id {
+				ids = append(ids, recordID)
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, recordID := range ids {
+			if err := s.collection.Delete(ctx, writer, recordID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func (s *Store) ListTarget(ctx context.Context, kind, id string) ([]Record, error) {
 	return s.list(ctx, func(record Record) bool { return record.TargetKind == kind && record.TargetID == id })
 }
@@ -93,6 +118,7 @@ func (s *Store) list(ctx context.Context, matches func(Record) bool) ([]Record, 
 var _ interface {
 	Upsert(context.Context, Record) error
 	Delete(context.Context, string) error
+	DeleteSource(context.Context, string, string) error
 	ListTarget(context.Context, string, string) ([]Record, error)
 	ListSource(context.Context, string, string) ([]Record, error)
 } = (*Store)(nil)

@@ -351,11 +351,52 @@ func explicitImageReferences(ctx context.Context, stores resources.StoreSet, ref
 	if err != nil {
 		return nil, err
 	}
+	liveVMs, liveSnapshots, err := liveImageReferenceSources(stores)
+	if err != nil {
+		return nil, err
+	}
 	refs := make([]imagestore.Reference, 0, len(records))
 	for _, record := range records {
+		live := true
+		switch record.SourceKind {
+		case "vm":
+			_, live = liveVMs[record.SourceID]
+		case "snapshot":
+			_, live = liveSnapshots[record.SourceID]
+		}
+		if !live {
+			if err := stores.References.Delete(ctx, record.ID); err != nil {
+				return nil, fmt.Errorf("delete dangling image reference %s: %w", record.ID, err)
+			}
+			continue
+		}
 		refs = append(refs, imagestore.Reference{Kind: record.SourceKind, VMID: record.SourceID, VMName: record.SourceID, ImageID: image.ID})
 	}
 	return refs, nil
+}
+
+func liveImageReferenceSources(stores resources.StoreSet) (map[string]struct{}, map[string]struct{}, error) {
+	vms, err := stores.VM.List()
+	if err != nil {
+		return nil, nil, fmt.Errorf("list VMs for image references: %w", err)
+	}
+	liveVMs := make(map[string]struct{}, len(vms))
+	for _, rec := range vms {
+		if rec != nil {
+			liveVMs[rec.ID] = struct{}{}
+		}
+	}
+	snapshots, err := stores.Snapshots.List()
+	if err != nil {
+		return nil, nil, fmt.Errorf("list snapshots for image references: %w", err)
+	}
+	liveSnapshots := make(map[string]struct{}, len(snapshots))
+	for _, rec := range snapshots {
+		if rec != nil {
+			liveSnapshots[rec.ID] = struct{}{}
+		}
+	}
+	return liveVMs, liveSnapshots, nil
 }
 
 func imageReferencesFromVMs(stores resources.StoreSet) ([]imagestore.Reference, error) {
