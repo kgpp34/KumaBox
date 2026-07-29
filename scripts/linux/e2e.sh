@@ -199,7 +199,7 @@ kb delete e2e-stopped-restored --force >/dev/null
 step "native snapshot clone"
 # Native snapshots contain guest memory. Keep this scenario small so it is
 # safe on hosts whose /run is a constrained tmpfs.
-run_vm e2e-native-source none "$native_snapshot_memory" >/dev/null
+run_vm e2e-native-source "$network" "$native_snapshot_memory" >/dev/null
 wait_agent e2e-native-source
 kb exec e2e-native-source -- sh -c 'printf native > /var/tmp/e2e-native; sync' >/dev/null
 native_snapshot=$(kb snapshot create e2e-native-source --name e2e-native --type running | jq -r .id)
@@ -221,7 +221,7 @@ fi
 # while that wait is active because normal rollback removes its runtime and log
 # directories after a failure.
 clone_output="$native_debug_dir/clone.out"
-kb clone "$native_snapshot" --name e2e-native-clone --network none --restore-mode ondemand >"$clone_output" 2>&1 &
+kb clone "$native_snapshot" --name e2e-native-clone --network "$network" --restore-mode ondemand >"$clone_output" 2>&1 &
 clone_pid=$!
 clone_seen=false
 for _ in $(seq 1 210); do
@@ -268,7 +268,7 @@ if ! wait "$clone_pid"; then
     exit 1
   fi
   printf 'native clone: ondemand unavailable; falling back to %s copy restore\n' "$native_snapshot_memory"
-  kb clone "$native_snapshot" --name e2e-native-clone --network none --restore-mode copy >/dev/null
+  kb clone "$native_snapshot" --name e2e-native-clone --network "$network" --restore-mode copy >/dev/null
 fi
 wait_agent e2e-native-clone
 [[ $(kb exec e2e-native-clone -- cat /var/tmp/e2e-native) == native ]]

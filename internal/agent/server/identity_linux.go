@@ -22,14 +22,24 @@ func applyIdentity(req identityRequest) error {
 	if err := os.WriteFile("/etc/hostname", []byte(req.Hostname+"\n"), 0o644); err != nil {
 		return fmt.Errorf("persist hostname: %w", err)
 	}
-	interfaceNames, err := persistNetworkdIdentity(req.Interfaces)
+	return applyNetworkIdentity(req.Interfaces)
+}
+
+// applyNetworkIdentity changes networkd state only when the clone has guest
+// NICs. A networkless clone still needs a unique hostname, but reloading
+// networkd in that case is unrelated work during the restore critical path.
+func applyNetworkIdentity(identities []interfaceIdentity) error {
+	if len(identities) == 0 {
+		return nil
+	}
+	interfaceNames, err := persistNetworkdIdentity(identities)
 	if err != nil {
 		return fmt.Errorf("persist network identity: %w", err)
 	}
 	if err := reloadNetworkd(); err != nil {
 		return fmt.Errorf("reload network identity: %w", err)
 	}
-	for index, identity := range req.Interfaces {
+	for index, identity := range identities {
 		if err := configureInterface(index, identity); err != nil {
 			return err
 		}
