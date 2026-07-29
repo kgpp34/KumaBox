@@ -101,39 +101,11 @@ func TestCloneRestoreTAPNameFitsLinuxInterfaceLimit(t *testing.T) {
 
 func TestHotSwapCloneNetworksRemovesOldBeforeAddingNew(t *testing.T) {
 	var calls []string
-	state := "Paused"
-	oldDevicePresent := true
-	ejectObserved := false
 	client := apiTestClient(func(req *http.Request) (*http.Response, error) {
 		body, _ := io.ReadAll(req.Body)
 		calls = append(calls, req.URL.Path+":"+string(body))
-		switch req.URL.Path {
-		case "/api/v1/vm.info":
-			deviceTree := map[string]any{}
-			if oldDevicePresent {
-				deviceTree["old-net"] = map[string]any{"id": "old-net"}
-			}
-			payload, _ := json.Marshal(map[string]any{"state": state, "device_tree": deviceTree})
-			if state == "Running" && oldDevicePresent {
-				if ejectObserved {
-					oldDevicePresent = false
-				} else {
-					ejectObserved = true
-				}
-			}
-			return apiResponse(http.StatusOK, string(payload)), nil
-		case "/api/v1/vm.resume":
-			state = "Running"
-			return apiResponse(http.StatusNoContent, ""), nil
-		case "/api/v1/vm.pause":
-			state = "Paused"
-			return apiResponse(http.StatusNoContent, ""), nil
-		}
 		code := http.StatusNoContent
 		if req.URL.Path == "/api/v1/vm.add-net" {
-			if oldDevicePresent || state != "Paused" {
-				t.Fatalf("new NIC added before eject barrier: present=%t state=%s", oldDevicePresent, state)
-			}
 			code = http.StatusOK
 		}
 		return apiResponse(code, ""), nil
@@ -148,7 +120,7 @@ func TestHotSwapCloneNetworksRemovesOldBeforeAddingNew(t *testing.T) {
 	if err := hotSwapCloneNetworks(context.Background(), client, map[string]json.RawMessage{"net": old}, rec); err != nil {
 		t.Fatal(err)
 	}
-	if len(calls) < 8 || calls[0] != `/api/v1/vm.remove-device:{"id":"old-net"}` {
+	if len(calls) != 2 || calls[0] != `/api/v1/vm.remove-device:{"id":"old-net"}` {
 		t.Fatalf("calls = %v", calls)
 	}
 	wantID := cloneNetworkDeviceID(rec.NetworkConfigs[0].MAC)

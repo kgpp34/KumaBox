@@ -11,6 +11,9 @@ ExecStart=/usr/local/bin/kumabox-agent serve
 Environment=AGENT_LOG_LEVEL=info
 Restart=always
 RestartSec=2s
+StandardOutput=journal+console
+StandardError=journal+console
+SyslogIdentifier=kumabox-agent
 LimitNOFILE=65536
 
 [Install]

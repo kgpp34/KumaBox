@@ -10,17 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
-)
-
-const (
-	cloneDeviceEjectTimeout = 30 * time.Second
-	cloneDeviceEjectPoll    = 50 * time.Millisecond
 )
 
 // RestoreVM launches an API-only Cloud Hypervisor process, restores native
@@ -250,7 +244,6 @@ func hotSwapCloneNetworks(ctx context.Context, client *http.Client, config map[s
 	if len(oldNets) != len(rec.NetworkConfigs) {
 		return fmt.Errorf("SNAPSHOT_INCOMPATIBLE: snapshot has %d NICs, clone has %d", len(oldNets), len(rec.NetworkConfigs))
 	}
-	oldIDs := make([]string, 0, len(oldNets))
 	for i, oldNet := range oldNets {
 		if oldNet.ID == "" {
 			return fmt.Errorf("SNAPSHOT_INCOMPATIBLE: snapshot NIC %d has no backend device id", i)
@@ -261,20 +254,6 @@ func hotSwapCloneNetworks(ctx context.Context, client *http.Client, config map[s
 		}
 		if _, err := doAPIOnceWithClient(ctx, client, http.MethodPut, apiVMRemoveDevice, body, http.StatusNoContent); err != nil {
 			return fmt.Errorf("remove snapshot NIC %s: %w", oldNet.ID, err)
-		}
-		oldIDs = append(oldIDs, oldNet.ID)
-	}
-	if len(oldIDs) > 0 {
-		// vm.remove-device only requests ACPI eject. The guest must run before
-		// Cloud Hypervisor drops the old virtio-net device and closes its TAP.
-		if err := stateTransitionWithClient(ctx, client, apiVMResume, backendStateRunning); err != nil {
-			return fmt.Errorf("resume clone for NIC eject: %w", err)
-		}
-		if err := waitCloneDevicesEjected(ctx, client, oldIDs); err != nil {
-			return err
-		}
-		if err := stateTransitionWithClient(ctx, client, apiVMPause, backendStatePaused); err != nil {
-			return fmt.Errorf("pause clone after NIC eject: %w", err)
 		}
 	}
 	for i, nc := range rec.NetworkConfigs {
@@ -297,37 +276,6 @@ func hotSwapCloneNetworks(ctx context.Context, client *http.Client, config map[s
 		}
 	}
 	return nil
-}
-
-func waitCloneDevicesEjected(ctx context.Context, client *http.Client, ids []string) error {
-	waitCtx, cancel := context.WithTimeout(ctx, cloneDeviceEjectTimeout)
-	defer cancel()
-	ticker := time.NewTicker(cloneDeviceEjectPoll)
-	defer ticker.Stop()
-
-	for {
-		info, err := queryVMInfoWithClient(waitCtx, client)
-		if err != nil {
-			return fmt.Errorf("inspect clone NIC eject: %w", err)
-		}
-		if info.DeviceTree == nil {
-			return errors.New("inspect clone NIC eject: vm.info response has no device_tree")
-		}
-		pending := make([]string, 0, len(ids))
-		for _, id := range ids {
-			if _, found := info.DeviceTree[id]; found {
-				pending = append(pending, id)
-			}
-		}
-		if len(pending) == 0 {
-			return nil
-		}
-		select {
-		case <-waitCtx.Done():
-			return fmt.Errorf("CLONE_DEVICE_EJECT_TIMEOUT: waiting for %s: %w", strings.Join(pending, ","), waitCtx.Err())
-		case <-ticker.C:
-		}
-	}
 }
 
 func cloneNetworkDeviceID(mac string) string {

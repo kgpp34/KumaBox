@@ -4,8 +4,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"golang.org/x/sys/unix"
+)
+
+const vsockListenRetryInterval = time.Second
+
+var (
+	serveVsockAttempt = serveVsockOnce
+	waitVsockRetry    = time.Sleep
 )
 
 type fdConn struct {
@@ -25,6 +33,17 @@ func (c *fdConn) Close() error {
 }
 
 func serveVsock(port uint32, handler func(io.ReadWriter)) error {
+	for attempt := 1; ; attempt++ {
+		err := serveVsockAttempt(port, handler)
+		if err == nil {
+			return nil
+		}
+		auditLog.Printf("vsock listener attempt=%d failed: %v; retrying in %s", attempt, err, vsockListenRetryInterval)
+		waitVsockRetry(vsockListenRetryInterval)
+	}
+}
+
+func serveVsockOnce(port uint32, handler func(io.ReadWriter)) error {
 	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM, 0)
 	if err != nil {
 		return fmt.Errorf("create vsock socket: %w", err)

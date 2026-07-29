@@ -22,6 +22,7 @@ rebuild_image=false
 fs_socket=
 pci_bdf=
 native_clone_id=
+expected_agent_version=
 
 usage() {
   cat <<'EOF'
@@ -129,6 +130,14 @@ build_host_binary() {
     exit 1
   }
   printf 'host binary: commit=%s path=%s\n' "$binary_commit" "$kumabox"
+}
+
+resolve_agent_version() {
+  if [[ $(id -u) -eq 0 ]]; then
+    expected_agent_version=$(sudo -u "$build_user" -H "$go_bin" run ./cmd/agent version)
+  else
+    expected_agent_version=$("$go_bin" run ./cmd/agent version)
+  fi
 }
 
 names=(e2e-exec e2e-boot e2e-cni e2e-stopped-source e2e-stopped-restored e2e-native-source e2e-native-clone e2e-hotplug)
@@ -260,6 +269,7 @@ run_vm() {
 
 step "build current host binary"
 build_host_binary
+resolve_agent_version
 
 step "clean previous E2E resources"
 cleanup
@@ -267,7 +277,13 @@ ensure_image
 
 step "OCI boot and guest exec"
 run_vm e2e-exec none | jq .
-wait_agent e2e-exec
+agent_json=$(kb agent ping e2e-exec --timeout 90s)
+actual_agent_version=$(printf '%s' "$agent_json" | jq -r '.agent.version // empty')
+if [[ "$actual_agent_version" != "$expected_agent_version" ]]; then
+  printf 'managed image %q contains kumabox-agent %q, but current source is %q; rerun once with --rebuild-image\n' \
+    "$image" "$actual_agent_version" "$expected_agent_version" >&2
+  exit 1
+fi
 [[ $(kb exec e2e-exec -- uname -n) == e2e-exec ]]
 [[ $(printf 'roundtrip' | kb exec e2e-exec -- cat) == roundtrip ]]
 [[ $(kb exec --env FOO=bar e2e-exec -- sh -c 'printf %s "$FOO"') == bar ]]
