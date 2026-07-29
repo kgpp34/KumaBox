@@ -10,7 +10,7 @@ LDFLAGS := -X github.com/kumabox/kumabox/internal/version.Version=$(VERSION) \
 	-X github.com/kumabox/kumabox/internal/version.Commit=$(COMMIT) \
 	-X github.com/kumabox/kumabox/internal/version.BuildTime=$(BUILD_TIME)
 
-.PHONY: build build-agent build-agent-linux-amd64 build-agent-linux-arm64 test install-doctor clean
+.PHONY: build build-agent build-agent-linux-amd64 build-agent-linux-arm64 test clean
 
 build: build-agent
 	mkdir -p $(BIN_DIR)
@@ -27,9 +27,6 @@ build-agent-linux-arm64:
 
 test:
 	go test ./...
-
-install-doctor:
-	install -m 0755 scripts/linux/kumabox-doctor.sh /usr/local/bin/kumabox-doctor
 
 clean:
 	rm -rf $(BIN_DIR)
