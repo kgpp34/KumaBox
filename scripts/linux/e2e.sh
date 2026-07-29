@@ -111,7 +111,8 @@ build_image() {
   [[ -x "$go_bin" ]] || { echo "Go binary is required; pass --go-bin \$(go env GOROOT)/bin/go" >&2; exit 1; }
   "$go_bin" version | grep -Eq 'go1\.24\.[4-9]|go1\.(2[5-9]|[3-9][0-9])\.' || { echo "Go 1.24.4 or newer is required" >&2; exit 1; }
   command -v docker >/dev/null || { echo "docker is required to build $image_ref" >&2; exit 1; }
-  local context="$repo_dir/oci-images/ubuntu" agent="$context/kumabox-agent-linux-amd64"
+  local context="$repo_dir/oci-images/ubuntu"
+  local agent="$context/kumabox-agent-linux-amd64"
   sudo -u "$build_user" -H env GOOS=linux GOARCH=amd64 CGO_ENABLED=0 "$go_bin" build -o "$agent" "$repo_dir/cmd/agent"
   sudo -u "$build_user" -H docker build --platform linux/amd64 -f "$context/24.04/Dockerfile" -t "$image_ref" "$context"
   rm -f "$agent"
