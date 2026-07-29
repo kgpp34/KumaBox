@@ -370,7 +370,6 @@ func handleIdentity(w io.Writer, raw []byte) {
 
 func handlePingPong(w io.Writer) {
 	hostname, _ := os.Hostname()
-	auditLog.Printf("ping-pong request hostname=%q", hostname)
 	writeResponse(w, pingResponse{
 		OK:           true,
 		Version:      Version,

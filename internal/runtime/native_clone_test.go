@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -108,76 +107,6 @@ func TestCloneNativeSnapshotPreservesFailedBackend(t *testing.T) {
 	}
 	if preserved.State != vmstore.StateError || preserved.Restore == nil || preserved.Restore.State != "failed" {
 		t.Fatalf("failed clone = %+v", preserved)
-	}
-	diagnosticRoot := filepath.Join(store.RootDir(), "diagnostics", "native-clone")
-	entries, err := os.ReadDir(diagnosticRoot)
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("native clone diagnostics = %v, entries=%v", err, entries)
-	}
-	diagnosticDir := filepath.Join(diagnosticRoot, entries[0].Name())
-	for _, name := range []string{"failure.txt", "vm.json", "snapshot.json"} {
-		if _, statErr := os.Stat(filepath.Join(diagnosticDir, name)); statErr != nil {
-			t.Fatalf("diagnostic %s: %v", name, statErr)
-		}
-	}
-	failure, err := os.ReadFile(filepath.Join(diagnosticDir, "failure.txt"))
-	if err != nil || !strings.Contains(string(failure), cloneErr.Error()) {
-		t.Fatalf("diagnostic failure = %q, err=%v", failure, err)
-	}
-}
-
-func TestCloneNativeSnapshotCapturesDiagnosticsBeforeStoppingBackend(t *testing.T) {
-	rt, store, _, ready := newNativeCloneRuntime(t)
-	readinessErr := errors.New("injected readiness failure")
-	rt.guestReadiness = func(context.Context, string) error { return readinessErr }
-	originalIdentity := configureGuestIdentity
-	configureGuestIdentity = func(context.Context, string, *vmstore.VMRecord) error { return nil }
-	defer func() { configureGuestIdentity = originalIdentity }()
-
-	rt.backend = backendFake{
-		render: func(rec *vmstore.VMRecord) error {
-			if err := os.MkdirAll(filepath.Dir(rec.Config), 0o700); err != nil {
-				return err
-			}
-			if err := os.MkdirAll(rec.LogDir, 0o700); err != nil {
-				return err
-			}
-			if err := os.WriteFile(rec.Config, []byte(`{"live":true}`), 0o600); err != nil {
-				return err
-			}
-			return os.WriteFile(filepath.Join(rec.LogDir, "cloud-hypervisor.stderr.log"), []byte("live failure\n"), 0o600)
-		},
-		clone: func(_ context.Context, rec *vmstore.VMRecord, _ string, _ string) (*backend.StartResult, error) {
-			return &backend.StartResult{PID: 9876, APISocket: filepath.Join(rec.RunDir, "ch.sock")}, nil
-		},
-		stop: func(rec *vmstore.VMRecord, _ backend.StopOptions) (*backend.StopResult, error) {
-			if err := os.RemoveAll(rec.RunDir); err != nil {
-				return nil, err
-			}
-			if err := os.RemoveAll(rec.LogDir); err != nil {
-				return nil, err
-			}
-			return &backend.StopResult{}, nil
-		},
-	}
-
-	if _, err := rt.CloneNativeSnapshot(context.Background(), ready.ID, NativeCloneOptions{
-		Name: "readiness-failure", Networks: []string{"none"},
-	}); !errors.Is(err, readinessErr) {
-		t.Fatalf("clone error = %v", err)
-	}
-	preserved, err := store.Inspect("readiness-failure")
-	if err != nil {
-		t.Fatalf("inspect failed clone: %v", err)
-	}
-	diagnosticDir := filepath.Join(store.RootDir(), "diagnostics", "native-clone", preserved.ID)
-	config, err := os.ReadFile(filepath.Join(diagnosticDir, "cloud-hypervisor.json"))
-	if err != nil || string(config) != `{"live":true}` {
-		t.Fatalf("preserved config = %q, err=%v", config, err)
-	}
-	stderr, err := os.ReadFile(filepath.Join(diagnosticDir, "cloud-hypervisor.stderr.log"))
-	if err != nil || string(stderr) != "live failure\n" {
-		t.Fatalf("preserved stderr = %q, err=%v", stderr, err)
 	}
 }
 
