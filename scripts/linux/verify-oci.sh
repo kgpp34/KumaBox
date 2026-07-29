@@ -4,6 +4,29 @@ set -euo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_dir=$(cd -- "$script_dir/../.." && pwd)
 
+user_go_path() {
+	local user="$1"
+	local shell_path candidate alternate_shell
+	shell_path="$(getent passwd "$user" | cut -d: -f7)"
+	[[ -x "$shell_path" ]] || shell_path=/bin/bash
+	while IFS= read -r candidate; do
+		[[ -x "$candidate" ]] || continue
+		if "$candidate" version 2>/dev/null | grep -Eq 'go1\.24\.([4-9]|[1-9][0-9])([[:space:]]|$)|go1\.(2[5-9]|[3-9][0-9])([.[:space:]]|$)'; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+	done < <(
+		{
+			sudo -u "$user" -H "$shell_path" -lic 'command -v go1.24.4; command -v go1.24; command -v go' 2>/dev/null || true
+			for alternate_shell in /bin/bash /bin/zsh; do
+				[[ -x "$alternate_shell" && "$alternate_shell" != "$shell_path" ]] || continue
+				sudo -u "$user" -H "$alternate_shell" -lic 'command -v go1.24.4; command -v go1.24; command -v go' 2>/dev/null || true
+			done
+		} | awk 'NF && !seen[$0]++'
+	)
+	return 1
+}
+
 kumabox_path="./bin/kumabox"
 cloud_hypervisor_path="cloud-hypervisor"
 qemu_img_path="qemu-img"
@@ -217,8 +240,7 @@ build_base_image() {
 		local build_shell build_go build_path build_command
 		build_shell="$(getent passwd "$build_user" | cut -d: -f7)"
 		[[ -x "$build_shell" ]] || build_shell=/bin/bash
-		build_go="$(sudo -u "$build_user" -H "$build_shell" -lic 'command -v go' 2>/dev/null)"
-		[[ -x "$build_go" ]] || { echo "cannot find Go in $build_user login environment" >&2; return 1; }
+		build_go="$(user_go_path "$build_user")" || { echo "cannot find Go 1.24.4 or newer in $build_user login environment" >&2; return 1; }
 		build_path="$(dirname "$build_go"):${PATH:-/usr/bin:/bin}"
 		printf -v build_command 'cd %q && PATH=%q command -v docker >/dev/null && PATH=%q GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o %q ./cmd/agent && PATH=%q GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o %q ./cmd/agent && PATH=%q docker build --platform %q -f %q -t %q %q' \
 			"$repo_dir" "$build_path" "$build_path" "$repo_dir/$agent_binary_amd64" "$build_path" "$repo_dir/$agent_binary_arm64" "$build_path" "$platform" "$repo_dir/$dockerfile" "$ref" "$repo_dir/$context_dir"

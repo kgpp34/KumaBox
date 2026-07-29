@@ -133,9 +133,25 @@ print_failure_context() {
 user_go_path() {
   local user="$1"
   local shell_path
+  local candidate
   shell_path="$(getent passwd "$user" | cut -d: -f7)"
   [[ -x "$shell_path" ]] || shell_path=/bin/bash
-  sudo -u "$user" -H "$shell_path" -lic 'command -v go' 2>/dev/null
+  while IFS= read -r candidate; do
+    [[ -x "$candidate" ]] || continue
+    if "$candidate" version 2>/dev/null | grep -Eq 'go1\.24\.([4-9]|[1-9][0-9])([[:space:]]|$)|go1\.(2[5-9]|[3-9][0-9])([.[:space:]]|$)'; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done < <(
+    {
+      sudo -u "$user" -H "$shell_path" -lic 'command -v go1.24.4; command -v go1.24; command -v go' 2>/dev/null || true
+      for alternate_shell in /bin/bash /bin/zsh; do
+        [[ -x "$alternate_shell" && "$alternate_shell" != "$shell_path" ]] || continue
+        sudo -u "$user" -H "$alternate_shell" -lic 'command -v go1.24.4; command -v go1.24; command -v go' 2>/dev/null || true
+      done
+    } | awk 'NF && !seen[$0]++'
+  )
+  return 1
 }
 trap print_failure_context EXIT
 
@@ -207,9 +223,8 @@ if [[ "$skip_unit" != true ]]; then
       echo 'cannot run unit tests as root: invoke with sudo from the development user' >&2
       exit 1
     }
-    build_go="$(user_go_path "$SUDO_USER")"
-    [[ -x "$build_go" ]] || {
-      echo "cannot find Go in $SUDO_USER login environment" >&2
+    build_go="$(user_go_path "$SUDO_USER")" || {
+      echo "cannot find Go 1.24.4 or newer in $SUDO_USER login environment" >&2
       exit 1
     }
     build_path="$(dirname "$build_go"):${PATH:-/usr/bin:/bin}"
