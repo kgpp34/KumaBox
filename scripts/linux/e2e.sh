@@ -174,9 +174,9 @@ run_vm e2e-stopped-source none >/dev/null
 wait_agent e2e-stopped-source
 kb exec e2e-stopped-source -- sh -c 'printf stopped > /var/tmp/e2e-stopped; sync' >/dev/null
 kb stop e2e-stopped-source --force >/dev/null
-stopped_snapshot=$(kb snapshot create e2e-stopped-source --name e2e-stopped --json | jq -r .id)
+stopped_snapshot=$(kb snapshot create e2e-stopped-source --name e2e-stopped | jq -r .id)
 kb snapshot export "$stopped_snapshot" --output /var/lib/kumabox/e2e-stopped.kbsnap --compression none >/dev/null
-imported_snapshot=$(kb snapshot import /var/lib/kumabox/e2e-stopped.kbsnap --name e2e-stopped-import --json | jq -r .id)
+imported_snapshot=$(kb snapshot import /var/lib/kumabox/e2e-stopped.kbsnap --name e2e-stopped-import | jq -r .id)
 kb snapshot restore "$imported_snapshot" --name e2e-stopped-restored --network none >/dev/null
 wait_agent e2e-stopped-restored
 [[ $(kb exec e2e-stopped-restored -- cat /var/tmp/e2e-stopped) == stopped ]]
@@ -187,7 +187,7 @@ step "native snapshot clone"
 run_vm e2e-native-source none >/dev/null
 wait_agent e2e-native-source
 kb exec e2e-native-source -- sh -c 'printf native > /var/tmp/e2e-native; sync' >/dev/null
-native_snapshot=$(kb snapshot create e2e-native-source --name e2e-native --type running --json | jq -r .id)
+native_snapshot=$(kb snapshot create e2e-native-source --name e2e-native --type running | jq -r .id)
 kb clone "$native_snapshot" --name e2e-native-clone --network none --restore-mode copy >/dev/null
 wait_agent e2e-native-clone
 [[ $(kb exec e2e-native-clone -- cat /var/tmp/e2e-native) == native ]]
