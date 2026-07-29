@@ -11,9 +11,9 @@ repo_root=$(cd -- "$script_dir/../.." && pwd)
 kumabox=./bin/kumabox
 cloud_hypervisor=cloud-hypervisor
 qemu_img=qemu-img
-root_dir=/tmp/kumabox-p0/data
-run_dir=/tmp/kumabox-p0/run
-log_dir=/tmp/kumabox-p0/logs
+root_dir=/var/lib/kumabox
+run_dir=/run/kumabox
+log_dir=/var/log/kumabox
 image=p6-agent-image
 image_ref=kumabox/ubuntu:24.04-p6
 network=cni:default
@@ -35,9 +35,9 @@ Runs the complete Linux validation sequence in order:
   unit -> OCI boot/exec/disk -> CNI datapath -> snapshot/restore/clone -> hotplug
 
 Defaults match the standard KumaBox validation layout:
-  root: /tmp/kumabox-p0/data
-  run:  /tmp/kumabox-p0/run
-  logs: /tmp/kumabox-p0/logs
+  root: /var/lib/kumabox
+  run:  /run/kumabox
+  logs: /var/log/kumabox
 
 Options:
   --kumabox PATH

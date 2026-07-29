@@ -42,9 +42,9 @@ user_go_path() {
 kumabox_path="./bin/kumabox"
 cloud_hypervisor_path="cloud-hypervisor"
 qemu_img_path="qemu-img"
-root_dir="/tmp/kumabox-p0/data"
-run_dir="/tmp/kumabox-p0/run"
-log_dir="/tmp/kumabox-p0/logs"
+root_dir="/var/lib/kumabox"
+run_dir="/run/kumabox"
+log_dir="/var/log/kumabox"
 ref="kumabox/ubuntu:24.04-p3"
 platform="linux/amd64"
 image_name="p3-agent-image-v3"
@@ -70,9 +70,9 @@ Options:
   --kumabox PATH             kumabox binary path, defaults to ./bin/kumabox
   --cloud-hypervisor PATH    cloud-hypervisor path, defaults to cloud-hypervisor
   --qemu-img PATH            qemu-img path, defaults to qemu-img
-  --root-dir PATH            state root directory, defaults to /tmp/kumabox-p0/data
-  --run-dir PATH             runtime directory, defaults to /tmp/kumabox-p0/run
-  --log-dir PATH             log directory, defaults to /tmp/kumabox-p0/logs
+  --root-dir PATH            state root directory, defaults to /var/lib/kumabox
+  --run-dir PATH             runtime directory, defaults to /run/kumabox
+  --log-dir PATH             log directory, defaults to /var/log/kumabox
   --ref REF                  OCI image ref, defaults to kumabox/ubuntu:24.04-p3
   --platform VALUE           OCI platform, defaults to linux/amd64
   --image-name NAME          managed image name, defaults to p3-agent-image-v3

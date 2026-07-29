@@ -4,9 +4,9 @@ set -euo pipefail
 kumabox=./bin/kumabox
 cloud_hypervisor=cloud-hypervisor
 qemu_img=qemu-img
-root_dir=/tmp/kumabox-p0/data
-run_dir=/tmp/kumabox-p0/run
-log_dir=/tmp/kumabox-p0/logs
+root_dir=/var/lib/kumabox
+run_dir=/run/kumabox
+log_dir=/var/log/kumabox
 image=p3-agent-image-v3
 name=p2-real-cni
 network_name=kumabox-e2e
