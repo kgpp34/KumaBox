@@ -22,7 +22,7 @@ const (
 )
 
 var capabilities = []string{
-	string(protocol.CapabilityHello),
+	string(protocol.CapabilityPingPong),
 	string(protocol.CapabilityExec),
 	string(protocol.CapabilityExecStream),
 	string(protocol.CapabilityExecTTY),
@@ -31,11 +31,11 @@ var capabilities = []string{
 
 const streamChunkSize = 32 * 1024
 
-type helloRequest struct {
+type pingRequest struct {
 	Type protocol.RequestType `json:"type"`
 }
 
-type helloResponse struct {
+type pingResponse struct {
 	OK           bool     `json:"ok"`
 	Version      string   `json:"version,omitempty"`
 	OS           string   `json:"os,omitempty"`
@@ -90,7 +90,7 @@ func handleConn(rw io.ReadWriter) {
 	reader := bufio.NewReader(rw)
 	line, err := reader.ReadString('\n')
 	if err != nil {
-		writeResponse(rw, helloResponse{OK: false, Error: err.Error()})
+		writeResponse(rw, pingResponse{OK: false, Error: err.Error()})
 		return
 	}
 	var envelope struct {
@@ -114,20 +114,20 @@ func handleConn(rw io.ReadWriter) {
 		handleStreamExec(reader, rw, first)
 		return
 	}
-	var req helloRequest
+	var req pingRequest
 	if err := json.Unmarshal([]byte(line), &req); err != nil {
-		writeResponse(rw, helloResponse{OK: false, Error: "invalid request"})
+		writeResponse(rw, pingResponse{OK: false, Error: "invalid request"})
 		return
 	}
 	switch protocol.RequestType(strings.ToLower(string(req.Type))) {
-	case protocol.RequestHello:
-		handleHello(rw)
+	case protocol.RequestPing:
+		handlePingPong(rw)
 	case protocol.RequestExec:
 		handleExec(rw, []byte(line))
 	case protocol.RequestIdentity:
 		handleIdentity(rw, []byte(line))
 	default:
-		writeResponse(rw, helloResponse{OK: false, Error: "unsupported request"})
+		writeResponse(rw, pingResponse{OK: false, Error: "unsupported request"})
 	}
 }
 
@@ -285,9 +285,9 @@ func handleIdentity(w io.Writer, raw []byte) {
 	writeResponse(w, identityResponse{OK: true})
 }
 
-func handleHello(w io.Writer) {
+func handlePingPong(w io.Writer) {
 	hostname, _ := os.Hostname()
-	writeResponse(w, helloResponse{
+	writeResponse(w, pingResponse{
 		OK:           true,
 		Version:      Version,
 		OS:           runtime.GOOS,

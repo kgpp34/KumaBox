@@ -19,11 +19,11 @@ func requiresAgentReadiness(rec *vmstore.VMRecord) bool {
 func verifyGuestExecReadiness(ctx context.Context, socketPath string) error {
 	readinessCtx, cancel := context.WithTimeout(ctx, agentclient.DefaultPingTimeout)
 	defer cancel()
-	hello, err := agentclient.Ping(readinessCtx, socketPath)
+	pong, err := agentclient.Ping(readinessCtx, socketPath)
 	if err != nil {
 		return fmt.Errorf("wait for restored guest agent: %w", err)
 	}
-	if !hello.Supports(agentclient.CapabilityExec) {
+	if !pong.Supports(agentclient.CapabilityExec) {
 		return fmt.Errorf("AGENT_CAPABILITY_MISSING: guest agent does not advertise %q", agentclient.CapabilityExec)
 	}
 	resp, err := agentclient.Exec(readinessCtx, socketPath, agentclient.ExecRequest{Args: []string{"true"}})

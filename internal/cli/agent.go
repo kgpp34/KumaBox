@@ -57,11 +57,11 @@ func newAgentPingCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 			return writeJSON(cmd.OutOrStdout(), struct {
-				VMID        string                     `json:"vmId"`
-				VMName      string                     `json:"vmName"`
-				VsockSocket string                     `json:"vsockSocket"`
-				Agent       *agentclient.HelloResponse `json:"agent"`
-				CheckedAt   time.Time                  `json:"checkedAt"`
+				VMID        string                        `json:"vmId"`
+				VMName      string                        `json:"vmName"`
+				VsockSocket string                        `json:"vsockSocket"`
+				Agent       *agentclient.PingPongResponse `json:"agent"`
+				CheckedAt   time.Time                     `json:"checkedAt"`
 			}{
 				VMID:        rec.ID,
 				VMName:      rec.Name,

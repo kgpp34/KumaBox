@@ -24,20 +24,20 @@ func (c *memoryConn) Write(p []byte) (int, error) {
 	return c.writer.Write(p)
 }
 
-func TestHandleConnRespondsToHello(t *testing.T) {
+func TestHandleConnRespondsToPingPong(t *testing.T) {
 	t.Parallel()
 
-	conn := &memoryConn{reader: strings.NewReader(`{"type":"hello"}` + "\n")}
+	conn := &memoryConn{reader: strings.NewReader(`{"type":"ping"}` + "\n")}
 	handleConn(conn)
 
-	var resp helloResponse
+	var resp pingResponse
 	if err := json.Unmarshal(conn.writer.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
 	if !resp.OK || resp.Version != Version || resp.OS == "" || resp.Hostname == "" {
 		t.Fatalf("response = %+v", resp)
 	}
-	for _, capability := range []string{"hello", "exec", "exec-stream", "exec-tty", "identity"} {
+	for _, capability := range []string{"ping-pong", "exec", "exec-stream", "exec-tty", "identity"} {
 		if !slices.Contains(resp.Capabilities, capability) {
 			t.Fatalf("capabilities = %v, want %s", resp.Capabilities, capability)
 		}
@@ -116,7 +116,7 @@ func TestHandleConnRejectsUnsupportedRequest(t *testing.T) {
 	conn := &memoryConn{reader: strings.NewReader(`{"type":"unknown"}` + "\n")}
 	handleConn(conn)
 
-	var resp helloResponse
+	var resp pingResponse
 	if err := json.Unmarshal(conn.writer.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}

@@ -27,7 +27,7 @@ const (
 
 var ErrNotReady = errors.New("AGENT_NOT_READY")
 
-type HelloResponse struct {
+type PingPongResponse struct {
 	OK           bool     `json:"ok"`
 	Version      string   `json:"version,omitempty"`
 	OS           string   `json:"os,omitempty"`
@@ -36,7 +36,7 @@ type HelloResponse struct {
 	Error        string   `json:"error,omitempty"`
 }
 
-func (r *HelloResponse) Supports(capability protocol.Capability) bool {
+func (r *PingPongResponse) Supports(capability protocol.Capability) bool {
 	if r == nil {
 		return false
 	}
@@ -98,7 +98,7 @@ type IdentityResponse struct {
 	Error string `json:"error,omitempty"`
 }
 
-func Ping(ctx context.Context, socketPath string) (*HelloResponse, error) {
+func Ping(ctx context.Context, socketPath string) (*PingPongResponse, error) {
 	var lastErr error
 	for {
 		resp, err := pingOnce(ctx, socketPath)
@@ -114,9 +114,9 @@ func Ping(ctx context.Context, socketPath string) (*HelloResponse, error) {
 	}
 }
 
-func pingOnce(ctx context.Context, socketPath string) (*HelloResponse, error) {
-	var resp HelloResponse
-	if err := roundTrip(ctx, socketPath, map[string]any{"type": protocol.RequestHello}, &resp); err != nil {
+func pingOnce(ctx context.Context, socketPath string) (*PingPongResponse, error) {
+	var resp PingPongResponse
+	if err := roundTrip(ctx, socketPath, map[string]any{"type": protocol.RequestPing}, &resp); err != nil {
 		return nil, err
 	}
 	if !resp.OK {

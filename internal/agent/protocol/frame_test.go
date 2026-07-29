@@ -60,7 +60,7 @@ func TestFrameValidation(t *testing.T) {
 		frame Frame
 		want  ErrorCode
 	}{
-		{name: "version", frame: Frame{Version: "v0", Type: FrameHello}, want: ErrorUnsupportedVersion},
+		{name: "version", frame: Frame{Version: "v0", Type: FramePing}, want: ErrorUnsupportedVersion},
 		{name: "type", frame: Frame{Version: VersionV1, Type: "wat"}, want: ErrorUnsupportedFrame},
 		{name: "id", frame: Frame{Version: VersionV1, Type: FrameExec}, want: ErrorInvalidFrame},
 		{name: "args", frame: Frame{Version: VersionV1, Type: FrameExec, ID: "1"}, want: ErrorInvalidRequest},
@@ -90,7 +90,7 @@ func TestWriteFrameHandlesShortWriter(t *testing.T) {
 	t.Parallel()
 
 	var buf shortWriter
-	err := WriteFrame(&buf, Frame{Version: VersionV1, Type: FrameHello})
+	err := WriteFrame(&buf, Frame{Version: VersionV1, Type: FramePing})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,12 +102,12 @@ func TestWriteFrameHandlesShortWriter(t *testing.T) {
 func TestDecoderPreservesFollowingFrame(t *testing.T) {
 	t.Parallel()
 
-	input := `{"version":"kumabox.agent.v1","type":"hello"}
+	input := `{"version":"kumabox.agent.v1","type":"ping"}
 {"version":"kumabox.agent.v1","type":"ready","id":"1"}
 `
 	decoder := NewDecoder(strings.NewReader(input))
 	first, err := decoder.ReadFrame()
-	if err != nil || first.Type != FrameHello {
+	if err != nil || first.Type != FramePing {
 		t.Fatalf("first frame = %+v, error = %v", first, err)
 	}
 	second, err := decoder.ReadFrame()

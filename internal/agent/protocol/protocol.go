@@ -6,7 +6,7 @@ package protocol
 type RequestType string
 
 const (
-	RequestHello    RequestType = "hello"
+	RequestPing     RequestType = "ping"
 	RequestExec     RequestType = "exec"
 	RequestIdentity RequestType = "identity"
 )
@@ -17,7 +17,7 @@ type Capability string
 const CapabilityIdentity Capability = "identity"
 
 const (
-	CapabilityHello      Capability = "hello"
+	CapabilityPingPong   Capability = "ping-pong"
 	CapabilityExec       Capability = "exec"
 	CapabilityExecStream Capability = "exec-stream"
 	CapabilityExecTTY    Capability = "exec-tty"

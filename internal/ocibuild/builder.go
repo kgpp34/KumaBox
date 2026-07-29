@@ -336,7 +336,7 @@ func (b *Builder) inspectAgentProfile(layers []ocistore.BlobRecord, mode string)
 		BinaryPath:  imagestore.AgentBinaryPath,
 		ServicePath: imagestore.AgentServicePath,
 		Capabilities: []string{
-			string(protocol.CapabilityHello),
+			string(protocol.CapabilityPingPong),
 			string(protocol.CapabilityExec),
 			string(protocol.CapabilityExecStream),
 			string(protocol.CapabilityExecTTY),

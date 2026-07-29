@@ -21,7 +21,7 @@ const (
 type FrameType string
 
 const (
-	FrameHello  FrameType = "hello"
+	FramePing   FrameType = "ping"
 	FrameExec   FrameType = "exec"
 	FrameStdin  FrameType = "stdin"
 	FrameStdout FrameType = "stdout"
@@ -92,7 +92,7 @@ func (f Frame) Validate() error {
 	if !knownFrameType(f.Type) {
 		return fmt.Errorf("%w: %q", ErrorUnsupportedFrame, f.Type)
 	}
-	if f.Type != FrameHello && f.ID == "" {
+	if f.Type != FramePing && f.ID == "" {
 		return fmt.Errorf("%w: frame %q requires id", ErrorInvalidFrame, f.Type)
 	}
 	switch f.Type {
@@ -217,7 +217,7 @@ func readFrame(r *bufio.Reader) (Frame, error) {
 
 func knownFrameType(frameType FrameType) bool {
 	switch frameType {
-	case FrameHello, FrameExec, FrameStdin, FrameStdout, FrameStderr,
+	case FramePing, FrameExec, FrameStdin, FrameStdout, FrameStderr,
 		FrameResize, FrameSignal, FrameExit, FrameError, FrameReady:
 		return true
 	default:
