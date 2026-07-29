@@ -196,7 +196,7 @@ func checkPaths(cfg config.Config) Check {
 			Status:          StatusFail,
 			Code:            "PATH_INIT_FAILED",
 			Message:         err.Error(),
-			SuggestedAction: "choose writable --root-dir, --run-dir and --log-dir paths",
+			SuggestedAction: "ensure /var/lib/kumabox, /run/kumabox, and /var/log/kumabox are writable",
 		}
 	}
 	return Check{Name: "paths", Status: StatusPass, Message: "runtime directories are ready"}

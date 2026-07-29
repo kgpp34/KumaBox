@@ -8,9 +8,7 @@ import (
 
 type rootOptions struct {
 	configPath         string
-	rootDir            string
-	runDir             string
-	logDir             string
+	configOverride     *config.Config
 	cloudHypervisorBin string
 	qemuImgBin         string
 	metadataBackend    string
@@ -19,6 +17,16 @@ type rootOptions struct {
 
 func NewRootCommand() *cobra.Command {
 	opts := &rootOptions{}
+	return newRootCommand(opts)
+}
+
+// NewRootCommandWithConfig creates a command with an injected configuration.
+// It is intended for embedding and tests that need isolated storage roots.
+func NewRootCommandWithConfig(cfg config.Config) *cobra.Command {
+	return newRootCommand(&rootOptions{configOverride: &cfg})
+}
+
+func newRootCommand(opts *rootOptions) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:           "kumabox",
@@ -28,9 +36,6 @@ func NewRootCommand() *cobra.Command {
 	}
 
 	cmd.PersistentFlags().StringVar(&opts.configPath, "config", "", "config file path")
-	cmd.PersistentFlags().StringVar(&opts.rootDir, "root-dir", "", "persistent state directory")
-	cmd.PersistentFlags().StringVar(&opts.runDir, "run-dir", "", "runtime directory for pid and sockets")
-	cmd.PersistentFlags().StringVar(&opts.logDir, "log-dir", "", "log directory")
 	cmd.PersistentFlags().StringVar(&opts.cloudHypervisorBin, "cloud-hypervisor-bin", "", "cloud-hypervisor binary path")
 	cmd.PersistentFlags().StringVar(&opts.qemuImgBin, "qemu-img-bin", "", "qemu-img binary path")
 	cmd.PersistentFlags().StringVar(&opts.metadataBackend, "metadata-backend", "", "metadata backend: json or sqlite")
@@ -66,10 +71,23 @@ func NewRootCommand() *cobra.Command {
 }
 
 func loadConfig(opts *rootOptions) (config.Config, error) {
+	if opts.configOverride != nil {
+		cfg := *opts.configOverride
+		if opts.cloudHypervisorBin != "" {
+			cfg.Backend.CloudHypervisor.Binary = opts.cloudHypervisorBin
+		}
+		if opts.qemuImgBin != "" {
+			cfg.Storage.QEMUImgBinary = opts.qemuImgBin
+		}
+		if opts.metadataBackend != "" {
+			cfg.Metadata.Backend = opts.metadataBackend
+		}
+		if opts.metadataPath != "" {
+			cfg.Metadata.Path = opts.metadataPath
+		}
+		return cfg, nil
+	}
 	overrides := config.Overrides{
-		RootDir:            opts.rootDir,
-		RunDir:             opts.runDir,
-		LogDir:             opts.logDir,
 		CloudHypervisorBin: opts.cloudHypervisorBin,
 		QEMUImgBinary:      opts.qemuImgBin,
 		MetadataBackend:    opts.metadataBackend,

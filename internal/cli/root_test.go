@@ -14,11 +14,27 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
+
+func newTestRootCommand(rootDir string, paths ...string) *cobra.Command {
+	cfg := config.Default()
+	cfg.Runtime.RootDir = rootDir
+	cfg.Runtime.RunDir = filepath.Join(rootDir, "run")
+	cfg.Runtime.LogDir = filepath.Join(rootDir, "log")
+	if len(paths) > 0 {
+		cfg.Runtime.RunDir = paths[0]
+	}
+	if len(paths) > 1 {
+		cfg.Runtime.LogDir = paths[1]
+	}
+	return NewRootCommandWithConfig(cfg)
+}
 
 func TestVersionJSONCommand(t *testing.T) {
 	cmd := NewRootCommand()
@@ -39,22 +55,25 @@ func TestVersionJSONCommand(t *testing.T) {
 	}
 }
 
+func TestRootCommandRejectsRuntimePathFlags(t *testing.T) {
+	cmd := NewRootCommand()
+	cmd.SetArgs([]string{"--root-dir", "/tmp/ignored", "version"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "unknown flag: --root-dir") {
+		t.Fatalf("expected root-dir to be rejected, got %v", err)
+	}
+}
+
 func TestDoctorInitializesConfiguredDirectories(t *testing.T) {
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")
 	runDir := filepath.Join(dir, "run")
 	logDir := filepath.Join(dir, "log")
 
-	cmd := NewRootCommand()
+	cmd := newTestRootCommand(rootDir, runDir, logDir)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
-	cmd.SetArgs([]string{
-		"--root-dir", rootDir,
-		"--run-dir", runDir,
-		"--log-dir", logDir,
-		"doctor",
-		"--json",
-	})
+	cmd.SetArgs([]string{"doctor", "--json"})
 
 	_ = cmd.Execute()
 
@@ -88,13 +107,11 @@ func TestDoctorInitializesConfiguredDirectories(t *testing.T) {
 
 func TestNetworkLSJSONReturnsEmptyListWithoutIndex(t *testing.T) {
 	dir := t.TempDir()
-	cmd := NewRootCommand()
+	rootDir := filepath.Join(dir, "data")
+	cmd := newTestRootCommand(rootDir)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
-	cmd.SetArgs([]string{
-		"--root-dir", filepath.Join(dir, "data"),
-		"network", "ls", "--json",
-	})
+	cmd.SetArgs([]string{"network", "ls", "--json"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
@@ -160,13 +177,10 @@ func TestNetworkInspectResolvesVMName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := NewRootCommand()
+	cmd := newTestRootCommand(rootDir, runDir, logDir)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
-	cmd.SetArgs([]string{
-		"--root-dir", rootDir,
-		"network", "inspect", "p2-inspect", "--json",
-	})
+	cmd.SetArgs([]string{"network", "inspect", "p2-inspect", "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -195,11 +209,8 @@ func TestCreateInspectAndPSCommands(t *testing.T) {
 	runDir := filepath.Join(dir, "run")
 	logDir := filepath.Join(dir, "log")
 
-	create := NewRootCommand()
+	create := newTestRootCommand(rootDir, runDir, logDir)
 	create.SetArgs([]string{
-		"--root-dir", rootDir,
-		"--run-dir", runDir,
-		"--log-dir", logDir,
 		"--cloud-hypervisor-bin", "/custom/bin/cloud-hypervisor",
 		"create",
 		"--name", "p0-store",
@@ -245,11 +256,8 @@ func TestCreateInspectAndPSCommands(t *testing.T) {
 		t.Fatalf("rendered binary = %s", renderedConfig.Binary)
 	}
 
-	inspect := NewRootCommand()
-	inspect.SetArgs([]string{
-		"--root-dir", rootDir,
-		"inspect", "p0-store", "--json",
-	})
+	inspect := newTestRootCommand(rootDir, runDir, logDir)
+	inspect.SetArgs([]string{"inspect", "p0-store", "--json"})
 	var inspectOut bytes.Buffer
 	inspect.SetOut(&inspectOut)
 	if err := inspect.Execute(); err != nil {
@@ -266,8 +274,8 @@ func TestCreateInspectAndPSCommands(t *testing.T) {
 		t.Fatalf("inspect id = %s, want %s", inspected.ID, created.ID)
 	}
 
-	ps := NewRootCommand()
-	ps.SetArgs([]string{"--root-dir", rootDir, "ps", "--json"})
+	ps := newTestRootCommand(rootDir, runDir, logDir)
+	ps.SetArgs([]string{"ps", "--json"})
 	var psOut bytes.Buffer
 	ps.SetOut(&psOut)
 	if err := ps.Execute(); err != nil {
@@ -316,11 +324,8 @@ func TestCreateRejectsMixedNetworkProviderFamilies(t *testing.T) {
 	runDir := filepath.Join(dir, "run")
 	logDir := filepath.Join(dir, "log")
 
-	cmd := NewRootCommand()
+	cmd := newTestRootCommand(rootDir, runDir, logDir)
 	cmd.SetArgs([]string{
-		"--root-dir", rootDir,
-		"--run-dir", runDir,
-		"--log-dir", logDir,
 		"create",
 		"--name", "mixed-net",
 		"--root-disk", "fixtures/base.qcow2",
@@ -339,10 +344,10 @@ func TestCreateRejectsMixedNetworkProviderFamilies(t *testing.T) {
 
 func TestCreateRejectsDuplicateName(t *testing.T) {
 	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	runDir := filepath.Join(dir, "run")
+	logDir := filepath.Join(dir, "log")
 	args := []string{
-		"--root-dir", filepath.Join(dir, "data"),
-		"--run-dir", filepath.Join(dir, "run"),
-		"--log-dir", filepath.Join(dir, "log"),
 		"create",
 		"--name", "duplicate",
 		"--root-disk", "fixtures/base.qcow2",
@@ -350,13 +355,13 @@ func TestCreateRejectsDuplicateName(t *testing.T) {
 		"--initrd", "fixtures/initrd.img",
 	}
 
-	first := NewRootCommand()
+	first := newTestRootCommand(rootDir, runDir, logDir)
 	first.SetArgs(args)
 	if err := first.Execute(); err != nil {
 		t.Fatal(err)
 	}
 
-	second := NewRootCommand()
+	second := newTestRootCommand(rootDir, runDir, logDir)
 	second.SetArgs(args)
 	if err := second.Execute(); err == nil {
 		t.Fatal("expected duplicate name error")
@@ -369,11 +374,8 @@ func TestCreateFirmwareBootCommand(t *testing.T) {
 	runDir := filepath.Join(dir, "run")
 	logDir := filepath.Join(dir, "log")
 
-	create := NewRootCommand()
+	create := newTestRootCommand(rootDir, runDir, logDir)
 	create.SetArgs([]string{
-		"--root-dir", rootDir,
-		"--run-dir", runDir,
-		"--log-dir", logDir,
 		"create",
 		"--name", "uefi",
 		"--root-disk", "fixtures/ubuntu.img",
@@ -476,11 +478,8 @@ func TestCreateImageRefCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	create := NewRootCommand()
+	create := newTestRootCommand(rootDir, runDir, logDir)
 	create.SetArgs([]string{
-		"--root-dir", rootDir,
-		"--run-dir", runDir,
-		"--log-dir", logDir,
 		"--qemu-img-bin", fakeQEMUImgForOverlay(t, dir, rootDisk),
 		"create", "ubuntu",
 		"--name", "from-image",
@@ -594,11 +593,8 @@ func TestLogsCommandTailsVMLogs(t *testing.T) {
 	runDir := filepath.Join(dir, "run")
 	logDir := filepath.Join(dir, "log")
 
-	create := NewRootCommand()
+	create := newTestRootCommand(rootDir, runDir, logDir)
 	create.SetArgs([]string{
-		"--root-dir", rootDir,
-		"--run-dir", runDir,
-		"--log-dir", logDir,
 		"create",
 		"--name", "loggy",
 		"--root-disk", "fixtures/base.qcow2",
@@ -630,8 +626,8 @@ func TestLogsCommandTailsVMLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	logs := NewRootCommand()
-	logs.SetArgs([]string{"--root-dir", rootDir, "logs", "loggy", "--tail", "1"})
+	logs := newTestRootCommand(rootDir, runDir, logDir)
+	logs.SetArgs([]string{"logs", "loggy", "--tail", "1"})
 	var logsOut bytes.Buffer
 	logs.SetOut(&logsOut)
 	if err := logs.Execute(); err != nil {
@@ -646,8 +642,8 @@ func TestLogsCommandTailsVMLogs(t *testing.T) {
 		t.Fatalf("logs output did not tail console: %s", got)
 	}
 
-	vmmLogs := NewRootCommand()
-	vmmLogs.SetArgs([]string{"--root-dir", rootDir, "logs", "loggy", "--source", "vmm", "--tail", "1"})
+	vmmLogs := newTestRootCommand(rootDir, runDir, logDir)
+	vmmLogs.SetArgs([]string{"logs", "loggy", "--source", "vmm", "--tail", "1"})
 	var vmmLogsOut bytes.Buffer
 	vmmLogs.SetOut(&vmmLogsOut)
 	if err := vmmLogs.Execute(); err != nil {
@@ -679,11 +675,8 @@ func TestDeleteCommandRemovesVMRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	create := NewRootCommand()
+	create := newTestRootCommand(rootDir, runDir, logDir)
 	create.SetArgs([]string{
-		"--root-dir", rootDir,
-		"--run-dir", runDir,
-		"--log-dir", logDir,
 		"create",
 		"--name", "delete-cli",
 		"--root-disk", rootDisk,
@@ -694,8 +687,8 @@ func TestDeleteCommandRemovesVMRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	del := NewRootCommand()
-	del.SetArgs([]string{"--root-dir", rootDir, "delete", "delete-cli"})
+	del := newTestRootCommand(rootDir, runDir, logDir)
+	del.SetArgs([]string{"delete", "delete-cli"})
 	var delOut bytes.Buffer
 	del.SetOut(&delOut)
 	if err := del.Execute(); err != nil {
@@ -715,8 +708,8 @@ func TestDeleteCommandRemovesVMRecord(t *testing.T) {
 		t.Fatalf("root disk should remain: %v", err)
 	}
 
-	ps := NewRootCommand()
-	ps.SetArgs([]string{"--root-dir", rootDir, "ps", "--json"})
+	ps := newTestRootCommand(rootDir, runDir, logDir)
+	ps.SetArgs([]string{"ps", "--json"})
 	var psOut bytes.Buffer
 	ps.SetOut(&psOut)
 	if err := ps.Execute(); err != nil {
@@ -743,11 +736,8 @@ func TestGCDryRunCommandReportsCandidates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := NewRootCommand()
+	cmd := newTestRootCommand(rootDir, runDir, logDir)
 	cmd.SetArgs([]string{
-		"--root-dir", rootDir,
-		"--run-dir", runDir,
-		"--log-dir", logDir,
 		"gc",
 		"--dry-run",
 		"--json",
@@ -783,8 +773,8 @@ func TestImageListAndInspectCommands(t *testing.T) {
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")
 
-	listEmpty := NewRootCommand()
-	listEmpty.SetArgs([]string{"--root-dir", rootDir, "image", "ls", "--json"})
+	listEmpty := newTestRootCommand(rootDir)
+	listEmpty.SetArgs([]string{"image", "ls", "--json"})
 	var emptyOut bytes.Buffer
 	listEmpty.SetOut(&emptyOut)
 	if err := listEmpty.Execute(); err != nil {
@@ -812,8 +802,8 @@ func TestImageListAndInspectCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	inspect := NewRootCommand()
-	inspect.SetArgs([]string{"--root-dir", rootDir, "image", "inspect", "ubuntu", "--json"})
+	inspect := newTestRootCommand(rootDir)
+	inspect.SetArgs([]string{"image", "inspect", "ubuntu", "--json"})
 	var inspectOut bytes.Buffer
 	inspect.SetOut(&inspectOut)
 	if err := inspect.Execute(); err != nil {
@@ -862,11 +852,8 @@ func TestImageRemoveRejectsReferencedImage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	create := NewRootCommand()
+	create := newTestRootCommand(rootDir, runDir, logDir)
 	create.SetArgs([]string{
-		"--root-dir", rootDir,
-		"--run-dir", runDir,
-		"--log-dir", logDir,
 		"--qemu-img-bin", fakeQEMUImgForOverlay(t, dir, image.RootDisk.Path),
 		"create", "ubuntu",
 		"--name", "ref",
@@ -875,8 +862,8 @@ func TestImageRemoveRejectsReferencedImage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rm := NewRootCommand()
-	rm.SetArgs([]string{"--root-dir", rootDir, "image", "rm", "ubuntu"})
+	rm := newTestRootCommand(rootDir, runDir, logDir)
+	rm.SetArgs([]string{"image", "rm", "ubuntu"})
 	if err := rm.Execute(); !errors.Is(err, imagestore.ErrImageInUse) {
 		t.Fatalf("expected ErrImageInUse, got %v", err)
 	}
@@ -884,14 +871,14 @@ func TestImageRemoveRejectsReferencedImage(t *testing.T) {
 		t.Fatalf("referenced image should remain: %v", err)
 	}
 
-	del := NewRootCommand()
-	del.SetArgs([]string{"--root-dir", rootDir, "--run-dir", runDir, "--log-dir", logDir, "delete", "ref"})
+	del := newTestRootCommand(rootDir, runDir, logDir)
+	del.SetArgs([]string{"delete", "ref"})
 	if err := del.Execute(); err != nil {
 		t.Fatal(err)
 	}
 
-	rm = NewRootCommand()
-	rm.SetArgs([]string{"--root-dir", rootDir, "image", "rm", "ubuntu"})
+	rm = newTestRootCommand(rootDir, runDir, logDir)
+	rm.SetArgs([]string{"image", "rm", "ubuntu"})
 	var rmOut bytes.Buffer
 	rm.SetOut(&rmOut)
 	if err := rm.Execute(); err != nil {
@@ -937,9 +924,8 @@ func TestImageImportCommand(t *testing.T) {
 	}
 	qemuImg := fakeQemuImgForCLI(t, dir, "qcow2", 4096, 11)
 
-	importCmd := NewRootCommand()
+	importCmd := newTestRootCommand(rootDir)
 	importCmd.SetArgs([]string{
-		"--root-dir", rootDir,
 		"image", "import", source,
 		"--name", "ubuntu",
 		"--firmware", firmware,
@@ -980,8 +966,8 @@ func TestImageImportCommand(t *testing.T) {
 		t.Fatalf("boot = %+v", imported.Boot)
 	}
 
-	inspect := NewRootCommand()
-	inspect.SetArgs([]string{"--root-dir", rootDir, "image", "inspect", "ubuntu", "--json"})
+	inspect := newTestRootCommand(rootDir)
+	inspect.SetArgs([]string{"image", "inspect", "ubuntu", "--json"})
 	var inspectOut bytes.Buffer
 	inspect.SetOut(&inspectOut)
 	if err := inspect.Execute(); err != nil {
@@ -1011,9 +997,8 @@ func TestImagePullCommand(t *testing.T) {
 	sum := sha256.Sum256(content)
 	qemuImg := fakeQemuImgForCLI(t, dir, "qcow2", 4096, int64(len(content)))
 
-	pullCmd := NewRootCommand()
+	pullCmd := newTestRootCommand(rootDir)
 	pullCmd.SetArgs([]string{
-		"--root-dir", rootDir,
 		"image", "pull", server.URL + "/jammy-server-cloudimg-amd64.img",
 		"--name", "ubuntu-pull",
 		"--firmware", firmware,
@@ -1052,8 +1037,8 @@ func TestImagePullCommand(t *testing.T) {
 		t.Fatalf("pulled root disk missing: %v", err)
 	}
 
-	inspect := NewRootCommand()
-	inspect.SetArgs([]string{"--root-dir", rootDir, "image", "inspect", "ubuntu-pull", "--json"})
+	inspect := newTestRootCommand(rootDir)
+	inspect.SetArgs([]string{"image", "inspect", "ubuntu-pull", "--json"})
 	var inspectOut bytes.Buffer
 	inspect.SetOut(&inspectOut)
 	if err := inspect.Execute(); err != nil {
