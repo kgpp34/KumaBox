@@ -178,6 +178,7 @@ stopped_snapshot=$(kb snapshot create e2e-stopped-source --name e2e-stopped | jq
 kb snapshot export "$stopped_snapshot" --output /var/lib/kumabox/e2e-stopped.kbsnap --compression none >/dev/null
 imported_snapshot=$(kb snapshot import /var/lib/kumabox/e2e-stopped.kbsnap --name e2e-stopped-import | jq -r .id)
 kb snapshot restore "$imported_snapshot" --name e2e-stopped-restored --network none >/dev/null
+kb start e2e-stopped-restored >/dev/null
 wait_agent e2e-stopped-restored
 [[ $(kb exec e2e-stopped-restored -- cat /var/tmp/e2e-stopped) == stopped ]]
 kb delete e2e-stopped-source --force >/dev/null
