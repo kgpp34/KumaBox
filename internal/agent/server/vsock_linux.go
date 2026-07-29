@@ -59,6 +59,7 @@ func serveVsockOnce(port uint32, handler func(io.ReadWriter)) error {
 	if err := unix.Listen(fd, 128); err != nil {
 		return fmt.Errorf("listen vsock port %d: %w", port, err)
 	}
+	auditLog.Printf("vsock listener ready port=%d", port)
 
 	for {
 		connFD, _, err := unix.Accept(fd)

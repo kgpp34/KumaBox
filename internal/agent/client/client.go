@@ -100,16 +100,31 @@ type IdentityResponse struct {
 }
 
 func Ping(ctx context.Context, socketPath string) (*PingPongResponse, error) {
-	var lastErr error
+	var (
+		attempts int
+		firstErr error
+		lastErr  error
+	)
 	for {
+		attempts++
 		resp, err := pingOnce(ctx, socketPath)
 		if err == nil {
 			return resp, nil
 		}
+		if firstErr == nil {
+			firstErr = err
+		}
 		lastErr = err
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("%w: %v", ErrNotReady, lastErr)
+			return nil, fmt.Errorf(
+				"%w: attempts=%d first=%v last=%v: %v",
+				ErrNotReady,
+				attempts,
+				firstErr,
+				lastErr,
+				ctx.Err(),
+			)
 		case <-time.After(time.Second):
 		}
 	}

@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	Version = "0.3.1"
+	Version = "0.3.2"
 	Port    = protocol.AgentPort
 )
 
@@ -358,15 +358,19 @@ func handleIdentity(w io.Writer, raw []byte) {
 		writeResponse(w, identityResponse{OK: false, Error: "invalid identity request"})
 		return
 	}
+	auditLog.Printf("identity start hostname=%q interfaces=%d", req.Hostname, len(req.Interfaces))
 	if err := configureIdentity(req); err != nil {
+		auditLog.Printf("identity failed hostname=%q: %v", req.Hostname, err)
 		writeResponse(w, identityResponse{OK: false, Error: err.Error()})
 		return
 	}
 	writeResponse(w, identityResponse{OK: true})
+	auditLog.Printf("identity complete hostname=%q", req.Hostname)
 }
 
 func handlePingPong(w io.Writer) {
 	hostname, _ := os.Hostname()
+	auditLog.Printf("ping-pong request hostname=%q", hostname)
 	writeResponse(w, pingResponse{
 		OK:           true,
 		Version:      Version,

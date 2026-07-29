@@ -251,6 +251,11 @@ func TestPingMissingSocketReportsNotReady(t *testing.T) {
 	if !os.IsNotExist(errors.Unwrap(err)) && !strings.Contains(err.Error(), "dial guest agent") {
 		t.Fatalf("unexpected error detail: %v", err)
 	}
+	if !strings.Contains(err.Error(), "attempts=1") ||
+		!strings.Contains(err.Error(), "first=") ||
+		!strings.Contains(err.Error(), "last=") {
+		t.Fatalf("error lacks attempt history: %v", err)
+	}
 }
 
 func TestConfigureIdentityCancelsStalledResponse(t *testing.T) {
