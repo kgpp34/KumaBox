@@ -54,7 +54,10 @@ func handleTTYExec(reader *bufio.Reader, rw io.ReadWriter, request protocol.Fram
 	cmd.Stderr = slave
 	// Ctty is an index into the child's stdin/stdout/stderr file list, not
 	// the parent's PTY file descriptor.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setpgid: true, Setctty: true, Ctty: 0}
+	// setsid creates a new session whose process group is led by the child;
+	// that gives killProcessTree a dedicated negative-PID target without the
+	// incompatible Setpgid-after-Setsid combination.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 	if err := cmd.Start(); err != nil {
 		writeStreamError(rw, request.ID, protocol.ErrorExecFailed, err.Error())
 		return
