@@ -132,21 +132,23 @@ print_failure_context() {
 
 user_go_path() {
   local user="$1"
-  local shell_path
-  local candidate
+  local shell_path candidate version_command version_output alternate_shell
   shell_path="$(getent passwd "$user" | cut -d: -f7)"
   [[ -x "$shell_path" ]] || shell_path=/bin/bash
   while IFS= read -r candidate; do
-    [[ -x "$candidate" ]] || continue
-    if "$candidate" version 2>/dev/null | grep -Eq 'go1\.24\.([4-9]|[1-9][0-9])([[:space:]]|$)|go1\.(2[5-9]|[3-9][0-9])([.[:space:]]|$)'; then
+    printf -v version_command '%q version' "$candidate"
+    version_output="$(sudo -u "$user" -H "$shell_path" -ic "$version_command" 2>/dev/null || true)"
+    if printf '%s\n' "$version_output" | grep -Eq 'go1\.24\.([4-9]|[1-9][0-9])([[:space:]]|$)|go1\.(2[5-9]|[3-9][0-9])([.[:space:]]|$)'; then
       printf '%s\n' "$candidate"
       return 0
     fi
   done < <(
     {
+      sudo -u "$user" -H "$shell_path" -ic 'command -v go1.24.4; command -v go1.24; command -v go' 2>/dev/null || true
       sudo -u "$user" -H "$shell_path" -lic 'command -v go1.24.4; command -v go1.24; command -v go' 2>/dev/null || true
       for alternate_shell in /bin/bash /bin/zsh; do
         [[ -x "$alternate_shell" && "$alternate_shell" != "$shell_path" ]] || continue
+        sudo -u "$user" -H "$alternate_shell" -ic 'command -v go1.24.4; command -v go1.24; command -v go' 2>/dev/null || true
         sudo -u "$user" -H "$alternate_shell" -lic 'command -v go1.24.4; command -v go1.24; command -v go' 2>/dev/null || true
       done
     } | awk 'NF && !seen[$0]++'
@@ -228,7 +230,7 @@ if [[ "$skip_unit" != true ]]; then
       exit 1
     }
     build_path="$(dirname "$build_go"):${PATH:-/usr/bin:/bin}"
-    sudo -u "$SUDO_USER" -H env PATH="$build_path" bash -lc "cd '$repo_root' && GOTOOLCHAIN=local go test ./... -count=1"
+    sudo -u "$SUDO_USER" -H env PATH="$build_path" bash -lc "cd '$repo_root' && GOTOOLCHAIN=local '$build_go' test ./... -count=1"
   else
     (cd "$repo_root" && GOTOOLCHAIN=local go test ./... -count=1)
   fi
