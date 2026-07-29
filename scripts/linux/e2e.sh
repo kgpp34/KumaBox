@@ -29,7 +29,7 @@ Builds a Linux guest image and verifies OCI boot, agent exec, CNI cleanup,
 stopped and native snapshots, restore/clone, and disk hotplug.
 
 All runtime paths are fixed to KumaBox system defaults:
-  /var/lib/kumabox, /run/kumabox, /var/log/kumabox
+  /var/lib/kumabox, /var/lib/kumabox/run, /var/log/kumabox
 
 Options:
   --kumabox PATH
@@ -106,6 +106,10 @@ failure_context() {
   printf '\n==> E2E failure context\n' >&2
   kb ps --json 2>/dev/null >&2 || true
   find /var/log/kumabox/vms -maxdepth 2 -type f \( -name console.log -o -name cloud-hypervisor.stderr.log \) -print 2>/dev/null >&2 || true
+  if [[ -n ${native_debug_dir:-} && -d "$native_debug_dir" ]]; then
+    printf '\n==> preserved E2E diagnostics\n' >&2
+    find "$native_debug_dir" -maxdepth 2 -type f -print 2>/dev/null >&2 || true
+  fi
 }
 trap failure_context EXIT
 
@@ -199,9 +203,68 @@ run_vm e2e-native-source none "$native_snapshot_memory" >/dev/null
 wait_agent e2e-native-source
 kb exec e2e-native-source -- sh -c 'printf native > /var/tmp/e2e-native; sync' >/dev/null
 native_snapshot=$(kb snapshot create e2e-native-source --name e2e-native --type running | jq -r .id)
-if ! clone_error=$(kb clone "$native_snapshot" --name e2e-native-clone --network none --restore-mode ondemand 2>&1); then
+native_debug_dir=$(mktemp -d "${TMPDIR:-/tmp}/kumabox-e2e-native-clone.XXXXXX")
+kb inspect e2e-native-source --json >"$native_debug_dir/source-vm.json" 2>&1 || true
+kb snapshot inspect "$native_snapshot" --json >"$native_debug_dir/snapshot.json" 2>&1 || true
+snapshot_data_dir=$(jq -r '.dataDir // empty' "$native_debug_dir/snapshot.json" 2>/dev/null || true)
+if [[ -n "$snapshot_data_dir" ]]; then
+  {
+    printf 'snapshot_data_dir=%s\n' "$snapshot_data_dir"
+    findmnt -T "$snapshot_data_dir" -o TARGET,SOURCE,FSTYPE,OPTIONS
+    findmnt -T /var/lib/kumabox/run -o TARGET,SOURCE,FSTYPE,OPTIONS
+    df -h "$snapshot_data_dir" /var/lib/kumabox/run
+    find "$snapshot_data_dir/native" -maxdepth 1 -type f -printf '%n %s %p\n' | sort
+  } >"$native_debug_dir/filesystem.txt" 2>&1 || true
+fi
+
+# Clone waits for guest readiness before it returns. Capture the transient VM
+# while that wait is active because normal rollback removes its runtime and log
+# directories after a failure.
+clone_output="$native_debug_dir/clone.out"
+kb clone "$native_snapshot" --name e2e-native-clone --network none --restore-mode ondemand >"$clone_output" 2>&1 &
+clone_pid=$!
+clone_seen=false
+for _ in $(seq 1 210); do
+  if kb inspect e2e-native-clone --json >"$native_debug_dir/clone-vm.json" 2>/dev/null; then
+    clone_seen=true
+    clone_run_dir=$(jq -r '.runDir // empty' "$native_debug_dir/clone-vm.json")
+    clone_log_dir=$(jq -r '.logDir // empty' "$native_debug_dir/clone-vm.json")
+    if [[ -n "$clone_run_dir" && -d "$clone_run_dir" ]]; then
+      cp "$clone_run_dir/cloud-hypervisor.json" "$native_debug_dir/cloud-hypervisor.json" 2>/dev/null || true
+      if [[ -d "$clone_run_dir/.restore-staging/native" ]]; then
+        find -L "$clone_run_dir/.restore-staging/native" -maxdepth 1 -type f -printf '%n %s %p -> %l\n' | sort >"$native_debug_dir/staged-memory.txt" 2>&1 || true
+      fi
+    fi
+    if [[ -n "$clone_log_dir" && -d "$clone_log_dir" ]]; then
+      {
+        for log in "$clone_log_dir"/cloud-hypervisor.stderr.log "$clone_log_dir"/cloud-hypervisor.stdout.log "$clone_log_dir"/console.log; do
+          [[ -f "$log" ]] || continue
+          printf '\n--- %s ---\n' "$log"
+          tail -n 120 "$log"
+        done
+      } >"$native_debug_dir/live-logs.txt" 2>&1 || true
+    fi
+  fi
+  if ! kill -0 "$clone_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.5
+done
+if ! wait "$clone_pid"; then
+  clone_error=$(<"$clone_output")
+  {
+    printf 'clone_seen=%s\n' "$clone_seen"
+    printf '\n--- filesystem ---\n'
+    sed -n '1,200p' "$native_debug_dir/filesystem.txt"
+    printf '\n--- staged memory ---\n'
+    sed -n '1,200p' "$native_debug_dir/staged-memory.txt"
+    printf '\n--- live logs ---\n'
+    sed -n '1,300p' "$native_debug_dir/live-logs.txt"
+  } >"$native_debug_dir/clone-debug.txt" 2>&1 || true
+  printf 'native clone failed:\n%s\n' "$clone_error" >&2
+  printf 'native clone diagnostics: %s\n' "$native_debug_dir" >&2
+  sed -n '1,360p' "$native_debug_dir/clone-debug.txt" >&2 || true
   if [[ "$clone_error" != *RESTORE_MODE_UNSUPPORTED* ]]; then
-    printf 'native clone failed:\n%s\n' "$clone_error" >&2
     exit 1
   fi
   printf 'native clone: ondemand unavailable; falling back to %s copy restore\n' "$native_snapshot_memory"

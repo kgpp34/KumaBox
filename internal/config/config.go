@@ -16,7 +16,7 @@ import (
 
 const (
 	defaultRootDir               = "/var/lib/kumabox"
-	defaultRunDir                = "/run/kumabox"
+	defaultRunDir                = "/var/lib/kumabox/run"
 	defaultLogDir                = "/var/log/kumabox"
 	defaultCloudHypervisorBinary = "cloud-hypervisor"
 	defaultQEMUImgBinary         = "qemu-img"
@@ -64,7 +64,9 @@ type StorageConfig struct {
 // RuntimeConfig contains the three host path roots used by KumaBox.
 //
 // RootDir is durable state such as VM/image indexes and network leases. RunDir
-// is ephemeral runtime state such as sockets and rendered VMM config. LogDir is
+// holds runtime state such as sockets and rendered VMM config. It lives under
+// RootDir by default so native snapshot restore can hard-link memory payloads
+// instead of crossing from durable storage into a tmpfs. LogDir is
 // command-readable VM output and event logs.
 type RuntimeConfig struct {
 	RootDir string `toml:"root_dir" json:"rootDir"`

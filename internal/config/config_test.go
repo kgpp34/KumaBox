@@ -71,6 +71,9 @@ cni_bin_dir = "/tmp/cni/bin"
 
 func TestDefaultNetworkConfig(t *testing.T) {
 	cfg := Default()
+	if cfg.Runtime.RunDir != filepath.Join(cfg.Runtime.RootDir, "run") {
+		t.Fatalf("default run dir = %q, want under root dir %q", cfg.Runtime.RunDir, cfg.Runtime.RootDir)
+	}
 	if cfg.Network.Mode != "cni" {
 		t.Fatalf("network mode = %q", cfg.Network.Mode)
 	}
