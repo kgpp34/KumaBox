@@ -15,6 +15,7 @@ network=cni:cocoon
 storage=64M
 metadata_backend=sqlite
 go_bin=${GO_BIN:-}
+native_snapshot_memory=128M
 keep=false
 rebuild_image=false
 fs_socket=
@@ -132,7 +133,14 @@ ensure_image() {
 }
 
 wait_agent() { kb agent ping "$1" --timeout 90s >/dev/null; }
-run_vm() { kb run "$image" --name "$1" --network "$2" --storage "$storage"; }
+run_vm() {
+  local name=$1 network_name=$2 memory=${3:-}
+  local args=(run "$image" --name "$name" --network "$network_name" --storage "$storage")
+  if [[ -n "$memory" ]]; then
+    args+=(--memory "$memory")
+  fi
+  kb "${args[@]}"
+}
 
 step "clean previous E2E resources"
 cleanup
@@ -185,11 +193,20 @@ kb delete e2e-stopped-source --force >/dev/null
 kb delete e2e-stopped-restored --force >/dev/null
 
 step "native snapshot clone"
-run_vm e2e-native-source none >/dev/null
+# Native snapshots contain guest memory. Keep this scenario small so it is
+# safe on hosts whose /run is a constrained tmpfs.
+run_vm e2e-native-source none "$native_snapshot_memory" >/dev/null
 wait_agent e2e-native-source
 kb exec e2e-native-source -- sh -c 'printf native > /var/tmp/e2e-native; sync' >/dev/null
 native_snapshot=$(kb snapshot create e2e-native-source --name e2e-native --type running | jq -r .id)
-kb clone "$native_snapshot" --name e2e-native-clone --network none --restore-mode copy >/dev/null
+if ! clone_error=$(kb clone "$native_snapshot" --name e2e-native-clone --network none --restore-mode ondemand 2>&1); then
+  if [[ "$clone_error" != *RESTORE_MODE_UNSUPPORTED* ]]; then
+    printf 'native clone failed:\n%s\n' "$clone_error" >&2
+    exit 1
+  fi
+  printf 'native clone: ondemand unavailable; falling back to %s copy restore\n' "$native_snapshot_memory"
+  kb clone "$native_snapshot" --name e2e-native-clone --network none --restore-mode copy >/dev/null
+fi
 wait_agent e2e-native-clone
 [[ $(kb exec e2e-native-clone -- cat /var/tmp/e2e-native) == native ]]
 kb delete e2e-native-source --force >/dev/null
