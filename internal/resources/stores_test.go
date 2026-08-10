@@ -12,6 +12,9 @@ func TestNewStoreSetForConfigUsesOneSQLiteEngine(t *testing.T) {
 	cfg := config.Default()
 	cfg.Runtime.RootDir = t.TempDir()
 	cfg.Metadata.Backend = "sqlite"
+	if err := InitSQLiteMetadata(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
 	stores, err := NewStoreSetForConfig(cfg)
 	if err != nil {
 		t.Fatal(err)

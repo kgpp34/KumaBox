@@ -26,8 +26,15 @@ func BenchmarkMetadataUpdateJSON(b *testing.B) {
 
 func BenchmarkMetadataUpdateSQLite(b *testing.B) {
 	benchmarkMetadataUpdate(b, func(dir string) (meta.MetaEngine, error) {
-		return metasqlite.Open(filepath.Join(dir, "metadata.db"), metasqlite.Namespace{Name: "bench", Tables: []meta.Table{"records"}})
+		return openSQLiteEngine(context.Background(), filepath.Join(dir, "metadata.db"), metasqlite.Namespace{Name: "bench", Tables: []meta.Table{"records"}})
 	})
+}
+
+func openSQLiteEngine(ctx context.Context, path string, definition metasqlite.Namespace) (meta.MetaEngine, error) {
+	if err := metasqlite.Init(ctx, path, definition); err != nil {
+		return nil, err
+	}
+	return metasqlite.Open(path, definition)
 }
 
 func benchmarkMetadataUpdate(b *testing.B, open func(string) (meta.MetaEngine, error)) {
@@ -67,7 +74,7 @@ func TestMetadataBackendsRollbackTheWholeUpdate(t *testing.T) {
 			})
 		}},
 		{name: "sqlite", open: func(dir string) (meta.MetaEngine, error) {
-			return metasqlite.Open(filepath.Join(dir, "metadata.db"), metasqlite.Namespace{Name: "fault", Tables: []meta.Table{"records"}})
+			return openSQLiteEngine(context.Background(), filepath.Join(dir, "metadata.db"), metasqlite.Namespace{Name: "fault", Tables: []meta.Table{"records"}})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -114,7 +121,7 @@ func TestMetadataBackendsDoNotPartiallyOverwriteExistingRecords(t *testing.T) {
 			return metajson.Open(metajson.Namespace{Name: "fault", FilePath: filepath.Join(dir, "records.json"), LockPath: filepath.Join(dir, "records.lock"), Codec: metajson.TableCodec{Specs: []metajson.TableSpec{{Key: "records", Table: "records"}}}})
 		}},
 		{name: "sqlite", open: func(dir string) (meta.MetaEngine, error) {
-			return metasqlite.Open(filepath.Join(dir, "metadata.db"), metasqlite.Namespace{Name: "fault", Tables: []meta.Table{"records"}})
+			return openSQLiteEngine(context.Background(), filepath.Join(dir, "metadata.db"), metasqlite.Namespace{Name: "fault", Tables: []meta.Table{"records"}})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

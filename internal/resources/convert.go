@@ -2,7 +2,9 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/kumabox/kumabox/internal/imagestore"
@@ -22,6 +24,13 @@ import (
 func ConvertJSONToSQLite(ctx context.Context, rootDir, databasePath string) (statuses []metasqlite.NamespaceStatus, err error) {
 	if databasePath == "" {
 		databasePath = filepath.Join(rootDir, "metadata", "kumabox.db")
+	}
+	if _, statErr := os.Stat(databasePath); errors.Is(statErr, os.ErrNotExist) {
+		if err := metasqlite.Init(ctx, databasePath, sqliteDefinitions()...); err != nil {
+			return nil, fmt.Errorf("initialize sqlite conversion target: %w", err)
+		}
+	} else if statErr != nil {
+		return nil, fmt.Errorf("stat sqlite conversion target: %w", statErr)
 	}
 	destination, err := metasqlite.Open(databasePath, sqliteDefinitions()...)
 	if err != nil {

@@ -38,9 +38,14 @@ func TestTransferCopiesJSONMetadataIntoSQLite(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sqliteEngine, err := metasqlite.Open(filepath.Join(dir, "metadata.db"), metasqlite.Namespace{
+	databasePath := filepath.Join(dir, "metadata.db")
+	databaseDefinition := metasqlite.Namespace{
 		Name: "vms", Tables: []meta.Table{"records"},
-	})
+	}
+	if err := metasqlite.Init(ctx, databasePath, databaseDefinition); err != nil {
+		t.Fatal(err)
+	}
+	sqliteEngine, err := metasqlite.Open(databasePath, databaseDefinition)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +101,12 @@ func TestSQLiteConversionMarksNamespacesAfterTransfer(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	destination, err := metasqlite.Open(filepath.Join(dir, "metadata.db"), metasqlite.Namespace{Name: "vms", Tables: []meta.Table{"records"}})
+	databasePath := filepath.Join(dir, "metadata.db")
+	databaseDefinition := metasqlite.Namespace{Name: "vms", Tables: []meta.Table{"records"}}
+	if err := metasqlite.Init(ctx, databasePath, databaseDefinition); err != nil {
+		t.Fatal(err)
+	}
+	destination, err := metasqlite.Open(databasePath, databaseDefinition)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -202,6 +202,12 @@ resolve_agent_version
 
 step "clean previous E2E resources"
 cleanup
+if [[ "$metadata_backend" == sqlite ]]; then
+  if ! kb metadata status >/dev/null 2>&1; then
+    step "initialize SQLite metadata"
+    kb metadata init | jq .
+  fi
+fi
 ensure_image
 
 step "OCI boot and guest exec"

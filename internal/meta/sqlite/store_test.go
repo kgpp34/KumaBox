@@ -4,7 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/kumabox/kumabox/internal/meta"
@@ -12,6 +15,9 @@ import (
 
 func TestStorePersistsTypedCollectionAndRollsBack(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "meta.db")
+	if err := Init(t.Context(), path, Namespace{Name: "vms", Tables: []meta.Table{"records"}}); err != nil {
+		t.Fatal(err)
+	}
 	store, err := Open(path, Namespace{Name: "vms", Tables: []meta.Table{"records"}})
 	if err != nil {
 		t.Fatal(err)
@@ -80,10 +86,15 @@ func TestStorePersistsTypedCollectionAndRollsBack(t *testing.T) {
 }
 
 func TestStoreEnforcesDeclaredScopeAndCoalescesEvents(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "meta.db"),
+	path := filepath.Join(t.TempDir(), "meta.db")
+	definitions := []Namespace{
 		Namespace{Name: "vms", Tables: []meta.Table{"records"}},
 		Namespace{Name: "network", Tables: []meta.Table{"leases"}},
-	)
+	}
+	if err := Init(t.Context(), path, definitions...); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(path, definitions...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,6 +142,9 @@ func TestStoreEnforcesDeclaredScopeAndCoalescesEvents(t *testing.T) {
 
 func TestStoreRecordsIdentityAndNamespaceStatus(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "meta.db")
+	if err := Init(t.Context(), path, Namespace{Name: "vms", Tables: []meta.Table{"records"}}); err != nil {
+		t.Fatal(err)
+	}
 	store, err := Open(path, Namespace{Name: "vms", Tables: []meta.Table{"records"}})
 	if err != nil {
 		t.Fatal(err)
@@ -163,6 +177,9 @@ func TestStoreRecordsIdentityAndNamespaceStatus(t *testing.T) {
 
 func TestStoreRejectsUnsupportedSchemaVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "meta.db")
+	if err := Init(t.Context(), path, Namespace{Name: "vms", Tables: []meta.Table{"records"}}); err != nil {
+		t.Fatal(err)
+	}
 	store, err := Open(path, Namespace{Name: "vms", Tables: []meta.Table{"records"}})
 	if err != nil {
 		t.Fatal(err)
@@ -182,5 +199,70 @@ func TestStoreRejectsUnsupportedSchemaVersion(t *testing.T) {
 	}
 	if _, err := Open(path, Namespace{Name: "vms", Tables: []meta.Table{"records"}}); !errors.Is(err, meta.ErrCorrupt) {
 		t.Fatalf("wrong schema version error = %v", err)
+	}
+}
+
+func TestOpenRequiresInitialization(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "meta.db")
+	definition := Namespace{Name: "vms", Tables: []meta.Table{"records"}}
+	if _, err := Open(path, definition); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("open uninitialized database error = %v", err)
+	}
+	if err := Init(t.Context(), path, definition); err != nil {
+		t.Fatal(err)
+	}
+	if err := Init(t.Context(), path, definition); !errors.Is(err, meta.ErrConflict) {
+		t.Fatalf("reinitialize database error = %v", err)
+	}
+}
+
+func TestStoreSupportsConcurrentReadersAndSerializedWriters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "meta.db")
+	definition := Namespace{Name: "vms", Tables: []meta.Table{"records"}}
+	if err := Init(t.Context(), path, definition); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(path, definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
+	if store.durable == store.relaxed || store.durable == store.readers {
+		t.Fatal("durable, relaxed, and reader handles must be independent")
+	}
+
+	const workers = 8
+	var wait sync.WaitGroup
+	errorsCh := make(chan error, workers)
+	for worker := range workers {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			id := meta.RecordID(strconv.Itoa(worker))
+			if err := store.Update(t.Context(), meta.Scope{Write: "vms"}, meta.CommitRelaxed, func(writer meta.Writer) error {
+				return writer.PutRaw(t.Context(), "vms", "records", id, []byte(`{"ok":true}`))
+			}); err != nil {
+				errorsCh <- err
+				return
+			}
+			if err := store.View(t.Context(), []meta.Namespace{"vms"}, func(reader meta.Reader) error {
+				_, found, err := reader.GetRaw(t.Context(), "vms", "records", id)
+				if err == nil && !found {
+					return errors.New("written record was not found")
+				}
+				return err
+			}); err != nil {
+				errorsCh <- err
+			}
+		}()
+	}
+	wait.Wait()
+	close(errorsCh)
+	for err := range errorsCh {
+		t.Error(err)
 	}
 }

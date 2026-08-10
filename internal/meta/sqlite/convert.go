@@ -28,7 +28,7 @@ func Convert(ctx context.Context, source meta.MetaEngine, destination *Store, so
 }
 
 func (s *Store) markConverted(ctx context.Context, sourceName string, report meta.TransferReport) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.durable.BeginTx(ctx, nil)
 	if err != nil {
 		return mapError(err)
 	}

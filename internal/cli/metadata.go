@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -12,10 +11,29 @@ import (
 
 func newMetadataCommand(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{Use: "metadata", Short: "Inspect metadata storage"}
+	cmd.AddCommand(newMetadataInitCommand(opts))
 	cmd.AddCommand(newMetadataStatusCommand(opts))
 	cmd.AddCommand(newMetadataVerifyCommand(opts))
 	cmd.AddCommand(newMetadataConvertCommand(opts))
 	return cmd
+}
+
+func newMetadataInitCommand(opts *rootOptions) *cobra.Command {
+	return &cobra.Command{
+		Use: "init", Short: "Initialize the configured SQLite metadata database", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			if err := resources.InitSQLiteMetadata(cmd.Context(), cfg); err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), map[string]any{
+				"backend": "sqlite", "path": resources.SQLiteMetadataPath(cfg), "initialized": true,
+			})
+		},
+	}
 }
 
 func newMetadataConvertCommand(opts *rootOptions) *cobra.Command {
@@ -26,10 +44,7 @@ func newMetadataConvertCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			path := cfg.Metadata.Path
-			if path == "" {
-				path = filepath.Join(cfg.Runtime.RootDir, "metadata", "kumabox.db")
-			}
+			path := resources.SQLiteMetadataPath(cfg)
 			status, err := resources.ConvertJSONToSQLite(cmd.Context(), cfg.Runtime.RootDir, path)
 			if err != nil {
 				return err
@@ -53,10 +68,7 @@ func newMetadataStatusCommand(opts *rootOptions) *cobra.Command {
 			}
 			result := map[string]any{"backend": cfg.Metadata.Backend}
 			if cfg.Metadata.Backend == "sqlite" {
-				path := cfg.Metadata.Path
-				if path == "" {
-					path = filepath.Join(cfg.Runtime.RootDir, "metadata", "kumabox.db")
-				}
+				path := resources.SQLiteMetadataPath(cfg)
 				result["path"] = path
 				engine, ok := stores.Metadata.(*metasqlite.Store)
 				if !ok {
@@ -100,6 +112,9 @@ func newMetadataVerifyCommand(opts *rootOptions) *cobra.Command {
 				if namespace.State != "initialized" && namespace.State != "converted" {
 					return fmt.Errorf("metadata namespace %q has invalid state %q", namespace.Namespace, namespace.State)
 				}
+			}
+			if err := engine.Verify(cmd.Context()); err != nil {
+				return err
 			}
 			return writeJSON(cmd.OutOrStdout(), map[string]any{"backend": "sqlite", "verified": true, "namespaces": status})
 		},

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -45,7 +46,10 @@ type NamespaceStatus struct {
 
 // Store is an SQLite-backed MetaEngine.
 type Store struct {
-	db          *sql.DB
+	path        string
+	durable     *sql.DB
+	relaxed     *sql.DB
+	readers     *sql.DB
 	namespaces  map[meta.Namespace]map[meta.Table]struct{}
 	mu          sync.Mutex
 	subscribers map[chan struct{}]struct{}
@@ -54,7 +58,9 @@ type Store struct {
 
 var _ meta.MetaEngine = (*Store)(nil)
 
-// Open opens or creates a metadata database and declares its tables.
+// Open opens an initialized metadata database. Database creation and schema
+// changes belong to Init so a normal command can never mistake a partial or
+// unrelated SQLite file for an empty KumaBox store.
 func Open(path string, definitions ...Namespace) (*Store, error) {
 	if path == "" || len(definitions) == 0 {
 		return nil, fmt.Errorf("SQLite metadata path and namespace definitions are required: %w", meta.ErrScope)
@@ -63,23 +69,26 @@ func Open(path string, definitions ...Namespace) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, fmt.Errorf("create SQLite metadata directory: %w", err)
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("sqlite metadata database %s is not initialized: %w", path, os.ErrNotExist)
+		}
+		return nil, fmt.Errorf("stat sqlite metadata database: %w", err)
 	}
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_txlock=immediate")
-	if err != nil {
+	store := &Store{path: path, namespaces: namespaces, subscribers: make(map[chan struct{}]struct{})}
+	if store.durable, err = openDatabase(path, "FULL", true); err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	store := &Store{db: db, namespaces: namespaces, subscribers: make(map[chan struct{}]struct{})}
+	if store.relaxed, err = openDatabase(path, "NORMAL", true); err != nil {
+		return nil, errors.Join(err, store.Close())
+	}
+	if store.readers, err = openDatabase(path, "FULL", false); err != nil {
+		return nil, errors.Join(err, store.Close())
+	}
+	store.readers.SetMaxOpenConns(max(2, runtime.NumCPU()))
+	store.readers.SetMaxIdleConns(max(2, runtime.NumCPU()))
 	if err := store.initializeIdentity(); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	if err := store.createTables(); err != nil {
-		_ = db.Close()
-		return nil, err
+		return nil, errors.Join(err, store.Close())
 	}
 	return store, nil
 }
@@ -91,7 +100,7 @@ func (s *Store) View(ctx context.Context, namespaces []meta.Namespace, fn func(m
 	if err := s.checkOpenAndScope(namespaces, ""); err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.readers.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return mapError(err)
 	}
@@ -103,11 +112,18 @@ func (s *Store) Update(ctx context.Context, scope meta.Scope, mode meta.CommitMo
 	if fn == nil {
 		return fmt.Errorf("metadata update callback must not be nil: %w", meta.ErrScope)
 	}
+	if mode != meta.CommitDurable && mode != meta.CommitRelaxed {
+		return fmt.Errorf("unsupported metadata commit mode %d: %w", mode, meta.ErrDurabilityContract)
+	}
 	namespaces := append([]meta.Namespace{scope.Write}, scope.Read...)
 	if err := s.checkOpenAndScope(namespaces, scope.Write); err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	db := s.durable
+	if mode == meta.CommitRelaxed {
+		db = s.relaxed
+	}
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return mapError(err)
 	}
@@ -164,7 +180,14 @@ func (s *Store) Close() error {
 		delete(s.subscribers, ch)
 	}
 	s.mu.Unlock()
-	return s.db.Close()
+	var closeErrors []error
+	for _, db := range []*sql.DB{s.durable, s.relaxed, s.readers} {
+		if db != nil {
+			closeErrors = append(closeErrors, db.Close())
+		}
+	}
+	s.durable, s.relaxed, s.readers = nil, nil, nil
+	return errors.Join(closeErrors...)
 }
 
 // Status returns the initialization state recorded for each declared
@@ -180,7 +203,7 @@ func (s *Store) Status(ctx context.Context) (result []NamespaceStatus, err error
 	if closed {
 		return nil, meta.ErrClosed
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT namespace, state, schema_version, records, source, digest, updated_at FROM "+metadataStateTable+" ORDER BY namespace")
+	rows, err := s.readers.QueryContext(ctx, "SELECT namespace, state, schema_version, records, source, digest, updated_at FROM "+metadataStateTable+" ORDER BY namespace")
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -207,59 +230,39 @@ func (s *Store) Status(ctx context.Context) (result []NamespaceStatus, err error
 	return result, nil
 }
 
-func (s *Store) initializeIdentity() error {
-	var applicationID int
-	if err := s.db.QueryRow("PRAGMA application_id").Scan(&applicationID); err != nil {
+// Verify checks SQLite's page and index invariants in addition to KumaBox's
+// identity and namespace declarations.
+func (s *Store) Verify(ctx context.Context) error {
+	if _, err := s.Status(ctx); err != nil {
+		return err
+	}
+	var result string
+	if err := s.readers.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&result); err != nil {
 		return mapError(err)
 	}
-	if applicationID == 0 {
-		if _, err := s.db.Exec(fmt.Sprintf("PRAGMA application_id = %d", databaseApplicationID)); err != nil {
-			return mapError(err)
-		}
-	} else if applicationID != databaseApplicationID {
-		return fmt.Errorf("SQLite metadata application id %d is not KumaBox: %w", applicationID, meta.ErrCorrupt)
-	}
-
-	var schemaVersion int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&schemaVersion); err != nil {
-		return mapError(err)
-	}
-	if schemaVersion == 0 {
-		if _, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion)); err != nil {
-			return mapError(err)
-		}
-	} else if schemaVersion != databaseSchemaVersion {
-		return fmt.Errorf("unsupported SQLite metadata schema version %d: %w", schemaVersion, meta.ErrCorrupt)
+	if result != "ok" {
+		return fmt.Errorf("sqlite metadata integrity check returned %q: %w", result, meta.ErrCorrupt)
 	}
 	return nil
 }
 
-func (s *Store) createTables() error {
-	tx, err := s.db.Begin()
-	if err != nil {
+func (s *Store) initializeIdentity() error {
+	var applicationID int
+	if err := s.readers.QueryRow("PRAGMA application_id").Scan(&applicationID); err != nil {
 		return mapError(err)
 	}
-	if _, err := tx.Exec("CREATE TABLE IF NOT EXISTS " + metadataStateTable + " (namespace TEXT PRIMARY KEY NOT NULL, state TEXT NOT NULL, schema_version INTEGER NOT NULL, source TEXT NOT NULL DEFAULT '', digest TEXT NOT NULL DEFAULT '', records INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)"); err != nil {
-		_ = tx.Rollback()
+	if applicationID != databaseApplicationID {
+		return fmt.Errorf("sqlite metadata application id %d is not KumaBox: %w", applicationID, meta.ErrCorrupt)
+	}
+
+	var schemaVersion int
+	if err := s.readers.QueryRow("PRAGMA user_version").Scan(&schemaVersion); err != nil {
 		return mapError(err)
 	}
-	for namespace, tables := range s.namespaces {
-		for table := range tables {
-			query := "CREATE TABLE IF NOT EXISTS " + tableName(namespace, table) + " (id TEXT PRIMARY KEY NOT NULL, data BLOB NOT NULL)"
-			if _, err := tx.Exec(query); err != nil {
-				_ = tx.Rollback()
-				return mapError(err)
-			}
-		}
-		if _, err := tx.Exec("INSERT OR IGNORE INTO "+metadataStateTable+" (namespace, state, schema_version, updated_at) VALUES (?, 'initialized', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))", namespace, databaseSchemaVersion); err != nil {
-			_ = tx.Rollback()
-			return mapError(err)
-		}
+	if schemaVersion != databaseSchemaVersion {
+		return fmt.Errorf("unsupported sqlite metadata schema version %d: %w", schemaVersion, meta.ErrCorrupt)
 	}
-	if err := tx.Commit(); err != nil {
-		return mapError(err)
-	}
-	_, err = s.Status(context.Background())
+	_, err := s.Status(context.Background())
 	return err
 }
 
@@ -457,4 +460,25 @@ func mapError(err error) error {
 	default:
 		return err
 	}
+}
+
+func openDatabase(path, synchronous string, writer bool) (*sql.DB, error) {
+	dsn := "file:" + filepath.ToSlash(path) +
+		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)" +
+		"&_pragma=trusted_schema(OFF)&_pragma=synchronous(" + synchronous + ")"
+	if writer {
+		dsn += "&_txlock=immediate"
+	}
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite metadata database: %w", mapError(err))
+	}
+	if writer {
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
+	}
+	if err := db.Ping(); err != nil {
+		return nil, errors.Join(fmt.Errorf("ping sqlite metadata database: %w", mapError(err)), db.Close())
+	}
+	return db, nil
 }

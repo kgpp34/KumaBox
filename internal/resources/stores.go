@@ -2,6 +2,7 @@
 package resources
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
@@ -39,10 +40,7 @@ func NewStoreSetForConfig(cfg config.Config) (StoreSet, error) {
 	if cfg.Metadata.Backend != "sqlite" {
 		return NewStoreSet(cfg.Runtime.RootDir), nil
 	}
-	path := cfg.Metadata.Path
-	if path == "" {
-		path = filepath.Join(cfg.Runtime.RootDir, "metadata", "kumabox.db")
-	}
+	path := SQLiteMetadataPath(cfg)
 	engine, err := metasqlite.Open(path, sqliteDefinitions()...)
 	if err != nil {
 		return StoreSet{}, fmt.Errorf("open configured metadata backend: %w", err)
@@ -58,6 +56,24 @@ func NewStoreSetForConfig(cfg config.Config) (StoreSet, error) {
 		References: reference.NewWithEngine(engine),
 		Metadata:   engine,
 	}, nil
+}
+
+// InitSQLiteMetadata creates the configured SQLite metadata database. Normal
+// store construction deliberately refuses to create it implicitly.
+func InitSQLiteMetadata(ctx context.Context, cfg config.Config) error {
+	if cfg.Metadata.Backend != "sqlite" {
+		return fmt.Errorf("metadata initialization requires the sqlite backend, got %q", cfg.Metadata.Backend)
+	}
+	return metasqlite.Init(ctx, SQLiteMetadataPath(cfg), sqliteDefinitions()...)
+}
+
+// SQLiteMetadataPath resolves the single database path used by all SQLite
+// resource stores.
+func SQLiteMetadataPath(cfg config.Config) string {
+	if cfg.Metadata.Path != "" {
+		return cfg.Metadata.Path
+	}
+	return filepath.Join(cfg.Runtime.RootDir, "metadata", "kumabox.db")
 }
 
 func sqliteDefinitions() []metasqlite.Namespace {
