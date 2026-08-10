@@ -61,12 +61,23 @@ type leaseIndex struct {
 
 // NewStore returns a network store rooted under rootDir.
 func NewStore(rootDir string) *Store {
-	networkDir := filepath.Join(rootDir, "network")
+	namespaces := JSONNamespaces(rootDir)
 	return NewStoreWithEngines(rootDir,
-		mustOpenNetworkEngine(metajson.Namespace{Name: "networks", FilePath: filepath.Join(networkDir, "index.json"), LockPath: filepath.Join(networkDir, "index.lock"), Codec: indexCodec{}}),
-		mustOpenNetworkEngine(metajson.Namespace{Name: "leases", FilePath: filepath.Join(networkDir, "leases.json"), LockPath: filepath.Join(networkDir, "leases.lock"), Codec: leaseCodec{}}),
-		mustOpenNetworkEngine(metajson.Namespace{Name: "host-tap", FilePath: filepath.Join(networkDir, "host-tap.json"), LockPath: filepath.Join(networkDir, "host-tap.lock"), Codec: hostTapCodec{}}),
+		mustOpenNetworkEngine(namespaces[0]),
+		mustOpenNetworkEngine(namespaces[1]),
+		mustOpenNetworkEngine(namespaces[2]),
 	)
+}
+
+// JSONNamespaces describe network provider, lease, and host-tap state used by
+// the JSON metadata backend.
+func JSONNamespaces(rootDir string) []metajson.Namespace {
+	networkDir := filepath.Join(rootDir, "network")
+	return []metajson.Namespace{
+		{Name: "networks", FilePath: filepath.Join(networkDir, "index.json"), LockPath: filepath.Join(networkDir, "index.lock"), Codec: indexCodec{}},
+		{Name: "leases", FilePath: filepath.Join(networkDir, "leases.json"), LockPath: filepath.Join(networkDir, "leases.lock"), Codec: leaseCodec{}},
+		{Name: "host-tap", FilePath: filepath.Join(networkDir, "host-tap.json"), LockPath: filepath.Join(networkDir, "host-tap.lock"), Codec: hostTapCodec{}},
+	}
 }
 
 // NewStoreWithEngines creates a network store with separately injectable

@@ -37,6 +37,9 @@ type StoreSet struct {
 // metadata backend. All SQLite-backed resources share one database and one
 // transaction boundary; the JSON path keeps the existing file layout.
 func NewStoreSetForConfig(cfg config.Config) (StoreSet, error) {
+	if err := metasqlite.RefuseConversion(SQLiteMetadataPath(cfg)); err != nil {
+		return StoreSet{}, err
+	}
 	if cfg.Metadata.Backend != "sqlite" {
 		return NewStoreSet(cfg.Runtime.RootDir), nil
 	}

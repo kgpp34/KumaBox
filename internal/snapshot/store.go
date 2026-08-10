@@ -33,14 +33,19 @@ var snapshotIndexCollection = meta.NewCollection[snapshotIndex]("snapshots", sna
 
 // NewStore creates a snapshot store under rootDir.
 func NewStore(rootDir string) *Store {
+	engine := mustOpenSnapshotEngine(JSONNamespace(rootDir))
+	return NewStoreWithEngine(rootDir, engine)
+}
+
+// JSONNamespace describes the snapshot index used by the JSON metadata backend.
+func JSONNamespace(rootDir string) metajson.Namespace {
 	dir := filepath.Join(rootDir, "snapshot")
-	engine := mustOpenSnapshotEngine(metajson.Namespace{
+	return metajson.Namespace{
 		Name:     "snapshots",
 		FilePath: filepath.Join(dir, "index.json"),
 		LockPath: filepath.Join(dir, "index.lock"),
 		Codec:    indexCodec{},
-	})
-	return NewStoreWithEngine(rootDir, engine)
+	}
 }
 
 // NewStoreWithVMReader creates the default JSON snapshot store with an

@@ -32,14 +32,19 @@ var vmIndexCollection = meta.NewCollection[vmIndex]("vms", vmIndexTable)
 // The store path is backend-scoped so future backends can maintain independent
 // indexes without changing the VMRecord shape.
 func New(rootDir string) *Store {
+	engine := mustOpenEngine(JSONNamespace(rootDir))
+	return NewWithEngine(rootDir, engine)
+}
+
+// JSONNamespace describes the VM index used by the JSON metadata backend.
+func JSONNamespace(rootDir string) metajson.Namespace {
 	backendDir := filepath.Join(rootDir, "backends", backendCloudHypervisor)
-	engine := mustOpenEngine(metajson.Namespace{
+	return metajson.Namespace{
 		Name:     "vms",
 		FilePath: filepath.Join(backendDir, "index.json"),
 		LockPath: filepath.Join(backendDir, "index.lock"),
 		Codec:    indexCodec{},
-	})
-	return NewWithEngine(rootDir, engine)
+	}
 }
 
 // NewWithEngine creates a VM store with an injected metadata engine.

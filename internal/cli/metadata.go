@@ -38,18 +38,17 @@ func newMetadataInitCommand(opts *rootOptions) *cobra.Command {
 
 func newMetadataConvertCommand(opts *rootOptions) *cobra.Command {
 	return &cobra.Command{
-		Use: "convert", Short: "Convert JSON metadata into SQLite", Args: cobra.NoArgs,
+		Use: "convert", Short: "Switch metadata to the configured backend", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadConfig(opts)
 			if err != nil {
 				return err
 			}
-			path := resources.SQLiteMetadataPath(cfg)
-			status, err := resources.ConvertJSONToSQLite(cmd.Context(), cfg.Runtime.RootDir, path)
+			result, err := resources.ConvertMetadata(cmd.Context(), cfg)
 			if err != nil {
 				return err
 			}
-			return writeJSON(cmd.OutOrStdout(), map[string]any{"backend": "sqlite", "path": path, "namespaces": status})
+			return writeJSON(cmd.OutOrStdout(), result)
 		},
 	}
 }

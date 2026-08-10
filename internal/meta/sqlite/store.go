@@ -23,6 +23,8 @@ const (
 	databaseApplicationID = 0x4b4d4231 // "KMB1"
 	databaseSchemaVersion = 1
 	metadataStateTable    = "_kumabox_meta_state"
+	// ConversionManifestName marks an unfinished offline backend switch.
+	ConversionManifestName = "meta-convert.manifest"
 )
 
 // Namespace declares the tables an SQLite metadata file may contain.
@@ -62,6 +64,18 @@ var _ meta.MetaEngine = (*Store)(nil)
 // changes belong to Init so a normal command can never mistake a partial or
 // unrelated SQLite file for an empty KumaBox store.
 func Open(path string, definitions ...Namespace) (*Store, error) {
+	if err := RefuseConversion(path); err != nil {
+		return nil, err
+	}
+	return open(path, definitions...)
+}
+
+// OpenForRecovery bypasses the conversion guard for the conversion command.
+func OpenForRecovery(path string, definitions ...Namespace) (*Store, error) {
+	return open(path, definitions...)
+}
+
+func open(path string, definitions ...Namespace) (*Store, error) {
 	if path == "" || len(definitions) == 0 {
 		return nil, fmt.Errorf("SQLite metadata path and namespace definitions are required: %w", meta.ErrScope)
 	}
@@ -91,6 +105,18 @@ func Open(path string, definitions ...Namespace) (*Store, error) {
 		return nil, errors.Join(err, store.Close())
 	}
 	return store, nil
+}
+
+// RefuseConversion prevents ordinary commands from using either side of an
+// unfinished metadata switch.
+func RefuseConversion(path string) error {
+	manifest := filepath.Join(filepath.Dir(path), ConversionManifestName)
+	if _, err := os.Stat(manifest); err == nil {
+		return fmt.Errorf("metadata conversion manifest %s exists; rerun metadata convert", manifest)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat metadata conversion manifest: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) View(ctx context.Context, namespaces []meta.Namespace, fn func(meta.Reader) error) error {

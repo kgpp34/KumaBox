@@ -15,6 +15,18 @@ import (
 // populated files are never overwritten; an empty file left by an interrupted
 // initialization may be safely retried.
 func Init(ctx context.Context, path string, definitions ...Namespace) (err error) {
+	if err := RefuseConversion(path); err != nil {
+		return err
+	}
+	return initStore(ctx, path, definitions...)
+}
+
+// InitForRecovery creates a conversion target while its manifest is present.
+func InitForRecovery(ctx context.Context, path string, definitions ...Namespace) error {
+	return initStore(ctx, path, definitions...)
+}
+
+func initStore(ctx context.Context, path string, definitions ...Namespace) (err error) {
 	if path == "" || len(definitions) == 0 {
 		return fmt.Errorf("sqlite metadata path and namespace definitions are required: %w", meta.ErrScope)
 	}

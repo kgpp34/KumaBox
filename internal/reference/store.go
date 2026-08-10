@@ -34,14 +34,19 @@ type Store struct {
 }
 
 func New(rootDir string) *Store {
-	engine, err := metajson.Open(metajson.Namespace{
-		Name: string(namespace), FilePath: filepath.Join(rootDir, "references", "records.json"), LockPath: filepath.Join(rootDir, "references", "records.lock"),
-		Codec: metajson.TableCodec{Specs: []metajson.TableSpec{{Key: string(table), Table: string(table)}}},
-	})
+	engine, err := metajson.Open(JSONNamespace(rootDir))
 	if err != nil {
 		panic(fmt.Sprintf("open reference metadata engine: %v", err))
 	}
 	return NewWithEngine(engine)
+}
+
+// JSONNamespace describes references used by the JSON metadata backend.
+func JSONNamespace(rootDir string) metajson.Namespace {
+	return metajson.Namespace{
+		Name: string(namespace), FilePath: filepath.Join(rootDir, "references", "records.json"), LockPath: filepath.Join(rootDir, "references", "records.lock"),
+		Codec: metajson.TableCodec{Specs: []metajson.TableSpec{{Key: string(table), Table: string(table)}}},
+	}
 }
 
 func NewWithEngine(engine meta.MetaEngine) *Store {
