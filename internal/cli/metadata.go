@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -15,7 +17,37 @@ func newMetadataCommand(opts *rootOptions) *cobra.Command {
 	cmd.AddCommand(newMetadataStatusCommand(opts))
 	cmd.AddCommand(newMetadataVerifyCommand(opts))
 	cmd.AddCommand(newMetadataConvertCommand(opts))
+	cmd.AddCommand(newMetadataBackupCommand(opts))
 	return cmd
+}
+
+func newMetadataBackupCommand(opts *rootOptions) *cobra.Command {
+	return &cobra.Command{
+		Use: "backup OUTPUT", Short: "Create a verified SQLite metadata backup", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			if cfg.Metadata.Backend != "sqlite" {
+				return fmt.Errorf("metadata backup requires the sqlite backend, got %q", cfg.Metadata.Backend)
+			}
+			destination, err := filepath.Abs(args[0])
+			if err != nil {
+				return fmt.Errorf("resolve metadata backup destination: %w", err)
+			}
+			if err := metasqlite.Backup(cmd.Context(), resources.SQLiteMetadataPath(cfg), destination); err != nil {
+				return err
+			}
+			info, err := os.Stat(destination)
+			if err != nil {
+				return fmt.Errorf("stat metadata backup: %w", err)
+			}
+			return writeJSON(cmd.OutOrStdout(), map[string]any{
+				"backend": "sqlite", "output": destination, "sizeBytes": info.Size(), "verified": true,
+			})
+		},
+	}
 }
 
 func newMetadataInitCommand(opts *rootOptions) *cobra.Command {

@@ -148,7 +148,8 @@ cleanup() {
   local name snapshot
   for name in "${names[@]}"; do kb delete "$name" --force >/dev/null 2>&1 || true; done
   for snapshot in "${snapshots[@]}"; do kb snapshot rm "$snapshot" >/dev/null 2>&1 || true; done
-  "${run[@]}" rm -f /var/lib/kumabox/e2e-hotplug.raw /var/lib/kumabox/e2e-stopped.kbsnap 2>/dev/null || true
+  "${run[@]}" rm -f /var/lib/kumabox/e2e-hotplug.raw /var/lib/kumabox/e2e-stopped.kbsnap \
+    /var/lib/kumabox/e2e-metadata-backup.db /var/lib/kumabox/e2e-metadata-backup.db.backup.lock 2>/dev/null || true
 }
 
 failure_context() {
@@ -309,6 +310,11 @@ if [[ -n "$pci_bdf" ]]; then
   kb device detach e2e-hotplug --id e2e-pci >/dev/null
 fi
 kb delete e2e-hotplug --force >/dev/null
+
+if [[ "$metadata_backend" == sqlite ]]; then
+  step "SQLite metadata backup"
+  kb metadata backup /var/lib/kumabox/e2e-metadata-backup.db | jq -e '.verified == true and .sizeBytes > 0' >/dev/null
+fi
 
 [[ "$keep" == true ]] || cleanup
 trap - EXIT
