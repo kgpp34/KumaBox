@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,7 +19,6 @@ import (
 
 func TestCloneNativeSnapshotCreatesIndependentRunningVM(t *testing.T) {
 	rt, store, source, ready := newNativeCloneRuntime(t)
-	rt.guestReadiness = func(context.Context, string) error { return nil }
 	originalIdentity := configureGuestIdentity
 	configureGuestIdentity = func(_ context.Context, socket string, rec *vmstore.VMRecord) error {
 		if rec.ID == source.ID || rec.Name != "clone" {
@@ -84,6 +84,9 @@ func TestCloneNativeSnapshotCreatesIndependentRunningVM(t *testing.T) {
 	if cloned.LastRestore == nil || cloned.LastRestore.DiskStageDurationMs < 0 || cloned.LastRestore.IdentityDurationMs < 0 || cloned.LastRestore.ReadinessDurationMs < 0 {
 		t.Fatalf("clone metrics = %+v", cloned.LastRestore)
 	}
+	if cloned.LastRestore.GuestAgentWarning != "" {
+		t.Fatalf("successful identity update warning = %q", cloned.LastRestore.GuestAgentWarning)
+	}
 	if _, err := os.Stat(filepath.Join(cloned.RunDir, ".restore-staging")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("copy clone retained native staging: %v", err)
 	}
@@ -121,7 +124,6 @@ func TestCloneNativeSnapshotPinsDelayedMemoryPayload(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			rt, store, _, ready := newNativeCloneRuntime(t)
-			rt.guestReadiness = func(context.Context, string) error { return nil }
 			originalIdentity := configureGuestIdentity
 			configureGuestIdentity = func(context.Context, string, *vmstore.VMRecord) error { return nil }
 			defer func() { configureGuestIdentity = originalIdentity }()
@@ -161,6 +163,44 @@ func TestCloneNativeSnapshotPinsDelayedMemoryPayload(t *testing.T) {
 				t.Fatalf("remove %s snapshot error = %v", test.mode, err)
 			}
 		})
+	}
+}
+
+func TestCloneNativeSnapshotPublishesRunningVMWhenGuestAgentIsUnavailable(t *testing.T) {
+	rt, store, _, ready := newNativeCloneRuntime(t)
+	agentErr := errors.New("agent unavailable")
+	originalIdentity := configureGuestIdentity
+	configureGuestIdentity = func(context.Context, string, *vmstore.VMRecord) error { return agentErr }
+	defer func() { configureGuestIdentity = originalIdentity }()
+
+	rt.backend = backendFake{
+		render: func(*vmstore.VMRecord) error { return nil },
+		clone: func(_ context.Context, rec *vmstore.VMRecord, _ string, _ string) (*backend.StartResult, error) {
+			return &backend.StartResult{PID: 9876, APISocket: filepath.Join(rec.RunDir, "ch.sock")}, nil
+		},
+		observe: func(*vmstore.VMRecord) vmstore.Observation {
+			return vmstore.Observation{State: vmstore.ObservedStateRunning, CheckedAt: time.Now().UTC()}
+		},
+	}
+
+	cloned, err := rt.CloneNativeSnapshot(context.Background(), ready.ID, NativeCloneOptions{
+		Name: "agentless-clone", Networks: []string{"none"}, Mode: RestoreModeCopy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cloned.State != vmstore.StateRunning || cloned.LastRestore == nil {
+		t.Fatalf("cloned record = %+v", cloned)
+	}
+	if !strings.Contains(cloned.LastRestore.GuestAgentWarning, agentErr.Error()) {
+		t.Fatalf("guest agent warning = %q", cloned.LastRestore.GuestAgentWarning)
+	}
+	persisted, err := store.Inspect(cloned.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.State != vmstore.StateRunning || persisted.Restore != nil {
+		t.Fatalf("persisted clone = %+v", persisted)
 	}
 }
 

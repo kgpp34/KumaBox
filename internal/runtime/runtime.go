@@ -32,20 +32,19 @@ const defaultQEMUImgBinary = "qemu-img"
 // KumaBox is daemonless, so each command must reconcile persisted intent with
 // the current backend process state before making lifecycle decisions.
 type Runtime struct {
-	vmReader       state.VMReader
-	vmRecords      state.VMRecords
-	vmUpdater      state.VMUpdater
-	vmRestore      state.VMRestore
-	operations     state.OperationState
-	storeSet       StoreSet
-	backend        backend.Lifecycle
-	cfg            config.Config
-	vmLocks        *lockfile.Locker
-	resourceGuard  *resourceguard.Guard
-	qemuImg        *storage.QEMUImg
-	guestReadiness func(context.Context, string) error
-	network        *networkCoordinator
-	storage        *storageCoordinator
+	vmReader      state.VMReader
+	vmRecords     state.VMRecords
+	vmUpdater     state.VMUpdater
+	vmRestore     state.VMRestore
+	operations    state.OperationState
+	storeSet      StoreSet
+	backend       backend.Lifecycle
+	cfg           config.Config
+	vmLocks       *lockfile.Locker
+	resourceGuard *resourceguard.Guard
+	qemuImg       *storage.QEMUImg
+	network       *networkCoordinator
+	storage       *storageCoordinator
 }
 
 // CreateStoppedSnapshot captures managed writable disks while holding the VM
@@ -126,17 +125,16 @@ func New(cfg config.Config) (*Runtime, error) {
 func NewWithBackend(store state.VMState, vmBackend backend.Lifecycle) *Runtime {
 	stores := newStoreSet(store.RootDir(), store)
 	rt := &Runtime{
-		vmReader:       store,
-		vmRecords:      store,
-		vmUpdater:      store,
-		vmRestore:      store,
-		operations:     stores.Operations,
-		storeSet:       stores,
-		backend:        vmBackend,
-		vmLocks:        lockfile.New(filepath.Join(store.RootDir(), "locks", "vms")),
-		resourceGuard:  stores.Guard,
-		qemuImg:        storage.NewQEMUImg(defaultQEMUImgBinary),
-		guestReadiness: verifyGuestExecReadiness,
+		vmReader:      store,
+		vmRecords:     store,
+		vmUpdater:     store,
+		vmRestore:     store,
+		operations:    stores.Operations,
+		storeSet:      stores,
+		backend:       vmBackend,
+		vmLocks:       lockfile.New(filepath.Join(store.RootDir(), "locks", "vms")),
+		resourceGuard: stores.Guard,
+		qemuImg:       storage.NewQEMUImg(defaultQEMUImgBinary),
 	}
 	rt.initNetworkCoordinator()
 	return rt
@@ -152,17 +150,16 @@ func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) (*Run
 		stores.Guard = resourceguard.New(stores.VM.RootDir())
 	}
 	rt := &Runtime{
-		vmReader:       stores.VM,
-		vmRecords:      stores.VM,
-		vmUpdater:      stores.VM,
-		vmRestore:      stores.VM,
-		operations:     stores.Operations,
-		storeSet:       stores,
-		backend:        vmBackend,
-		vmLocks:        lockfile.New(filepath.Join(stores.VM.RootDir(), "locks", "vms")),
-		resourceGuard:  stores.Guard,
-		qemuImg:        storage.NewQEMUImg(defaultQEMUImgBinary),
-		guestReadiness: verifyGuestExecReadiness,
+		vmReader:      stores.VM,
+		vmRecords:     stores.VM,
+		vmUpdater:     stores.VM,
+		vmRestore:     stores.VM,
+		operations:    stores.Operations,
+		storeSet:      stores,
+		backend:       vmBackend,
+		vmLocks:       lockfile.New(filepath.Join(stores.VM.RootDir(), "locks", "vms")),
+		resourceGuard: stores.Guard,
+		qemuImg:       storage.NewQEMUImg(defaultQEMUImgBinary),
 	}
 	rt.initNetworkCoordinator()
 	return rt, nil
@@ -321,18 +318,8 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecy
 	if err != nil {
 		return nil, err
 	}
-	if requiresAgentReadiness(started) {
-		if err := r.guestReadiness(ctx, started.VsockSocket); err != nil {
-			_, _ = r.backend.StopVM(started, backend.StopOptions{Force: true})
-			if _, markErr := r.vmUpdater.SetError(started.ID, err.Error()); markErr != nil {
-				return nil, markErr
-			}
-			return nil, err
-		}
-		readyAt := time.Now()
-		metrics.markAgentConnected(readyAt)
-		metrics.markFirstExecCompleted(readyAt)
-	}
+	// A responsive VMM API is the lifecycle boundary. Guest-agent capability
+	// is checked independently by agent and exec commands.
 	updated, err := r.vmUpdater.UpdatePerformance(started.ID, metrics.snapshot())
 	if err != nil {
 		return nil, err

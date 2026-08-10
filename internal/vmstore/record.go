@@ -156,6 +156,7 @@ type RestoreResult struct {
 	BackendRestoreDurationMs int64     `json:"backendRestoreDurationMs"`
 	IdentityDurationMs       int64     `json:"identityDurationMs"`
 	ReadinessDurationMs      int64     `json:"readinessDurationMs"`
+	GuestAgentWarning        string    `json:"guestAgentWarning,omitempty"`
 	CompletedAt              time.Time `json:"completedAt"`
 }
 

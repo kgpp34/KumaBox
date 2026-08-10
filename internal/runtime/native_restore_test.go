@@ -39,7 +39,6 @@ func TestLinkNativeMemorySharesSourceInode(t *testing.T) {
 
 func TestRestoreNativeVMReplacesWritableStateAndResumesIdentity(t *testing.T) {
 	rt, store, rec, sourceDisk := newRunningSnapshotRuntime(t)
-	rt.guestReadiness = func(context.Context, string) error { return nil }
 	backendState := vmstore.ObservedStateRunning
 	rt.backend = nativeRestoreBackend(t, rec, &backendState, nil)
 
@@ -102,10 +101,8 @@ func TestRestoreNativeVMFailureQuarantinesColdStart(t *testing.T) {
 	}
 }
 
-func TestRestoreNativeVMQuarantinesGuestReadinessFailure(t *testing.T) {
+func TestRestoreNativeVMSucceedsWithoutGuestAgent(t *testing.T) {
 	rt, store, rec, _ := newRunningSnapshotRuntime(t)
-	readinessErr := errors.New("guest exec is not ready")
-	rt.guestReadiness = func(context.Context, string) error { return readinessErr }
 	backendState := vmstore.ObservedStateRunning
 	rt.backend = nativeRestoreBackend(t, rec, &backendState, nil)
 	ready, err := rt.CreateRunningSnapshot(context.Background(), rec.ID, "restore-readiness-failure")
@@ -113,15 +110,16 @@ func TestRestoreNativeVMQuarantinesGuestReadinessFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := rt.RestoreNativeVM(context.Background(), rec.ID, ready.ID, NativeRestoreOptions{}); !errors.Is(err, readinessErr) {
+	restored, err := rt.RestoreNativeVM(context.Background(), rec.ID, ready.ID, NativeRestoreOptions{})
+	if err != nil {
 		t.Fatalf("restore error = %v", err)
 	}
 	persisted, err := store.Inspect(rec.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.State != vmstore.StateError || persisted.Restore == nil || persisted.Restore.State != "failed" {
-		t.Fatalf("failed restore record = %+v", persisted)
+	if restored.State != vmstore.StateRunning || persisted.State != vmstore.StateRunning || persisted.Restore != nil {
+		t.Fatalf("restored record = %+v persisted = %+v", restored, persisted)
 	}
 }
 

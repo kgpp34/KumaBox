@@ -353,6 +353,7 @@ func (s *Store) CompleteRestore(ref string, pid int, apiSocket string, duration 
 			lastRestore.BackendRestoreDurationMs = metrics.BackendRestoreDurationMs
 			lastRestore.IdentityDurationMs = metrics.IdentityDurationMs
 			lastRestore.ReadinessDurationMs = metrics.ReadinessDurationMs
+			lastRestore.GuestAgentWarning = metrics.GuestAgentWarning
 		}
 		rec.LastRestore = lastRestore
 		if rec.Restore.Mode == "ondemand" || rec.Restore.Mode == "mmap" {

@@ -16,12 +16,19 @@ import (
 )
 
 const (
-	cloneIdentityTimeout        = 90 * time.Second
+	cloneIdentityTimeout        = 15 * time.Second
 	cloneIdentityAttemptTimeout = 5 * time.Second
 	cloneIdentityRetryInterval  = 500 * time.Millisecond
 )
 
 var configureGuestIdentity = configureCloneIdentity
+
+func guestAgentWarning(err error) string {
+	if err == nil {
+		return ""
+	}
+	return "clone is running, but guest identity was not updated: " + err.Error()
+}
 
 // NativeCloneOptions defines the new VM identity. Machine and storage shape
 // are inherited from the native snapshot and cannot be resized during clone.
@@ -183,22 +190,17 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	}
 	backendRestoreDuration := time.Since(backendRestoreStarted)
 	identityStarted := time.Now()
-	if err := configureGuestIdentity(ctx, rec.VsockSocket, rec); err != nil {
-		return nil, err
-	}
+	// Identity configuration is a best-effort guest capability. Do not tear
+	// down a successfully restored VMM when the image has no compatible agent.
+	identityErr := configureGuestIdentity(ctx, rec.VsockSocket, rec)
 	identityDuration := time.Since(identityStarted)
-	readinessStarted := time.Now()
-	if err := r.guestReadiness(ctx, rec.VsockSocket); err != nil {
-		return nil, fmt.Errorf("verify clone guest readiness: %w", err)
-	}
-	readinessDuration := time.Since(readinessStarted)
 	cloned, err := r.vmRestore.CompleteRestore(rec.ID, backendResult.PID, backendResult.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
 		NativeStageDurationMs:    stageMetrics.nativeStageDuration.Milliseconds(),
 		DiskStageDurationMs:      stageMetrics.diskStageDuration.Milliseconds(),
 		DiskCommitDurationMs:     diskCommitDuration.Milliseconds(),
 		BackendRestoreDurationMs: backendRestoreDuration.Milliseconds(),
 		IdentityDurationMs:       identityDuration.Milliseconds(),
-		ReadinessDurationMs:      readinessDuration.Milliseconds(),
+		GuestAgentWarning:        guestAgentWarning(identityErr),
 	})
 	if err != nil {
 		return nil, err

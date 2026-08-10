@@ -473,6 +473,7 @@ func TestCompleteRestorePersistsPhaseMetrics(t *testing.T) {
 	restored, err := store.CompleteRestore(rec.ID, 1234, filepath.Join(rec.RunDir, "ch.sock"), time.Second, &RestoreResult{
 		NativeStageDurationMs: 11, DiskStageDurationMs: 22, DiskCommitDurationMs: 3,
 		BackendRestoreDurationMs: 44, IdentityDurationMs: 55, ReadinessDurationMs: 66,
+		GuestAgentWarning: "agent unavailable",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -484,7 +485,7 @@ func TestCompleteRestorePersistsPhaseMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.LastRestore == nil || persisted.LastRestore.BackendRestoreDurationMs != 44 {
+	if persisted.LastRestore == nil || persisted.LastRestore.BackendRestoreDurationMs != 44 || persisted.LastRestore.GuestAgentWarning != "agent unavailable" {
 		t.Fatalf("persisted restore metrics = %+v", persisted.LastRestore)
 	}
 }

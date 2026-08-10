@@ -125,7 +125,7 @@ func TestCreateVMRollsBackRecordOnRenderFailure(t *testing.T) {
 	}
 }
 
-func TestStartVMMarksRunning(t *testing.T) {
+func TestStartVMMarksRunningWithoutGuestAgent(t *testing.T) {
 	dir := t.TempDir()
 	store := vmstore.New(filepath.Join(dir, "data"))
 	rt := NewWithBackend(
@@ -152,6 +152,7 @@ func TestStartVMMarksRunning(t *testing.T) {
 		Initrd:   "initrd.img",
 		RunDir:   filepath.Join(dir, "run"),
 		LogDir:   filepath.Join(dir, "log"),
+		Image:    &vmstore.ImageRef{ID: "img_direct", BootMode: "direct"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -169,6 +170,9 @@ func TestStartVMMarksRunning(t *testing.T) {
 	}
 	if started.ObservedState != vmstore.ObservedStateRunning {
 		t.Fatalf("observed state = %s", started.ObservedState)
+	}
+	if started.Performance == nil || started.Performance.ReadyDurationMs != started.Performance.VMMAPIReadyDurationMs {
+		t.Fatalf("lifecycle readiness did not stop at VMM API readiness: %+v", started.Performance)
 	}
 }
 

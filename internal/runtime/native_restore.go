@@ -142,21 +142,13 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 		return fail(fmt.Errorf("restore backend state: %w", err))
 	}
 	backendRestoreDuration := time.Since(backendRestoreStarted)
-	readinessStarted := time.Now()
-	if err := r.guestReadiness(ctx, rec.VsockSocket); err != nil {
-		cleanupRec := *dirty
-		cleanupRec.PID = backendResult.PID
-		cleanupRec.APISocket = backendResult.APISocket
-		_, _ = r.backend.StopVM(&cleanupRec, backend.StopOptions{Force: true})
-		return fail(fmt.Errorf("verify restored guest readiness: %w", err))
-	}
-	readinessDuration := time.Since(readinessStarted)
+	// Backend restore is the lifecycle boundary. Agent-dependent commands
+	// report their own availability without quarantining this running VM.
 	restored, err := r.vmRestore.CompleteRestore(rec.ID, backendResult.PID, backendResult.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
 		NativeStageDurationMs:    stageMetrics.nativeStageDuration.Milliseconds(),
 		DiskStageDurationMs:      stageMetrics.diskStageDuration.Milliseconds(),
 		DiskCommitDurationMs:     diskCommitDuration.Milliseconds(),
 		BackendRestoreDurationMs: backendRestoreDuration.Milliseconds(),
-		ReadinessDurationMs:      readinessDuration.Milliseconds(),
 	})
 	if err != nil {
 		cleanupRec := *dirty
