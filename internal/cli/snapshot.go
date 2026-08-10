@@ -109,6 +109,11 @@ func newSnapshotImportCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			mutation, err := stores.Guard.BeginMutation(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer mutation.Release() //nolint:errcheck
 			rec, err := stores.Snapshots.Import(cmd.Context(), snapshot.ImportOptions{Input: input, Name: name, QEMUImgBinary: cfg.Storage.QEMUImgBinary})
 			if err != nil {
 				return err
@@ -252,6 +257,11 @@ func newSnapshotRMCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			mutation, err := stores.Guard.BeginMutation(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer mutation.Release() //nolint:errcheck
 			if stores.References != nil {
 				record, inspectErr := stores.Snapshots.Inspect(args[0])
 				if inspectErr != nil {

@@ -21,6 +21,12 @@ func (r *Runtime) ResumeVM(ctx context.Context, ref string) (*vmstore.VMRecord, 
 }
 
 func (r *Runtime) transitionVMState(ctx context.Context, ref string, target vmstore.VMState) (result *vmstore.VMRecord, resultErr error) {
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
+
 	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err

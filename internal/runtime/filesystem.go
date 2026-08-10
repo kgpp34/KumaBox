@@ -11,6 +11,12 @@ import (
 )
 
 func (r *Runtime) AttachFilesystem(ctx context.Context, ref string, spec backend.FilesystemSpec) (*vmstore.VMRecord, error) {
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
+
 	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err
@@ -44,6 +50,12 @@ func (r *Runtime) AttachFilesystem(ctx context.Context, ref string, spec backend
 }
 
 func (r *Runtime) DetachFilesystem(ctx context.Context, ref, tag string) (*vmstore.VMRecord, error) {
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
+
 	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err

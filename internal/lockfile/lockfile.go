@@ -34,6 +34,16 @@ func New(dir string) *Locker {
 
 // Acquire waits until key is exclusively locked or ctx is cancelled.
 func (l *Locker) Acquire(ctx context.Context, key string) (*Lock, error) {
+	return l.acquire(ctx, key, syscall.LOCK_EX)
+}
+
+// AcquireShared waits until key is shared-locked or ctx is cancelled.
+// Shared holders may run concurrently, but exclude an Acquire holder.
+func (l *Locker) AcquireShared(ctx context.Context, key string) (*Lock, error) {
+	return l.acquire(ctx, key, syscall.LOCK_SH)
+}
+
+func (l *Locker) acquire(ctx context.Context, key string, mode int) (*Lock, error) {
 	if err := validateKey(key); err != nil {
 		return nil, err
 	}
@@ -51,7 +61,7 @@ func (l *Locker) Acquire(ctx context.Context, key string) (*Lock, error) {
 	ticker := time.NewTicker(retryInterval)
 	defer ticker.Stop()
 	for {
-		err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		err = syscall.Flock(int(file.Fd()), mode|syscall.LOCK_NB)
 		if err == nil {
 			return &Lock{file: file}, nil
 		}

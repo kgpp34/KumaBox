@@ -12,6 +12,12 @@ import (
 // RefreshDeviceState reconciles durable hotplug metadata with one live
 // vm.info response while holding the VM operation lock.
 func (r *Runtime) RefreshDeviceState(ctx context.Context, ref string) (*vmstore.VMRecord, error) {
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
+
 	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err

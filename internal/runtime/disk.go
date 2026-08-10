@@ -13,6 +13,12 @@ import (
 )
 
 func (r *Runtime) AttachDisk(ctx context.Context, ref string, spec backend.DiskSpec) (*vmstore.VMRecord, error) {
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
+
 	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err
@@ -52,6 +58,12 @@ func (r *Runtime) AttachDisk(ctx context.Context, ref string, spec backend.DiskS
 }
 
 func (r *Runtime) DetachDisk(ctx context.Context, ref, name string) (*vmstore.VMRecord, error) {
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
+
 	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err

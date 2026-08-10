@@ -12,6 +12,12 @@ import (
 )
 
 func (r *Runtime) ResizeNetwork(ctx context.Context, ref string, target int) (*vmstore.VMRecord, error) {
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
+
 	if target < 0 {
 		return nil, fmt.Errorf("network count must not be negative")
 	}

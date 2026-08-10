@@ -28,7 +28,7 @@ func newGCCommand(opts *rootOptions) *cobra.Command {
 			}
 			var report *kbgc.Report
 			if repair {
-				report, err = kbgc.Repair(cfg)
+				report, err = kbgc.RepairContext(cmd.Context(), cfg)
 			} else {
 				report, err = kbgc.DryRun(cfg)
 			}

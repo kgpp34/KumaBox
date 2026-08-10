@@ -19,6 +19,12 @@ const snapshotCleanupTimeout = 30 * time.Second
 // CreateRunningSnapshot captures native backend state and writable disks from
 // one pause window, then publishes the snapshot after the source VM resumes.
 func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (result *snapshot.Record, resultErr error) {
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
+
 	captureStarted := time.Now()
 	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {

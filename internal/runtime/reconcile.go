@@ -16,6 +16,11 @@ func (r *Runtime) ReconcileOperations(ctx context.Context) error {
 	if r.operations == nil {
 		return nil
 	}
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return err
+	}
+	defer mutation.Release() //nolint:errcheck
 	return r.operations.Reconcile(ctx, r.reconcileOperation)
 }
 

@@ -45,6 +45,12 @@ type restoreStageMetrics struct {
 // into the original VM identity. Snapshot and VM operation locks are held for
 // the complete transaction.
 func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string, opts NativeRestoreOptions) (result *vmstore.VMRecord, resultErr error) {
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
+
 	mode, err := normalizeRestoreMode(opts.Mode)
 	if err != nil {
 		return nil, err

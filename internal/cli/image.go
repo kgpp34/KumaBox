@@ -13,6 +13,7 @@ import (
 	"github.com/kumabox/kumabox/internal/ocibuild"
 	"github.com/kumabox/kumabox/internal/ociresolver"
 	"github.com/kumabox/kumabox/internal/ocistore"
+	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/resources"
 )
 
@@ -50,6 +51,11 @@ func newImagePullOCICommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			mutation, err := stores.Guard.BeginMutation(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer mutation.Release() //nolint:errcheck
 			result, err := stores.OCI.Pull(cmd.Context(), ocistore.PullRequest{
 				Ref:      args[0],
 				Platform: platform,
@@ -117,6 +123,11 @@ func newImageBuildCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			mutation, err := stores.Guard.BeginMutation(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer mutation.Release() //nolint:errcheck
 			rec, err := ocibuild.NewWithStores(cfg.Runtime.RootDir, stores.OCI, stores.Images).Build(cmd.Context(), ocibuild.BuildRequest{
 				Name:         name,
 				Ref:          args[0],
@@ -177,6 +188,11 @@ func newImageImportCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			mutation, err := stores.Guard.BeginMutation(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer mutation.Release() //nolint:errcheck
 			rec, err := stores.Images.ImportLocal(imagestore.ImportRequest{
 				Name:        name,
 				File:        args[0],
@@ -216,6 +232,11 @@ func newImagePullCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			mutation, err := stores.Guard.BeginMutation(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer mutation.Release() //nolint:errcheck
 			rec, err := stores.Images.Pull(imagestore.PullRequest{
 				Name:        name,
 				URL:         args[0],
@@ -315,6 +336,20 @@ func newImageRMCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			mutation, err := stores.Guard.BeginMutation(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer mutation.Release() //nolint:errcheck
+			image, err := stores.Images.Inspect(args[0])
+			if err != nil {
+				return err
+			}
+			imageLock, err := stores.Guard.LockEntity(cmd.Context(), resourceguard.EntityImage, image.ID)
+			if err != nil {
+				return err
+			}
+			defer imageLock.Release() //nolint:errcheck
 			refs, err := imageReferencesFromVMs(stores)
 			if err != nil {
 				return err

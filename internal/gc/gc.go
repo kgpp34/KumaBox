@@ -15,6 +15,7 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
+	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/state"
@@ -135,6 +136,19 @@ func DryRun(cfg config.Config) (*Report, error) {
 // roots. Network records are cleaned only when their VM is gone; drift on a
 // live VM is reported and left for explicit reconciliation.
 func Repair(cfg config.Config) (*Report, error) {
+	return RepairContext(context.Background(), cfg)
+}
+
+// RepairContext excludes concurrent resource publication for the complete
+// scan-and-delete cycle. Candidates are discovered only after the exclusive
+// lock is held, so a report produced before lock acquisition is never used.
+func RepairContext(ctx context.Context, cfg config.Config) (*Report, error) {
+	maintenance, err := resourceguard.New(cfg.Runtime.RootDir).BeginMaintenance(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer maintenance.Release() //nolint:errcheck
+
 	report, err := DryRun(cfg)
 	if err != nil {
 		return nil, err
@@ -150,7 +164,7 @@ func Repair(cfg config.Config) (*Report, error) {
 	report.DryRun = false
 	for _, candidate := range report.Candidates {
 		if candidate.Component == "network" {
-			if err := repairNetworkCandidate(context.Background(), cfg, stores.Networks, networkRecords, candidate); err != nil {
+			if err := repairNetworkCandidate(ctx, cfg, stores.Networks, networkRecords, candidate); err != nil {
 				return nil, err
 			}
 			if candidate.Type == "network_drift" {

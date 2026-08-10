@@ -40,6 +40,46 @@ func TestAcquireDoesNotSerializeDifferentKeys(t *testing.T) {
 	}
 }
 
+func TestSharedLocksRunConcurrentlyAndExcludeWriter(t *testing.T) {
+	locker := New(t.TempDir())
+	first, err := locker.AcquireShared(context.Background(), "resources")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Release() //nolint:errcheck
+
+	second, err := locker.AcquireShared(context.Background(), "resources")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Release(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	_, err = locker.Acquire(ctx, "resources")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("exclusive Acquire() error = %v, want context deadline", err)
+	}
+}
+
+func TestExclusiveLockExcludesSharedReader(t *testing.T) {
+	locker := New(t.TempDir())
+	writer, err := locker.Acquire(context.Background(), "resources")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Release() //nolint:errcheck
+
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	_, err = locker.AcquireShared(ctx, "resources")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("AcquireShared() error = %v, want context deadline", err)
+	}
+}
+
 func TestReleaseAllowsReacquire(t *testing.T) {
 	locker := New(t.TempDir())
 	lock, err := locker.Acquire(context.Background(), "kb_release")

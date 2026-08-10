@@ -14,6 +14,7 @@ import (
 	"github.com/kumabox/kumabox/internal/lockfile"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/operation"
+	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/state"
@@ -40,6 +41,7 @@ type Runtime struct {
 	backend        backend.Lifecycle
 	cfg            config.Config
 	vmLocks        *lockfile.Locker
+	resourceGuard  *resourceguard.Guard
 	qemuImg        *storage.QEMUImg
 	guestReadiness func(context.Context, string) error
 	network        *networkCoordinator
@@ -49,6 +51,12 @@ type Runtime struct {
 // CreateStoppedSnapshot captures managed writable disks while holding the VM
 // operation lock for the full consistency boundary.
 func (r *Runtime) CreateStoppedSnapshot(ctx context.Context, ref, name string) (*snapshot.Record, error) {
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
+
 	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err
@@ -126,6 +134,7 @@ func NewWithBackend(store state.VMState, vmBackend backend.Lifecycle) *Runtime {
 		storeSet:       stores,
 		backend:        vmBackend,
 		vmLocks:        lockfile.New(filepath.Join(store.RootDir(), "locks", "vms")),
+		resourceGuard:  stores.Guard,
 		qemuImg:        storage.NewQEMUImg(defaultQEMUImgBinary),
 		guestReadiness: verifyGuestExecReadiness,
 	}
@@ -139,6 +148,9 @@ func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) (*Run
 	if stores.VM == nil {
 		return nil, errors.New("runtime store set must include a VM store")
 	}
+	if stores.Guard == nil {
+		stores.Guard = resourceguard.New(stores.VM.RootDir())
+	}
 	rt := &Runtime{
 		vmReader:       stores.VM,
 		vmRecords:      stores.VM,
@@ -148,6 +160,7 @@ func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) (*Run
 		storeSet:       stores,
 		backend:        vmBackend,
 		vmLocks:        lockfile.New(filepath.Join(stores.VM.RootDir(), "locks", "vms")),
+		resourceGuard:  stores.Guard,
 		qemuImg:        storage.NewQEMUImg(defaultQEMUImgBinary),
 		guestReadiness: verifyGuestExecReadiness,
 	}
@@ -161,10 +174,22 @@ func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) (*Run
 // stable tap/MAC/IP values. If rendering fails, runtime rolls back any provider
 // resources before removing the VM record.
 func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
+	mutation, err := r.resourceGuard.BeginMutation(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
 	return r.createVMContext(context.Background(), req, nil)
 }
 
 func (r *Runtime) createVMContext(ctx context.Context, req vmstore.CreateRequest, metrics *lifecycleMetrics) (*vmstore.VMRecord, error) {
+	if req.Image != nil && req.Image.ID != "" {
+		imageLock, err := r.resourceGuard.LockEntity(ctx, resourceguard.EntityImage, req.Image.ID)
+		if err != nil {
+			return nil, err
+		}
+		defer imageLock.Release() //nolint:errcheck
+	}
 	rec, err := r.vmRecords.Create(req)
 	if err != nil {
 		return nil, err
@@ -220,6 +245,12 @@ func (r *Runtime) StartVM(ref string) (*vmstore.VMRecord, error) {
 // StartVMContext starts an existing VM while holding its cross-process
 // operation lock. Waiting for the lock observes ctx cancellation.
 func (r *Runtime) StartVMContext(ctx context.Context, ref string) (*vmstore.VMRecord, error) {
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
+
 	commandStarted := time.Now()
 	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
@@ -316,6 +347,12 @@ func (r *Runtime) RunVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
 
 // RunVMContext creates and starts a VM with cancellation propagated to start.
 func (r *Runtime) RunVMContext(ctx context.Context, req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
+
 	metrics := newLifecycleMetrics("run", time.Now(), nil)
 	rec, err := r.createVMContext(ctx, req, metrics)
 	if err != nil {
@@ -352,6 +389,12 @@ func (r *Runtime) StopVM(ref string, opts backend.StopOptions) (*vmstore.VMRecor
 
 // StopVMContext stops a VM while holding its cross-process operation lock.
 func (r *Runtime) StopVMContext(ctx context.Context, ref string, opts backend.StopOptions) (*vmstore.VMRecord, error) {
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
+
 	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err
@@ -432,6 +475,12 @@ func (r *Runtime) DeleteVM(ref string, force bool) (*vmstore.VMRecord, error) {
 // DeleteVMContext deletes a VM while serializing stop and cleanup under one
 // operation lock.
 func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (result *vmstore.VMRecord, resultErr error) {
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
+
 	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err

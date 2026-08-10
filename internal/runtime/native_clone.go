@@ -10,6 +10,7 @@ import (
 	"github.com/kumabox/kumabox/internal/backend"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/operation"
+	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -33,6 +34,12 @@ type NativeCloneOptions struct {
 // CloneNativeSnapshot creates a new running VM from native state while
 // assigning fresh host storage, vsock, and provider network identities.
 func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, opts NativeCloneOptions) (result *vmstore.VMRecord, resultErr error) {
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
+
 	if opts.Name == "" {
 		return nil, errors.New("clone VM name must not be empty")
 	}
@@ -80,6 +87,15 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	image, err := r.storeSet.Images.Inspect(manifest.Source.ImageID)
 	if err != nil {
 		return nil, fmt.Errorf("BASE_IMAGE_MISSING: resolve image %s: %w", manifest.Source.ImageID, err)
+	}
+	imageLock, err := r.resourceGuard.LockEntity(ctx, resourceguard.EntityImage, image.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer imageLock.Release() //nolint:errcheck
+	image, err = r.storeSet.Images.Inspect(image.ID)
+	if err != nil {
+		return nil, fmt.Errorf("BASE_IMAGE_MISSING: revalidate image %s: %w", manifest.Source.ImageID, err)
 	}
 	req, err := restoreCreateRequest(RestoreOptions{
 		Name: opts.Name, CPUs: manifest.Machine.VCPUs, MemoryBytes: manifest.Machine.MemoryBytes, Networks: networks,

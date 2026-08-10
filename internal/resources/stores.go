@@ -14,6 +14,7 @@ import (
 	"github.com/kumabox/kumabox/internal/ocistore"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/reference"
+	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/state"
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -31,6 +32,7 @@ type StoreSet struct {
 	Operations state.OperationState
 	References state.ReferenceState
 	Metadata   meta.MetaEngine
+	Guard      *resourceguard.Guard
 }
 
 // NewStoreSetForConfig composes every persisted resource over the configured
@@ -58,6 +60,7 @@ func NewStoreSetForConfig(cfg config.Config) (StoreSet, error) {
 		Operations: operation.NewWithEngine(engine),
 		References: reference.NewWithEngine(engine),
 		Metadata:   engine,
+		Guard:      resourceguard.New(cfg.Runtime.RootDir),
 	}, nil
 }
 
@@ -104,5 +107,6 @@ func NewStoreSet(rootDir string) StoreSet {
 		OCI:        ocistore.New(rootDir),
 		Operations: operation.New(rootDir),
 		References: reference.New(rootDir),
+		Guard:      resourceguard.New(rootDir),
 	}
 }

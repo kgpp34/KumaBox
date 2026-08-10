@@ -13,6 +13,12 @@ func (r *Runtime) AttachPCIDevice(ctx context.Context, ref string, spec backend.
 	return r.changePCIDevice(ctx, ref, spec, true)
 }
 func (r *Runtime) changePCIDevice(ctx context.Context, ref string, spec backend.PCIDeviceSpec, attach bool) (*vmstore.VMRecord, error) {
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
+
 	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err

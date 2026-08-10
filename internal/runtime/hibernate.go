@@ -26,6 +26,12 @@ type HibernateResult struct {
 // HibernateVM durably captures a paused VM and terminates the VMM without a
 // resume gap. Persistence failure resumes the original process.
 func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOptions) (result *HibernateResult, resultErr error) {
+	mutation, err := r.resourceGuard.BeginMutation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer mutation.Release() //nolint:errcheck
+
 	if opts.Name == "" {
 		return nil, errors.New("hibernate snapshot name must not be empty")
 	}

@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -21,6 +22,8 @@ import (
 	"github.com/kumabox/kumabox/internal/imagestore"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/reference"
+	"github.com/kumabox/kumabox/internal/resourceguard"
+	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -894,6 +897,95 @@ func TestImageRemoveRejectsReferencedImage(t *testing.T) {
 	}
 	if removed.ID != image.ID {
 		t.Fatalf("removed id = %s, want %s", removed.ID, image.ID)
+	}
+}
+
+func TestImageRemoveRechecksReferencesAfterEntityLock(t *testing.T) {
+	for _, backend := range []string{"json", "sqlite"} {
+		t.Run(backend, func(t *testing.T) {
+			testImageRemoveRechecksReferencesAfterEntityLock(t, backend)
+		})
+	}
+}
+
+func testImageRemoveRechecksReferencesAfterEntityLock(t *testing.T, backend string) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	cfg := config.Default()
+	cfg.Runtime.RootDir = rootDir
+	cfg.Runtime.RunDir = filepath.Join(dir, "run")
+	cfg.Runtime.LogDir = filepath.Join(dir, "log")
+	cfg.Metadata.Backend = backend
+	if backend == "sqlite" {
+		cfg.Metadata.Path = filepath.Join(rootDir, "metadata", "kumabox.db")
+		if err := resources.InitSQLiteMetadata(t.Context(), cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stores, err := resources.NewStoreSetForConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stores.Metadata != nil {
+		t.Cleanup(func() { _ = stores.Metadata.Close() })
+	}
+	image, err := stores.Images.Create(imagestore.CreateRequest{
+		Name:   "ubuntu",
+		Source: imagestore.Source{Type: "test", URI: "fixtures/ubuntu.img"},
+		RootDisk: imagestore.RootDisk{
+			Path: filepath.Join(rootDir, "cloudimg", "base.qcow2"), Format: "qcow2",
+		},
+		Boot: imagestore.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	guard := resourceguard.New(rootDir)
+	mutation, err := guard.BeginMutation(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = mutation.Release() })
+	imageLock, err := guard.LockEntity(t.Context(), resourceguard.EntityImage, image.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = imageLock.Release() })
+
+	rm := NewRootCommandWithConfig(cfg)
+	rm.SetArgs([]string{"image", "rm", image.ID})
+	result := make(chan error, 1)
+	go func() { result <- rm.Execute() }()
+
+	vm, err := stores.VM.Create(vmstore.CreateRequest{
+		Name: "late-reference", RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd",
+		Image:  &vmstore.ImageRef{ID: image.ID, Name: image.Name},
+		RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := imageLock.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mutation.Release(); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-result:
+		if !errors.Is(err, imagestore.ErrImageInUse) {
+			t.Fatalf("image remove error = %v, want ErrImageInUse", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("image remove did not resume after entity lock released")
+	}
+	if _, err := stores.Images.Inspect(image.ID); err != nil {
+		t.Fatalf("newly referenced image was removed: %v", err)
+	}
+	if _, err := stores.VM.Inspect(vm.ID); err != nil {
+		t.Fatalf("late VM reference was not persisted: %v", err)
 	}
 }
 

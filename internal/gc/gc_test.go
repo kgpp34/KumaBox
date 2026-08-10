@@ -3,6 +3,7 @@ package gc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
+	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -281,6 +283,86 @@ func TestRepairRemovesOrphanManagedStorage(t *testing.T) {
 	assertCandidate(t, report, orphan, "orphan_vm_storage")
 	if report.DryRun {
 		t.Fatal("repair report is marked dry-run")
+	}
+}
+
+func TestRepairWaitsForMutationAndScansAfterLockAcquisition(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Runtime.RootDir = filepath.Join(dir, "data")
+	cfg.Runtime.RunDir = filepath.Join(dir, "run")
+	cfg.Runtime.LogDir = filepath.Join(dir, "log")
+	orphan := filepath.Join(cfg.Runtime.RootDir, "storage", "vms", "kb_claimed")
+	if err := os.MkdirAll(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	mutation, err := resourceguard.New(cfg.Runtime.RootDir).BeginMutation(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = mutation.Release() })
+
+	type repairResult struct {
+		report *Report
+		err    error
+	}
+	result := make(chan repairResult, 1)
+	go func() {
+		report, repairErr := RepairContext(t.Context(), cfg)
+		result <- repairResult{report: report, err: repairErr}
+	}()
+
+	select {
+	case got := <-result:
+		t.Fatalf("RepairContext completed during mutation: report=%+v err=%v", got.report, got.err)
+	case <-time.After(75 * time.Millisecond):
+	}
+
+	// The in-flight mutation resolves what looked orphaned before GC entered
+	// its critical section. GC must scan the post-mutation state.
+	if err := os.RemoveAll(orphan); err != nil {
+		t.Fatal(err)
+	}
+	if err := mutation.Release(); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case got := <-result:
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		assertNoCandidate(t, got.report, orphan)
+	case <-time.After(5 * time.Second):
+		t.Fatal("RepairContext did not resume after mutation released")
+	}
+}
+
+func TestRepairCancellationLeavesCandidatesUntouched(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Runtime.RootDir = filepath.Join(dir, "data")
+	cfg.Runtime.RunDir = filepath.Join(dir, "run")
+	cfg.Runtime.LogDir = filepath.Join(dir, "log")
+	orphan := filepath.Join(cfg.Runtime.RootDir, "storage", "vms", "kb_orphan")
+	if err := os.MkdirAll(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	mutation, err := resourceguard.New(cfg.Runtime.RootDir).BeginMutation(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mutation.Release() //nolint:errcheck
+
+	ctx, cancel := context.WithTimeout(t.Context(), 75*time.Millisecond)
+	defer cancel()
+	if _, err := RepairContext(ctx, cfg); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("RepairContext() error = %v, want context deadline", err)
+	}
+	if _, err := os.Stat(orphan); err != nil {
+		t.Fatalf("candidate changed while repair waited for lock: %v", err)
 	}
 }
 
