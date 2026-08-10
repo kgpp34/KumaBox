@@ -28,14 +28,17 @@ func NetNSPath(vmID string) string {
 }
 
 func prepareCNINetnsLinux(vmID, requestedPath string) (string, bool, error) {
-	if requestedPath != "" {
-		return requestedPath, false, nil
-	}
 	nsPath := NetNSPath(vmID)
+	if requestedPath != "" {
+		nsPath = requestedPath
+	}
 	if _, err := os.Stat(nsPath); err == nil {
 		return nsPath, false, nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return "", false, fmt.Errorf("stat netns %s: %w", nsPath, err)
+	}
+	if nsPath != NetNSPath(vmID) {
+		return "", false, fmt.Errorf("missing CNI netns path %s is not managed by VM %s", nsPath, vmID)
 	}
 	if err := os.MkdirAll(netnsDir, 0o755); err != nil {
 		return "", false, fmt.Errorf("create netns dir: %w", err)

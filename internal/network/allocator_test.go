@@ -158,6 +158,27 @@ func TestAllocatorRecoverExistingNetworkConfig(t *testing.T) {
 	}
 }
 
+func TestAllocatorRecoversExistingLeaseWhenNetworkIsFull(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testNetworkConfig()
+	cfg.CIDR = "10.88.0.0/30"
+	allocator := NewAllocator(dir, cfg)
+	original, err := allocator.Allocate(AllocateRequest{VMID: "kb_recover", Index: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recovered, err := allocator.Allocate(AllocateRequest{
+		VMID: "kb_recover", Index: 0, Existing: &original.Config,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Config.Network.IP != original.Config.Network.IP || recovered.Config.MAC != original.Config.MAC {
+		t.Fatalf("recovered identity = %+v, want %+v", recovered.Config, original.Config)
+	}
+}
+
 func TestAllocatorRecoverExistingIPConflict(t *testing.T) {
 	dir := t.TempDir()
 	cfg := testNetworkConfig()

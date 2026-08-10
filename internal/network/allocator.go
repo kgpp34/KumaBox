@@ -49,10 +49,14 @@ type Allocation struct {
 
 // NewAllocator returns an allocator backed by rootDir's network store.
 func NewAllocator(rootDir string, cfg config.NetworkConfig) *Allocator {
-	return &Allocator{
-		store: NewStore(rootDir),
-		cfg:   cfg,
-	}
+	return NewAllocatorWithStore(NewStore(rootDir), cfg)
+}
+
+// NewAllocatorWithStore returns an allocator using the caller's metadata
+// backend. Runtime uses this form so SQLite and JSON never split leases across
+// different stores.
+func NewAllocatorWithStore(store *Store, cfg config.NetworkConfig) *Allocator {
+	return &Allocator{store: store, cfg: cfg}
 }
 
 // Allocate reserves a tap/MAC/IP tuple for one VM interface.
@@ -67,19 +71,19 @@ func (a *Allocator) Allocate(req AllocateRequest) (*Allocation, error) {
 	err := a.store.withLeases(true, func(leases *leaseIndex) error {
 		now := time.Now().UTC()
 		tap := TapName(a.cfg.TapPrefix, req.VMID, req.Index)
-		mac, err := a.allocateMAC(leases, req.VMID)
-		if err != nil {
-			return err
-		}
-		ip, prefix, err := a.allocateIP(leases)
-		if err != nil {
-			return err
-		}
+		var mac, ip string
+		var prefix int
+		var err error
 		if req.Existing != nil {
 			tap, mac, ip, prefix, err = a.recoverExisting(leases, req)
-			if err != nil {
-				return err
+		} else {
+			mac, err = a.allocateMAC(leases, req.VMID)
+			if err == nil {
+				ip, prefix, err = a.allocateIP(leases)
 			}
+		}
+		if err != nil {
+			return err
 		}
 		leases.CIDR = a.cfg.CIDR
 		leases.Leases[ip] = &Lease{VMID: req.VMID, MAC: mac, TAP: tap, CreatedAt: now}

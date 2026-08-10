@@ -102,6 +102,7 @@ var deleteHostTap = kbnetwork.DeleteHostTap
 var addCNI = kbnetwork.AddCNI
 var deleteCNI = kbnetwork.DeleteCNI
 var deleteCNINetNS = kbnetwork.DeleteCNINetNS
+var verifyNetworkConfig = kbnetwork.VerifyConfig
 var mkfsExt4 = func(path string) ([]byte, error) {
 	return exec.Command("mkfs.ext4", "-F", path).CombinedOutput() //nolint:gosec
 }
@@ -286,6 +287,12 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecy
 		metrics = newLifecycleMetrics("start", time.Now(), rec)
 	}
 	metrics.bindRecord(rec)
+	if err := r.network.ensureNetwork(ctx, rec); err != nil {
+		if _, markErr := r.vmUpdater.SetError(rec.ID, err.Error()); markErr != nil {
+			return nil, markErr
+		}
+		return nil, err
+	}
 	metrics.markNetworkReady(time.Now())
 	if err := r.storage.prepare(ctx, rec); err != nil {
 		if _, markErr := r.vmUpdater.SetError(rec.ID, err.Error()); markErr != nil {
@@ -593,7 +600,7 @@ func (r *networkCoordinator) attachNetwork(rec *vmstore.VMRecord) (resultErr err
 	for index, selection := range selections {
 		allocation, err := r.attachNetworkConfig(rec, selection, index)
 		if err != nil {
-			rollbackNetworkConfigs(rec, r.cfg, attached)
+			r.rollbackNetworkConfigs(rec, attached)
 			return err
 		}
 		attached = append(attached, allocation.Config)
@@ -602,72 +609,109 @@ func (r *networkCoordinator) attachNetwork(rec *vmstore.VMRecord) (resultErr err
 		return nil
 	}
 	if _, err := r.vmRecords.SetNetworkConfigs(rec.ID, attached); err != nil {
-		rollbackNetworkConfigs(rec, r.cfg, attached)
+		r.rollbackNetworkConfigs(rec, attached)
 		return err
 	}
 	return nil
 }
 
 func (r *networkCoordinator) attachNetworkConfig(rec *vmstore.VMRecord, selection string, index int) (*kbnetwork.Allocation, error) {
+	allocation, _, err := r.attachNetworkConfigWithExisting(context.Background(), rec, selection, index, nil)
+	return allocation, err
+}
+
+func (r *networkCoordinator) attachNetworkConfigWithExisting(
+	ctx context.Context,
+	rec *vmstore.VMRecord,
+	selection string,
+	index int,
+	existing *kbnetwork.Config,
+) (*kbnetwork.Allocation, bool, error) {
 	if kbnetwork.IsCNISelection(selection) {
-		return r.attachCNIConfig(rec, selection, index)
+		allocation, err := r.attachCNIConfig(ctx, rec, selection, index, existing)
+		return allocation, false, err
 	}
 	if selection != "default" && selection != kbnetwork.ProviderHostTap {
-		return nil, fmt.Errorf("unsupported network %q", selection)
+		return nil, false, fmt.Errorf("unsupported network %q", selection)
 	}
 	// Provider state is created before the VM is rendered so Cloud Hypervisor
 	// always receives a concrete tap device name. The reverse cleanup path below
 	// keeps lease/index/tap state consistent if any later step fails.
 	if err := config.EnsureRuntimeDirs(r.cfg); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	if _, err := kbnetwork.EnsureHostTap(context.Background(), r.cfg.Runtime.RootDir, r.cfg.Network); err != nil {
-		return nil, err
+	networkStore, err := r.providerStore()
+	if err != nil {
+		return nil, false, err
 	}
-	allocation, err := kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network).Allocate(kbnetwork.AllocateRequest{
-		VMID:    rec.ID,
-		Network: selection,
-		Index:   index,
-		CPU:     rec.CPUs,
+	previousHostState, err := networkStore.ReadHostTapState()
+	if err != nil {
+		return nil, false, err
+	}
+	if _, err := kbnetwork.EnsureHostTapWithStore(ctx, r.cfg.Runtime.RootDir, r.cfg.Network, networkStore); err != nil {
+		return nil, false, err
+	}
+	allocator := kbnetwork.NewAllocatorWithStore(networkStore, r.cfg.Network)
+	allocation, err := allocator.Allocate(kbnetwork.AllocateRequest{
+		VMID:     rec.ID,
+		Network:  selection,
+		Index:    index,
+		CPU:      rec.CPUs,
+		Existing: existing,
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if err := kbnetwork.AttachHostTap(allocation.Record); err != nil {
-		_ = kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network).ReleaseIP(allocation.Config.Network.IP)
-		return nil, err
+		if existing == nil {
+			_ = allocator.ReleaseIP(allocation.Config.Network.IP)
+		}
+		return nil, false, err
 	}
-	networkStore := r.storeSet.Networks
 	if err := networkStore.UpsertRecord(allocation.Record); err != nil {
 		_ = deleteHostTap(allocation.Record.TAP)
-		_ = kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network).ReleaseIP(allocation.Config.Network.IP)
-		return nil, err
+		if existing == nil {
+			_ = allocator.ReleaseIP(allocation.Config.Network.IP)
+		}
+		return nil, false, err
 	}
-	if err := networkStore.IncrementHostTapRef(1); err != nil {
-		_ = networkStore.DeleteRecord(allocation.Record.ID)
-		_ = deleteHostTap(allocation.Record.TAP)
-		_ = kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network).ReleaseIP(allocation.Config.Network.IP)
-		return nil, err
+	hostRefAdded := existing == nil || previousHostState == nil
+	if hostRefAdded {
+		if err := networkStore.IncrementHostTapRef(1); err != nil {
+			_ = networkStore.DeleteRecord(allocation.Record.ID)
+			_ = deleteHostTap(allocation.Record.TAP)
+			if existing == nil {
+				_ = allocator.ReleaseIP(allocation.Config.Network.IP)
+			}
+			return nil, false, err
+		}
 	}
-	return allocation, nil
+	return allocation, hostRefAdded, nil
 }
 
-func (r *networkCoordinator) attachCNIConfig(rec *vmstore.VMRecord, selection string, index int) (*kbnetwork.Allocation, error) {
+func (r *networkCoordinator) attachCNIConfig(
+	ctx context.Context,
+	rec *vmstore.VMRecord,
+	selection string,
+	index int,
+	existing *kbnetwork.Config,
+) (*kbnetwork.Allocation, error) {
 	if err := config.EnsureRuntimeDirs(r.cfg); err != nil {
 		return nil, err
 	}
-	allocation, err := addCNI(context.Background(), r.cfg.Runtime.RootDir, r.cfg.Network, kbnetwork.CNIAddRequest{
-		VMID:    rec.ID,
-		Network: selection,
-		Index:   index,
-		CPU:     rec.CPUs,
+	allocation, err := addCNI(ctx, r.cfg.Runtime.RootDir, r.cfg.Network, kbnetwork.CNIAddRequest{
+		VMID:     rec.ID,
+		Network:  selection,
+		Index:    index,
+		CPU:      rec.CPUs,
+		Existing: existing,
 	})
 	if err != nil {
 		return nil, err
 	}
 	networkStore := r.storeSet.Networks
 	if err := networkStore.UpsertRecord(allocation.Record); err != nil {
-		_ = deleteCNI(context.Background(), r.cfg.Runtime.RootDir, r.cfg.Network, kbnetwork.CNIDeleteRequest{
+		_ = deleteCNI(ctx, r.cfg.Runtime.RootDir, r.cfg.Network, kbnetwork.CNIDeleteRequest{
 			VMID:      rec.ID,
 			Network:   selection,
 			IfName:    allocation.Record.IfName,
@@ -683,7 +727,7 @@ func (r *networkCoordinator) rollbackNetwork(rec *vmstore.VMRecord) {
 	if rec == nil {
 		return
 	}
-	rollbackNetworkConfigs(rec, r.cfg, rec.NetworkConfigs)
+	r.rollbackNetworkConfigs(rec, rec.NetworkConfigs)
 }
 
 func (r *networkCoordinator) cleanupNetwork(rec *vmstore.VMRecord) (resultErr error) {
@@ -696,7 +740,11 @@ func (r *networkCoordinator) cleanupNetwork(rec *vmstore.VMRecord) (resultErr er
 		return nil
 	}
 	store := r.storeSet.Networks
-	allocator := kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network)
+	providerStore, err := r.providerStore()
+	if err != nil {
+		return err
+	}
+	allocator := kbnetwork.NewAllocatorWithStore(providerStore, r.cfg.Network)
 	var cleanupErrs []error
 	cniCount := countCNIConfigs(rec.NetworkConfigs)
 	cniCleanupFailed := false
@@ -826,16 +874,19 @@ func networkSelectionForConfig(rec *vmstore.VMRecord, nc kbnetwork.Config) strin
 	return ""
 }
 
-func rollbackNetworkConfigs(rec *vmstore.VMRecord, cfg config.Config, configs []kbnetwork.Config) {
-	store := kbnetwork.NewStore(cfg.Runtime.RootDir)
-	allocator := kbnetwork.NewAllocator(cfg.Runtime.RootDir, cfg.Network)
+func (r *networkCoordinator) rollbackNetworkConfigs(rec *vmstore.VMRecord, configs []kbnetwork.Config) {
+	store, err := r.providerStore()
+	if err != nil {
+		return
+	}
+	allocator := kbnetwork.NewAllocatorWithStore(store, r.cfg.Network)
 	cniRemaining := countCNIConfigs(configs)
 	for i := len(configs) - 1; i >= 0; i-- {
 		nc := configs[i]
 		if nc.Backend == kbnetwork.ProviderCNI {
 			cniRemaining--
 			_ = store.DeleteRecord(nc.ID)
-			_ = deleteCNI(context.Background(), cfg.Runtime.RootDir, cfg.Network, kbnetwork.CNIDeleteRequest{
+			_ = deleteCNI(context.Background(), r.cfg.Runtime.RootDir, r.cfg.Network, kbnetwork.CNIDeleteRequest{
 				VMID:          rec.ID,
 				Network:       networkSelectionForConfig(rec, nc),
 				IfName:        cniIfName(nc),

@@ -18,8 +18,6 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
-var ErrNetworkConflict = errors.New("NETWORK_CONFLICT")
-
 type commandRunner interface {
 	Run(ctx context.Context, name string, args ...string) ([]byte, error)
 }
@@ -41,7 +39,18 @@ func (execRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 // under one KumaBox root. Ownership is recorded on disk so another root cannot
 // accidentally tear down or reconfigure the same host device.
 func EnsureHostTap(ctx context.Context, rootDir string, cfg config.NetworkConfig) (*HostTapReport, error) {
-	return ensureHostTap(ctx, rootDir, cfg, execRunner{})
+	return EnsureHostTapWithStore(ctx, rootDir, cfg, NewStore(rootDir))
+}
+
+// EnsureHostTapWithStore reconciles host-tap state in the caller's metadata
+// backend instead of opening an independent JSON store.
+func EnsureHostTapWithStore(
+	ctx context.Context,
+	rootDir string,
+	cfg config.NetworkConfig,
+	store *Store,
+) (*HostTapReport, error) {
+	return ensureHostTap(ctx, rootDir, cfg, store, execRunner{})
 }
 
 // TeardownHostTap removes the global host-tap bridge and NAT rule.
@@ -52,7 +61,13 @@ func TeardownHostTap(ctx context.Context, rootDir string, cfg config.NetworkConf
 	return teardownHostTap(ctx, rootDir, cfg, execRunner{})
 }
 
-func ensureHostTap(ctx context.Context, rootDir string, cfg config.NetworkConfig, runner commandRunner) (*HostTapReport, error) {
+func ensureHostTap(
+	ctx context.Context,
+	rootDir string,
+	cfg config.NetworkConfig,
+	store *Store,
+	runner commandRunner,
+) (*HostTapReport, error) {
 	if err := validateHostTapConfig(cfg); err != nil {
 		return nil, err
 	}
@@ -61,7 +76,6 @@ func ensureHostTap(ctx context.Context, rootDir string, cfg config.NetworkConfig
 		return nil, fmt.Errorf("resolve root dir: %w", err)
 	}
 
-	store := NewStore(rootDir)
 	var report *HostTapReport
 	err = store.withHostTap(true, func(current **HostTapState) error {
 		state := *current

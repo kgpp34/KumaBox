@@ -68,14 +68,14 @@ func (r *Runtime) resizeNetworksLocked(ctx context.Context, controller backend.N
 				for _, previous := range added {
 					_ = controller.DetachNetwork(ctx, rec, previous)
 				}
-				rollbackNetworkConfigs(rec, r.cfg, added)
+				r.network.rollbackNetworkConfigs(rec, added)
 				return err
 			}
 			if err := controller.AttachNetwork(ctx, rec, allocation.Config); err != nil {
 				for _, previous := range added {
 					_ = controller.DetachNetwork(ctx, rec, previous)
 				}
-				rollbackNetworkConfigs(rec, r.cfg, append(added, allocation.Config))
+				r.network.rollbackNetworkConfigs(rec, append(added, allocation.Config))
 				return err
 			}
 			added = append(added, allocation.Config)
@@ -88,7 +88,11 @@ func (r *Runtime) resizeNetworksLocked(ctx context.Context, controller backend.N
 		if err := controller.DetachNetwork(ctx, rec, network); err != nil {
 			return err
 		}
-		if err := cleanupNetworkConfig(ctx, r.storeSet.Networks, kbnetwork.NewAllocator(r.cfg.Runtime.RootDir, r.cfg.Network), r.cfg, rec, network, false); err != nil {
+		providerStore, err := r.network.providerStore()
+		if err != nil {
+			return err
+		}
+		if err := cleanupNetworkConfig(ctx, r.storeSet.Networks, kbnetwork.NewAllocatorWithStore(providerStore, r.cfg.Network), r.cfg, rec, network, false); err != nil {
 			return err
 		}
 	}

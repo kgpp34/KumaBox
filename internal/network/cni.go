@@ -76,7 +76,11 @@ func (p *CNIProvider) Add(ctx context.Context, req CNIAddRequest) (_ *Allocation
 	if err != nil {
 		return nil, err
 	}
-	netnsPath, createdNetns, err := prepareCNINetns(req.VMID, req.NetNSPath)
+	requestedNetNS := req.NetNSPath
+	if requestedNetNS == "" && req.Existing != nil {
+		requestedNetNS = req.Existing.NetnsPath
+	}
+	netnsPath, createdNetns, err := prepareCNINetns(req.VMID, requestedNetNS)
 	if err != nil {
 		return nil, err
 	}
@@ -99,16 +103,13 @@ func (p *CNIProvider) Add(ctx context.Context, req CNIAddRequest) (_ *Allocation
 		if req.Existing.MAC != "" {
 			mac = strings.ToLower(req.Existing.MAC)
 		}
-		if req.Existing.NetnsPath != "" {
-			netnsPath = req.Existing.NetnsPath
-		}
 	}
 
 	runtimeConf := &libcni.RuntimeConf{
 		ContainerID: req.VMID,
 		NetNS:       netnsPath,
 		IfName:      ifName,
-		Args:        cniRuntimeArgs(req.VMID, networkName),
+		Args:        cniRuntimeArgs(req.VMID, networkName, req.Existing),
 	}
 	cni := libcni.NewCNIConfigWithCacheDir(
 		[]string{p.cfg.CNIBinDir},
@@ -130,7 +131,11 @@ func (p *CNIProvider) Add(ctx context.Context, req CNIAddRequest) (_ *Allocation
 	}()
 
 	guest := guestInfoFromCNIResult(current)
-	if resultMAC := macFromCNIResult(current, ifName); resultMAC != "" {
+	if err := validateRecoveredCNIIdentity(req.Existing, guest); err != nil {
+		return nil, err
+	}
+	if resultMAC := macFromCNIResult(current, ifName); resultMAC != "" &&
+		(req.Existing == nil || req.Existing.MAC == "") {
 		mac = resultMAC
 	}
 	mac, err = setupCNIDatapath(netnsPath, ifName, tapName, netNumQueues(req.CPU), mac)
@@ -193,7 +198,7 @@ func (p *CNIProvider) Delete(ctx context.Context, req CNIDeleteRequest) error {
 		ContainerID: req.VMID,
 		NetNS:       netnsPath,
 		IfName:      req.IfName,
-		Args:        cniRuntimeArgs(req.VMID, networkName),
+		Args:        cniRuntimeArgs(req.VMID, networkName, nil),
 	}
 	cni := libcni.NewCNIConfigWithCacheDir(
 		[]string{p.cfg.CNIBinDir},
@@ -218,12 +223,34 @@ func (p *CNIProvider) Delete(ctx context.Context, req CNIDeleteRequest) error {
 	return nil
 }
 
-func cniRuntimeArgs(vmID, networkName string) [][2]string {
-	return [][2]string{
+func cniRuntimeArgs(vmID, networkName string, existing *Config) [][2]string {
+	args := [][2]string{
 		{"IgnoreUnknown", "1"},
 		{"KUMABOX_VM_ID", vmID},
 		{"KUMABOX_NETWORK", networkName},
 	}
+	if existing != nil && existing.Network != nil && existing.Network.IP != "" {
+		args = append(args, [2]string{"IP", existing.Network.IP})
+	}
+	return args
+}
+
+func validateRecoveredCNIIdentity(existing *Config, guest *GuestInfo) error {
+	if existing == nil || existing.Network == nil || existing.Network.IP == "" {
+		return nil
+	}
+	if guest == nil || guest.IP != existing.Network.IP {
+		actual := ""
+		if guest != nil {
+			actual = guest.IP
+		}
+		return fmt.Errorf("%w: CNI recovery returned IP %q, want %q", ErrNetworkConflict, actual, existing.Network.IP)
+	}
+	if existing.Network.Prefix != 0 && guest.Prefix != existing.Network.Prefix {
+		return fmt.Errorf("%w: CNI recovery returned prefix %d, want %d", ErrNetworkConflict,
+			guest.Prefix, existing.Network.Prefix)
+	}
+	return nil
 }
 
 func CNIName(network, fallback string) string {

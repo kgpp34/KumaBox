@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,6 +55,39 @@ func TestAddCNICallsPluginAndParsesResult(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "ADD kb_cni eth0 "+NetNSPath("kb_cni")) {
 		t.Fatalf("plugin log = %s", raw)
+	}
+}
+
+func TestAddCNIReusesExistingIdentity(t *testing.T) {
+	dir := t.TempDir()
+	cfg, _ := writeTestCNIConfig(t, dir, false)
+	withCNIDatapath(t)
+	existing := Config{
+		TAP: "persisted-tap", MAC: "5a:00:00:00:00:77", NetnsPath: "/persisted/netns",
+		Network: &GuestInfo{IP: "10.244.0.2", Gateway: "10.244.0.1", Prefix: 24},
+	}
+
+	allocation, err := AddCNI(context.Background(), dir, cfg, CNIAddRequest{
+		VMID: "kb_recover", Network: "cni:default", Index: 0, CPU: 1, Existing: &existing,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allocation.Config.TAP != existing.TAP || allocation.Config.MAC != existing.MAC ||
+		allocation.Config.NetnsPath != existing.NetnsPath || allocation.Config.Network.IP != existing.Network.IP {
+		t.Fatalf("recovered config = %+v, want identity from %+v", allocation.Config, existing)
+	}
+	args := cniRuntimeArgs("kb_recover", "default", &existing)
+	if got := args[len(args)-1]; got != [2]string{"IP", existing.Network.IP} {
+		t.Fatalf("recovery CNI args = %+v", args)
+	}
+}
+
+func TestValidateRecoveredCNIIdentityRejectsChangedIP(t *testing.T) {
+	existing := &Config{Network: &GuestInfo{IP: "10.244.0.2", Prefix: 24}}
+	err := validateRecoveredCNIIdentity(existing, &GuestInfo{IP: "10.244.0.3", Prefix: 24})
+	if !errors.Is(err, ErrNetworkConflict) {
+		t.Fatalf("validation error = %v, want network conflict", err)
 	}
 }
 

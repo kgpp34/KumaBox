@@ -7,8 +7,14 @@
 package network
 
 import (
+	"errors"
 	"fmt"
 	"time"
+)
+
+var (
+	ErrNetworkConflict    = errors.New("NETWORK_CONFLICT")
+	ErrNetworkUnavailable = errors.New("network unavailable")
 )
 
 const (

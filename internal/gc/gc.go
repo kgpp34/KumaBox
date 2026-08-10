@@ -200,11 +200,16 @@ func managedCandidatePath(cfg config.Config, path string) bool {
 }
 
 func repairNetworkCandidate(ctx context.Context, cfg config.Config, store state.NetworkState, records []kbnetwork.Record, candidate Candidate) error {
-	if candidate.Type == "orphan_lease" {
-		return kbnetwork.NewAllocator(cfg.Runtime.RootDir, cfg.Network).ReleaseIP(candidate.Path)
-	}
 	if candidate.Type == "network_drift" {
 		return nil
+	}
+	providerStore, ok := store.(*kbnetwork.Store)
+	if !ok {
+		return fmt.Errorf("network repair requires a concrete network store")
+	}
+	allocator := kbnetwork.NewAllocatorWithStore(providerStore, cfg.Network)
+	if candidate.Type == "orphan_lease" {
+		return allocator.ReleaseIP(candidate.Path)
 	}
 	for _, rec := range records {
 		if rec.ID != candidate.Path && rec.TAP != candidate.Path {
@@ -220,7 +225,7 @@ func repairNetworkCandidate(ctx context.Context, cfg config.Config, store state.
 				return fmt.Errorf("delete stale CNI network %s: %w", rec.ID, err)
 			}
 		}
-		if err := kbnetwork.NewAllocator(cfg.Runtime.RootDir, cfg.Network).ReleaseIP(firstString(rec.IPs)); err != nil {
+		if err := allocator.ReleaseIP(firstString(rec.IPs)); err != nil {
 			return err
 		}
 		return store.DeleteRecord(rec.ID)

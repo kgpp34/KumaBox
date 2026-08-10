@@ -14,6 +14,15 @@ func EnsureHostTap(_ context.Context, _ string, _ config.NetworkConfig) (*HostTa
 	return nil, fmt.Errorf("host-tap networking requires Linux (running on %s)", runtime.GOOS)
 }
 
+func EnsureHostTapWithStore(
+	_ context.Context,
+	_ string,
+	_ config.NetworkConfig,
+	_ *Store,
+) (*HostTapReport, error) {
+	return nil, fmt.Errorf("host-tap networking requires Linux (running on %s)", runtime.GOOS)
+}
+
 func TeardownHostTap(_ context.Context, _ string, _ config.NetworkConfig) (*HostTapReport, error) {
 	return nil, fmt.Errorf("host-tap networking requires Linux (running on %s)", runtime.GOOS)
 }
