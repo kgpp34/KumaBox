@@ -227,7 +227,7 @@ func TestInspectAgentProfileDetectsEmbeddedAgent(t *testing.T) {
 	if profile.Injection != "embedded" || profile.BinaryPath == "" || profile.ServicePath == "" {
 		t.Fatalf("profile = %+v", profile)
 	}
-	if len(profile.Capabilities) != 5 {
+	if len(profile.Capabilities) != 6 {
 		t.Fatalf("capabilities = %v", profile.Capabilities)
 	}
 }

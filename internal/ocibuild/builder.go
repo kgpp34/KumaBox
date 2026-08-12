@@ -341,6 +341,7 @@ func (b *Builder) inspectAgentProfile(layers []ocistore.BlobRecord, mode string)
 			string(protocol.CapabilityExecStream),
 			string(protocol.CapabilityExecTTY),
 			string(protocol.CapabilityIdentity),
+			string(protocol.CapabilityReseed),
 		},
 	}, nil
 }

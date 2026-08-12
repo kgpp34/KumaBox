@@ -4,6 +4,7 @@ package client
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,8 @@ const (
 	CapabilityExec      = protocol.CapabilityExec
 	CapabilityExecTTY   = protocol.CapabilityExecTTY
 	CapabilityIdentity  = protocol.CapabilityIdentity
+	CapabilityReseed    = protocol.CapabilityReseed
+	ReseedEntropyBytes  = 32
 )
 
 var ErrNotReady = errors.New("AGENT_NOT_READY")
@@ -95,6 +98,12 @@ type InterfaceIdentity struct {
 }
 
 type IdentityResponse struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// ReseedResponse reports whether the guest accepted fresh host entropy.
+type ReseedResponse struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
 }
@@ -180,6 +189,36 @@ func ConfigureIdentity(ctx context.Context, socketPath string, req IdentityReque
 			resp.Error = "guest agent identity update returned not ok"
 		}
 		return &resp, fmt.Errorf("AGENT_IDENTITY_FAILED: %s", resp.Error)
+	}
+	return &resp, nil
+}
+
+// Reseed injects one-time host entropy into the guest and optionally replaces
+// its machine ID. Entropy is generated for each call and never persisted.
+func Reseed(ctx context.Context, socketPath string, regenerateMachineID bool) (*ReseedResponse, error) {
+	entropy := make([]byte, ReseedEntropyBytes)
+	if _, err := rand.Read(entropy); err != nil {
+		return nil, fmt.Errorf("AGENT_RESEED_FAILED: generate entropy: %w", err)
+	}
+	defer clear(entropy)
+	wireReq := struct {
+		Type                protocol.RequestType `json:"type"`
+		Entropy             []byte               `json:"entropy"`
+		RegenerateMachineID bool                 `json:"regenerateMachineId,omitempty"`
+	}{
+		Type:                protocol.RequestReseed,
+		Entropy:             entropy,
+		RegenerateMachineID: regenerateMachineID,
+	}
+	var resp ReseedResponse
+	if err := roundTrip(ctx, socketPath, wireReq, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		if resp.Error == "" {
+			resp.Error = "guest agent reseed returned not ok"
+		}
+		return &resp, fmt.Errorf("AGENT_RESEED_FAILED: %s", resp.Error)
 	}
 	return &resp, nil
 }

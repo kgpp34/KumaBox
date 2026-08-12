@@ -9,12 +9,16 @@ const (
 	RequestPing     RequestType = "ping"
 	RequestExec     RequestType = "exec"
 	RequestIdentity RequestType = "identity"
+	RequestReseed   RequestType = "reseed"
 )
 
 // Capability identifies an operation advertised by the guest agent.
 type Capability string
 
-const CapabilityIdentity Capability = "identity"
+const (
+	CapabilityIdentity Capability = "identity"
+	CapabilityReseed   Capability = "reseed"
+)
 
 const (
 	CapabilityPingPong   Capability = "ping-pong"

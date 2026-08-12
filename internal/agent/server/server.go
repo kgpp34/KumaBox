@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	Version = "0.3.2"
+	Version = "0.3.3"
 	Port    = protocol.AgentPort
 )
 
@@ -30,6 +30,7 @@ var capabilities = []string{
 	string(protocol.CapabilityExecStream),
 	string(protocol.CapabilityExecTTY),
 	string(protocol.CapabilityIdentity),
+	string(protocol.CapabilityReseed),
 }
 
 var agentPolicy = policyFromEnvironment()
@@ -88,7 +89,19 @@ type identityResponse struct {
 	Error string `json:"error,omitempty"`
 }
 
+type reseedRequest struct {
+	Type                protocol.RequestType `json:"type"`
+	Entropy             []byte               `json:"entropy"`
+	RegenerateMachineID bool                 `json:"regenerateMachineId,omitempty"`
+}
+
+type reseedResponse struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
 var configureIdentity = applyIdentity
+var reseedGuest = applyReseed
 
 func Serve() error {
 	return serveVsock(Port, handleConn)
@@ -134,6 +147,8 @@ func handleConn(rw io.ReadWriter) {
 		handleExec(rw, []byte(line))
 	case protocol.RequestIdentity:
 		handleIdentity(rw, []byte(line))
+	case protocol.RequestReseed:
+		handleReseed(rw, []byte(line))
 	default:
 		writeResponse(rw, pingResponse{OK: false, Error: "unsupported request"})
 	}
@@ -366,6 +381,29 @@ func handleIdentity(w io.Writer, raw []byte) {
 	}
 	writeResponse(w, identityResponse{OK: true})
 	auditLog.Printf("identity complete hostname=%q", req.Hostname)
+}
+
+func handleReseed(w io.Writer, raw []byte) {
+	var req reseedRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		writeResponse(w, reseedResponse{OK: false, Error: "invalid reseed request"})
+		return
+	}
+	if len(req.Entropy) != agentReseedEntropyBytes {
+		clear(req.Entropy)
+		writeResponse(w, reseedResponse{OK: false, Error: fmt.Sprintf("reseed entropy must be %d bytes", agentReseedEntropyBytes)})
+		return
+	}
+	auditLog.Printf("reseed start regenerate_machine_id=%t", req.RegenerateMachineID)
+	err := reseedGuest(req)
+	clear(req.Entropy)
+	if err != nil {
+		auditLog.Printf("reseed failed: %v", err)
+		writeResponse(w, reseedResponse{OK: false, Error: err.Error()})
+		return
+	}
+	writeResponse(w, reseedResponse{OK: true})
+	auditLog.Printf("reseed complete regenerate_machine_id=%t", req.RegenerateMachineID)
 }
 
 func handlePingPong(w io.Writer) {

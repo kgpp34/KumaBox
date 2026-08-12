@@ -27,7 +27,7 @@ func guestAgentWarning(err error) string {
 	if err == nil {
 		return ""
 	}
-	return "clone is running, but guest identity was not updated: " + err.Error()
+	return "VM is running, but guest post-restore configuration was incomplete: " + err.Error()
 }
 
 // NativeCloneOptions defines the new VM identity. Machine and storage shape
@@ -263,15 +263,8 @@ func configureCloneIdentity(ctx context.Context, socket string, rec *vmstore.VMR
 	if err != nil {
 		return fmt.Errorf("wait for clone guest agent: %w", err)
 	}
-	if !pong.Supports(agentclient.CapabilityIdentity) {
-		version := pong.Version
-		if version == "" {
-			version = "unknown"
-		}
-		return fmt.Errorf(
-			"AGENT_CAPABILITY_MISSING: guest agent %s does not advertise %q (capabilities=%v); rebuild the managed image with the current kumabox-agent",
-			version, agentclient.CapabilityIdentity, pong.Capabilities,
-		)
+	if err := requireAgentCapability(pong, agentclient.CapabilityIdentity); err != nil {
+		return err
 	}
 	var lastErr error
 	for {
@@ -279,7 +272,7 @@ func configureCloneIdentity(ctx context.Context, socket string, rec *vmstore.VMR
 		_, err := agentclient.ConfigureIdentity(attemptCtx, socket, request)
 		attemptCancel()
 		if err == nil {
-			return nil
+			break
 		}
 		lastErr = err
 		if identityCtx.Err() != nil {
@@ -299,4 +292,13 @@ func configureCloneIdentity(ctx context.Context, socket string, rec *vmstore.VMR
 		case <-retry.C:
 		}
 	}
+	if err := requireAgentCapability(pong, agentclient.CapabilityReseed); err != nil {
+		return err
+	}
+	reseedCtx, reseedCancel := context.WithTimeout(identityCtx, cloneIdentityAttemptTimeout)
+	defer reseedCancel()
+	if _, err := agentclient.Reseed(reseedCtx, socket, true); err != nil {
+		return fmt.Errorf("reseed clone guest identity: %w", err)
+	}
+	return nil
 }

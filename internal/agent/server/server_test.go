@@ -37,7 +37,7 @@ func TestHandleConnRespondsToPingPong(t *testing.T) {
 	if !resp.OK || resp.Version != Version || resp.OS == "" || resp.Hostname == "" {
 		t.Fatalf("response = %+v", resp)
 	}
-	for _, capability := range []string{"ping-pong", "exec", "exec-stream", "exec-tty", "identity"} {
+	for _, capability := range []string{"ping-pong", "exec", "exec-stream", "exec-tty", "identity", "reseed"} {
 		if !slices.Contains(resp.Capabilities, capability) {
 			t.Fatalf("capabilities = %v, want %s", resp.Capabilities, capability)
 		}
@@ -175,5 +175,50 @@ func TestHandleConnConfiguresIdentity(t *testing.T) {
 	}
 	if !decoded.OK {
 		t.Fatalf("identity response = %+v", decoded)
+	}
+}
+
+func TestHandleConnReseedsGuest(t *testing.T) {
+	original := reseedGuest
+	defer func() { reseedGuest = original }()
+	var got reseedRequest
+	reseedGuest = func(req reseedRequest) error {
+		got = req
+		return nil
+	}
+	entropy := bytes.Repeat([]byte{0x5a}, agentReseedEntropyBytes)
+	raw, err := json.Marshal(reseedRequest{
+		Type:                protocol.RequestReseed,
+		Entropy:             entropy,
+		RegenerateMachineID: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := &memoryConn{reader: strings.NewReader(string(raw) + "\n")}
+	handleConn(conn)
+	if !got.RegenerateMachineID || !bytes.Equal(got.Entropy, make([]byte, agentReseedEntropyBytes)) {
+		t.Fatalf("reseed request was not handled and cleared: %+v", got)
+	}
+	var resp reseedResponse
+	if err := json.Unmarshal(conn.writer.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("reseed response = %+v", resp)
+	}
+}
+
+func TestHandleConnRejectsInvalidReseedEntropy(t *testing.T) {
+	t.Parallel()
+
+	conn := &memoryConn{reader: strings.NewReader(`{"type":"reseed","entropy":"AQI="}` + "\n")}
+	handleConn(conn)
+	var resp reseedResponse
+	if err := json.Unmarshal(conn.writer.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.OK || !strings.Contains(resp.Error, "32 bytes") {
+		t.Fatalf("reseed response = %+v", resp)
 	}
 }

@@ -306,6 +306,71 @@ func TestConfigureIdentityCancelsStalledResponse(t *testing.T) {
 	}
 }
 
+func TestReseedSendsFreshEntropyAndMachineIDPolicy(t *testing.T) {
+	t.Parallel()
+
+	socketPath := testSocketPath(t)
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close() //nolint:errcheck
+
+	errCh := make(chan error, 1)
+	go func() {
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
+			errCh <- acceptErr
+			return
+		}
+		defer conn.Close() //nolint:errcheck
+		reader := bufio.NewReader(conn)
+		if line, readErr := reader.ReadString('\n'); readErr != nil || line != "CONNECT 1024\n" {
+			errCh <- fmt.Errorf("CONNECT line = %q, error = %v", line, readErr)
+			return
+		}
+		if _, writeErr := conn.Write([]byte("OK 1024\n")); writeErr != nil {
+			errCh <- writeErr
+			return
+		}
+		line, readErr := reader.ReadBytes('\n')
+		if readErr != nil {
+			errCh <- readErr
+			return
+		}
+		var req struct {
+			Type                protocol.RequestType `json:"type"`
+			Entropy             []byte               `json:"entropy"`
+			RegenerateMachineID bool                 `json:"regenerateMachineId"`
+		}
+		if decodeErr := json.Unmarshal(line, &req); decodeErr != nil {
+			errCh <- decodeErr
+			return
+		}
+		if req.Type != protocol.RequestReseed || len(req.Entropy) != ReseedEntropyBytes || !req.RegenerateMachineID {
+			errCh <- fmt.Errorf("reseed request = %+v", req)
+			return
+		}
+		if bytes.Equal(req.Entropy, make([]byte, ReseedEntropyBytes)) {
+			errCh <- errors.New("reseed entropy is all zero")
+			return
+		}
+		_, writeErr := conn.Write([]byte("{\"ok\":true}\n"))
+		errCh <- writeErr
+	}()
+
+	resp, err := Reseed(context.Background(), socketPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("response = %+v", resp)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func testSocketPath(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "kb-agent-test-*")

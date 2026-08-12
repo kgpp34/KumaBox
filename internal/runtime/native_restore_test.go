@@ -41,6 +41,16 @@ func TestRestoreNativeVMReplacesWritableStateAndResumesIdentity(t *testing.T) {
 	rt, store, rec, sourceDisk := newRunningSnapshotRuntime(t)
 	backendState := vmstore.ObservedStateRunning
 	rt.backend = nativeRestoreBackend(t, rec, &backendState, nil)
+	originalReseed := reseedRestoredGuest
+	t.Cleanup(func() { reseedRestoredGuest = originalReseed })
+	var reseedCalled bool
+	reseedRestoredGuest = func(_ context.Context, socket string, regenerateMachineID bool) error {
+		reseedCalled = true
+		if socket != rec.VsockSocket || regenerateMachineID {
+			t.Fatalf("restore reseed socket=%q regenerateMachineID=%t", socket, regenerateMachineID)
+		}
+		return nil
+	}
 
 	ready, err := rt.CreateRunningSnapshot(context.Background(), rec.ID, "restore-source")
 	if err != nil {
@@ -74,6 +84,9 @@ func TestRestoreNativeVMReplacesWritableStateAndResumesIdentity(t *testing.T) {
 	if persisted.LastRestore == nil || persisted.LastRestore.BackendRestoreDurationMs < 0 || persisted.LastRestore.ReadinessDurationMs < 0 {
 		t.Fatalf("restore metrics = %+v", persisted.LastRestore)
 	}
+	if !reseedCalled || persisted.LastRestore.GuestAgentWarning != "" {
+		t.Fatalf("restore reseed called=%t warning=%q", reseedCalled, persisted.LastRestore.GuestAgentWarning)
+	}
 }
 
 func TestRestoreNativeVMFailureQuarantinesColdStart(t *testing.T) {
@@ -105,6 +118,8 @@ func TestRestoreNativeVMSucceedsWithoutGuestAgent(t *testing.T) {
 	rt, store, rec, _ := newRunningSnapshotRuntime(t)
 	backendState := vmstore.ObservedStateRunning
 	rt.backend = nativeRestoreBackend(t, rec, &backendState, nil)
+	agentErr := errors.New("agent unavailable")
+	reseedRestoredGuest = func(context.Context, string, bool) error { return agentErr }
 	ready, err := rt.CreateRunningSnapshot(context.Background(), rec.ID, "restore-readiness-failure")
 	if err != nil {
 		t.Fatal(err)
@@ -121,10 +136,16 @@ func TestRestoreNativeVMSucceedsWithoutGuestAgent(t *testing.T) {
 	if restored.State != vmstore.StateRunning || persisted.State != vmstore.StateRunning || persisted.Restore != nil {
 		t.Fatalf("restored record = %+v persisted = %+v", restored, persisted)
 	}
+	if restored.LastRestore == nil || !strings.Contains(restored.LastRestore.GuestAgentWarning, agentErr.Error()) {
+		t.Fatalf("restore warning = %+v", restored.LastRestore)
+	}
 }
 
 func nativeRestoreBackend(t *testing.T, rec *vmstore.VMRecord, state *vmstore.ObservedState, restoreErr error) backendFake {
 	t.Helper()
+	originalReseed := reseedRestoredGuest
+	reseedRestoredGuest = func(context.Context, string, bool) error { return nil }
+	t.Cleanup(func() { reseedRestoredGuest = originalReseed })
 	return backendFake{
 		render: func(*vmstore.VMRecord) error { return nil },
 		observe: func(*vmstore.VMRecord) vmstore.Observation {

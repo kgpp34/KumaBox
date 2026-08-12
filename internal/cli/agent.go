@@ -22,6 +22,51 @@ func newAgentCommand(opts *rootOptions) *cobra.Command {
 	}
 	cmd.AddCommand(newAgentPingCommand(opts))
 	cmd.AddCommand(newAgentStatusCommand(opts))
+	cmd.AddCommand(newAgentReseedCommand(opts))
+	return cmd
+}
+
+func newAgentReseedCommand(opts *rootOptions) *cobra.Command {
+	var (
+		machineID bool
+		timeout   time.Duration
+	)
+	cmd := &cobra.Command{
+		Use:   "reseed VM",
+		Short: "Inject fresh entropy into a running guest",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			rt, err := kbruntime.New(cfg)
+			if err != nil {
+				return err
+			}
+			if timeout <= 0 {
+				timeout = agentclient.DefaultPingTimeout
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
+			defer cancel()
+			rec, err := rt.ReseedGuestVM(ctx, args[0], machineID)
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), struct {
+				VMID                 string    `json:"vmId"`
+				VMName               string    `json:"vmName"`
+				RegeneratedMachineID bool      `json:"regeneratedMachineId"`
+				ReseededAt           time.Time `json:"reseededAt"`
+			}{
+				VMID: rec.ID, VMName: rec.Name,
+				RegeneratedMachineID: machineID,
+				ReseededAt:           time.Now().UTC(),
+			})
+		},
+	}
+	cmd.Flags().BoolVar(&machineID, "machine-id", false, "also regenerate /etc/machine-id; use for clones, not restore")
+	cmd.Flags().DurationVar(&timeout, "timeout", agentclient.DefaultPingTimeout, "agent reseed timeout")
 	return cmd
 }
 
