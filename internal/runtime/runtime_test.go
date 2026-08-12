@@ -727,6 +727,7 @@ func TestStopVMPreservesNetworkResources(t *testing.T) {
 		},
 	)
 	rt.cfg = testRuntimeConfig(rootDir)
+	withVerifyNetworkConfig(t, func(kbnetwork.Config) error { return nil })
 
 	rec, allocation := createVMWithNetwork(t, rt, store, "stop-network")
 	if _, err := rt.StartVM(rec.ID); err != nil {
