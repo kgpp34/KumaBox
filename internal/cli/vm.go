@@ -103,11 +103,17 @@ func newRunCommand(opts *rootOptions) *cobra.Command {
 }
 
 func newStartCommand(opts *rootOptions) *cobra.Command {
+	var concurrency int
+
 	cmd := &cobra.Command{
-		Use:   "start VM",
-		Short: "Start a VM",
-		Args:  cobra.ExactArgs(1),
+		Use:   "start VM [VM...]",
+		Short: "Start one or more VMs",
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			batchOpts, err := lifecycleBatchOptions(concurrency)
+			if err != nil {
+				return err
+			}
 			cfg, err := loadConfig(opts)
 			if err != nil {
 				return err
@@ -116,25 +122,28 @@ func newStartCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rec, err := rt.StartVMContext(cmd.Context(), args[0])
-			if err != nil {
-				return err
-			}
-			return writeJSON(cmd.OutOrStdout(), rec)
+			result := rt.StartVMsContext(cmd.Context(), args, batchOpts)
+			return writeLifecycleBatchResult(cmd, args, "start", result)
 		},
 	}
+	addBatchConcurrencyFlag(cmd, &concurrency)
 	return cmd
 }
 
 func newStopCommand(opts *rootOptions) *cobra.Command {
 	var timeout time.Duration
 	var force bool
+	var concurrency int
 
 	cmd := &cobra.Command{
-		Use:   "stop VM",
-		Short: "Stop a VM",
-		Args:  cobra.ExactArgs(1),
+		Use:   "stop VM [VM...]",
+		Short: "Stop one or more VMs",
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			batchOpts, err := lifecycleBatchOptions(concurrency)
+			if err != nil {
+				return err
+			}
 			cfg, err := loadConfig(opts)
 			if err != nil {
 				return err
@@ -146,19 +155,17 @@ func newStopCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rec, err := rt.StopVMContext(cmd.Context(), args[0], backend.StopOptions{
+			result := rt.StopVMsContext(cmd.Context(), args, backend.StopOptions{
 				Timeout: timeout,
 				Force:   force,
-			})
-			if err != nil {
-				return err
-			}
-			return writeJSON(cmd.OutOrStdout(), rec)
+			}, batchOpts)
+			return writeLifecycleBatchResult(cmd, args, "stop", result)
 		},
 	}
 
 	cmd.Flags().DurationVar(&timeout, "timeout", 0, "graceful shutdown timeout")
 	cmd.Flags().BoolVar(&force, "force", false, "skip API shutdown and terminate the VMM")
+	addBatchConcurrencyFlag(cmd, &concurrency)
 	return cmd
 }
 
@@ -236,12 +243,17 @@ func newLogsCommand(opts *rootOptions) *cobra.Command {
 
 func newDeleteCommand(opts *rootOptions) *cobra.Command {
 	var force bool
+	var concurrency int
 
 	cmd := &cobra.Command{
-		Use:   "delete VM",
-		Short: "Delete a VM",
-		Args:  cobra.ExactArgs(1),
+		Use:   "delete VM [VM...]",
+		Short: "Delete one or more VMs",
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			batchOpts, err := lifecycleBatchOptions(concurrency)
+			if err != nil {
+				return err
+			}
 			cfg, err := loadConfig(opts)
 			if err != nil {
 				return err
@@ -250,15 +262,13 @@ func newDeleteCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rec, err := rt.DeleteVMContext(cmd.Context(), args[0], force)
-			if err != nil {
-				return err
-			}
-			return writeJSON(cmd.OutOrStdout(), rec)
+			result := rt.DeleteVMsContext(cmd.Context(), args, force, batchOpts)
+			return writeLifecycleBatchResult(cmd, args, "delete", result)
 		},
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "stop running VM before deleting it")
+	addBatchConcurrencyFlag(cmd, &concurrency)
 	return cmd
 }
 

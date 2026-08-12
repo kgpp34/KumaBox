@@ -731,6 +731,89 @@ func TestDeleteCommandRemovesVMRecord(t *testing.T) {
 	}
 }
 
+func TestDeleteCommandBestEffortBatchResult(t *testing.T) {
+	dir := t.TempDir()
+	rootDir := filepath.Join(dir, "data")
+	runDir := filepath.Join(dir, "run")
+	logDir := filepath.Join(dir, "log")
+	store := vmstore.New(rootDir)
+	wantIDs := make([]string, 0, 2)
+
+	for _, name := range []string{"batch-a", "batch-b"} {
+		record, err := store.Create(vmstore.CreateRequest{
+			Name:     name,
+			RootDisk: filepath.Join(dir, name+".qcow2"),
+			Kernel:   "vmlinuz",
+			Initrd:   "initrd.img",
+			RunDir:   filepath.Join(runDir, name),
+			LogDir:   filepath.Join(logDir, name),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantIDs = append(wantIDs, record.ID)
+	}
+
+	cmd := newTestRootCommand(rootDir, runDir, logDir)
+	cmd.SetArgs([]string{"delete", "batch-a", "missing", "batch-b", "--concurrency", "2"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "delete: VM missing") {
+		t.Fatalf("error = %v", err)
+	}
+
+	var result struct {
+		Succeeded []string `json:"succeeded"`
+		Failed    []struct {
+			Ref   string `json:"ref"`
+			Error string `json:"error"`
+		} `json:"failed"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Succeeded) != 2 || result.Succeeded[0] != wantIDs[0] || result.Succeeded[1] != wantIDs[1] {
+		t.Fatalf("succeeded = %+v", result.Succeeded)
+	}
+	if len(result.Failed) != 1 || result.Failed[0].Ref != "missing" || result.Failed[0].Error == "" {
+		t.Fatalf("failed = %+v", result.Failed)
+	}
+	if records, err := store.List(); err != nil || len(records) != 0 {
+		t.Fatalf("remaining records = %+v, error = %v", records, err)
+	}
+}
+
+func TestLifecycleCommandRejectsNegativeConcurrency(t *testing.T) {
+	cmd := newTestRootCommand(t.TempDir())
+	cmd.SetArgs([]string{"start", "vm-a", "--concurrency", "-1"})
+	err := cmd.Execute()
+	if err == nil || err.Error() != "concurrency must be greater than or equal to zero" {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestLifecycleCommandsAcceptBatchAndExposeConcurrency(t *testing.T) {
+	opts := &rootOptions{}
+	commands := []*cobra.Command{
+		newStartCommand(opts),
+		newStopCommand(opts),
+		newPauseCommand(opts),
+		newResumeCommand(opts),
+		newDeleteCommand(opts),
+	}
+	for _, cmd := range commands {
+		t.Run(cmd.Name(), func(t *testing.T) {
+			if err := cmd.Args(cmd, []string{"vm-a", "vm-b"}); err != nil {
+				t.Fatalf("batch args rejected: %v", err)
+			}
+			if cmd.Flags().Lookup("concurrency") == nil {
+				t.Fatal("concurrency flag is missing")
+			}
+		})
+	}
+}
+
 func TestGCDryRunCommandReportsCandidates(t *testing.T) {
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")

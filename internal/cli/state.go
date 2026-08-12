@@ -8,11 +8,16 @@ import (
 )
 
 func newPauseCommand(opts *rootOptions) *cobra.Command {
-	return &cobra.Command{
-		Use:   "pause VM",
-		Short: "Pause a running VM",
-		Args:  cobra.ExactArgs(1),
+	var concurrency int
+	cmd := &cobra.Command{
+		Use:   "pause VM [VM...]",
+		Short: "Pause one or more running VMs",
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			batchOpts, err := lifecycleBatchOptions(concurrency)
+			if err != nil {
+				return err
+			}
 			cfg, err := loadConfig(opts)
 			if err != nil {
 				return err
@@ -24,21 +29,25 @@ func newPauseCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rec, err := rt.PauseVM(cmd.Context(), args[0])
-			if err != nil {
-				return err
-			}
-			return writeJSON(cmd.OutOrStdout(), rec)
+			result := rt.PauseVMs(cmd.Context(), args, batchOpts)
+			return writeLifecycleBatchResult(cmd, args, "pause", result)
 		},
 	}
+	addBatchConcurrencyFlag(cmd, &concurrency)
+	return cmd
 }
 
 func newResumeCommand(opts *rootOptions) *cobra.Command {
-	return &cobra.Command{
-		Use:   "resume VM",
-		Short: "Resume a paused VM",
-		Args:  cobra.ExactArgs(1),
+	var concurrency int
+	cmd := &cobra.Command{
+		Use:   "resume VM [VM...]",
+		Short: "Resume one or more paused VMs",
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			batchOpts, err := lifecycleBatchOptions(concurrency)
+			if err != nil {
+				return err
+			}
 			cfg, err := loadConfig(opts)
 			if err != nil {
 				return err
@@ -50,11 +59,10 @@ func newResumeCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rec, err := rt.ResumeVM(cmd.Context(), args[0])
-			if err != nil {
-				return err
-			}
-			return writeJSON(cmd.OutOrStdout(), rec)
+			result := rt.ResumeVMs(cmd.Context(), args, batchOpts)
+			return writeLifecycleBatchResult(cmd, args, "resume", result)
 		},
 	}
+	addBatchConcurrencyFlag(cmd, &concurrency)
+	return cmd
 }
