@@ -7,7 +7,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/kumabox/kumabox/internal/meta"
 )
@@ -164,6 +166,50 @@ func TestStoreEventsCoalesce(t *testing.T) {
 		t.Fatal("event channel should coalesce notifications")
 	default:
 	}
+}
+
+func TestStoreEventsObserveAnotherStoreProcess(t *testing.T) {
+	_, dir := newTestStore(t)
+	open := func() *Store {
+		store, err := Open(Namespace{
+			Name: "vm", FilePath: filepath.Join(dir, "vm.json"), LockPath: filepath.Join(dir, "vm.lock"),
+			Codec: TableCodec{Specs: []TableSpec{{Key: "records", Table: "records"}}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		return store
+	}
+	reader, writer := open(), open()
+	changes, release, err := reader.Events(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if err := writer.Update(t.Context(), meta.Scope{Write: "vm"}, meta.CommitDurable, func(w meta.Writer) error {
+		return w.PutRaw(t.Context(), "vm", "records", "external", []byte(`{}`))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-changes:
+	case <-time.After(2 * time.Second):
+		t.Fatal("subscriber did not observe external JSON store commit")
+	}
+}
+
+func TestStoreEventsReleaseMayRaceClose(t *testing.T) {
+	store, _ := newTestStore(t)
+	_, release, err := store.Events(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wait sync.WaitGroup
+	wait.Add(2)
+	go func() { defer wait.Done(); release() }()
+	go func() { defer wait.Done(); _ = store.Close() }()
+	wait.Wait()
 }
 
 func TestStoreRejectsCorruptMetadataWithoutPreviousGeneration(t *testing.T) {

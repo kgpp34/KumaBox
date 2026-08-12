@@ -2,6 +2,7 @@ package json
 
 import (
 	"context"
+	"crypto/sha256"
 	stdjson "encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kumabox/kumabox/internal/lockfile"
 	"github.com/kumabox/kumabox/internal/meta"
@@ -31,8 +33,23 @@ type Namespace struct {
 type Store struct {
 	namespaces map[string]Namespace
 	mu         sync.Mutex
-	subs       map[chan struct{}]struct{}
+	subs       map[*subscription]struct{}
 	closed     bool
+}
+
+type subscription struct {
+	changes chan struct{}
+	cancel  context.CancelFunc
+	done    chan struct{}
+	stop    sync.Once
+}
+
+func (s *subscription) close() {
+	s.stop.Do(func() {
+		s.cancel()
+		<-s.done
+		close(s.changes)
+	})
 }
 
 var _ meta.MetaEngine = (*Store)(nil)
@@ -52,7 +69,7 @@ func Open(definitions ...Namespace) (*Store, error) {
 		}
 		namespaces[definition.Name] = definition
 	}
-	return &Store{namespaces: namespaces, subs: make(map[chan struct{}]struct{})}, nil
+	return &Store{namespaces: namespaces, subs: make(map[*subscription]struct{})}, nil
 }
 
 func (s *Store) View(ctx context.Context, requested []meta.Namespace, fn func(meta.Reader) error) error {
@@ -118,37 +135,49 @@ func (s *Store) Events(ctx context.Context) (<-chan struct{}, func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
+	fingerprint, err := s.fingerprint()
+	if err != nil {
+		return nil, nil, err
+	}
+	watchCtx, cancel := context.WithCancel(ctx)
+	sub := &subscription{changes: make(chan struct{}, 1), cancel: cancel, done: make(chan struct{})}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
+		cancel()
 		return nil, nil, meta.ErrClosed
 	}
-	ch := make(chan struct{}, 1)
-	s.subs[ch] = struct{}{}
+	s.subs[sub] = struct{}{}
+	s.mu.Unlock()
+	go s.watchFiles(watchCtx, sub, fingerprint)
+
 	var once sync.Once
 	release := func() {
 		once.Do(func() {
 			s.mu.Lock()
-			if _, ok := s.subs[ch]; ok {
-				delete(s.subs, ch)
-				close(ch)
-			}
+			delete(s.subs, sub)
 			s.mu.Unlock()
+			sub.close()
 		})
 	}
-	return ch, release, nil
+	return sub.changes, release, nil
 }
 
 func (s *Store) Close() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return nil
 	}
 	s.closed = true
-	for ch := range s.subs {
-		close(ch)
-		delete(s.subs, ch)
+	subs := make([]*subscription, 0, len(s.subs))
+	for sub := range s.subs {
+		subs = append(subs, sub)
+		delete(s.subs, sub)
+	}
+	s.mu.Unlock()
+	for _, sub := range subs {
+		sub.close()
 	}
 	return nil
 }
@@ -159,12 +188,63 @@ func (s *Store) notify() {
 	if s.closed {
 		return
 	}
-	for ch := range s.subs {
+	for sub := range s.subs {
 		select {
-		case ch <- struct{}{}:
+		case sub.changes <- struct{}{}:
 		default:
 		}
 	}
+}
+
+func (s *Store) watchFiles(ctx context.Context, sub *subscription, previous [32]byte) {
+	defer close(sub.done)
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			current, err := s.fingerprint()
+			if err != nil || current == previous {
+				continue
+			}
+			previous = current
+			s.mu.Lock()
+			if _, ok := s.subs[sub]; ok && !s.closed {
+				select {
+				case sub.changes <- struct{}{}:
+				default:
+				}
+			}
+			s.mu.Unlock()
+		}
+	}
+}
+
+func (s *Store) fingerprint() ([32]byte, error) {
+	hash := sha256.New()
+	names := make([]string, 0, len(s.namespaces))
+	for name := range s.namespaces {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		path := s.namespaces[name].FilePath
+		raw, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			_, _ = fmt.Fprintf(hash, "%s:missing\n", path)
+			continue
+		}
+		if err != nil {
+			return [32]byte{}, fmt.Errorf("fingerprint metadata %s: %w", path, err)
+		}
+		_, _ = fmt.Fprintf(hash, "%s:%d:", path, len(raw))
+		_, _ = hash.Write(raw)
+	}
+	var fingerprint [32]byte
+	copy(fingerprint[:], hash.Sum(nil))
+	return fingerprint, nil
 }
 
 func (s *Store) resolve(requested []meta.Namespace, write meta.Namespace) ([]Namespace, error) {

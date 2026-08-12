@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kumabox/kumabox/internal/meta"
 )
@@ -83,6 +84,61 @@ func TestStorePersistsTypedCollectionAndRollsBack(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestStoreEventsObserveAnotherConnection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "meta.db")
+	definition := Namespace{Name: "vms", Tables: []meta.Table{"records"}}
+	if err := Init(t.Context(), path, definition); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := Open(path, definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close() }()
+	writer, err := Open(path, definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = writer.Close() }()
+
+	changes, release, err := reader.Events(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if err := writer.Update(t.Context(), meta.Scope{Write: "vms"}, meta.CommitDurable, func(w meta.Writer) error {
+		return w.PutRaw(t.Context(), "vms", "records", "external", []byte(`{}`))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-changes:
+	case <-time.After(2 * time.Second):
+		t.Fatal("subscriber did not observe external SQLite connection commit")
+	}
+}
+
+func TestStoreEventsReleaseMayRaceClose(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "meta.db")
+	definition := Namespace{Name: "vms", Tables: []meta.Table{"records"}}
+	if err := Init(t.Context(), path, definition); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(path, definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, release, err := store.Events(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wait sync.WaitGroup
+	wait.Add(2)
+	go func() { defer wait.Done(); release() }()
+	go func() { defer wait.Done(); _ = store.Close() }()
+	wait.Wait()
 }
 
 func TestStoreEnforcesDeclaredScopeAndCoalescesEvents(t *testing.T) {

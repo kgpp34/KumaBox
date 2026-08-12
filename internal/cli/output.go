@@ -48,6 +48,34 @@ func writeVMTable(w io.Writer, records []*vmstore.VMRecord) error {
 	return tw.Flush()
 }
 
+func writeVMEventTable(w io.Writer, events []kbruntime.VMStatusEvent, header bool) error {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	if header {
+		if _, err := fmt.Fprintln(tw, "EVENT\tID\tNAME\tSTATE\tOBSERVED\tBACKEND"); err != nil {
+			return err
+		}
+	}
+	for _, event := range events {
+		record := event.VM
+		if record == nil {
+			continue
+		}
+		observed := string(record.ObservedState)
+		if observed == "" {
+			observed = "-"
+		}
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			event.Event, record.ID, record.Name, record.State, observed, record.Backend); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
+}
+
+func writeJSONLine(w io.Writer, value any) error {
+	return json.NewEncoder(w).Encode(value)
+}
+
 func writeImageTable(w io.Writer, records []*imagestore.ImageRecord) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintln(tw, "ID\tNAME\tSOURCE\tFORMAT\tPROFILE"); err != nil {

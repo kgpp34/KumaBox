@@ -56,6 +56,12 @@ func NewWithEngine(rootDir string, engine meta.MetaEngine) *Store {
 // Runtime code should use the VM state capability instead.
 func (s *Store) MetadataEngine() meta.MetaEngine { return s.engine }
 
+// Events subscribes to coalesced VM metadata change notifications. Callers
+// must reread the store after every notification and retain a polling fallback.
+func (s *Store) Events(ctx context.Context) (<-chan struct{}, func(), error) {
+	return s.engine.Events(ctx)
+}
+
 func mustOpenEngine(namespace metajson.Namespace) meta.MetaEngine {
 	engine, err := metajson.Open(namespace)
 	if err != nil {

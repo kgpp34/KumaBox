@@ -274,10 +274,15 @@ func newDeleteCommand(opts *rootOptions) *cobra.Command {
 
 func newPSCommand(opts *rootOptions) *cobra.Command {
 	var jsonOutput bool
+	var watch bool
+	var events bool
+	var interval time.Duration
+	var eventHeader bool
 
 	cmd := &cobra.Command{
-		Use:   "ps",
-		Short: "List VM records",
+		Use:   "ps [VM...]",
+		Short: "List or watch VM records",
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig(opts)
 			if err != nil {
@@ -287,10 +292,32 @@ func newPSCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if watch || events {
+				return rt.WatchVMs(cmd.Context(), args, interval, func(update kbruntime.VMStatusUpdate) error {
+					if events {
+						if jsonOutput {
+							for _, event := range update.Events {
+								if err := writeJSONLine(cmd.OutOrStdout(), event); err != nil {
+									return err
+								}
+							}
+							return nil
+						}
+						err := writeVMEventTable(cmd.OutOrStdout(), update.Events, !eventHeader)
+						eventHeader = true
+						return err
+					}
+					if jsonOutput {
+						return writeJSONLine(cmd.OutOrStdout(), update.Records)
+					}
+					return writeVMTable(cmd.OutOrStdout(), update.Records)
+				})
+			}
 			records, err := rt.ListVMs()
 			if err != nil {
 				return err
 			}
+			records = filterVMRecords(records, args)
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), records)
 			}
@@ -299,5 +326,29 @@ func newPSCommand(opts *rootOptions) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "watch and redraw when VM status changes")
+	cmd.Flags().BoolVar(&events, "events", false, "stream ADDED, MODIFIED, and DELETED events")
+	cmd.Flags().DurationVar(&interval, "interval", time.Second, "poll interval used while watching")
 	return cmd
+}
+
+func filterVMRecords(records []*vmstore.VMRecord, refs []string) []*vmstore.VMRecord {
+	if len(refs) == 0 {
+		return records
+	}
+	selected := make([]*vmstore.VMRecord, 0, len(refs))
+	seen := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		for _, record := range records {
+			if record.ID != ref && record.Name != ref {
+				continue
+			}
+			if _, ok := seen[record.ID]; !ok {
+				selected = append(selected, record)
+				seen[record.ID] = struct{}{}
+			}
+			break
+		}
+	}
+	return selected
 }

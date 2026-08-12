@@ -4,6 +4,7 @@
 package state
 
 import (
+	"context"
 	"time"
 
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
@@ -16,6 +17,13 @@ type VMReader interface {
 	Inspect(string) (*vmstore.VMRecord, error)
 	List() ([]*vmstore.VMRecord, error)
 	RootDir() string
+}
+
+// VMEvents reports that persisted VM metadata may have changed. Notifications
+// are hints: consumers must always reread VM records because events may be
+// coalesced by the metadata backend.
+type VMEvents interface {
+	Events(context.Context) (<-chan struct{}, func(), error)
 }
 
 // VMRecords contains VM record creation and attachment mutations.

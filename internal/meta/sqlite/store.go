@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kumabox/kumabox/internal/meta"
 	_ "modernc.org/sqlite"
@@ -54,8 +55,23 @@ type Store struct {
 	readers     *sql.DB
 	namespaces  map[meta.Namespace]map[meta.Table]struct{}
 	mu          sync.Mutex
-	subscribers map[chan struct{}]struct{}
+	subscribers map[*subscription]struct{}
 	closed      bool
+}
+
+type subscription struct {
+	changes chan struct{}
+	cancel  context.CancelFunc
+	done    chan struct{}
+	stop    sync.Once
+}
+
+func (s *subscription) close() {
+	s.stop.Do(func() {
+		s.cancel()
+		<-s.done
+		close(s.changes)
+	})
 }
 
 var _ meta.MetaEngine = (*Store)(nil)
@@ -89,7 +105,7 @@ func open(path string, definitions ...Namespace) (*Store, error) {
 		}
 		return nil, fmt.Errorf("stat sqlite metadata database: %w", err)
 	}
-	store := &Store{path: path, namespaces: namespaces, subscribers: make(map[chan struct{}]struct{})}
+	store := &Store{path: path, namespaces: namespaces, subscribers: make(map[*subscription]struct{})}
 	if store.durable, err = openDatabase(path, "FULL", true); err != nil {
 		return nil, err
 	}
@@ -173,25 +189,40 @@ func (s *Store) Events(ctx context.Context) (<-chan struct{}, func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
+	watchCtx, cancel := context.WithCancel(ctx)
+	conn, err := s.readers.Conn(watchCtx)
+	if err != nil {
+		cancel()
+		return nil, nil, mapError(err)
+	}
+	version, err := sqliteDataVersion(watchCtx, conn)
+	if err != nil {
+		_ = conn.Close()
+		cancel()
+		return nil, nil, err
+	}
+	sub := &subscription{changes: make(chan struct{}, 1), cancel: cancel, done: make(chan struct{})}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
+		_ = conn.Close()
+		cancel()
 		return nil, nil, meta.ErrClosed
 	}
-	ch := make(chan struct{}, 1)
-	s.subscribers[ch] = struct{}{}
+	s.subscribers[sub] = struct{}{}
+	s.mu.Unlock()
+	go s.watchDataVersion(watchCtx, conn, sub, version)
+
 	var once sync.Once
 	release := func() {
 		once.Do(func() {
 			s.mu.Lock()
-			if _, ok := s.subscribers[ch]; ok {
-				delete(s.subscribers, ch)
-				close(ch)
-			}
+			delete(s.subscribers, sub)
 			s.mu.Unlock()
+			sub.close()
 		})
 	}
-	return ch, release, nil
+	return sub.changes, release, nil
 }
 
 func (s *Store) Close() error {
@@ -201,11 +232,15 @@ func (s *Store) Close() error {
 		return nil
 	}
 	s.closed = true
-	for ch := range s.subscribers {
-		close(ch)
-		delete(s.subscribers, ch)
+	subs := make([]*subscription, 0, len(s.subscribers))
+	for sub := range s.subscribers {
+		subs = append(subs, sub)
+		delete(s.subscribers, sub)
 	}
 	s.mu.Unlock()
+	for _, sub := range subs {
+		sub.close()
+	}
 	var closeErrors []error
 	for _, db := range []*sql.DB{s.durable, s.relaxed, s.readers} {
 		if db != nil {
@@ -323,12 +358,47 @@ func (s *Store) notify() {
 	if s.closed {
 		return
 	}
-	for ch := range s.subscribers {
+	for sub := range s.subscribers {
 		select {
-		case ch <- struct{}{}:
+		case sub.changes <- struct{}{}:
 		default:
 		}
 	}
+}
+
+func (s *Store) watchDataVersion(ctx context.Context, conn *sql.Conn, sub *subscription, previous int64) {
+	defer close(sub.done)
+	defer func() { _ = conn.Close() }()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			current, err := sqliteDataVersion(ctx, conn)
+			if err != nil || current == previous {
+				continue
+			}
+			previous = current
+			s.mu.Lock()
+			if _, ok := s.subscribers[sub]; ok && !s.closed {
+				select {
+				case sub.changes <- struct{}{}:
+				default:
+				}
+			}
+			s.mu.Unlock()
+		}
+	}
+}
+
+func sqliteDataVersion(ctx context.Context, conn *sql.Conn) (int64, error) {
+	var version int64
+	if err := conn.QueryRowContext(ctx, "PRAGMA data_version").Scan(&version); err != nil {
+		return 0, mapError(err)
+	}
+	return version, nil
 }
 
 type txReader struct {
