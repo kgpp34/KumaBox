@@ -364,13 +364,13 @@ func ensureIptablesNAT(ctx context.Context, runner commandRunner, cidr string) (
 }
 
 func ensureNftNAT(ctx context.Context, runner commandRunner, cidr string) (string, bool, error) {
-	out, _ := runner.Run(ctx, "nft", "list", "ruleset")
-	if bytes.Contains(out, []byte("ip saddr "+cidr+" masquerade")) {
+	out, _ := runner.Run(ctx, "nft", "-a", "list", "chain", "inet", nftTable, nftChain)
+	if len(nftNATRuleHandles(out, cidr)) > 0 {
 		return NATBackendNFT, false, nil
 	}
-	_, _ = runner.Run(ctx, "nft", "add", "table", "inet", "kumabox")
-	_, _ = runner.Run(ctx, "nft", "add", "chain", "inet", "kumabox", "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}")
-	if _, err := runner.Run(ctx, "nft", "add", "rule", "inet", "kumabox", "postrouting", "ip", "saddr", cidr, "masquerade"); err != nil {
+	_, _ = runner.Run(ctx, "nft", "add", "table", "inet", nftTable)
+	_, _ = runner.Run(ctx, "nft", "add", "chain", "inet", nftTable, nftChain, "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}")
+	if _, err := runner.Run(ctx, "nft", "add", "rule", "inet", nftTable, nftChain, "ip", "saddr", cidr, "masquerade"); err != nil {
 		return "", false, err
 	}
 	return NATBackendNFT, true, nil
@@ -390,7 +390,15 @@ func removeNAT(ctx context.Context, runner commandRunner, backend, cidr string) 
 			}
 		}
 	case NATBackendNFT:
-		_, _ = runner.Run(ctx, "nft", "delete", "table", "inet", "kumabox")
+		out, err := runner.Run(ctx, "nft", "-a", "list", "chain", "inet", nftTable, nftChain)
+		if err != nil {
+			return nil
+		}
+		for _, handle := range nftNATRuleHandles(out, cidr) {
+			if _, err := runner.Run(ctx, "nft", "delete", "rule", "inet", nftTable, nftChain, "handle", handle); err != nil {
+				return err
+			}
+		}
 		return nil
 	default:
 		return fmt.Errorf("unsupported NAT backend %q", backend)
