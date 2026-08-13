@@ -25,6 +25,8 @@ func ExecTTY(ctx context.Context, socketPath string, req ExecRequest, stdin io.R
 	defer conn.Close() //nolint:errcheck
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
+	sessionCtx, cancelSession := context.WithCancel(ctx)
+	defer cancelSession()
 
 	id := fmt.Sprintf("exec-tty-%d", time.Now().UnixNano())
 	writer := &lockedFrameWriter{writer: conn}
@@ -48,20 +50,13 @@ func ExecTTY(ctx context.Context, socketPath string, req ExecRequest, stdin io.R
 	}
 
 	inputResults := make(chan error, 1)
-	go func() { inputResults <- streamInput(ctx, writer, id, stdin) }()
-	frames := make(chan protocol.Frame, 1)
-	frameErrors := make(chan error, 1)
 	go func() {
-		decoder := protocol.NewDecoder(conn)
-		for {
-			frame, readErr := decoder.ReadFrame()
-			if readErr != nil {
-				frameErrors <- readErr
-				return
-			}
-			frames <- frame
+		select {
+		case inputResults <- streamInput(sessionCtx, writer, id, stdin):
+		case <-sessionCtx.Done():
 		}
 	}()
+	frames, frameErrors := readFrameStream(sessionCtx, conn)
 
 	resize := options.Resize
 	signals := options.Signals

@@ -32,6 +32,8 @@ func ExecStream(ctx context.Context, socketPath string, req ExecRequest, stdin i
 	defer conn.Close() //nolint:errcheck
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
+	sessionCtx, cancelSession := context.WithCancel(ctx)
+	defer cancelSession()
 
 	id := fmt.Sprintf("exec-%d", time.Now().UnixNano())
 	writer := &lockedFrameWriter{writer: conn}
@@ -51,16 +53,29 @@ func ExecStream(ctx context.Context, socketPath string, req ExecRequest, stdin i
 		return 127, fmt.Errorf("%w: write exec frame: %v", ErrNotReady, err)
 	}
 
-	inputErr := make(chan error, 1)
+	inputResults := make(chan error, 1)
 	go func() {
-		inputErr <- streamInput(ctx, writer, id, stdin)
+		select {
+		case inputResults <- streamInput(sessionCtx, writer, id, stdin):
+		case <-sessionCtx.Done():
+		}
 	}()
 
-	decoder := protocol.NewDecoder(conn)
+	frames, frameErrors := readFrameStream(sessionCtx, conn)
 	for {
-		frame, readErr := decoder.ReadFrame()
-		if readErr != nil {
+		var frame protocol.Frame
+		select {
+		case <-ctx.Done():
+			return 127, ctx.Err()
+		case inputErr := <-inputResults:
+			if inputErr != nil && ctx.Err() == nil {
+				return 127, fmt.Errorf("stream guest stdin: %w", inputErr)
+			}
+			inputResults = nil
+			continue
+		case readErr := <-frameErrors:
 			return 127, fmt.Errorf("%w: read stream: %v", ErrNotReady, readErr)
+		case frame = <-frames:
 		}
 		if frame.ID != id {
 			return 127, fmt.Errorf("AGENT_INVALID_FRAME: unexpected exec id %q", frame.ID)
@@ -79,14 +94,35 @@ func ExecStream(ctx context.Context, socketPath string, req ExecRequest, stdin i
 		case protocol.FrameError:
 			return 127, fmt.Errorf("%s: %s", frame.Code, frame.Message)
 		case protocol.FrameExit:
-			if err := <-inputErr; err != nil && ctx.Err() == nil {
-				return frame.ExitCode, fmt.Errorf("stream guest stdin: %w", err)
-			}
 			return frame.ExitCode, nil
 		default:
 			return 127, fmt.Errorf("AGENT_INVALID_FRAME: unexpected frame %q", frame.Type)
 		}
 	}
+}
+
+func readFrameStream(ctx context.Context, reader io.Reader) (<-chan protocol.Frame, <-chan error) {
+	frames := make(chan protocol.Frame)
+	errs := make(chan error, 1)
+	go func() {
+		decoder := protocol.NewDecoder(reader)
+		for {
+			frame, err := decoder.ReadFrame()
+			if err != nil {
+				select {
+				case errs <- err:
+				case <-ctx.Done():
+				}
+				return
+			}
+			select {
+			case frames <- frame:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return frames, errs
 }
 
 func streamInput(ctx context.Context, writer *lockedFrameWriter, id string, stdin io.Reader) error {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -156,6 +157,147 @@ func TestExecStreamForwardsInputOutputAndExitCode(t *testing.T) {
 	if err := <-serverErr; err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestExecStreamReturnsWhenGuestExitsBeforeBlockingInput(t *testing.T) {
+	t.Parallel()
+
+	socketPath := testSocketPath(t)
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close() //nolint:errcheck
+
+	serverErr := serveAgentExit(t, ln, false, 7)
+	stdin := newBlockingReader()
+	done := make(chan struct{})
+	var code int
+	var execErr error
+	go func() {
+		code, execErr = ExecStream(t.Context(), socketPath, ExecRequest{Args: []string{"true"}}, stdin, io.Discard, io.Discard)
+		close(done)
+	}()
+
+	stdin.waitUntilRead(t)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("ExecStream waited for blocking stdin after guest exit")
+	}
+	stdin.release()
+	if execErr != nil || code != 7 {
+		t.Fatalf("ExecStream() = code %d, error %v", code, execErr)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExecTTYReturnsWhenGuestExitsBeforeBlockingInput(t *testing.T) {
+	t.Parallel()
+
+	socketPath := testSocketPath(t)
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close() //nolint:errcheck
+
+	serverErr := serveAgentExit(t, ln, true, 3)
+	stdin := newBlockingReader()
+	done := make(chan struct{})
+	var code int
+	var execErr error
+	go func() {
+		code, execErr = ExecTTY(t.Context(), socketPath, ExecRequest{Args: []string{"true"}}, stdin, io.Discard, TTYOptions{})
+		close(done)
+	}()
+
+	stdin.waitUntilRead(t)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("ExecTTY waited for blocking stdin after guest exit")
+	}
+	stdin.release()
+	if execErr != nil || code != 3 {
+		t.Fatalf("ExecTTY() = code %d, error %v", code, execErr)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+}
+
+type blockingReader struct {
+	started chan struct{}
+	unblock chan struct{}
+}
+
+func newBlockingReader() *blockingReader {
+	return &blockingReader{started: make(chan struct{}), unblock: make(chan struct{})}
+}
+
+func (r *blockingReader) Read([]byte) (int, error) {
+	select {
+	case <-r.started:
+	default:
+		close(r.started)
+	}
+	<-r.unblock
+	return 0, io.EOF
+}
+
+func (r *blockingReader) waitUntilRead(t *testing.T) {
+	t.Helper()
+	select {
+	case <-r.started:
+	case <-time.After(time.Second):
+		t.Fatal("stdin was not read")
+	}
+}
+
+func (r *blockingReader) release() {
+	close(r.unblock)
+}
+
+func serveAgentExit(t *testing.T, ln net.Listener, tty bool, exitCode int) <-chan error {
+	t.Helper()
+	errs := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			errs <- err
+			return
+		}
+		defer conn.Close() //nolint:errcheck
+		reader := bufio.NewReader(conn)
+		line, err := reader.ReadString('\n')
+		if err != nil || line != "CONNECT 1024\n" {
+			errs <- fmt.Errorf("read CONNECT: line %q: %w", line, err)
+			return
+		}
+		if _, err := conn.Write([]byte("OK 1024\n")); err != nil {
+			errs <- err
+			return
+		}
+		execFrame, err := protocol.NewDecoder(reader).ReadFrame()
+		if err != nil {
+			errs <- err
+			return
+		}
+		if execFrame.Type != protocol.FrameExec || execFrame.TTY != tty {
+			errs <- fmt.Errorf("unexpected exec frame: %+v", execFrame)
+			return
+		}
+		errs <- protocol.WriteFrame(conn, protocol.Frame{
+			Version:  protocol.VersionV1,
+			Type:     protocol.FrameExit,
+			ID:       execFrame.ID,
+			ExitCode: exitCode,
+		})
+	}()
+	return errs
 }
 
 func TestPingPongResponseSupportsRejectsMissingCapability(t *testing.T) {
