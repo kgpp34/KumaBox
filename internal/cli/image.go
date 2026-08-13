@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kumabox/kumabox/internal/batch"
+	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/ocibuild"
 	"github.com/kumabox/kumabox/internal/ociresolver"
@@ -71,6 +72,7 @@ func newImageAddCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			qemuImg = configuredQEMUImg(qemuImg, cfg)
 			stores, err := configuredStores(cfg)
 			if err != nil {
 				return err
@@ -112,7 +114,7 @@ func newImageAddCommand(opts *rootOptions) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&name, "name", "", "image name")
 	cmd.Flags().StringVar(&firmware, "firmware", "", "UEFI firmware path for cloud images")
-	cmd.Flags().StringVar(&qemuImg, "qemu-img", "qemu-img", "qemu-img binary path")
+	cmd.Flags().StringVar(&qemuImg, "qemu-img", "", "qemu-img binary path override")
 	cmd.Flags().StringVar(&expectedSHA256, "sha256", "", "expected HTTP image sha256 digest")
 	cmd.Flags().StringVar(&platform, "platform", ociresolver.DefaultPlatform(), "OCI platform os/arch[/variant]")
 	cmd.Flags().StringVar(&source, "source", "auto", "OCI source: auto, registry, or daemon")
@@ -300,6 +302,7 @@ func newImageImportCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			qemuImg = configuredQEMUImg(qemuImg, cfg)
 			stores, err := configuredStores(cfg)
 			if err != nil {
 				return err
@@ -323,7 +326,7 @@ func newImageImportCommand(opts *rootOptions) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&name, "name", "", "image name")
 	cmd.Flags().StringVar(&firmware, "firmware", "", "UEFI firmware path")
-	cmd.Flags().StringVar(&qemuImg, "qemu-img", "qemu-img", "qemu-img binary path")
+	cmd.Flags().StringVar(&qemuImg, "qemu-img", "", "qemu-img binary path override")
 	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("firmware")
 	return cmd
@@ -351,6 +354,7 @@ func newImagePullCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			qemuImg = configuredQEMUImg(qemuImg, cfg)
 			stores, err := configuredStores(cfg)
 			if err != nil {
 				return err
@@ -373,12 +377,19 @@ func newImagePullCommand(opts *rootOptions) *cobra.Command {
 	}
 	cmd.Flags().StringArrayVar(&names, "name", nil, "image name, repeat once per URL")
 	cmd.Flags().StringVar(&firmware, "firmware", "", "UEFI firmware path")
-	cmd.Flags().StringVar(&qemuImg, "qemu-img", "qemu-img", "qemu-img binary path")
+	cmd.Flags().StringVar(&qemuImg, "qemu-img", "", "qemu-img binary path override")
 	cmd.Flags().StringVar(&sha256Digest, "sha256", "", "expected image sha256 digest")
 	addResourceBatchConcurrencyFlag(cmd, &concurrency)
 	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("firmware")
 	return cmd
+}
+
+func configuredQEMUImg(override string, cfg config.Config) string {
+	if override != "" {
+		return override
+	}
+	return cfg.Storage.QEMUImgBinary
 }
 
 func newImageLSCommand(opts *rootOptions) *cobra.Command {

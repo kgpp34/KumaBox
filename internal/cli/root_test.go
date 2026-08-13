@@ -70,6 +70,19 @@ func TestRootCommandRejectsRuntimePathFlags(t *testing.T) {
 	}
 }
 
+func TestConfiguredQEMUImgPrecedence(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.Storage.QEMUImgBinary = "/configured/qemu-img"
+	if got := configuredQEMUImg("", cfg); got != cfg.Storage.QEMUImgBinary {
+		t.Fatalf("configuredQEMUImg() = %q, want configured binary", got)
+	}
+	if got := configuredQEMUImg("/command/qemu-img", cfg); got != "/command/qemu-img" {
+		t.Fatalf("configuredQEMUImg() = %q, want command override", got)
+	}
+}
+
 func TestDoctorInitializesConfiguredDirectories(t *testing.T) {
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")
