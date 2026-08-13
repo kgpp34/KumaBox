@@ -857,6 +857,62 @@ func TestGCDryRunCommandReportsCandidates(t *testing.T) {
 	}
 }
 
+func TestGCSnapshotPolicyFlags(t *testing.T) {
+	dir := t.TempDir()
+	cmd := newTestRootCommand(filepath.Join(dir, "data"), filepath.Join(dir, "run"), filepath.Join(dir, "log"))
+	cmd.SetArgs([]string{
+		"gc", "--dry-run", "--json",
+		"--snapshot-keep", "0",
+		"--snapshot-max-age", "168h",
+		"--snapshot-max-bytes", "20G",
+	})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		SnapshotPolicy struct {
+			Policy struct {
+				KeepLast int           `json:"keepLast"`
+				MaxAge   time.Duration `json:"maxAge"`
+				MaxBytes int64         `json:"maxBytes"`
+			} `json:"policy"`
+			TargetSatisfied bool `json:"targetSatisfied"`
+		} `json:"snapshotPolicy"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.SnapshotPolicy.Policy.KeepLast != 0 ||
+		payload.SnapshotPolicy.Policy.MaxAge != 168*time.Hour ||
+		payload.SnapshotPolicy.Policy.MaxBytes != 20<<30 ||
+		!payload.SnapshotPolicy.TargetSatisfied {
+		t.Fatalf("snapshot policy = %+v", payload.SnapshotPolicy)
+	}
+}
+
+func TestGCSnapshotPolicyRejectsInvalidFlags(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "negative keep", args: []string{"gc", "--dry-run", "--snapshot-keep", "-1"}, want: "--snapshot-keep must not be negative"},
+		{name: "invalid bytes", args: []string{"gc", "--dry-run", "--snapshot-max-bytes", "none"}, want: "--snapshot-max-bytes must be a positive size"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newTestRootCommand(t.TempDir())
+			cmd.SetArgs(tt.args)
+			err := cmd.Execute()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestImageListAndInspectCommands(t *testing.T) {
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")

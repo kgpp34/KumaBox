@@ -37,6 +37,7 @@ type SnapshotState interface {
 	Inspect(string) (*snapshot.Record, error)
 	AcquireRead(context.Context, string) (*snapshot.Record, *snapshot.Lease, error)
 	LoadManifest(context.Context, string) (*snapshot.Manifest, error)
+	PeekManifest(context.Context, string) (*snapshot.Manifest, error)
 	Remove(string) (*snapshot.Record, error)
 	VerifyNative(context.Context, string, snapshot.NativeVerifyTarget) (*snapshot.Manifest, error)
 	VerifyNativeRecord(context.Context, *snapshot.Record, snapshot.NativeVerifyTarget) (*snapshot.Manifest, error)

@@ -102,7 +102,7 @@ func (r *Runtime) requireSnapshotForVM(ctx context.Context, record operation.Rec
 		if candidate.ID != snapshotRef && candidate.Name != snapshotRef {
 			continue
 		}
-		manifest, err := r.storeSet.Snapshots.LoadManifest(ctx, candidate.ID)
+		manifest, err := r.storeSet.Snapshots.PeekManifest(ctx, candidate.ID)
 		if err != nil {
 			return err
 		}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,6 +115,43 @@ func TestStoreRemoveRejectsActiveReadLease(t *testing.T) {
 	}
 	if _, err := os.Stat(ready.DataDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("snapshot payload still exists: %v", err)
+	}
+}
+
+func TestStoreAcquireReadTouchesLastAccessButPeekManifestDoesNot(t *testing.T) {
+	t.Parallel()
+	store := NewStore(t.TempDir())
+	ready := createReadySnapshot(t, store, "access-time")
+
+	if _, err := store.PeekManifest(t.Context(), ready.ID); err == nil || !strings.Contains(err.Error(), "manifest identity") {
+		// createReadySnapshot intentionally writes an empty test manifest. Peek
+		// must still avoid touching the record when validation fails.
+		if err == nil {
+			t.Fatal("expected invalid fixture manifest")
+		}
+	}
+	afterPeek, err := store.Inspect(ready.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !afterPeek.LastAccessedAt.Equal(ready.LastAccessedAt) {
+		t.Fatalf("peek changed last access from %s to %s", ready.LastAccessedAt, afterPeek.LastAccessedAt)
+	}
+
+	time.Sleep(time.Millisecond)
+	_, lease, err := store.AcquireRead(t.Context(), ready.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	afterRead, err := store.Inspect(ready.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !afterRead.LastAccessedAt.After(ready.LastAccessedAt) {
+		t.Fatalf("last access = %s, want after %s", afterRead.LastAccessedAt, ready.LastAccessedAt)
 	}
 }
 

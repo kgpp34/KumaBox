@@ -33,11 +33,18 @@ type Candidate struct {
 
 // Report is the result of a GC scan.
 type Report struct {
-	DryRun     bool        `json:"dryRun"`
-	CheckedAt  time.Time   `json:"checkedAt"`
-	Candidates []Candidate `json:"candidates"`
-	Repaired   []Candidate `json:"repaired,omitempty"`
-	Skipped    []Candidate `json:"skipped,omitempty"`
+	DryRun         bool                  `json:"dryRun"`
+	CheckedAt      time.Time             `json:"checkedAt"`
+	Candidates     []Candidate           `json:"candidates"`
+	Repaired       []Candidate           `json:"repaired,omitempty"`
+	Skipped        []Candidate           `json:"skipped,omitempty"`
+	SnapshotPolicy *SnapshotPolicyReport `json:"snapshotPolicy,omitempty"`
+}
+
+// Options enables optional policy-based collection in addition to orphan
+// reconciliation.
+type Options struct {
+	SnapshotPolicy *SnapshotPolicy
 }
 
 // DryRun scans VM, runtime, log, and image state for orphaned managed files.
@@ -45,10 +52,26 @@ type Report struct {
 // It never removes data. The report is intended for operator review and for
 // validating GC policy before destructive cleanup is implemented.
 func DryRun(cfg config.Config) (*Report, error) {
+	return DryRunContext(context.Background(), cfg, Options{})
+}
+
+// DryRunContext scans with optional policy rules without deleting resources.
+func DryRunContext(ctx context.Context, cfg config.Config, options Options) (report *Report, err error) {
 	stores, err := resources.NewStoreSetForConfig(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open resource stores: %w", err)
 	}
+	if stores.Metadata != nil {
+		defer func() {
+			if closeErr := stores.Metadata.Close(); closeErr != nil {
+				err = errors.Join(err, fmt.Errorf("close metadata store: %w", closeErr))
+			}
+		}()
+	}
+	return scan(ctx, cfg, stores, options)
+}
+
+func scan(ctx context.Context, cfg config.Config, stores resources.StoreSet, options Options) (*Report, error) {
 	records, err := stores.VM.List()
 	if err != nil {
 		return nil, fmt.Errorf("read VM store: %w", err)
@@ -100,6 +123,7 @@ func DryRun(cfg config.Config) (*Report, error) {
 		report.Candidates = append(report.Candidates, staleRestoreStaging(rec, report.CheckedAt)...)
 	}
 	snapshotCandidates, err := snapshotGCCandidates(
+		ctx,
 		snapshotStore,
 		cfg.Runtime.RootDir,
 		snapshots,
@@ -122,6 +146,13 @@ func DryRun(cfg config.Config) (*Report, error) {
 	report.Candidates = append(report.Candidates, imageCandidates(cfg.Runtime.RootDir, images, liveImageIDs)...)
 	report.Candidates = append(report.Candidates, ociCandidates(cfg.Runtime.RootDir, liveOCIPaths, liveOCIDigests)...)
 	report.Candidates = append(report.Candidates, networkCandidates(records, networkRecords, leases)...)
+	if options.SnapshotPolicy != nil {
+		policyReport, err := planSnapshotPolicy(ctx, stores, *options.SnapshotPolicy, report.CheckedAt)
+		if err != nil {
+			return nil, err
+		}
+		report.SnapshotPolicy = policyReport
+	}
 
 	sort.Slice(report.Candidates, func(i, j int) bool {
 		if report.Candidates[i].Path == report.Candidates[j].Path {
@@ -143,19 +174,36 @@ func Repair(cfg config.Config) (*Report, error) {
 // scan-and-delete cycle. Candidates are discovered only after the exclusive
 // lock is held, so a report produced before lock acquisition is never used.
 func RepairContext(ctx context.Context, cfg config.Config) (*Report, error) {
+	return RepairWithOptions(ctx, cfg, Options{})
+}
+
+// RepairWithOptions performs orphan repair and optional snapshot policy
+// eviction under one maintenance lock and one consistent resource setup.
+func RepairWithOptions(ctx context.Context, cfg config.Config, options Options) (report *Report, err error) {
 	maintenance, err := resourceguard.New(cfg.Runtime.RootDir).BeginMaintenance(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer maintenance.Release() //nolint:errcheck
+	defer func() {
+		if releaseErr := maintenance.Release(); releaseErr != nil {
+			err = errors.Join(err, fmt.Errorf("release GC maintenance lock: %w", releaseErr))
+		}
+	}()
 
-	report, err := DryRun(cfg)
-	if err != nil {
-		return nil, err
-	}
 	stores, err := resources.NewStoreSetForConfig(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open resource stores for repair: %w", err)
+	}
+	if stores.Metadata != nil {
+		defer func() {
+			if closeErr := stores.Metadata.Close(); closeErr != nil {
+				err = errors.Join(err, fmt.Errorf("close metadata store: %w", closeErr))
+			}
+		}()
+	}
+	report, err = scan(ctx, cfg, stores, options)
+	if err != nil {
+		return nil, err
 	}
 	networkRecords, err := stores.Networks.List()
 	if err != nil {
@@ -182,6 +230,11 @@ func RepairContext(ctx context.Context, cfg config.Config) (*Report, error) {
 			return nil, fmt.Errorf("repair %s: %w", candidate.Path, err)
 		}
 		report.Repaired = append(report.Repaired, candidate)
+	}
+	if report.SnapshotPolicy != nil {
+		if err := applySnapshotPolicy(ctx, stores, report.SnapshotPolicy); err != nil {
+			return nil, err
+		}
 	}
 	return report, nil
 }
@@ -234,6 +287,7 @@ func repairNetworkCandidate(ctx context.Context, cfg config.Config, store state.
 }
 
 func snapshotGCCandidates(
+	ctx context.Context,
 	store state.SnapshotState,
 	rootDir string,
 	records []*snapshot.Record,
@@ -260,7 +314,7 @@ func snapshotGCCandidates(
 			} else if err != nil {
 				return nil, fmt.Errorf("stat ready snapshot %s: %w", rec.ID, err)
 			}
-			manifest, err := store.LoadManifest(context.Background(), rec.ID)
+			manifest, err := store.PeekManifest(ctx, rec.ID)
 			if err != nil {
 				return nil, fmt.Errorf("read ready snapshot %s: %w", rec.ID, err)
 			}

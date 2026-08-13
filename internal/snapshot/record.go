@@ -21,6 +21,8 @@ type Record struct {
 	DataDir        string          `json:"dataDir"`
 	StagingDir     string          `json:"stagingDir,omitempty"`
 	SizeBytes      int64           `json:"sizeBytes,omitempty"`
+	LogicalBytes   int64           `json:"logicalBytes,omitempty"`
+	AllocatedBytes int64           `json:"allocatedBytes,omitempty"`
 	CreatedAt      time.Time       `json:"createdAt"`
 	UpdatedAt      time.Time       `json:"updatedAt"`
 	LastAccessedAt time.Time       `json:"lastAccessedAt"`

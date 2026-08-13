@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kumabox/kumabox/internal/meta"
@@ -157,6 +158,13 @@ func (b *Build) Finalize(sizeBytes int64) (*Record, error) {
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("snapshot manifest must be a regular file")
 	}
+	logicalBytes, allocatedBytes, err := payloadUsage(b.record.StagingDir)
+	if err != nil {
+		return nil, fmt.Errorf("measure snapshot payload: %w", err)
+	}
+	if allocatedBytes == 0 && sizeBytes > 0 {
+		allocatedBytes = sizeBytes
+	}
 
 	var finalized *Record
 	err = b.store.update(func(idx *snapshotIndex) error {
@@ -176,6 +184,8 @@ func (b *Build) Finalize(sizeBytes int64) (*Record, error) {
 		rec.State = StateReady
 		rec.StagingDir = ""
 		rec.SizeBytes = sizeBytes
+		rec.LogicalBytes = logicalBytes
+		rec.AllocatedBytes = allocatedBytes
 		if b.performance != nil {
 			metrics := *b.performance
 			rec.Performance = &metrics
@@ -193,6 +203,29 @@ func (b *Build) Finalize(sizeBytes int64) (*Record, error) {
 		return nil, fmt.Errorf("release snapshot build lease: %w", err)
 	}
 	return finalized, nil
+}
+
+func payloadUsage(root string) (logical, allocated int64, err error) {
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.Type().IsRegular() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		logical += info.Size()
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+			allocated += stat.Blocks * 512
+		} else {
+			allocated += info.Size()
+		}
+		return nil
+	})
+	return logical, allocated, err
 }
 
 // Abort rolls back a pending build and removes its staging directory.
@@ -280,6 +313,10 @@ func (s *Store) Inspect(ref string) (*Record, error) {
 
 // AcquireRead holds a shared lease for payload inspect/export/restore.
 func (s *Store) AcquireRead(ctx context.Context, ref string) (*Record, *Lease, error) {
+	return s.acquireRead(ctx, ref, true)
+}
+
+func (s *Store) acquireRead(ctx context.Context, ref string, touch bool) (*Record, *Lease, error) {
 	rec, err := s.Inspect(ref)
 	if err != nil {
 		return nil, nil, err
@@ -288,7 +325,21 @@ func (s *Store) AcquireRead(ctx context.Context, ref string) (*Record, *Lease, e
 	if err != nil {
 		return nil, nil, err
 	}
-	current, err := s.Inspect(rec.ID)
+	var current *Record
+	if touch {
+		err = s.update(func(idx *snapshotIndex) error {
+			candidate := idx.Snapshots[rec.ID]
+			if candidate == nil || candidate.State != StateReady {
+				return fmt.Errorf("SNAPSHOT_NOT_FOUND: %w: %s", ErrNotFound, rec.ID)
+			}
+			candidate.LastAccessedAt = time.Now().UTC()
+			candidate.UpdatedAt = candidate.LastAccessedAt
+			current = cloneRecord(candidate)
+			return nil
+		})
+	} else {
+		current, err = s.Inspect(rec.ID)
+	}
 	if err != nil {
 		_ = lease.Release()
 		return nil, nil, err
@@ -298,7 +349,17 @@ func (s *Store) AcquireRead(ctx context.Context, ref string) (*Record, *Lease, e
 
 // LoadManifest reads a ready manifest while holding a shared payload lease.
 func (s *Store) LoadManifest(ctx context.Context, ref string) (*Manifest, error) {
-	rec, lease, err := s.AcquireRead(ctx, ref)
+	return s.loadManifest(ctx, ref, true)
+}
+
+// PeekManifest validates and reads a manifest without changing its LRU age.
+// It is intended for GC and dependency scans, not payload consumers.
+func (s *Store) PeekManifest(ctx context.Context, ref string) (*Manifest, error) {
+	return s.loadManifest(ctx, ref, false)
+}
+
+func (s *Store) loadManifest(ctx context.Context, ref string, touch bool) (*Manifest, error) {
+	rec, lease, err := s.acquireRead(ctx, ref, touch)
 	if err != nil {
 		return nil, err
 	}

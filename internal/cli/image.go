@@ -457,7 +457,7 @@ func imageReferencesFromVMs(stores resources.StoreSet) ([]imagestore.Reference, 
 		return nil, fmt.Errorf("read snapshot references: %w", err)
 	}
 	for _, rec := range snapshots {
-		manifest, err := stores.Snapshots.LoadManifest(context.Background(), rec.ID)
+		manifest, err := stores.Snapshots.PeekManifest(context.Background(), rec.ID)
 		if err != nil {
 			return nil, fmt.Errorf("read snapshot %s image reference: %w", rec.ID, err)
 		}
