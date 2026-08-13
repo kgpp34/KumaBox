@@ -63,3 +63,14 @@ func TestFilterVMRecords(t *testing.T) {
 		t.Fatalf("selected records = %+v", selected)
 	}
 }
+
+func TestLogsCommandExposesFollowFlags(t *testing.T) {
+	t.Parallel()
+
+	cmd := newLogsCommand(&rootOptions{})
+	for _, name := range []string{"follow", "interval", "source", "tail"} {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Fatalf("logs flag %q is missing", name)
+		}
+	}
+}

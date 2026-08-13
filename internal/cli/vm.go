@@ -204,6 +204,8 @@ func newLogsCommand(opts *rootOptions) *cobra.Command {
 	var tail int
 	var source string
 	var jsonOutput bool
+	var follow bool
+	var interval time.Duration
 
 	cmd := &cobra.Command{
 		Use:   "logs VM",
@@ -221,10 +223,24 @@ func newLogsCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			logs, err := rt.LogsVM(args[0], kbruntime.LogOptions{
+			selectedSource := source
+			if follow && !cmd.Flags().Changed("source") {
+				selectedSource = kbruntime.LogSourceVMM
+			}
+			logOpts := kbruntime.LogOptions{
 				Tail:   tail,
-				Source: source,
-			})
+				Source: selectedSource,
+			}
+			if follow {
+				multiple := len(kbruntime.LogFileNames(selectedSource)) > 1
+				return rt.FollowLogsVM(cmd.Context(), args[0], logOpts, interval, func(chunk kbruntime.VMLogChunk) error {
+					if jsonOutput {
+						return writeJSONLine(cmd.OutOrStdout(), chunk)
+					}
+					return writeVMLogChunk(cmd.OutOrStdout(), chunk, multiple)
+				})
+			}
+			logs, err := rt.LogsVM(args[0], logOpts)
 			if err != nil {
 				return err
 			}
@@ -238,6 +254,8 @@ func newLogsCommand(opts *rootOptions) *cobra.Command {
 	cmd.Flags().IntVar(&tail, "tail", 100, "number of recent lines to show, 0 for all")
 	cmd.Flags().StringVar(&source, "source", kbruntime.LogSourceConsole, "log source: console, stdout, stderr, vmm, all")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "stream appended log content until interrupted")
+	cmd.Flags().DurationVar(&interval, "interval", 200*time.Millisecond, "poll interval used while following")
 	return cmd
 }
 

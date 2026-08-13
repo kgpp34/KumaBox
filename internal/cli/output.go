@@ -146,3 +146,13 @@ func writeVMLogs(w io.Writer, logs *kbruntime.VMLogs) error {
 	}
 	return nil
 }
+
+func writeVMLogChunk(w io.Writer, chunk kbruntime.VMLogChunk, header bool) error {
+	if header {
+		if _, err := fmt.Fprintf(w, "==> %s <==\n", chunk.Name); err != nil {
+			return err
+		}
+	}
+	_, err := io.WriteString(w, chunk.Content)
+	return err
+}

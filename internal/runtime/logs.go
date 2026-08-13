@@ -1,11 +1,14 @@
 package runtime
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -48,6 +51,15 @@ type VMLogs struct {
 	Files []VMLogFile `json:"files"`
 }
 
+// VMLogChunk is one append-only unit emitted while following logs.
+type VMLogChunk struct {
+	VMID    string `json:"vmId"`
+	VMName  string `json:"vmName"`
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
 // LogsVM reads selected VM logs without requiring the VM to be running.
 //
 // Missing log files are skipped. This lets logs work consistently for created,
@@ -81,6 +93,133 @@ func (r *Runtime) LogsVM(ref string, opts LogOptions) (*VMLogs, error) {
 	return logs, nil
 }
 
+// FollowLogsVM emits existing tail content and then appended bytes until ctx
+// is cancelled. Polling deliberately handles files created after subscription,
+// truncation on VM restart, and atomic file replacement without fsnotify.
+func (r *Runtime) FollowLogsVM(
+	ctx context.Context,
+	ref string,
+	opts LogOptions,
+	interval time.Duration,
+	emit func(VMLogChunk) error,
+) error {
+	if interval <= 0 {
+		return fmt.Errorf("log follow interval must be positive")
+	}
+	if emit == nil {
+		return fmt.Errorf("log follow emitter is required")
+	}
+	if !ValidLogSource(opts.Source) {
+		return fmt.Errorf("invalid log source %q", opts.Source)
+	}
+	rec, err := r.vmReader.Inspect(ref)
+	if err != nil {
+		return err
+	}
+	files := make([]followedLog, 0, len(logFileNames(opts.Source)))
+	for _, name := range logFileNames(opts.Source) {
+		files = append(files, followedLog{name: name, path: filepath.Join(rec.LogDir, name)})
+	}
+
+	poll := func(initial bool) error {
+		for i := range files {
+			content, changed, err := files[i].read(initial, opts.Tail)
+			if err != nil {
+				return fmt.Errorf("follow log %s: %w", files[i].path, err)
+			}
+			if changed && content != "" {
+				if err := emit(VMLogChunk{VMID: rec.ID, VMName: rec.Name, Name: files[i].name, Path: files[i].path, Content: content}); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := poll(true); err != nil {
+		return err
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if err := poll(false); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+type followedLog struct {
+	name   string
+	path   string
+	info   os.FileInfo
+	offset int64
+}
+
+func (f *followedLog) read(initial bool, tail int) (string, bool, error) {
+	file, err := os.Open(f.path) //nolint:gosec
+	if errors.Is(err, os.ErrNotExist) {
+		f.info = nil
+		f.offset = 0
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return "", false, err
+	}
+	firstAppearance := f.info == nil
+	reset := firstAppearance || !os.SameFile(f.info, info) || info.Size() < f.offset
+	start := f.offset
+	if reset {
+		start = 0
+	}
+	if (initial || firstAppearance) && start == 0 && tail > 0 {
+		start, err = tailOffset(file, tail)
+		if err != nil {
+			return "", false, err
+		}
+	}
+	if start > info.Size() {
+		start = 0
+	}
+	raw, err := io.ReadAll(io.NewSectionReader(file, start, info.Size()-start))
+	if err != nil {
+		return "", false, err
+	}
+	f.info = info
+	f.offset = info.Size()
+	return string(raw), reset || len(raw) > 0, nil
+}
+
+func tailOffset(file *os.File, tail int) (int64, error) {
+	info, err := file.Stat()
+	if err != nil {
+		return 0, err
+	}
+	raw, err := io.ReadAll(file)
+	if err != nil {
+		return 0, err
+	}
+	content := string(raw)
+	trimmed := strings.TrimSuffix(content, "\n")
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) <= tail {
+		return 0, nil
+	}
+	kept := strings.Join(lines[len(lines)-tail:], "\n")
+	if strings.HasSuffix(content, "\n") {
+		kept += "\n"
+	}
+	return info.Size() - int64(len(kept)), nil
+}
+
 func logFileNames(source string) []string {
 	if source == "" {
 		source = LogSourceConsole
@@ -99,6 +238,11 @@ func logFileNames(source string) []string {
 	default:
 		return nil
 	}
+}
+
+// LogFileNames returns the stable file order selected by source.
+func LogFileNames(source string) []string {
+	return append([]string(nil), logFileNames(source)...)
 }
 
 // ValidLogSource reports whether source is accepted by LogsVM.
