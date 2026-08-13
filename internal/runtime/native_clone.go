@@ -202,6 +202,9 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		cleanup.PID = backendResult.PID
 		cleanup.APISocket = backendResult.APISocket
 		_, stopErr := r.backend.StopVM(&cleanup, backend.StopOptions{Force: true})
+		if stopErr != nil && restoreModePinsSnapshot(opts.Mode) {
+			staged.retainNativePayload()
+		}
 		backendResult = nil
 		return errors.Join(cause, stopErr)
 	}

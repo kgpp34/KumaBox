@@ -148,6 +148,9 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 		cleanupRec.PID = backendResult.PID
 		cleanupRec.APISocket = backendResult.APISocket
 		_, stopErr := r.backend.StopVM(&cleanupRec, backend.StopOptions{Force: true})
+		if stopErr != nil && restoreModePinsSnapshot(opts.Mode) {
+			staged.retainNativePayload()
+		}
 		return fail(errors.Join(cause, stopErr))
 	}
 	identityStarted := time.Now()

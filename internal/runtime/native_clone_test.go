@@ -291,6 +291,45 @@ func TestCloneNativeSnapshotStopsBackendWhenSnapshotReferenceFails(t *testing.T)
 	}
 }
 
+func TestCloneNativeSnapshotPreservesOnDemandMemoryWhenRollbackStopFails(t *testing.T) {
+	rt, store, _, ready := newNativeCloneRuntime(t)
+	referenceErr := errors.New("injected reference failure")
+	stopErr := errors.New("injected stop failure")
+	rt.storeSet.References = failingReferenceState{ReferenceState: rt.storeSet.References, err: referenceErr}
+	originalIdentity := configureGuestIdentity
+	configureGuestIdentity = func(context.Context, string, *vmstore.VMRecord) error { return nil }
+	t.Cleanup(func() { configureGuestIdentity = originalIdentity })
+	rt.backend = backendFake{
+		nativeHost: func(context.Context, *vmstore.VMRecord) (backend.NativeHost, error) {
+			return backend.NativeHost{
+				BackendName: "cloud-hypervisor", BackendVersion: "test", SnapshotFormat: "cloud-hypervisor-native-v1",
+				Architecture: "test", CPUVendor: "test", RestoreModes: []string{"ondemand"},
+			}, nil
+		},
+		render: func(*vmstore.VMRecord) error { return nil },
+		clone: func(_ context.Context, rec *vmstore.VMRecord, _ string, _ string) (*backend.StartResult, error) {
+			return &backend.StartResult{PID: 9876, APISocket: filepath.Join(rec.RunDir, "ch.sock")}, nil
+		},
+		stop: func(*vmstore.VMRecord, backend.StopOptions) (*backend.StopResult, error) {
+			return nil, stopErr
+		},
+	}
+
+	_, err := rt.CloneNativeSnapshot(t.Context(), ready.ID, NativeCloneOptions{
+		Name: "stop-failure-clone", Networks: []string{"none"}, Mode: RestoreModeOnDemand,
+	})
+	if !errors.Is(err, referenceErr) || !errors.Is(err, stopErr) {
+		t.Fatalf("clone error = %v, want reference and stop failures", err)
+	}
+	persisted, err := store.Inspect("stop-failure-clone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(persisted.RunDir, ".restore-staging", "native", "memory-range-0")); err != nil {
+		t.Fatalf("on-demand memory payload was removed while backend may be running: %v", err)
+	}
+}
+
 func newNativeCloneRuntime(t *testing.T) (*Runtime, *vmstore.Store, *vmstore.VMRecord, *snapshot.Record) {
 	t.Helper()
 	dir := t.TempDir()

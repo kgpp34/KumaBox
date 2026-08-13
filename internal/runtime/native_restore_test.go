@@ -182,6 +182,38 @@ func TestRestoreNativeVMStopsBackendWhenSnapshotReferenceFails(t *testing.T) {
 	}
 }
 
+func TestRestoreNativeVMPreservesOnDemandMemoryWhenRollbackStopFails(t *testing.T) {
+	rt, _, rec, _ := newRunningSnapshotRuntime(t)
+	backendState := vmstore.ObservedStateRunning
+	referenceErr := errors.New("injected reference failure")
+	stopErr := errors.New("injected stop failure")
+	backendImpl := nativeRestoreBackend(t, rec, &backendState, nil)
+	backendImpl.nativeHost = func(context.Context, *vmstore.VMRecord) (backend.NativeHost, error) {
+		return backend.NativeHost{RestoreModes: []string{string(RestoreModeOnDemand)}}, nil
+	}
+	backendImpl.stop = func(stopped *vmstore.VMRecord, _ backend.StopOptions) (*backend.StopResult, error) {
+		if stopped.PID == 4321 {
+			return nil, stopErr
+		}
+		backendState = vmstore.ObservedStateStopped
+		return &backend.StopResult{}, nil
+	}
+	rt.backend = backendImpl
+	ready, err := rt.CreateRunningSnapshot(t.Context(), rec.ID, "restore-stop-failure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.storeSet.References = failingReferenceState{ReferenceState: rt.storeSet.References, err: referenceErr}
+
+	_, err = rt.RestoreNativeVM(t.Context(), rec.ID, ready.ID, NativeRestoreOptions{Mode: RestoreModeOnDemand})
+	if !errors.Is(err, referenceErr) || !errors.Is(err, stopErr) {
+		t.Fatalf("restore error = %v, want reference and stop failures", err)
+	}
+	if _, err := os.Stat(filepath.Join(rec.RunDir, ".restore-staging", "native", "memory-range-0")); err != nil {
+		t.Fatalf("on-demand memory payload was removed while backend may be running: %v", err)
+	}
+}
+
 type failingReferenceState struct {
 	state.ReferenceState
 	err error
@@ -229,7 +261,7 @@ func nativeRestoreBackend(t *testing.T, rec *vmstore.VMRecord, state *vmstore.Ob
 			return &backend.StopResult{}, nil
 		},
 		restore: func(_ context.Context, dirty *vmstore.VMRecord, sourceDir, mode string) (*backend.StartResult, error) {
-			if dirty.Restore == nil || dirty.Restore.State != "dirty" || mode != "copy" {
+			if dirty.Restore == nil || dirty.Restore.State != "dirty" || (mode != "copy" && mode != "ondemand") {
 				t.Fatalf("restore input = %+v mode=%s", dirty.Restore, mode)
 			}
 			if _, err := os.Stat(filepath.Join(sourceDir, "memory-range-0")); err != nil {
