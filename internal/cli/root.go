@@ -71,6 +71,7 @@ func newRootCommand(opts *rootOptions) *cobra.Command {
 	cmd.AddCommand(newPSCommand(opts))
 	cmd.AddCommand(newUsageCommand(opts))
 	cmd.AddCommand(newMetadataCommand(opts))
+	cmd.AddCommand(newDebugCommand(opts))
 	cmd.AddCommand(newCompletionCommand())
 	configureResourceCompletions(cmd, opts)
 	return cmd

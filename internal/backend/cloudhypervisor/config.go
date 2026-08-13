@@ -5,6 +5,7 @@
 package cloudhypervisor
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -304,6 +305,36 @@ func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
 		rendered.Initramfs = &Initramfs{Path: rec.Initrd}
 	}
 	return rendered
+}
+
+// ValidateConfig checks the pure launch plan without touching host resources.
+func ValidateConfig(launch Config) error {
+	if launch.Binary == "" {
+		return errors.New("cloud-hypervisor binary is empty")
+	}
+	if launch.APISocket == "" || launch.PIDFile == "" {
+		return errors.New("cloud-hypervisor runtime paths are incomplete")
+	}
+	if launch.CPUs.Boot <= 0 || launch.Memory.Size <= 0 {
+		return errors.New("cloud-hypervisor CPU and memory must be positive")
+	}
+	if launch.Firmware != nil && launch.Firmware.Path == "" {
+		return errors.New("cloud-hypervisor firmware path is empty")
+	}
+	if launch.Firmware == nil && (launch.Kernel == nil || launch.Initramfs == nil || launch.Kernel.Path == "" || launch.Initramfs.Path == "") {
+		return errors.New("cloud-hypervisor boot configuration is incomplete")
+	}
+	for _, disk := range launch.Disks {
+		if disk.Path == "" {
+			return errors.New("cloud-hypervisor disk path is empty")
+		}
+	}
+	for _, network := range launch.Nets {
+		if network.TAP == "" || network.MAC == "" {
+			return errors.New("cloud-hypervisor network configuration is incomplete")
+		}
+	}
+	return nil
 }
 
 func newVsock(rec *vmstore.VMRecord) *Vsock {

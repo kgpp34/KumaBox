@@ -96,6 +96,32 @@ func TestStoreRecoversPreviousIndexGeneration(t *testing.T) {
 	}
 }
 
+func TestPreviewRecordDoesNotPersistOrCreateRuntimeFiles(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	record, err := PreviewRecord(CreateRequest{
+		Name: "preview", RootDisk: "/images/root.qcow2", Firmware: "/firmware.fd",
+		CPUs: 2, MemoryBytes: 512 << 20, Networks: []string{"none"},
+		RunDir: filepath.Join(root, "run"), LogDir: filepath.Join(root, "log"),
+	}, root, "kb_preview")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.ID != "kb_preview" || record.Name != "preview" {
+		t.Fatalf("preview record = %+v", record)
+	}
+	records, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("persisted preview records = %d", len(records))
+	}
+	if _, err := os.Stat(record.RunDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("preview run directory stat error = %v", err)
+	}
+}
+
 func TestDeleteRemovesRecordAndName(t *testing.T) {
 	dir := t.TempDir()
 	store := New(filepath.Join(dir, "data"))

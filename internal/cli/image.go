@@ -6,6 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -23,6 +27,7 @@ func newImageCommand(opts *rootOptions) *cobra.Command {
 		Use:   "image",
 		Short: "Manage KumaBox images",
 	}
+	cmd.AddCommand(newImageAddCommand(opts))
 	cmd.AddCommand(newImageImportCommand(opts))
 	cmd.AddCommand(newImagePullCommand(opts))
 	cmd.AddCommand(newImagePullOCICommand(opts))
@@ -31,6 +36,116 @@ func newImageCommand(opts *rootOptions) *cobra.Command {
 	cmd.AddCommand(newImageInspectCommand(opts))
 	cmd.AddCommand(newImageRMCommand(opts))
 	return cmd
+}
+
+type imageSourceKind string
+
+const (
+	imageSourceLocal imageSourceKind = "local"
+	imageSourceHTTP  imageSourceKind = "http"
+	imageSourceOCI   imageSourceKind = "oci"
+)
+
+func newImageAddCommand(opts *rootOptions) *cobra.Command {
+	var name, firmware, qemuImg, expectedSHA256 string
+	var platform, source, mkfsEROFS, agentProfile string
+	var concurrency int
+	var progress bool
+
+	cmd := &cobra.Command{
+		Use:   "add SOURCE",
+		Short: "Add a local, HTTP, or OCI image",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if concurrency < 0 {
+				return errors.New("--concurrency must not be negative")
+			}
+			kind, err := classifyImageSource(args[0])
+			if err != nil {
+				return err
+			}
+			if kind != imageSourceOCI && firmware == "" {
+				return errors.New("--firmware is required for local and HTTP cloud images")
+			}
+			cfg, err := loadConfig(opts)
+			if err != nil {
+				return err
+			}
+			stores, err := configuredStores(cfg)
+			if err != nil {
+				return err
+			}
+			if stores.Metadata != nil {
+				defer func() { _ = stores.Metadata.Close() }()
+			}
+			mutation, err := stores.Guard.BeginMutation(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer mutation.Release() //nolint:errcheck
+
+			var record *imagestore.ImageRecord
+			switch kind {
+			case imageSourceLocal:
+				record, err = stores.Images.ImportLocal(imagestore.ImportRequest{
+					Name: name, File: args[0], Firmware: firmware, QemuImgPath: qemuImg,
+				})
+			case imageSourceHTTP:
+				record, err = stores.Images.Pull(imagestore.PullRequest{
+					Name: name, URL: args[0], Firmware: firmware,
+					QemuImgPath: qemuImg, SHA256: expectedSHA256,
+				})
+			case imageSourceOCI:
+				record, err = ocibuild.NewWithStores(cfg.Runtime.RootDir, stores.OCI, stores.Images).Build(cmd.Context(), ocibuild.BuildRequest{
+					Name: name, Ref: args[0], Platform: platform, Source: source,
+					MkfsEROFS: mkfsEROFS, Concurrency: concurrency, AgentProfile: agentProfile,
+					Progress: cliOCIProgress(cmd, progress),
+				})
+			default:
+				return fmt.Errorf("unsupported image source kind %q", kind)
+			}
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), record)
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "", "image name")
+	cmd.Flags().StringVar(&firmware, "firmware", "", "UEFI firmware path for cloud images")
+	cmd.Flags().StringVar(&qemuImg, "qemu-img", "qemu-img", "qemu-img binary path")
+	cmd.Flags().StringVar(&expectedSHA256, "sha256", "", "expected HTTP image sha256 digest")
+	cmd.Flags().StringVar(&platform, "platform", ociresolver.DefaultPlatform(), "OCI platform os/arch[/variant]")
+	cmd.Flags().StringVar(&source, "source", "auto", "OCI source: auto, registry, or daemon")
+	cmd.Flags().StringVar(&mkfsEROFS, "mkfs-erofs", "mkfs.erofs", "mkfs.erofs binary path")
+	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "maximum concurrent OCI layer conversions")
+	cmd.Flags().StringVar(&agentProfile, "agent-profile", imagestore.AgentProfileAuto, "guest agent profile")
+	cmd.Flags().BoolVar(&progress, "progress", false, "print OCI import progress to stderr")
+	_ = cmd.MarkFlagRequired("name")
+	return cmd
+}
+
+func classifyImageSource(source string) (imageSourceKind, error) {
+	parsed, err := url.Parse(source)
+	if err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") {
+		if parsed.Host == "" {
+			return "", fmt.Errorf("invalid HTTP image source: %s", source)
+		}
+		return imageSourceHTTP, nil
+	}
+	info, statErr := os.Stat(source)
+	if statErr == nil {
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("local image source is not a regular file: %s", source)
+		}
+		return imageSourceLocal, nil
+	}
+	if !errors.Is(statErr, os.ErrNotExist) {
+		return "", fmt.Errorf("inspect image source %s: %w", source, statErr)
+	}
+	if filepath.IsAbs(source) || strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../") {
+		return "", fmt.Errorf("local image source does not exist: %s", source)
+	}
+	return imageSourceOCI, nil
 }
 
 func newImagePullOCICommand(opts *rootOptions) *cobra.Command {

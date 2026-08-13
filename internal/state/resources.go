@@ -30,7 +30,9 @@ type ImageState interface {
 type SnapshotState interface {
 	Reserve(context.Context, string) (*snapshot.Build, error)
 	Import(context.Context, snapshot.ImportOptions) (*snapshot.Record, error)
+	ImportDirectory(context.Context, string, string, string) (*snapshot.Record, error)
 	Export(context.Context, string, snapshot.ExportOptions) error
+	ExportDirectory(context.Context, string, string) error
 	List() ([]*snapshot.Record, error)
 	Scan() ([]*snapshot.Record, error)
 	IsLeased(string) (bool, error)

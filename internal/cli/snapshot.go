@@ -96,15 +96,25 @@ func newSnapshotRestoreCommand(opts *rootOptions) *cobra.Command {
 }
 
 func newSnapshotImportCommand(opts *rootOptions) *cobra.Command {
-	var name string
+	var name, fromDirectory string
 	cmd := &cobra.Command{
-		Use: "import PACKAGE", Short: "Import an untrusted snapshot package", Args: cobra.ExactArgs(1),
+		Use: "import [PACKAGE]", Short: "Import a snapshot package or directory", Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 && fromDirectory == "" {
+				return fmt.Errorf("provide PACKAGE or --from-dir")
+			}
+			if len(args) != 0 && fromDirectory != "" {
+				return fmt.Errorf("PACKAGE and --from-dir are mutually exclusive")
+			}
 			cfg, err := loadConfig(opts)
 			if err != nil {
 				return err
 			}
-			input, err := filepath.Abs(args[0])
+			input := fromDirectory
+			if len(args) != 0 {
+				input = args[0]
+			}
+			input, err = filepath.Abs(input)
 			if err != nil {
 				return err
 			}
@@ -112,12 +122,20 @@ func newSnapshotImportCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if stores.Metadata != nil {
+				defer func() { _ = stores.Metadata.Close() }()
+			}
 			mutation, err := stores.Guard.BeginMutation(cmd.Context())
 			if err != nil {
 				return err
 			}
 			defer mutation.Release() //nolint:errcheck
-			rec, err := stores.Snapshots.Import(cmd.Context(), snapshot.ImportOptions{Input: input, Name: name, QEMUImgBinary: cfg.Storage.QEMUImgBinary})
+			var rec *snapshot.Record
+			if fromDirectory != "" {
+				rec, err = stores.Snapshots.ImportDirectory(cmd.Context(), input, name, cfg.Storage.QEMUImgBinary)
+			} else {
+				rec, err = stores.Snapshots.Import(cmd.Context(), snapshot.ImportOptions{Input: input, Name: name, QEMUImgBinary: cfg.Storage.QEMUImgBinary})
+			}
 			if err != nil {
 				return err
 			}
@@ -125,26 +143,49 @@ func newSnapshotImportCommand(opts *rootOptions) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "imported snapshot name")
+	cmd.Flags().StringVar(&fromDirectory, "from-dir", "", "unpacked snapshot directory")
 	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }
 
 func newSnapshotExportCommand(opts *rootOptions) *cobra.Command {
-	var output, compression string
+	var output, toDirectory, compression string
 	cmd := &cobra.Command{
 		Use: "export SNAPSHOT", Short: "Export a portable snapshot package", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if output == "" && toDirectory == "" {
+				return fmt.Errorf("provide --output or --to-dir")
+			}
+			if output != "" && toDirectory != "" {
+				return fmt.Errorf("--output and --to-dir are mutually exclusive")
+			}
+			if toDirectory != "" && cmd.Flags().Changed("compression") {
+				return fmt.Errorf("--compression cannot be used with --to-dir")
+			}
 			cfg, err := loadConfig(opts)
 			if err != nil {
 				return err
 			}
-			absolute, err := filepath.Abs(output)
+			destination := output
+			if toDirectory != "" {
+				destination = toDirectory
+			}
+			absolute, err := filepath.Abs(destination)
 			if err != nil {
 				return fmt.Errorf("resolve export output: %w", err)
 			}
 			stores, err := configuredStores(cfg)
 			if err != nil {
 				return err
+			}
+			if stores.Metadata != nil {
+				defer func() { _ = stores.Metadata.Close() }()
+			}
+			if toDirectory != "" {
+				if err := stores.Snapshots.ExportDirectory(cmd.Context(), args[0], absolute); err != nil {
+					return err
+				}
+				return writeJSON(cmd.OutOrStdout(), map[string]string{"snapshot": args[0], "directory": absolute})
 			}
 			if err := stores.Snapshots.Export(cmd.Context(), args[0], snapshot.ExportOptions{Output: absolute, Compression: compression}); err != nil {
 				return err
@@ -153,8 +194,8 @@ func newSnapshotExportCommand(opts *rootOptions) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&output, "output", "", "output .kbsnap path")
+	cmd.Flags().StringVar(&toDirectory, "to-dir", "", "output unpacked snapshot directory")
 	cmd.Flags().StringVar(&compression, "compression", "none", "compression: none, gzip, or zstd")
-	_ = cmd.MarkFlagRequired("output")
 	return cmd
 }
 

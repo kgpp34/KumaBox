@@ -410,6 +410,21 @@ func TestRenderConfigRejectsInvalidNetworkQueues(t *testing.T) {
 	}
 }
 
+func TestValidateConfigRejectsIncompleteLaunchPlan(t *testing.T) {
+	valid := Config{
+		Binary: "cloud-hypervisor", APISocket: "/run/ch.sock", PIDFile: "/run/ch.pid",
+		CPUs: CPUs{Boot: 1}, Memory: Memory{Size: 512 << 20},
+		Kernel: &Kernel{Path: "/boot/vmlinuz"}, Initramfs: &Initramfs{Path: "/boot/initrd"},
+	}
+	if err := ValidateConfig(valid); err != nil {
+		t.Fatalf("valid launch plan: %v", err)
+	}
+	valid.Memory.Size = 0
+	if err := ValidateConfig(valid); err == nil {
+		t.Fatal("expected invalid memory error")
+	}
+}
+
 func TestRenderConfigSkipsCidataAfterFirstBoot(t *testing.T) {
 	dir := t.TempDir()
 	rec := &vmstore.VMRecord{

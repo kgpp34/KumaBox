@@ -94,6 +94,27 @@ type CreateRequest struct {
 	LogDir         string
 }
 
+// PreviewRecord normalizes and validates a VM request without persisting it.
+// It is used by dry-run tooling that must share the exact record defaults and
+// path layout with Create while producing no metadata or host side effects.
+func PreviewRecord(req CreateRequest, rootDir, id string) (*VMRecord, error) {
+	if err := validateCreateRequest(req); err != nil {
+		return nil, err
+	}
+	if id == "" {
+		id = "kb_preview"
+	}
+	now := time.Now().UTC()
+	record, err := newRecord(id, req, rootDir, now)
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidateStorageContract(record, rootDir); err != nil {
+		return nil, err
+	}
+	return cloneRecord(record), nil
+}
+
 // Create validates and inserts a VM record.
 //
 // Name uniqueness is enforced inside the store lock. On success the returned

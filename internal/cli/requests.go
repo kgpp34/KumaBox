@@ -68,6 +68,9 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 	if err != nil {
 		return vmstore.CreateRequest{}, err
 	}
+	if stores.Metadata != nil {
+		defer func() { _ = stores.Metadata.Close() }()
+	}
 	image, err := stores.Images.Inspect(args[0])
 	if err != nil {
 		return vmstore.CreateRequest{}, fmt.Errorf("resolve image %q: %w", args[0], err)
