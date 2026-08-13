@@ -119,7 +119,11 @@ func verifyDatabaseFile(ctx context.Context, path string) (err error) {
 	return nil
 }
 
-func verifyDatabaseIdentity(ctx context.Context, db *sql.DB) error {
+type queryRower interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func verifyDatabaseIdentity(ctx context.Context, db queryRower) error {
 	var applicationID, schemaVersion int
 	if err := db.QueryRowContext(ctx, "PRAGMA application_id").Scan(&applicationID); err != nil {
 		return mapError(err)

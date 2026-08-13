@@ -272,6 +272,84 @@ func TestOpenRequiresInitialization(t *testing.T) {
 	}
 }
 
+func TestInitAddsNewNamespaceWithoutLosingExistingRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metastore.db")
+	vms := Namespace{Name: "vms", Tables: []metastore.Table{"records"}}
+	usage := Namespace{Name: "metering", Tables: []metastore.Table{"usage-events"}}
+	if err := Init(t.Context(), path, vms); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(path, vms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(t.Context(), metastore.Scope{Write: "vms"}, metastore.CommitDurable, func(writer metastore.Writer) error {
+		return writer.PutRaw(t.Context(), "vms", "records", "vm-1", []byte(`{"name":"preserved"}`))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Init(t.Context(), path, vms, usage); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(path, vms, usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close upgraded store: %v", err)
+		}
+	})
+	if err := store.View(t.Context(), []metastore.Namespace{"vms"}, func(reader metastore.Reader) error {
+		raw, found, err := reader.GetRaw(t.Context(), "vms", "records", "vm-1")
+		if err != nil {
+			return err
+		}
+		if !found || string(raw) != `{"name":"preserved"}` {
+			t.Fatalf("preserved record = %s, found = %v", raw, found)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := store.Status(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status) != 2 {
+		t.Fatalf("namespace status = %+v", status)
+	}
+}
+
+func TestInitRefusesToUpgradeIncompleteExistingNamespace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metastore.db")
+	vms := Namespace{Name: "vms", Tables: []metastore.Table{"records"}}
+	if err := Init(t.Context(), path, vms); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE "vms__records"`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	usage := Namespace{Name: "metering", Tables: []metastore.Table{"usage-events"}}
+	if err := Init(t.Context(), path, vms, usage); !errors.Is(err, metastore.ErrCorrupt) {
+		t.Fatalf("upgrade incomplete namespace error = %v", err)
+	}
+	if _, err := Open(path, vms, usage); !errors.Is(err, metastore.ErrCorrupt) {
+		t.Fatalf("partially upgraded store error = %v", err)
+	}
+}
+
 func TestStoreSupportsConcurrentReadersAndSerializedWriters(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metastore.db")
 	definition := Namespace{Name: "vms", Tables: []metastore.Table{"records"}}

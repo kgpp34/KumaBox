@@ -539,8 +539,12 @@ func (s *Store) tablesFor(namespaces []metastore.Namespace) map[metastore.Namesp
 }
 
 func tableName(namespace metastore.Namespace, table metastore.Table) string {
-	name := string(namespace) + "__" + string(table)
+	name := rawTableName(namespace, table)
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
+func rawTableName(namespace metastore.Namespace, table metastore.Table) string {
+	return string(namespace) + "__" + string(table)
 }
 
 func mapError(err error) error {

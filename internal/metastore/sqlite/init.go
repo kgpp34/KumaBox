@@ -11,9 +11,10 @@ import (
 	"github.com/kumabox/kumabox/internal/metastore"
 )
 
-// Init creates a new SQLite metadata database in one transaction. Existing
-// populated files are never overwritten; an empty file left by an interrupted
-// initialization may be safely retried.
+// Init creates a new SQLite metadata database or adds newly declared
+// namespaces to an existing compatible KumaBox database. Existing namespaces
+// are validated and never rebuilt, so missing tables remain a corruption error
+// rather than being mistaken for an upgrade.
 func Init(ctx context.Context, path string, definitions ...Namespace) (err error) {
 	if err := RefuseConversion(path); err != nil {
 		return err
@@ -43,7 +44,7 @@ func initStore(ctx context.Context, path string, definitions ...Namespace) (err 
 			return inspectErr
 		}
 		if !empty {
-			return fmt.Errorf("sqlite metadata database %s already exists: %w", path, metastore.ErrConflict)
+			return upgradeStore(ctx, path, namespaces)
 		}
 		if err := os.Remove(path); err != nil {
 			return fmt.Errorf("remove incomplete sqlite metadata database: %w", err)
@@ -88,6 +89,90 @@ func initStore(ctx context.Context, path string, definitions ...Namespace) (err 
 	return syncDatabase(path)
 }
 
+func upgradeStore(ctx context.Context, path string, namespaces map[metastore.Namespace]map[metastore.Table]struct{}) (err error) {
+	db, err := openDatabase(path, "FULL", true)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, db.Close()) }()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return mapError(err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	if err := verifyDatabaseIdentity(ctx, tx); err != nil {
+		return err
+	}
+
+	added := false
+	for namespace, tables := range namespaces {
+		exists, err := namespaceStateExists(ctx, tx, namespace)
+		if err != nil {
+			return err
+		}
+		if exists {
+			if err := verifyNamespaceTables(ctx, tx, namespace, tables); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := createNamespace(ctx, tx, namespace, tables); err != nil {
+			return err
+		}
+		added = true
+	}
+	if !added {
+		return fmt.Errorf("sqlite metadata database %s already contains every declared namespace: %w", path, metastore.ErrConflict)
+	}
+	if err := tx.Commit(); err != nil {
+		return mapError(err)
+	}
+	if _, err := db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		return mapError(err)
+	}
+	return syncDatabase(path)
+}
+
+func namespaceStateExists(ctx context.Context, tx *sql.Tx, namespace metastore.Namespace) (bool, error) {
+	var schemaVersion int
+	err := tx.QueryRowContext(ctx, "SELECT schema_version FROM "+metadataStateTable+" WHERE namespace = ?", namespace).Scan(&schemaVersion)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, mapError(err)
+	}
+	if schemaVersion != databaseSchemaVersion {
+		return false, fmt.Errorf("metadata namespace %q has unsupported schema version %d: %w", namespace, schemaVersion, metastore.ErrCorrupt)
+	}
+	return true, nil
+}
+
+func verifyNamespaceTables(ctx context.Context, tx *sql.Tx, namespace metastore.Namespace, tables map[metastore.Table]struct{}) error {
+	for table := range tables {
+		var count int
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?", rawTableName(namespace, table)).Scan(&count); err != nil {
+			return mapError(err)
+		}
+		if count != 1 {
+			return fmt.Errorf("metadata namespace %q is missing table %q: %w", namespace, table, metastore.ErrCorrupt)
+		}
+	}
+	return nil
+}
+
+func createNamespace(ctx context.Context, tx *sql.Tx, namespace metastore.Namespace, tables map[metastore.Table]struct{}) error {
+	for table := range tables {
+		query := "CREATE TABLE " + tableName(namespace, table) + " (id TEXT PRIMARY KEY NOT NULL, data BLOB NOT NULL)"
+		if _, err := tx.ExecContext(ctx, query); err != nil {
+			return mapError(err)
+		}
+	}
+	_, err := tx.ExecContext(ctx, "INSERT INTO "+metadataStateTable+" (namespace, state, schema_version, updated_at) VALUES (?, 'initialized', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))", namespace, databaseSchemaVersion)
+	return mapError(err)
+}
+
 func isEmptyDatabase(path string) (empty bool, err error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -113,14 +198,8 @@ func createSchema(ctx context.Context, tx *sql.Tx, namespaces map[metastore.Name
 		return mapError(err)
 	}
 	for namespace, tables := range namespaces {
-		for table := range tables {
-			query := "CREATE TABLE " + tableName(namespace, table) + " (id TEXT PRIMARY KEY NOT NULL, data BLOB NOT NULL)"
-			if _, err := tx.ExecContext(ctx, query); err != nil {
-				return mapError(err)
-			}
-		}
-		if _, err := tx.ExecContext(ctx, "INSERT INTO "+metadataStateTable+" (namespace, state, schema_version, updated_at) VALUES (?, 'initialized', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))", namespace, databaseSchemaVersion); err != nil {
-			return mapError(err)
+		if err := createNamespace(ctx, tx, namespace, tables); err != nil {
+			return err
 		}
 	}
 	return nil

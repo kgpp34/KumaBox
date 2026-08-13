@@ -9,6 +9,7 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/metastore"
 	metasqlite "github.com/kumabox/kumabox/internal/metastore/sqlite"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/ocistore"
@@ -41,6 +42,54 @@ func TestNewStoreSetForConfigUsesOneSQLiteEngine(t *testing.T) {
 		t.Fatalf("namespace status = %d, err = %v", len(status), err)
 	}
 	if err := stores.Metadata.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInitSQLiteMetadataUpgradesPreMeteringDatabase(t *testing.T) {
+	cfg := config.Default()
+	cfg.Runtime.RootDir = t.TempDir()
+	cfg.Metadata.Backend = "sqlite"
+	definitions := sqliteDefinitions()
+	legacyDefinitions := definitions[:len(definitions)-1]
+	if err := metasqlite.Init(t.Context(), SQLiteMetadataPath(cfg), legacyDefinitions...); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := metasqlite.Open(SQLiteMetadataPath(cfg), legacyDefinitions...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Update(t.Context(), metastore.Scope{Write: "vms"}, metastore.CommitDurable, func(writer metastore.Writer) error {
+		return writer.PutRaw(t.Context(), "vms", "vm-index", "vm-before-upgrade", []byte(`{"name":"preserved"}`))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := InitSQLiteMetadata(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	stores, err := NewStoreSetForConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := stores.Metadata.Close(); err != nil {
+			t.Errorf("close upgraded metadata: %v", err)
+		}
+	})
+	if err := stores.Metadata.View(t.Context(), []metastore.Namespace{"vms"}, func(reader metastore.Reader) error {
+		raw, found, err := reader.GetRaw(t.Context(), "vms", "vm-index", "vm-before-upgrade")
+		if err != nil {
+			return err
+		}
+		if !found || string(raw) != `{"name":"preserved"}` {
+			t.Fatalf("preserved VM metadata = %s, found = %v", raw, found)
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 }
