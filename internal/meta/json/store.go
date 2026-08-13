@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/lockfile"
 	"github.com/kumabox/kumabox/internal/meta"
 )
@@ -321,7 +322,7 @@ func (s *Store) commit(ctx context.Context, definitions []Namespace, models map[
 		if err != nil {
 			return fmt.Errorf("encode metadata namespace %s: %w", write, err)
 		}
-		if err := writeAtomic(definition.FilePath, raw, current.raw); err != nil {
+		if err := writeAtomic(ctx, definition.FilePath, raw, current.raw); err != nil {
 			return fmt.Errorf("commit metadata namespace %s: %w", write, err)
 		}
 		return nil
@@ -460,22 +461,22 @@ func (w *writer) checkWrite(ctx context.Context, namespace meta.Namespace, table
 	return nil
 }
 
-func writeAtomic(path string, raw, previous []byte) error {
+func writeAtomic(ctx context.Context, path string, raw, previous []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create metadata directory: %w", err)
 	}
 	if len(previous) > 0 {
-		if err := writeFileSync(path+previousSuffix, previous, ".prev-*.tmp"); err != nil {
+		if err := writeFileSync(ctx, path+previousSuffix, previous, ".prev-*.tmp", false); err != nil {
 			return fmt.Errorf("preserve previous metadata generation: %w", err)
 		}
 	}
-	if err := writeFileSync(path, raw, ".meta-*.tmp"); err != nil {
+	if err := writeFileSync(ctx, path, raw, ".meta-*.tmp", true); err != nil {
 		return err
 	}
 	return syncDirectory(filepath.Dir(path))
 }
 
-func writeFileSync(path string, raw []byte, pattern string) error {
+func writeFileSync(ctx context.Context, path string, raw []byte, pattern string, inject bool) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), pattern)
 	if err != nil {
 		return fmt.Errorf("create metadata temporary file: %w", err)
@@ -493,8 +494,18 @@ func writeFileSync(path string, raw []byte, pattern string) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close metadata temporary file: %w", err)
 	}
+	if inject {
+		if err := fault.Check(ctx, fault.MetadataJSONBeforeRename); err != nil {
+			return err
+		}
+	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("publish metadata file: %w", err)
+	}
+	if inject {
+		if err := fault.Check(ctx, fault.MetadataJSONAfterRename); err != nil {
+			return err
+		}
 	}
 	return nil
 }

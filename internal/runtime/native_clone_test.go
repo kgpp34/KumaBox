@@ -12,6 +12,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/config"
+	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -110,6 +111,45 @@ func TestCloneNativeSnapshotPreservesFailedBackend(t *testing.T) {
 	}
 	if preserved.State != vmstore.StateError || preserved.Restore == nil || preserved.Restore.State != "failed" {
 		t.Fatalf("failed clone = %+v", preserved)
+	}
+}
+
+func TestCloneNativeSnapshotFailureBoundaries(t *testing.T) {
+	tests := []struct {
+		name  string
+		point fault.Point
+	}{
+		{name: "after stage", point: fault.CloneAfterStage},
+		{name: "after disk commit", point: fault.CloneAfterDiskCommit},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt, store, _, ready := newNativeCloneRuntime(t)
+			rt.backend = backendFake{render: func(*vmstore.VMRecord) error { return nil }}
+			injected := errors.New("injected clone interruption")
+			ctx := fault.WithInjector(t.Context(), fault.InjectorFunc(func(point fault.Point) error {
+				if point == tt.point {
+					return injected
+				}
+				return nil
+			}))
+			if _, err := rt.CloneNativeSnapshot(ctx, ready.ID, NativeCloneOptions{Name: "boundary-clone", Networks: []string{"none"}}); !errors.Is(err, injected) {
+				t.Fatalf("CloneNativeSnapshot() error = %v, want %v", err, injected)
+			}
+			preserved, err := store.Inspect("boundary-clone")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if preserved.State != vmstore.StateError || preserved.Restore == nil || preserved.Restore.State != "failed" {
+				t.Fatalf("failed clone state = %+v", preserved)
+			}
+			if _, err := os.Stat(filepath.Join(preserved.RunDir, ".restore-staging")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("restore staging remains: %v", err)
+			}
+			if leased, err := snapshot.NewStore(store.RootDir()).IsLeased(ready.ID); err != nil || leased {
+				t.Fatalf("snapshot lease after failure = %t, err = %v", leased, err)
+			}
+		})
 	}
 }
 

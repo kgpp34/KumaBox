@@ -12,6 +12,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/config"
+	"github.com/kumabox/kumabox/internal/fault"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -793,6 +794,48 @@ func TestDeleteVMCleansNetworkResources(t *testing.T) {
 	}
 }
 
+func TestDeleteVMRetriesAfterManagedCleanup(t *testing.T) {
+	rootDir := t.TempDir()
+	store := vmstore.New(rootDir)
+	rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	rt.cfg = testRuntimeConfig(rootDir)
+	rec, err := store.Create(vmstore.CreateRequest{
+		Name: "retry-delete", RootDisk: filepath.Join(rootDir, "root.raw"),
+		Kernel: filepath.Join(rootDir, "vmlinuz"), Initrd: filepath.Join(rootDir, "initrd"),
+		RunDir: filepath.Join(rootDir, "run"), LogDir: filepath.Join(rootDir, "log"), Network: "none",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	injected := fault.Interrupt(fault.DeleteBeforeRecordDelete)
+	ctx := fault.WithInjector(t.Context(), fault.InjectorFunc(func(point fault.Point) error {
+		if point == fault.DeleteBeforeRecordDelete {
+			return injected
+		}
+		return nil
+	}))
+	if _, err := rt.DeleteVMContext(ctx, rec.ID, false); !errors.Is(err, injected) {
+		t.Fatalf("DeleteVMContext() error = %v, want %v", err, injected)
+	}
+	if _, err := store.Inspect(rec.ID); err != nil {
+		t.Fatalf("VM record unavailable for retry: %v", err)
+	}
+	recovered := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	recovered.cfg = testRuntimeConfig(rootDir)
+	if _, err := recovered.DeleteVMContext(t.Context(), rec.ID, false); err != nil {
+		t.Fatalf("retry DeleteVMContext(): %v", err)
+	}
+	if err := recovered.ReconcileOperations(t.Context()); err != nil {
+		t.Fatalf("ReconcileOperations(): %v", err)
+	}
+	if recoverable, err := recovered.operations.Recoverable(t.Context()); err != nil || len(recoverable) != 0 {
+		t.Fatalf("recoverable operations after retry = %+v, err = %v", recoverable, err)
+	}
+	if _, err := store.Inspect(rec.ID); !errors.Is(err, vmstore.ErrNotFound) {
+		t.Fatalf("VM after retry error = %v, want ErrNotFound", err)
+	}
+}
+
 func TestDeleteVMMarksNetworkCleanupPendingOnFailure(t *testing.T) {
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")
@@ -862,6 +905,90 @@ func TestDeleteVMCleansCNIResources(t *testing.T) {
 	if len(records) != 0 {
 		t.Fatalf("network records after delete = %+v", records)
 	}
+}
+
+func TestCNIFailureBoundariesRollbackAndRetry(t *testing.T) {
+	t.Run("add rolls back provider side effect", func(t *testing.T) {
+		rootDir := t.TempDir()
+		store := vmstore.New(rootDir)
+		rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+		rt.cfg = testRuntimeConfig(rootDir)
+		withAddCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIAddRequest) (*kbnetwork.Allocation, error) {
+			return testCNIAllocation(req.VMID), nil
+		})
+		var deleted []kbnetwork.CNIDeleteRequest
+		withDeleteCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIDeleteRequest) error {
+			deleted = append(deleted, req)
+			return nil
+		})
+		injected := errors.New("injected after CNI ADD")
+		ctx := fault.WithInjector(t.Context(), fault.InjectorFunc(func(point fault.Point) error {
+			if point == fault.NetworkAfterAdd {
+				return injected
+			}
+			return nil
+		}))
+		_, err := rt.createVMContext(ctx, vmstore.CreateRequest{
+			Name: "cni-add-boundary", RootDisk: "base.qcow2", Kernel: "vmlinuz", Initrd: "initrd.img",
+			Network: "cni:default", RunDir: filepath.Join(rootDir, "run"), LogDir: filepath.Join(rootDir, "log"),
+		}, nil)
+		if !errors.Is(err, injected) {
+			t.Fatalf("createVMContext() error = %v, want %v", err, injected)
+		}
+		if len(deleted) != 1 {
+			t.Fatalf("CNI rollback calls = %d, want 1", len(deleted))
+		}
+		records, err := kbnetwork.NewStore(rootDir).List()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(records) != 0 {
+			t.Fatalf("provider records after ADD rollback = %+v", records)
+		}
+		if records, err := store.List(); err != nil || len(records) != 0 {
+			t.Fatalf("VM records after ADD rollback = %+v, err = %v", records, err)
+		}
+	})
+
+	t.Run("delete retains record for retry", func(t *testing.T) {
+		rootDir := t.TempDir()
+		store := vmstore.New(rootDir)
+		rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+		rt.cfg = testRuntimeConfig(rootDir)
+		withAddCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIAddRequest) (*kbnetwork.Allocation, error) {
+			return testCNIAllocation(req.VMID), nil
+		})
+		deletes := 0
+		withDeleteCNI(t, func(context.Context, string, config.NetworkConfig, kbnetwork.CNIDeleteRequest) error {
+			deletes++
+			return nil
+		})
+		withDeleteCNINetNS(t, func(string, string) error { return nil })
+		rec := createVMWithCNIConfig(t, rt, "cni-del-boundary")
+		injected := errors.New("injected after CNI DEL")
+		ctx := fault.WithInjector(t.Context(), fault.InjectorFunc(func(point fault.Point) error {
+			if point == fault.NetworkAfterDelete {
+				return injected
+			}
+			return nil
+		}))
+		if _, err := rt.DeleteVMContext(ctx, rec.ID, false); !errors.Is(err, injected) {
+			t.Fatalf("DeleteVMContext() error = %v, want %v", err, injected)
+		}
+		providerRecords, err := kbnetwork.NewStore(rootDir).List()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(providerRecords) != 1 || !providerRecords[0].Cleanup.Pending {
+			t.Fatalf("provider record after DEL interruption = %+v", providerRecords)
+		}
+		if _, err := rt.DeleteVMContext(t.Context(), rec.ID, false); err != nil {
+			t.Fatalf("retry DeleteVMContext(): %v", err)
+		}
+		if deletes != 2 {
+			t.Fatalf("CNI DEL calls = %d, want 2", deletes)
+		}
+	})
 }
 
 func TestDeleteVMCleansMultipleCNIResourcesAndNetNS(t *testing.T) {

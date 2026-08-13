@@ -76,7 +76,7 @@ func (s *Store) Import(ctx context.Context, opts ImportOptions) (record *Record,
 	for _, disk := range manifest.Disks {
 		size += disk.AllocatedSizeBytes
 	}
-	return build.Finalize(size)
+	return build.FinalizeContext(ctx, size)
 }
 
 func extractPackage(ctx context.Context, tr *tar.Reader, staging string) (*Manifest, map[string]string, error) {

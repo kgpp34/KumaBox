@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/meta"
 	metajson "github.com/kumabox/kumabox/internal/meta/json"
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -147,10 +148,22 @@ func (s *Store) Reserve(ctx context.Context, name string) (*Build, error) {
 
 // Finalize atomically publishes staged payload after snapshot.json exists.
 func (b *Build) Finalize(sizeBytes int64) (*Record, error) {
+	return b.FinalizeContext(context.Background(), sizeBytes)
+}
+
+// FinalizeContext publishes staged payload and is safe to retry when the data
+// directory rename completed but the metadata transaction did not.
+func (b *Build) FinalizeContext(ctx context.Context, sizeBytes int64) (*Record, error) {
 	if b == nil || b.finished {
 		return nil, errors.New("snapshot build is already finished")
 	}
-	manifest := filepath.Join(b.record.StagingDir, ManifestFile)
+	payloadDir := b.record.StagingDir
+	if _, err := os.Stat(payloadDir); errors.Is(err, os.ErrNotExist) {
+		payloadDir = b.record.DataDir
+	} else if err != nil {
+		return nil, fmt.Errorf("stat snapshot staging directory: %w", err)
+	}
+	manifest := filepath.Join(payloadDir, ManifestFile)
 	info, err := os.Stat(manifest)
 	if err != nil {
 		return nil, fmt.Errorf("validate snapshot manifest: %w", err)
@@ -158,7 +171,7 @@ func (b *Build) Finalize(sizeBytes int64) (*Record, error) {
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("snapshot manifest must be a regular file")
 	}
-	logicalBytes, allocatedBytes, err := payloadUsage(b.record.StagingDir)
+	logicalBytes, allocatedBytes, err := payloadUsage(payloadDir)
 	if err != nil {
 		return nil, fmt.Errorf("measure snapshot payload: %w", err)
 	}
@@ -172,13 +185,30 @@ func (b *Build) Finalize(sizeBytes int64) (*Record, error) {
 		if !ok || rec.State != StatePending {
 			return errors.New("pending snapshot record disappeared before finalize")
 		}
-		if _, err := os.Stat(rec.DataDir); err == nil {
-			return errors.New("snapshot data directory already exists")
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("stat snapshot data directory: %w", err)
+		_, dataErr := os.Stat(rec.DataDir)
+		_, stagingErr := os.Stat(rec.StagingDir)
+		if dataErr == nil && stagingErr == nil {
+			return errors.New("snapshot staging and data directories both exist")
 		}
-		if err := os.Rename(rec.StagingDir, rec.DataDir); err != nil {
-			return fmt.Errorf("publish snapshot data directory: %w", err)
+		if dataErr != nil && !errors.Is(dataErr, os.ErrNotExist) {
+			return fmt.Errorf("stat snapshot data directory: %w", dataErr)
+		}
+		if stagingErr != nil && !errors.Is(stagingErr, os.ErrNotExist) {
+			return fmt.Errorf("stat snapshot staging directory: %w", stagingErr)
+		}
+		if errors.Is(dataErr, os.ErrNotExist) {
+			if errors.Is(stagingErr, os.ErrNotExist) {
+				return errors.New("snapshot payload disappeared before finalize")
+			}
+			if err := fault.Check(ctx, fault.SnapshotBeforePublish); err != nil {
+				return err
+			}
+			if err := os.Rename(rec.StagingDir, rec.DataDir); err != nil {
+				return fmt.Errorf("publish snapshot data directory: %w", err)
+			}
+			if err := fault.Check(ctx, fault.SnapshotAfterRename); err != nil {
+				return err
+			}
 		}
 		now := time.Now().UTC()
 		rec.State = StateReady
@@ -241,7 +271,7 @@ func (b *Build) Abort() error {
 		}
 		return nil
 	})
-	removeErr := os.RemoveAll(b.record.StagingDir)
+	removeErr := errors.Join(os.RemoveAll(b.record.StagingDir), os.RemoveAll(b.record.DataDir))
 	releaseErr := b.lease.Release()
 	b.finished = true
 	return errors.Join(err, removeErr, releaseErr)

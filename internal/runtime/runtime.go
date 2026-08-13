@@ -11,6 +11,7 @@ import (
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/backend/cloudhypervisor"
 	"github.com/kumabox/kumabox/internal/config"
+	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/lockfile"
 	"github.com/kumabox/kumabox/internal/metering"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
@@ -86,7 +87,7 @@ func (r *Runtime) CreateStoppedSnapshot(ctx context.Context, ref, name string) (
 	if err != nil {
 		return nil, err
 	}
-	ready, err := build.Finalize(sizeBytes)
+	ready, err := build.FinalizeContext(ctx, sizeBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +198,7 @@ func (r *Runtime) createVMContext(ctx context.Context, req vmstore.CreateRequest
 		metrics.bindRecord(rec)
 		metrics.markImageResolved(time.Now())
 	}
-	if err := r.network.attachNetwork(rec); err != nil {
+	if err := r.network.attachNetwork(ctx, rec); err != nil {
 		_ = r.vmRecords.Delete(rec.ID)
 		return nil, err
 	}
@@ -539,7 +540,7 @@ func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (
 		}
 	}
 
-	if err := r.network.cleanupNetwork(observed); err != nil {
+	if err := r.network.cleanupNetwork(ctx, observed); err != nil {
 		return nil, err
 	}
 	if err := r.removeVMReferences(ctx, observed.ID); err != nil {
@@ -552,6 +553,9 @@ func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (
 		CheckedAt: time.Now().UTC(),
 	})
 	if err := r.storage.removeManagedDirs(observed); err != nil {
+		return nil, err
+	}
+	if err := fault.Check(ctx, fault.DeleteBeforeRecordDelete); err != nil {
 		return nil, err
 	}
 	if err := r.vmRecords.Delete(observed.ID); err != nil {
@@ -617,19 +621,19 @@ func (r *networkCoordinator) inspectNetwork(rec *vmstore.VMRecord) *kbnetwork.In
 	return result
 }
 
-func (r *networkCoordinator) attachNetwork(rec *vmstore.VMRecord) (resultErr error) {
-	operationID, err := r.beginOperation(context.Background(), operation.KindNetworkAttach, rec.ID)
+func (r *networkCoordinator) attachNetwork(ctx context.Context, rec *vmstore.VMRecord) (resultErr error) {
+	operationID, err := r.beginOperation(ctx, operation.KindNetworkAttach, rec.ID)
 	if err != nil {
 		return err
 	}
-	defer func() { resultErr = r.finishOperation(context.Background(), operationID, resultErr) }()
+	defer func() { resultErr = r.finishOperation(ctx, operationID, resultErr) }()
 	selections := networkSelections(rec)
 	if len(selections) == 0 {
 		return nil
 	}
 	attached := make([]kbnetwork.Config, 0, len(selections))
 	for index, selection := range selections {
-		allocation, err := r.attachNetworkConfig(rec, selection, index)
+		allocation, err := r.attachNetworkConfig(ctx, rec, selection, index)
 		if err != nil {
 			r.rollbackNetworkConfigs(rec, attached)
 			return err
@@ -646,8 +650,8 @@ func (r *networkCoordinator) attachNetwork(rec *vmstore.VMRecord) (resultErr err
 	return nil
 }
 
-func (r *networkCoordinator) attachNetworkConfig(rec *vmstore.VMRecord, selection string, index int) (*kbnetwork.Allocation, error) {
-	allocation, _, err := r.attachNetworkConfigWithExisting(context.Background(), rec, selection, index, nil)
+func (r *networkCoordinator) attachNetworkConfig(ctx context.Context, rec *vmstore.VMRecord, selection string, index int) (*kbnetwork.Allocation, error) {
+	allocation, _, err := r.attachNetworkConfigWithExisting(ctx, rec, selection, index, nil)
 	return allocation, err
 }
 
@@ -740,6 +744,13 @@ func (r *networkCoordinator) attachCNIConfig(
 	if err != nil {
 		return nil, err
 	}
+	if err := fault.Check(ctx, fault.NetworkAfterAdd); err != nil {
+		rollbackErr := deleteCNI(ctx, r.cfg.Runtime.RootDir, r.cfg.Network, kbnetwork.CNIDeleteRequest{
+			VMID: rec.ID, Network: selection, IfName: allocation.Record.IfName,
+			TAP: allocation.Record.TAP, NetNSPath: allocation.Record.NetnsPath,
+		})
+		return nil, errors.Join(err, rollbackErr)
+	}
 	networkStore := r.storeSet.Networks
 	if err := networkStore.UpsertRecord(allocation.Record); err != nil {
 		_ = deleteCNI(ctx, r.cfg.Runtime.RootDir, r.cfg.Network, kbnetwork.CNIDeleteRequest{
@@ -761,12 +772,12 @@ func (r *networkCoordinator) rollbackNetwork(rec *vmstore.VMRecord) {
 	r.rollbackNetworkConfigs(rec, rec.NetworkConfigs)
 }
 
-func (r *networkCoordinator) cleanupNetwork(rec *vmstore.VMRecord) (resultErr error) {
-	operationID, err := r.beginOperation(context.Background(), operation.KindNetworkCleanup, rec.ID)
+func (r *networkCoordinator) cleanupNetwork(ctx context.Context, rec *vmstore.VMRecord) (resultErr error) {
+	operationID, err := r.beginOperation(ctx, operation.KindNetworkCleanup, rec.ID)
 	if err != nil {
 		return err
 	}
-	defer func() { resultErr = r.finishOperation(context.Background(), operationID, resultErr) }()
+	defer func() { resultErr = r.finishOperation(ctx, operationID, resultErr) }()
 	if rec == nil || len(rec.NetworkConfigs) == 0 {
 		return nil
 	}
@@ -784,7 +795,7 @@ func (r *networkCoordinator) cleanupNetwork(rec *vmstore.VMRecord) (resultErr er
 		if nc.Backend == kbnetwork.ProviderCNI {
 			preserveCNI = true
 		}
-		if err := cleanupNetworkConfig(context.Background(), store, allocator, r.cfg, rec, nc, preserveCNI); err != nil {
+		if err := cleanupNetworkConfig(ctx, store, allocator, r.cfg, rec, nc, preserveCNI); err != nil {
 			// Preserve the provider record when cleanup fails. A later GC or
 			// explicit retry needs the original tap/IP metadata to finish the
 			// cleanup safely.
@@ -827,6 +838,9 @@ func cleanupNetworkConfig(
 			NetNSPath:     nc.NetnsPath,
 			PreserveNetNS: preserveCNINetNS,
 		}); err != nil {
+			return err
+		}
+		if err := fault.Check(ctx, fault.NetworkAfterDelete); err != nil {
 			return err
 		}
 		if err := store.DeleteRecord(nc.ID); err != nil {

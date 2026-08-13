@@ -112,7 +112,7 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 	if err != nil {
 		return nil, err
 	}
-	ready, err := build.Finalize(totalSize)
+	ready, err := build.FinalizeContext(ctx, totalSize)
 	if err != nil {
 		return nil, err
 	}

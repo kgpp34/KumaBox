@@ -137,7 +137,7 @@ func (r *Runtime) persistHibernationSnapshot(ctx context.Context, build *snapsho
 	if err != nil {
 		return nil, err
 	}
-	ready, err := build.Finalize(totalSize)
+	ready, err := build.FinalizeContext(ctx, totalSize)
 	if err != nil {
 		return nil, err
 	}

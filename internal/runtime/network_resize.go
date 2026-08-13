@@ -63,7 +63,7 @@ func (r *Runtime) resizeNetworksLocked(ctx context.Context, controller backend.N
 		}
 		added := make([]kbnetwork.Config, 0, target-current)
 		for index := current; index < target; index++ {
-			allocation, err := r.network.attachNetworkConfig(rec, selection, index)
+			allocation, err := r.network.attachNetworkConfig(ctx, rec, selection, index)
 			if err != nil {
 				for _, previous := range added {
 					_ = controller.DetachNetwork(ctx, rec, previous)

@@ -8,11 +8,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/lockfile"
 	"github.com/kumabox/kumabox/internal/meta"
 )
-
-var testBackupStep func(string) error
 
 // Backup atomically replaces destination with a verified, single-file SQLite
 // snapshot. A failed run removes only its temporary file and leaves any
@@ -68,14 +67,8 @@ func Backup(ctx context.Context, sourcePath, destinationPath string) (err error)
 	if err := vacuumInto(ctx, sourcePath, temporaryPath); err != nil {
 		return err
 	}
-	if err := backupStep("vacuumed"); err != nil {
-		return err
-	}
 	if err := verifyDatabaseFile(ctx, temporaryPath); err != nil {
 		return fmt.Errorf("verify sqlite backup: %w", err)
-	}
-	if err := backupStep("verified"); err != nil {
-		return err
 	}
 	if err := os.Chmod(temporaryPath, 0o600); err != nil {
 		return fmt.Errorf("set sqlite backup permissions: %w", err)
@@ -83,14 +76,11 @@ func Backup(ctx context.Context, sourcePath, destinationPath string) (err error)
 	if err := syncFile(temporaryPath); err != nil {
 		return err
 	}
-	if err := backupStep("synced"); err != nil {
+	if err := fault.Check(ctx, fault.MetadataBackupBeforeSwap); err != nil {
 		return err
 	}
 	if err := os.Rename(temporaryPath, destinationPath); err != nil {
 		return fmt.Errorf("publish sqlite backup: %w", err)
-	}
-	if err := backupStep("renamed"); err != nil {
-		return err
 	}
 	return syncParent(filepath.Dir(destinationPath))
 }
@@ -176,11 +166,4 @@ func syncParent(path string) (err error) {
 		return fmt.Errorf("sync sqlite backup directory: %w", err)
 	}
 	return nil
-}
-
-func backupStep(step string) error {
-	if testBackupStep == nil {
-		return nil
-	}
-	return testBackupStep(step)
 }

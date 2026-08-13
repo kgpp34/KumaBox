@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/meta"
 )
 
@@ -72,14 +73,13 @@ func TestBackupFailurePreservesPublishedBackup(t *testing.T) {
 	writeBackupRecord(t, store, "unpublished")
 
 	injected := errors.New("injected backup failure")
-	testBackupStep = func(step string) error {
-		if step == "verified" {
+	ctx := fault.WithInjector(t.Context(), fault.InjectorFunc(func(point fault.Point) error {
+		if point == fault.MetadataBackupBeforeSwap {
 			return injected
 		}
 		return nil
-	}
-	err = Backup(t.Context(), sourcePath, destinationPath)
-	testBackupStep = nil
+	}))
+	err = Backup(ctx, sourcePath, destinationPath)
 	if !errors.Is(err, injected) {
 		t.Fatalf("backup error = %v", err)
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -52,6 +53,72 @@ func TestStoreReserveFinalizeAndList(t *testing.T) {
 	inspected, err := store.Inspect(ready.ID[:10])
 	if err != nil || inspected.ID != ready.ID {
 		t.Fatalf("inspect prefix = %+v, err = %v", inspected, err)
+	}
+}
+
+func TestBuildFinalizeRetriesAfterPayloadRename(t *testing.T) {
+	store := NewStore(t.TempDir())
+	build, err := store.Reserve(t.Context(), "retry-publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = build.Abort() })
+	if err := os.WriteFile(filepath.Join(build.Record().StagingDir, ManifestFile), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	injected := errors.New("injected after payload rename")
+	ctx := fault.WithInjector(t.Context(), fault.InjectorFunc(func(point fault.Point) error {
+		if point == fault.SnapshotAfterRename {
+			return injected
+		}
+		return nil
+	}))
+	if _, err := build.FinalizeContext(ctx, 4096); !errors.Is(err, injected) {
+		t.Fatalf("FinalizeContext() error = %v, want %v", err, injected)
+	}
+	if _, err := os.Stat(build.Record().DataDir); err != nil {
+		t.Fatalf("renamed payload missing: %v", err)
+	}
+	if records, err := store.List(); err != nil || len(records) != 0 {
+		t.Fatalf("ready snapshots before retry = %+v, err = %v", records, err)
+	}
+	ready, err := build.FinalizeContext(t.Context(), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready.State != StateReady {
+		t.Fatalf("retry state = %s, want %s", ready.State, StateReady)
+	}
+}
+
+func TestBuildAbortRemovesRenamedUnpublishedPayload(t *testing.T) {
+	store := NewStore(t.TempDir())
+	build, err := store.Reserve(t.Context(), "abort-renamed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(build.Record().StagingDir, ManifestFile), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	injected := errors.New("injected after payload rename")
+	ctx := fault.WithInjector(t.Context(), fault.InjectorFunc(func(point fault.Point) error {
+		if point == fault.SnapshotAfterRename {
+			return injected
+		}
+		return nil
+	}))
+	if _, err := build.FinalizeContext(ctx, 1); !errors.Is(err, injected) {
+		t.Fatalf("FinalizeContext() error = %v, want %v", err, injected)
+	}
+	dataDir := build.Record().DataDir
+	if err := build.Abort(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dataDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unpublished payload remains after abort: %v", err)
+	}
+	if records, err := store.Scan(); err != nil || len(records) != 0 {
+		t.Fatalf("snapshot index after abort = %+v, err = %v", records, err)
 	}
 }
 

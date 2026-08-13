@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/operation"
 )
 
@@ -28,6 +29,9 @@ func (r *Runtime) beginOperationWithRelated(ctx context.Context, kind, resourceI
 
 func (r *Runtime) finishOperation(ctx context.Context, id string, operationErr error) error {
 	if id == "" || r.operations == nil {
+		return operationErr
+	}
+	if errors.Is(operationErr, fault.ErrInterrupted) {
 		return operationErr
 	}
 	var recordErr error

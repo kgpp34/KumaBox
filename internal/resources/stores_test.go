@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/kumabox/kumabox/internal/config"
+	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
@@ -91,14 +92,13 @@ func TestConvertMetadataResumesAfterCommittedNamespace(t *testing.T) {
 	cfg.Metadata.Backend = "sqlite"
 
 	injected := errors.New("injected conversion interruption")
-	testConversionStep = func(step string) error {
-		if step == "namespace-done" {
+	ctx := fault.WithInjector(t.Context(), fault.InjectorFunc(func(point fault.Point) error {
+		if point == fault.MetadataConvertNamespace {
 			return injected
 		}
 		return nil
-	}
-	_, err := ConvertMetadata(t.Context(), cfg)
-	testConversionStep = nil
+	}))
+	_, err := ConvertMetadata(ctx, cfg)
 	if !errors.Is(err, injected) {
 		t.Fatalf("interrupted conversion error = %v", err)
 	}
@@ -121,14 +121,13 @@ func TestConvertMetadataResumesWhileRetiringSQLiteSource(t *testing.T) {
 
 	cfg.Metadata.Backend = "json"
 	injected := errors.New("injected source retirement interruption")
-	testConversionStep = func(step string) error {
-		if step == "source-retired" {
+	ctx := fault.WithInjector(t.Context(), fault.InjectorFunc(func(point fault.Point) error {
+		if point == fault.MetadataConvertRetired {
 			return injected
 		}
 		return nil
-	}
-	_, err := ConvertMetadata(t.Context(), cfg)
-	testConversionStep = nil
+	}))
+	_, err := ConvertMetadata(ctx, cfg)
 	if !errors.Is(err, injected) {
 		t.Fatalf("interrupted retirement error = %v", err)
 	}

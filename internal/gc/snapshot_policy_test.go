@@ -2,12 +2,14 @@ package gc
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/kumabox/kumabox/internal/config"
+	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/reference"
 	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
@@ -152,6 +154,35 @@ func TestSnapshotPolicyGCMatchesJSONAndSQLite(t *testing.T) {
 				t.Fatalf("snapshot %s was not deleted", middle.ID)
 			}
 		})
+	}
+}
+
+func TestSnapshotPolicyFailureBeforeDeleteKeepsSnapshot(t *testing.T) {
+	cfg := snapshotPolicyConfig(t, "json")
+	stores, err := resources.NewStoreSetForConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := createPolicySnapshot(t, stores, "retained", "vm-source", 10)
+	injected := errors.New("injected before GC delete")
+	ctx := fault.WithInjector(t.Context(), fault.InjectorFunc(func(point fault.Point) error {
+		if point == fault.GCBeforeDelete {
+			return injected
+		}
+		return nil
+	}))
+	if _, err := RepairWithOptions(ctx, cfg, Options{SnapshotPolicy: &SnapshotPolicy{KeepLastSet: true}}); !errors.Is(err, injected) {
+		t.Fatalf("RepairWithOptions() error = %v, want %v", err, injected)
+	}
+	if _, err := stores.Snapshots.Inspect(ready.ID); err != nil {
+		t.Fatalf("snapshot changed before delete: %v", err)
+	}
+	report, err := RepairWithOptions(t.Context(), cfg, Options{SnapshotPolicy: &SnapshotPolicy{KeepLastSet: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := candidateIDs(report.SnapshotPolicy.Deleted); !equalStrings(got, []string{ready.ID}) {
+		t.Fatalf("retry deleted = %v, want %s", got, ready.ID)
 	}
 }
 

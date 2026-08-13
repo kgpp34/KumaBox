@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/meta"
 )
 
@@ -94,6 +95,49 @@ func TestStorePreservesPreviousGenerationAndRecovers(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatalf("view after repair: %v", err)
+	}
+}
+
+func TestStoreAtomicCommitFailureLeavesCompleteGeneration(t *testing.T) {
+	tests := []struct {
+		name  string
+		point fault.Point
+		want  string
+	}{
+		{name: "before rename", point: fault.MetadataJSONBeforeRename, want: "before"},
+		{name: "after rename", point: fault.MetadataJSONAfterRename, want: "after"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, _ := newTestStore(t)
+			put := func(ctx context.Context, name string) error {
+				return store.Update(ctx, meta.Scope{Write: "vm"}, meta.CommitDurable, func(w meta.Writer) error {
+					return w.PutRaw(ctx, "vm", "records", "vm-1", stdjson.RawMessage(`{"name":"`+name+`"}`))
+				})
+			}
+			if err := put(t.Context(), "before"); err != nil {
+				t.Fatal(err)
+			}
+			injected := errors.New("injected atomic commit interruption")
+			ctx := fault.WithInjector(t.Context(), fault.InjectorFunc(func(point fault.Point) error {
+				if point == tt.point {
+					return injected
+				}
+				return nil
+			}))
+			if err := put(ctx, "after"); !errors.Is(err, injected) {
+				t.Fatalf("Update() error = %v, want %v", err, injected)
+			}
+			if err := store.View(t.Context(), []meta.Namespace{"vm"}, func(r meta.Reader) error {
+				raw, _, err := r.GetRaw(t.Context(), "vm", "records", "vm-1")
+				if err == nil && !sameJSON(raw, []byte(`{"name":"`+tt.want+`"}`)) {
+					t.Fatalf("record after interruption = %s, want %s", raw, tt.want)
+				}
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

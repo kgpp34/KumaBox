@@ -109,7 +109,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	if err := restoreWritableDisks(ctx, rec, snapshotRec.DataDir, manifest, r.qemuImg); err != nil {
 		return nil, err
 	}
-	if err := r.network.attachNetwork(rec); err != nil {
+	if err := r.network.attachNetwork(ctx, rec); err != nil {
 		return nil, err
 	}
 	if updated, inspectErr := r.vmReader.Inspect(rec.ID); inspectErr == nil {

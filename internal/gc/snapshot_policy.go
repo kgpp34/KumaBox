@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/reference"
 	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
@@ -258,6 +259,9 @@ func applySnapshotPolicy(ctx context.Context, stores resources.StoreSet, report 
 			candidate.References = refs
 			report.Skipped = append(report.Skipped, candidate)
 			continue
+		}
+		if err := fault.Check(ctx, fault.GCBeforeDelete); err != nil {
+			return err
 		}
 		if _, err := stores.Snapshots.Remove(candidate.ID); err != nil {
 			if errors.Is(err, snapshot.ErrInUse) || errors.Is(err, snapshot.ErrNotFound) {

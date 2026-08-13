@@ -8,6 +8,7 @@ import (
 
 	agentclient "github.com/kumabox/kumabox/internal/agent/client"
 	"github.com/kumabox/kumabox/internal/backend"
+	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/metering"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/operation"
@@ -157,7 +158,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		_ = r.vmRecords.Delete(rec.ID)
 	}()
 
-	if err := r.network.attachNetwork(rec); err != nil {
+	if err := r.network.attachNetwork(ctx, rec); err != nil {
 		return nil, err
 	}
 	rec, err = r.vmReader.Inspect(rec.ID)
@@ -175,6 +176,9 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		return nil, err
 	}
 	defer staged.cleanup() //nolint:errcheck
+	if err := fault.Check(ctx, fault.CloneAfterStage); err != nil {
+		return nil, err
+	}
 	dirty, err := r.vmRestore.BeginRestore(rec.ID, snapshotRec.ID, string(opts.Mode))
 	if err != nil {
 		return nil, err
@@ -182,6 +186,9 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	diskCommitStarted := time.Now()
 	if err := staged.commitDisks(); err != nil {
 		return nil, fmt.Errorf("replace clone writable disks: %w", err)
+	}
+	if err := fault.Check(ctx, fault.CloneAfterDiskCommit); err != nil {
+		return nil, err
 	}
 	diskCommitDuration := time.Since(diskCommitStarted)
 	backendRestoreStarted := time.Now()

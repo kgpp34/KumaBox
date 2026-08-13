@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/config"
+	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/lockfile"
 	"github.com/kumabox/kumabox/internal/meta"
@@ -29,8 +30,6 @@ import (
 )
 
 const convertedSuffix = ".converted-"
-
-var testConversionStep func(string) error
 
 // ConversionResult describes a completed metadata backend switch.
 type ConversionResult struct {
@@ -101,14 +100,13 @@ func ConvertMetadata(ctx context.Context, cfg config.Config) (result ConversionR
 			return result, err
 		}
 	}
-	if err := conversionStep("manifest-saved"); err != nil {
-		return result, err
-	}
-
 	if !conversionComplete(manifest) {
 		if err := copyConversionNamespaces(ctx, cfg.Metadata.Backend, databasePath, definitions, jsonDefinitions, manifestPath, manifest); err != nil {
 			return result, err
 		}
+	}
+	if err := fault.Check(ctx, fault.MetadataConvertAfterCopy); err != nil {
+		return result, err
 	}
 	if err := retireConversionSources(ctx, cfg.Metadata.Backend, databasePath, manifest); err != nil {
 		return result, err
@@ -171,10 +169,6 @@ func copyConversionNamespaces(ctx context.Context, target, databasePath string, 
 		return err
 	}
 	defer func() { err = errors.Join(err, destination.Close()) }()
-	if err := conversionStep("target-opened"); err != nil {
-		return err
-	}
-
 	for _, definition := range definitions {
 		state := manifest.Namespaces[definition.Name]
 		if state == nil {
@@ -201,7 +195,7 @@ func copyConversionNamespaces(ctx context.Context, target, databasePath string, 
 		if err := saveConversionManifest(manifestPath, manifest); err != nil {
 			return err
 		}
-		if err := conversionStep("namespace-done"); err != nil {
+		if err := fault.Check(ctx, fault.MetadataConvertNamespace); err != nil {
 			return err
 		}
 	}
@@ -370,7 +364,7 @@ func retireConversionSources(ctx context.Context, target, databasePath string, m
 				if err := syncDirectory(filepath.Dir(candidate)); err != nil {
 					return err
 				}
-				if err := conversionStep("source-retired"); err != nil {
+				if err := fault.Check(ctx, fault.MetadataConvertRetired); err != nil {
 					return err
 				}
 			}
@@ -531,11 +525,4 @@ func conversionResult(target, databasePath string, manifest *conversionManifest)
 	}
 	sort.Slice(result.Namespaces, func(i, j int) bool { return result.Namespaces[i].Namespace < result.Namespaces[j].Namespace })
 	return result
-}
-
-func conversionStep(step string) error {
-	if testConversionStep == nil {
-		return nil
-	}
-	return testConversionStep(step)
 }
