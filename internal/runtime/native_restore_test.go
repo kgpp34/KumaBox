@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/backend"
+	"github.com/kumabox/kumabox/internal/reference"
+	"github.com/kumabox/kumabox/internal/state"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -139,6 +141,57 @@ func TestRestoreNativeVMSucceedsWithoutGuestAgent(t *testing.T) {
 	if restored.LastRestore == nil || !strings.Contains(restored.LastRestore.GuestAgentWarning, agentErr.Error()) {
 		t.Fatalf("restore warning = %+v", restored.LastRestore)
 	}
+}
+
+func TestRestoreNativeVMStopsBackendWhenSnapshotReferenceFails(t *testing.T) {
+	rt, store, rec, _ := newRunningSnapshotRuntime(t)
+	backendState := vmstore.ObservedStateRunning
+	referenceErr := errors.New("injected reference failure")
+	backendImpl := nativeRestoreBackend(t, rec, &backendState, nil)
+	baseStop := backendImpl.stop
+	var restoredBackendStopped bool
+	backendImpl.stop = func(stopped *vmstore.VMRecord, options backend.StopOptions) (*backend.StopResult, error) {
+		if stopped.PID == 4321 {
+			restoredBackendStopped = true
+		}
+		return baseStop(stopped, options)
+	}
+	rt.backend = backendImpl
+	ready, err := rt.CreateRunningSnapshot(context.Background(), rec.ID, "restore-reference-failure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.storeSet.References = failingReferenceState{ReferenceState: rt.storeSet.References, err: referenceErr}
+
+	_, err = rt.RestoreNativeVM(context.Background(), rec.ID, ready.ID, NativeRestoreOptions{})
+	if !errors.Is(err, referenceErr) {
+		t.Fatalf("restore error = %v, want %v", err, referenceErr)
+	}
+	if !restoredBackendStopped {
+		t.Fatal("restored backend was not stopped after reference failure")
+	}
+	persisted, err := store.Inspect(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.State != vmstore.StateError || persisted.PID != 0 {
+		t.Fatalf("failed restore record = %+v", persisted)
+	}
+	if _, err := os.Stat(filepath.Join(rec.RunDir, ".restore-staging")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("restore staging remains after backend stop: %v", err)
+	}
+}
+
+type failingReferenceState struct {
+	state.ReferenceState
+	err error
+}
+
+func (s failingReferenceState) Upsert(ctx context.Context, record reference.Record) error {
+	if record.TargetKind == referenceKindSnapshot {
+		return s.err
+	}
+	return s.ReferenceState.Upsert(ctx, record)
 }
 
 func nativeRestoreBackend(t *testing.T, rec *vmstore.VMRecord, state *vmstore.ObservedState, restoreErr error) backendFake {

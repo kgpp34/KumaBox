@@ -143,9 +143,19 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 		return fail(fmt.Errorf("restore backend state: %w", err))
 	}
 	backendRestoreDuration := time.Since(backendRestoreStarted)
+	stopRestoredBackend := func(cause error) (*vmstore.VMRecord, error) {
+		cleanupRec := *dirty
+		cleanupRec.PID = backendResult.PID
+		cleanupRec.APISocket = backendResult.APISocket
+		_, stopErr := r.backend.StopVM(&cleanupRec, backend.StopOptions{Force: true})
+		return fail(errors.Join(cause, stopErr))
+	}
 	identityStarted := time.Now()
 	reseedErr := reseedRestoredGuest(ctx, rec.VsockSocket, false)
 	identityDuration := time.Since(identityStarted)
+	if err := r.recordVMSnapshotReference(ctx, dirty.ID, snapshotRec.ID); err != nil {
+		return stopRestoredBackend(fmt.Errorf("record restore snapshot reference: %w", err))
+	}
 	// Backend restore is the lifecycle boundary. Agent-dependent commands
 	// report their own availability without quarantining this running VM.
 	restored, err := r.vmRestore.CompleteRestore(rec.ID, backendResult.PID, backendResult.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
@@ -157,16 +167,10 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 		GuestAgentWarning:        guestAgentWarning(reseedErr),
 	})
 	if err != nil {
-		cleanupRec := *dirty
-		cleanupRec.PID = backendResult.PID
-		cleanupRec.APISocket = backendResult.APISocket
-		_, _ = r.backend.StopVM(&cleanupRec, backend.StopOptions{Force: true})
-		return fail(fmt.Errorf("publish restored VM state: %w", err))
+		removeErr := r.removeVMSnapshotReference(ctx, dirty.ID, snapshotRec.ID)
+		return stopRestoredBackend(errors.Join(fmt.Errorf("publish restored VM state: %w", err), removeErr))
 	}
 	r.recordComputeStart(ctx, restored, metering.ReasonRestore)
-	if err := r.recordVMSnapshotReference(ctx, restored.ID, snapshotRec.ID); err != nil {
-		return nil, fmt.Errorf("record restore snapshot reference: %w", err)
-	}
 	if restoreModePinsSnapshot(opts.Mode) {
 		staged.retainNativePayload()
 	}

@@ -51,6 +51,13 @@ func (r *Runtime) recordVMSnapshotReference(ctx context.Context, vmID, snapshotI
 	})
 }
 
+func (r *Runtime) removeVMSnapshotReference(ctx context.Context, vmID, snapshotID string) error {
+	if r.storeSet.References == nil || vmID == "" || snapshotID == "" {
+		return nil
+	}
+	return r.storeSet.References.Delete(ctx, vmSnapshotReferenceID(vmID, snapshotID))
+}
+
 func (r *Runtime) removeVMReferences(ctx context.Context, vmID string) error {
 	if r.storeSet.References == nil {
 		return nil

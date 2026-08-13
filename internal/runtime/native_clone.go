@@ -197,11 +197,22 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		return nil, fmt.Errorf("restore clone backend state: %w", err)
 	}
 	backendRestoreDuration := time.Since(backendRestoreStarted)
+	stopRestoredBackend := func(cause error) error {
+		cleanup := *dirty
+		cleanup.PID = backendResult.PID
+		cleanup.APISocket = backendResult.APISocket
+		_, stopErr := r.backend.StopVM(&cleanup, backend.StopOptions{Force: true})
+		backendResult = nil
+		return errors.Join(cause, stopErr)
+	}
 	identityStarted := time.Now()
 	// Identity configuration is a best-effort guest capability. Do not tear
 	// down a successfully restored VMM when the image has no compatible agent.
 	identityErr := configureGuestIdentity(ctx, rec.VsockSocket, rec)
 	identityDuration := time.Since(identityStarted)
+	if err := r.recordVMSnapshotReference(ctx, dirty.ID, snapshotRec.ID); err != nil {
+		return nil, stopRestoredBackend(fmt.Errorf("record clone snapshot reference: %w", err))
+	}
 	cloned, err := r.vmRestore.CompleteRestore(rec.ID, backendResult.PID, backendResult.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
 		NativeStageDurationMs:    stageMetrics.nativeStageDuration.Milliseconds(),
 		DiskStageDurationMs:      stageMetrics.diskStageDuration.Milliseconds(),
@@ -211,12 +222,10 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		GuestAgentWarning:        guestAgentWarning(identityErr),
 	})
 	if err != nil {
-		return nil, err
+		removeErr := r.removeVMSnapshotReference(ctx, dirty.ID, snapshotRec.ID)
+		return nil, stopRestoredBackend(errors.Join(err, removeErr))
 	}
 	r.recordComputeStart(ctx, cloned, metering.ReasonClone)
-	if err := r.recordVMSnapshotReference(ctx, cloned.ID, snapshotRec.ID); err != nil {
-		return nil, fmt.Errorf("record clone snapshot reference: %w", err)
-	}
 	if restoreModePinsSnapshot(opts.Mode) {
 		staged.retainNativePayload()
 	}

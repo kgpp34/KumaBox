@@ -244,6 +244,53 @@ func TestCloneNativeSnapshotPublishesRunningVMWhenGuestAgentIsUnavailable(t *tes
 	}
 }
 
+func TestCloneNativeSnapshotStopsBackendWhenSnapshotReferenceFails(t *testing.T) {
+	rt, store, _, ready := newNativeCloneRuntime(t)
+	referenceErr := errors.New("injected reference failure")
+	rt.storeSet.References = failingReferenceState{ReferenceState: rt.storeSet.References, err: referenceErr}
+	originalIdentity := configureGuestIdentity
+	configureGuestIdentity = func(context.Context, string, *vmstore.VMRecord) error { return nil }
+	t.Cleanup(func() { configureGuestIdentity = originalIdentity })
+
+	var restoredBackendStopped bool
+	rt.backend = backendFake{
+		nativeHost: func(context.Context, *vmstore.VMRecord) (backend.NativeHost, error) {
+			return backend.NativeHost{
+				BackendName: "cloud-hypervisor", BackendVersion: "test", SnapshotFormat: "cloud-hypervisor-native-v1",
+				Architecture: "test", CPUVendor: "test", RestoreModes: []string{"copy", "ondemand"},
+			}, nil
+		},
+		render: func(*vmstore.VMRecord) error { return nil },
+		clone: func(_ context.Context, rec *vmstore.VMRecord, _ string, _ string) (*backend.StartResult, error) {
+			return &backend.StartResult{PID: 9876, APISocket: filepath.Join(rec.RunDir, "ch.sock")}, nil
+		},
+		stop: func(stopped *vmstore.VMRecord, _ backend.StopOptions) (*backend.StopResult, error) {
+			restoredBackendStopped = stopped.PID == 9876
+			return &backend.StopResult{}, nil
+		},
+	}
+
+	_, err := rt.CloneNativeSnapshot(context.Background(), ready.ID, NativeCloneOptions{
+		Name: "reference-failure-clone", Networks: []string{"none"}, Mode: RestoreModeOnDemand,
+	})
+	if !errors.Is(err, referenceErr) {
+		t.Fatalf("clone error = %v, want %v", err, referenceErr)
+	}
+	if !restoredBackendStopped {
+		t.Fatal("restored clone backend was not stopped after reference failure")
+	}
+	persisted, err := store.Inspect("reference-failure-clone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.State != vmstore.StateError || persisted.PID != 0 {
+		t.Fatalf("failed clone record = %+v", persisted)
+	}
+	if _, err := os.Stat(filepath.Join(persisted.RunDir, ".restore-staging")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("clone staging remains after backend stop: %v", err)
+	}
+}
+
 func newNativeCloneRuntime(t *testing.T) (*Runtime, *vmstore.Store, *vmstore.VMRecord, *snapshot.Record) {
 	t.Helper()
 	dir := t.TempDir()
