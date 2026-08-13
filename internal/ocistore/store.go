@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kumabox/kumabox/internal/meta"
@@ -23,10 +24,11 @@ import (
 
 // Store caches OCI manifest/config/layer blobs by digest.
 type Store struct {
-	rootDir  string
-	engine   meta.MetaEngine
-	blobsDir string
-	stageDir string
+	rootDir   string
+	engine    meta.MetaEngine
+	blobsDir  string
+	stageDir  string
+	blobLocks sync.Map
 }
 
 // PullRequest describes a P3-02 content-store pull.
@@ -157,6 +159,46 @@ func (s *Store) Pull(ctx context.Context, req PullRequest) (*PullResult, error) 
 	}
 	emitProgress(req.Progress, ProgressEvent{Phase: "manifest", Digest: resolved.ResolvedDigest})
 
+	manifest, manifestCached, err := s.ensureBlob(resolved.ResolvedDigest, "application/vnd.oci.image.manifest.v1+json", bytes.NewReader(manifestBytes))
+	if err != nil {
+		return nil, fmt.Errorf("store manifest: %w", err)
+	}
+	result.Manifest = manifest
+	configRecord, configCached, err := s.ensureBlob(resolved.Config.Digest, resolved.Config.MediaType, bytes.NewReader(configBytes))
+	if err != nil {
+		return nil, fmt.Errorf("store config: %w", err)
+	}
+	result.Config = configRecord
+	emitProgress(req.Progress, ProgressEvent{Phase: "config", Digest: result.Config.Digest})
+	result.recordBlob(manifestCached)
+	result.recordBlob(configCached)
+
+	for i, layer := range layers {
+		digest, err := layer.Digest()
+		if err != nil {
+			return nil, fmt.Errorf("layer %d digest: %w", i, err)
+		}
+		mediaType, err := layer.MediaType()
+		if err != nil {
+			return nil, fmt.Errorf("layer %d media type: %w", i, err)
+		}
+		rc, err := layer.Compressed()
+		if err != nil {
+			return nil, fmt.Errorf("layer %d compressed stream: %w", i, err)
+		}
+		rec, cached, storeErr := s.ensureBlob(digest.String(), string(mediaType), rc)
+		closeErr := rc.Close()
+		if storeErr != nil {
+			return nil, fmt.Errorf("store layer %d: %w", i, storeErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("close layer %d: %w", i, closeErr)
+		}
+		result.Layers = append(result.Layers, rec)
+		result.recordBlob(cached)
+		emitProgress(req.Progress, ProgressEvent{Phase: "layer", Index: i, Total: len(layers), Digest: rec.Digest, Cached: cached})
+	}
+
 	err = s.engine.Update(ctx, meta.Scope{Write: "oci-content"}, meta.CommitDurable, func(writer meta.Writer) error {
 		idx, err := contentIndexCollection.Get(ctx, writer, contentIndexRecord)
 		if errors.Is(err, meta.ErrNotFound) {
@@ -165,53 +207,13 @@ func (s *Store) Pull(ctx context.Context, req PullRequest) (*PullResult, error) 
 			return fmt.Errorf("read OCI content index: %w", err)
 		}
 		idx.init()
-		result.Manifest, err = s.ensureBlob(idx, resolved.ResolvedDigest, "application/vnd.oci.image.manifest.v1+json", bytes.NewReader(manifestBytes))
-		if err != nil {
-			return fmt.Errorf("store manifest: %w", err)
-		}
-		result.Config, err = s.ensureBlob(idx, resolved.Config.Digest, resolved.Config.MediaType, bytes.NewReader(configBytes))
-		if err != nil {
-			return fmt.Errorf("store config: %w", err)
-		}
-		emitProgress(req.Progress, ProgressEvent{Phase: "config", Digest: result.Config.Digest})
-
-		for i, layer := range layers {
-			digest, err := layer.Digest()
-			if err != nil {
-				return fmt.Errorf("layer %d digest: %w", i, err)
+		for _, record := range append([]BlobRecord{result.Manifest, result.Config}, result.Layers...) {
+			if existing := idx.Blobs[record.Digest]; existing != nil {
+				record.CreatedAt = existing.CreatedAt
 			}
-			mediaType, err := layer.MediaType()
-			if err != nil {
-				return fmt.Errorf("layer %d media type: %w", i, err)
-			}
-			rc, err := layer.Compressed()
-			if err != nil {
-				return fmt.Errorf("layer %d compressed stream: %w", i, err)
-			}
-			rec, storeErr := s.ensureBlob(idx, digest.String(), string(mediaType), rc)
-			closeErr := rc.Close()
-			if storeErr != nil {
-				return fmt.Errorf("store layer %d: %w", i, storeErr)
-			}
-			if closeErr != nil {
-				return fmt.Errorf("close layer %d: %w", i, closeErr)
-			}
-			result.Layers = append(result.Layers, rec)
-			emitProgress(req.Progress, ProgressEvent{
-				Phase:  "layer",
-				Index:  i,
-				Total:  len(layers),
-				Digest: rec.Digest,
-				Cached: rec.CreatedAt != rec.UpdatedAt,
-			})
-		}
-
-		for _, rec := range append([]BlobRecord{result.Manifest, result.Config}, result.Layers...) {
-			if rec.CreatedAt.Equal(rec.UpdatedAt) {
-				result.Downloaded++
-				continue
-			}
-			result.Cached++
+			record.UpdatedAt = time.Now().UTC()
+			recordCopy := record
+			idx.Blobs[record.Digest] = &recordCopy
 		}
 
 		layerDigests := make([]string, 0, len(result.Layers))
@@ -237,36 +239,40 @@ func (s *Store) Pull(ctx context.Context, req PullRequest) (*PullResult, error) 
 	return result, nil
 }
 
+func (r *PullResult) recordBlob(cached bool) {
+	if cached {
+		r.Cached++
+		return
+	}
+	r.Downloaded++
+}
+
 func emitProgress(progress func(ProgressEvent), event ProgressEvent) {
 	if progress != nil {
 		progress(event)
 	}
 }
 
-func (s *Store) ensureBlob(idx *indexFile, digest, mediaType string, src io.Reader) (BlobRecord, error) {
+func (s *Store) ensureBlob(digest, mediaType string, src io.Reader) (BlobRecord, bool, error) {
 	algo, hexDigest, err := splitDigest(digest)
 	if err != nil {
-		return BlobRecord{}, err
+		return BlobRecord{}, false, err
 	}
+	lockValue, _ := s.blobLocks.LoadOrStore(digest, &sync.Mutex{})
+	lock := lockValue.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
 	path := filepath.Join(s.blobsDir, algo, hexDigest)
 	now := time.Now().UTC()
 
-	if existing, ok := idx.Blobs[digest]; ok {
-		if info, err := os.Stat(existing.Path); err == nil && info.Mode().IsRegular() {
-			if got, hashErr := fileSHA256(existing.Path); hashErr == nil && got == hexDigest {
-				existing.UpdatedAt = now
-				return *existing, nil
-			}
-		}
-	}
 	if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
 		got, hashErr := fileSHA256(path)
 		if hashErr != nil {
-			return BlobRecord{}, fmt.Errorf("verify existing blob: %w", hashErr)
+			return BlobRecord{}, false, fmt.Errorf("verify existing blob: %w", hashErr)
 		}
 		if got != hexDigest {
 			if err := os.Remove(path); err != nil {
-				return BlobRecord{}, fmt.Errorf("remove corrupt blob: %w", err)
+				return BlobRecord{}, false, fmt.Errorf("remove corrupt blob: %w", err)
 			}
 		} else {
 			rec := &BlobRecord{
@@ -277,20 +283,19 @@ func (s *Store) ensureBlob(idx *indexFile, digest, mediaType string, src io.Read
 				CreatedAt: now,
 				UpdatedAt: now,
 			}
-			idx.Blobs[digest] = rec
-			return *rec, nil
+			return *rec, true, nil
 		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return BlobRecord{}, fmt.Errorf("create blob dir: %w", err)
+		return BlobRecord{}, false, fmt.Errorf("create blob dir: %w", err)
 	}
 	if err := os.MkdirAll(s.stageDir, 0o755); err != nil {
-		return BlobRecord{}, fmt.Errorf("create staging dir: %w", err)
+		return BlobRecord{}, false, fmt.Errorf("create staging dir: %w", err)
 	}
 	tmp, err := os.CreateTemp(s.stageDir, "blob-*")
 	if err != nil {
-		return BlobRecord{}, fmt.Errorf("create staging blob: %w", err)
+		return BlobRecord{}, false, fmt.Errorf("create staging blob: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath) //nolint:errcheck
@@ -299,24 +304,24 @@ func (s *Store) ensureBlob(idx *indexFile, digest, mediaType string, src io.Read
 	n, err := io.Copy(tmp, io.TeeReader(src, hasher))
 	if err != nil {
 		_ = tmp.Close()
-		return BlobRecord{}, fmt.Errorf("write staging blob: %w", err)
+		return BlobRecord{}, false, fmt.Errorf("write staging blob: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
-		return BlobRecord{}, fmt.Errorf("sync staging blob: %w", err)
+		return BlobRecord{}, false, fmt.Errorf("sync staging blob: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return BlobRecord{}, fmt.Errorf("close staging blob: %w", err)
+		return BlobRecord{}, false, fmt.Errorf("close staging blob: %w", err)
 	}
 	if got := hex.EncodeToString(hasher.Sum(nil)); got != hexDigest {
-		return BlobRecord{}, fmt.Errorf("OCI_DIGEST_MISMATCH: %s got sha256:%s", digest, got)
+		return BlobRecord{}, false, fmt.Errorf("OCI_DIGEST_MISMATCH: %s got sha256:%s", digest, got)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		if !os.IsExist(err) {
-			return BlobRecord{}, fmt.Errorf("commit blob: %w", err)
+			return BlobRecord{}, false, fmt.Errorf("commit blob: %w", err)
 		}
 		if got, hashErr := fileSHA256(path); hashErr != nil || got != hexDigest {
-			return BlobRecord{}, fmt.Errorf("commit blob: existing target failed digest verification")
+			return BlobRecord{}, false, fmt.Errorf("commit blob: existing target failed digest verification")
 		}
 	}
 
@@ -328,8 +333,7 @@ func (s *Store) ensureBlob(idx *indexFile, digest, mediaType string, src io.Read
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	idx.Blobs[digest] = rec
-	return *rec, nil
+	return *rec, false, nil
 }
 
 func fileSHA256(path string) (sum string, err error) {
