@@ -16,9 +16,7 @@ import (
 	"github.com/kumabox/kumabox/internal/batch"
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
-	"github.com/kumabox/kumabox/internal/ocibuild"
-	"github.com/kumabox/kumabox/internal/ociresolver"
-	"github.com/kumabox/kumabox/internal/ocistore"
+	"github.com/kumabox/kumabox/internal/oci"
 	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/resources"
 )
@@ -98,7 +96,7 @@ func newImageAddCommand(opts *rootOptions) *cobra.Command {
 					QemuImgPath: qemuImg, SHA256: expectedSHA256,
 				})
 			case imageSourceOCI:
-				record, err = ocibuild.NewWithStores(cfg.Runtime.RootDir, stores.OCI, stores.Images).Build(cmd.Context(), ocibuild.BuildRequest{
+				record, err = oci.NewImagePipeline(cfg.Runtime.RootDir, stores.OCI, stores.Images).Build(cmd.Context(), oci.BuildRequest{
 					Name: name, Ref: args[0], Platform: platform, Source: source,
 					MkfsEROFS: mkfsEROFS, Concurrency: concurrency, AgentProfile: agentProfile,
 					Progress: cliOCIProgress(cmd, progress),
@@ -116,7 +114,7 @@ func newImageAddCommand(opts *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&firmware, "firmware", "", "UEFI firmware path for cloud images")
 	cmd.Flags().StringVar(&qemuImg, "qemu-img", "", "qemu-img binary path override")
 	cmd.Flags().StringVar(&expectedSHA256, "sha256", "", "expected HTTP image sha256 digest")
-	cmd.Flags().StringVar(&platform, "platform", ociresolver.DefaultPlatform(), "OCI platform os/arch[/variant]")
+	cmd.Flags().StringVar(&platform, "platform", oci.DefaultPlatform(), "OCI platform os/arch[/variant]")
 	cmd.Flags().StringVar(&source, "source", "auto", "OCI source: auto, registry, or daemon")
 	cmd.Flags().StringVar(&mkfsEROFS, "mkfs-erofs", "mkfs.erofs", "mkfs.erofs binary path")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "maximum concurrent OCI layer conversions")
@@ -174,7 +172,7 @@ func newImagePullOCICommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 			defer mutation.Release() //nolint:errcheck
-			result, err := stores.OCI.Pull(cmd.Context(), ocistore.PullRequest{
+			result, err := oci.NewImagePipeline(cfg.Runtime.RootDir, stores.OCI, stores.Images).Pull(cmd.Context(), oci.PullRequest{
 				Ref:      args[0],
 				Platform: platform,
 				Source:   source,
@@ -186,7 +184,7 @@ func newImagePullOCICommand(opts *rootOptions) *cobra.Command {
 			return writeJSON(cmd.OutOrStdout(), result)
 		},
 	}
-	cmd.Flags().StringVar(&platform, "platform", ociresolver.DefaultPlatform(), "OCI platform os/arch[/variant]")
+	cmd.Flags().StringVar(&platform, "platform", oci.DefaultPlatform(), "OCI platform os/arch[/variant]")
 	cmd.Flags().StringVar(&source, "source", "auto", "OCI source: auto, registry, or daemon")
 	cmd.Flags().BoolVar(&progress, "progress", false, "print OCI import progress to stderr")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
@@ -221,15 +219,15 @@ func newImageBuildCommand(opts *rootOptions) *cobra.Command {
 				if !jsonOutput {
 					return fmt.Errorf("P3_RESOLVE_REQUIRES_JSON: P3-01 dry-run output requires --json")
 				}
-				result, err := (ociresolver.Resolver{}).Resolve(cmd.Context(), args[0], platform)
+				result, err := oci.Resolve(cmd.Context(), args[0], platform)
 				if err != nil {
 					return err
 				}
 				return writeJSON(cmd.OutOrStdout(), struct {
-					SchemaVersion string              `json:"schemaVersion"`
-					Name          string              `json:"name"`
-					DryRun        bool                `json:"dryRun"`
-					Result        *ociresolver.Result `json:"result"`
+					SchemaVersion string             `json:"schemaVersion"`
+					Name          string             `json:"name"`
+					DryRun        bool               `json:"dryRun"`
+					Result        *oci.ResolveResult `json:"result"`
 				}{
 					SchemaVersion: "kumabox.oci.resolve.v1",
 					Name:          name,
@@ -246,7 +244,7 @@ func newImageBuildCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 			defer mutation.Release() //nolint:errcheck
-			rec, err := ocibuild.NewWithStores(cfg.Runtime.RootDir, stores.OCI, stores.Images).Build(cmd.Context(), ocibuild.BuildRequest{
+			rec, err := oci.NewImagePipeline(cfg.Runtime.RootDir, stores.OCI, stores.Images).Build(cmd.Context(), oci.BuildRequest{
 				Name:         name,
 				Ref:          args[0],
 				Platform:     platform,
@@ -263,7 +261,7 @@ func newImageBuildCommand(opts *rootOptions) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "image name")
-	cmd.Flags().StringVar(&platform, "platform", ociresolver.DefaultPlatform(), "OCI platform os/arch[/variant]")
+	cmd.Flags().StringVar(&platform, "platform", oci.DefaultPlatform(), "OCI platform os/arch[/variant]")
 	cmd.Flags().StringVar(&source, "source", "auto", "OCI source: auto, registry, or daemon")
 	cmd.Flags().StringVar(&mkfsEROFS, "mkfs-erofs", "mkfs.erofs", "mkfs.erofs binary path")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "maximum concurrent OCI layer conversions; 0 uses host CPU count")
@@ -275,11 +273,11 @@ func newImageBuildCommand(opts *rootOptions) *cobra.Command {
 	return cmd
 }
 
-func cliOCIProgress(cmd *cobra.Command, enabled bool) func(ocistore.ProgressEvent) {
+func cliOCIProgress(cmd *cobra.Command, enabled bool) func(oci.ProgressEvent) {
 	if !enabled {
 		return nil
 	}
-	return func(event ocistore.ProgressEvent) {
+	return func(event oci.ProgressEvent) {
 		if event.Total > 0 {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "oci: phase=%s item=%d/%d digest=%s cached=%t\n", event.Phase, event.Index+1, event.Total, event.Digest, event.Cached)
 			return
