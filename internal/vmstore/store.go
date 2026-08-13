@@ -202,9 +202,19 @@ func (s *Store) UpdateStates(refs []string, state VMState) error {
 				return err
 			}
 			rec := idx.VMs[id]
+			previous := rec.State
 			rec.State = state
 			rec.UpdatedAt = now
-			if state == StateStopped {
+			if previous == state {
+				continue
+			}
+			switch state {
+			case StateRunning:
+				rec.StartedAt = &now
+				rec.StoppedAt = nil
+			case StatePaused:
+				rec.StoppedAt = &now
+			case StateStopped:
 				rec.PID = 0
 				rec.APISocket = ""
 				rec.Error = ""
@@ -236,6 +246,7 @@ func (s *Store) MarkStarted(ref string, pid int, apiSocket string) (*VMRecord, e
 		rec.SnapshotDependency = nil
 		rec.Hibernate = nil
 		rec.StartedAt = &now
+		rec.StoppedAt = nil
 		if rec.Metadata != nil {
 			rec.FirstBooted = true
 		}

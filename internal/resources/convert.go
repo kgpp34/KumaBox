@@ -19,6 +19,7 @@ import (
 	"github.com/kumabox/kumabox/internal/meta"
 	metajson "github.com/kumabox/kumabox/internal/meta/json"
 	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
+	"github.com/kumabox/kumabox/internal/metering"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/ocistore"
 	"github.com/kumabox/kumabox/internal/operation"
@@ -425,6 +426,7 @@ func metadataJSONDefinitions(rootDir string) []metajson.Namespace {
 		ocistore.JSONNamespace(rootDir),
 		operation.JSONNamespace(rootDir),
 		reference.JSONNamespace(rootDir),
+		metering.JSONNamespace(rootDir),
 	)
 	return definitions
 }

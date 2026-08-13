@@ -10,6 +10,7 @@ import (
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/meta"
 	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
+	"github.com/kumabox/kumabox/internal/metering"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/ocistore"
 	"github.com/kumabox/kumabox/internal/operation"
@@ -31,6 +32,7 @@ type StoreSet struct {
 	OCI        state.OCIState
 	Operations state.OperationState
 	References state.ReferenceState
+	Metering   *metering.Store
 	Metadata   meta.MetaEngine
 	Guard      *resourceguard.Guard
 }
@@ -59,6 +61,7 @@ func NewStoreSetForConfig(cfg config.Config) (StoreSet, error) {
 		OCI:        ocistore.NewWithEngine(cfg.Runtime.RootDir, engine),
 		Operations: operation.NewWithEngine(engine),
 		References: reference.NewWithEngine(engine),
+		Metering:   metering.NewWithEngine(engine),
 		Metadata:   engine,
 		Guard:      resourceguard.New(cfg.Runtime.RootDir),
 	}, nil
@@ -93,6 +96,7 @@ func sqliteDefinitions() []metasqlite.Namespace {
 		{Name: "oci-content", Tables: []meta.Table{"oci-content"}},
 		{Name: "operations", Tables: []meta.Table{"records"}},
 		{Name: "references", Tables: []meta.Table{"records"}},
+		{Name: metering.Namespace, Tables: []meta.Table{metering.Table}},
 	}
 }
 
@@ -107,6 +111,7 @@ func NewStoreSet(rootDir string) StoreSet {
 		OCI:        ocistore.New(rootDir),
 		Operations: operation.New(rootDir),
 		References: reference.New(rootDir),
+		Metering:   metering.New(rootDir),
 		Guard:      resourceguard.New(rootDir),
 	}
 }

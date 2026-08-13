@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/backend"
+	"github.com/kumabox/kumabox/internal/metering"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -103,6 +104,7 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 		_, _ = r.vmUpdater.SetError(rec.ID, "hibernate snapshot is durable but stopped state publication failed")
 		return nil, fmt.Errorf("publish hibernated VM state: %w", err)
 	}
+	r.recordComputeStop(ctx, hibernated, metering.ReasonHibernate)
 	if rec.Image != nil {
 		if err := r.recordSnapshotImageReference(ctx, ready.ID, rec.Image.ID); err != nil {
 			return nil, fmt.Errorf("record hibernate image reference: %w", err)

@@ -21,7 +21,10 @@ func (r *Runtime) ReconcileOperations(ctx context.Context) error {
 		return err
 	}
 	defer mutation.Release() //nolint:errcheck
-	return r.operations.Reconcile(ctx, r.reconcileOperation)
+	if err := r.operations.Reconcile(ctx, r.reconcileOperation); err != nil {
+		return err
+	}
+	return r.ReconcileMetering(ctx)
 }
 
 func (r *Runtime) reconcileOperation(ctx context.Context, record operation.Record) error {

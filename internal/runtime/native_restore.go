@@ -12,6 +12,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/fileutil"
+	"github.com/kumabox/kumabox/internal/metering"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/storage"
@@ -119,7 +120,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 
 	observed := r.applyObservation(rec)
 	if observed.ObservedState == vmstore.ObservedStateRunning || observed.ObservedState == vmstore.ObservedStatePaused {
-		if _, err := r.stopVMLocked(ctx, rec.ID, backend.StopOptions{Force: true, Timeout: forcedStopTimeout}); err != nil {
+		if _, err := r.stopVMLocked(ctx, rec.ID, backend.StopOptions{Force: true, Timeout: forcedStopTimeout}, metering.ReasonRestore); err != nil {
 			return nil, fmt.Errorf("stop VM for restore: %w", err)
 		}
 	}
@@ -162,6 +163,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 		_, _ = r.backend.StopVM(&cleanupRec, backend.StopOptions{Force: true})
 		return fail(fmt.Errorf("publish restored VM state: %w", err))
 	}
+	r.recordComputeStart(ctx, restored, metering.ReasonRestore)
 	if err := r.recordVMSnapshotReference(ctx, restored.ID, snapshotRec.ID); err != nil {
 		return nil, fmt.Errorf("record restore snapshot reference: %w", err)
 	}

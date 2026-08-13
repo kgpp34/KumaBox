@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/backend"
+	"github.com/kumabox/kumabox/internal/metering"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -88,6 +89,11 @@ func (r *Runtime) transitionVMState(ctx context.Context, ref string, target vmst
 	updated, err := r.persistLiveState(observed.ID, target)
 	if err != nil {
 		return nil, err
+	}
+	if target == vmstore.StatePaused {
+		r.recordComputeStop(ctx, updated, metering.ReasonPause)
+	} else {
+		r.recordComputeStart(ctx, updated, metering.ReasonResume)
 	}
 	expected := vmstore.ObservedStatePaused
 	eventType := "backend.pause.completed"

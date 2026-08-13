@@ -523,3 +523,50 @@ func TestResolveByIDPrefix(t *testing.T) {
 		t.Fatalf("id = %s", id)
 	}
 }
+
+func TestUpdateStatesMaintainsComputeIntervalTimestamps(t *testing.T) {
+	dir := t.TempDir()
+	store := New(filepath.Join(dir, "data"))
+	rec, err := store.Create(CreateRequest{Name: "timestamps", RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd", RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	running, err := store.MarkStarted(rec.ID, 1234, "ch.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running.StartedAt == nil || running.StoppedAt != nil {
+		t.Fatalf("running timestamps = start %v stop %v", running.StartedAt, running.StoppedAt)
+	}
+	if err := store.UpdateStates([]string{rec.ID}, StatePaused); err != nil {
+		t.Fatal(err)
+	}
+	paused, err := store.Inspect(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paused.StoppedAt == nil {
+		t.Fatal("paused VM has no compute stop timestamp")
+	}
+	pausedAt := *paused.StoppedAt
+	if err := store.UpdateStates([]string{rec.ID}, StatePaused); err != nil {
+		t.Fatal(err)
+	}
+	paused, err = store.Inspect(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !paused.StoppedAt.Equal(pausedAt) {
+		t.Fatalf("idempotent pause changed timestamp: %s != %s", paused.StoppedAt, pausedAt)
+	}
+	if err := store.UpdateStates([]string{rec.ID}, StateRunning); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := store.Inspect(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.StartedAt == nil || !resumed.StartedAt.After(pausedAt) || resumed.StoppedAt != nil {
+		t.Fatalf("resumed timestamps = start %v stop %v", resumed.StartedAt, resumed.StoppedAt)
+	}
+}

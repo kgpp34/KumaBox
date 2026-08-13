@@ -8,6 +8,7 @@ import (
 
 	agentclient "github.com/kumabox/kumabox/internal/agent/client"
 	"github.com/kumabox/kumabox/internal/backend"
+	"github.com/kumabox/kumabox/internal/metering"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/resourceguard"
@@ -205,6 +206,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err != nil {
 		return nil, err
 	}
+	r.recordComputeStart(ctx, cloned, metering.ReasonClone)
 	if err := r.recordVMSnapshotReference(ctx, cloned.ID, snapshotRec.ID); err != nil {
 		return nil, fmt.Errorf("record clone snapshot reference: %w", err)
 	}

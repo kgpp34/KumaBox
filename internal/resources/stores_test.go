@@ -28,7 +28,7 @@ func TestNewStoreSetForConfigUsesOneSQLiteEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stores.Metadata == nil || stores.VM == nil || stores.Images == nil || stores.Snapshots == nil || stores.Networks == nil || stores.OCI == nil || stores.Operations == nil {
+	if stores.Metadata == nil || stores.VM == nil || stores.Images == nil || stores.Snapshots == nil || stores.Networks == nil || stores.OCI == nil || stores.Operations == nil || stores.Metering == nil {
 		t.Fatalf("incomplete store set: %+v", stores)
 	}
 	statusStore, ok := stores.Metadata.(*metasqlite.Store)
@@ -36,7 +36,7 @@ func TestNewStoreSetForConfigUsesOneSQLiteEngine(t *testing.T) {
 		t.Fatalf("metadata engine type = %T", stores.Metadata)
 	}
 	status, err := statusStore.Status(context.Background())
-	if err != nil || len(status) != 9 {
+	if err != nil || len(status) != len(sqliteDefinitions()) {
 		t.Fatalf("namespace status = %d, err = %v", len(status), err)
 	}
 	if err := stores.Metadata.Close(); err != nil {
@@ -50,7 +50,7 @@ func TestConvertJSONToSQLiteCreatesCompletedNamespaceState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(status) != 9 {
+	if len(status) != len(sqliteDefinitions()) {
 		t.Fatalf("converted namespace count = %d", len(status))
 	}
 	for _, namespace := range status {
@@ -69,7 +69,7 @@ func TestConvertMetadataRoundTripsJSONAndSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if toSQLite.Backend != "sqlite" || len(toSQLite.Namespaces) != 9 {
+	if toSQLite.Backend != "sqlite" || len(toSQLite.Namespaces) != len(sqliteDefinitions()) {
 		t.Fatalf("sqlite conversion result = %+v", toSQLite)
 	}
 	assertConvertedRecords(t, cfg)
@@ -79,7 +79,7 @@ func TestConvertMetadataRoundTripsJSONAndSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if toJSON.Backend != "json" || len(toJSON.Namespaces) != 9 {
+	if toJSON.Backend != "json" || len(toJSON.Namespaces) != len(sqliteDefinitions()) {
 		t.Fatalf("json conversion result = %+v", toJSON)
 	}
 	assertConvertedRecords(t, cfg)

@@ -12,6 +12,7 @@ import (
 	"github.com/kumabox/kumabox/internal/backend/cloudhypervisor"
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/lockfile"
+	"github.com/kumabox/kumabox/internal/metering"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/resourceguard"
@@ -283,6 +284,10 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecy
 	if rec.Hibernate != nil {
 		return nil, fmt.Errorf("VM_HIBERNATED: VM %s must be restored from snapshot %s", rec.Name, rec.Hibernate.SnapshotID)
 	}
+	startReason := metering.ReasonBoot
+	if rec.StartedAt != nil {
+		startReason = metering.ReasonRestart
+	}
 	if metrics == nil {
 		metrics = newLifecycleMetrics("start", time.Now(), rec)
 	}
@@ -331,6 +336,7 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecy
 	if err != nil {
 		return nil, err
 	}
+	r.recordComputeStart(ctx, updated, startReason)
 	return r.applyObservation(updated), nil
 }
 
@@ -402,11 +408,11 @@ func (r *Runtime) StopVMContext(ctx context.Context, ref string, opts backend.St
 		return nil, r.finishOperation(ctx, operationID, fmt.Errorf("lock VM %s for stop: %w", rec.ID, err))
 	}
 	defer lock.Release() //nolint:errcheck
-	result, stopErr := r.stopVMLocked(ctx, rec.ID, opts)
+	result, stopErr := r.stopVMLocked(ctx, rec.ID, opts, metering.ReasonStopUser)
 	return result, r.finishOperation(ctx, operationID, stopErr)
 }
 
-func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.StopOptions) (*vmstore.VMRecord, error) {
+func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.StopOptions, reason metering.Reason) (*vmstore.VMRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("stop VM: %w", err)
 	}
@@ -415,6 +421,7 @@ func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.Sto
 		return nil, err
 	}
 	observed := r.applyObservation(rec)
+	computeOpen := observed.StartedAt != nil && observed.StoppedAt == nil
 	if (observed.State == vmstore.StateRunning || observed.State == vmstore.StatePaused) &&
 		observed.ObservedState != vmstore.ObservedStateRunning && observed.ObservedState != vmstore.ObservedStatePaused {
 		if err := r.vmUpdater.UpdateStates([]string{observed.ID}, vmstore.StateStopped); err != nil {
@@ -423,6 +430,9 @@ func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.Sto
 		stopped, err := r.vmReader.Inspect(observed.ID)
 		if err != nil {
 			return nil, err
+		}
+		if computeOpen {
+			r.recordComputeStop(ctx, stopped, metering.ReasonStopCrash)
 		}
 		_ = writeVMEvent(stopped, "backend.stop.completed", vmstore.Observation{
 			State:     vmstore.ObservedStateStopped,
@@ -447,6 +457,9 @@ func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.Sto
 	stopped, err := r.vmReader.Inspect(observed.ID)
 	if err != nil {
 		return nil, err
+	}
+	if computeOpen {
+		r.recordComputeStop(ctx, stopped, reason)
 	}
 	_ = writeVMEvent(stopped, "backend.stop.completed", vmstore.Observation{
 		State:     vmstore.ObservedStateStopped,
@@ -498,13 +511,31 @@ func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (
 		return nil, err
 	}
 	observed := r.applyObservation(rec)
+	deleteComputeOpen := observed.StartedAt != nil && observed.StoppedAt == nil
 	if observed.ObservedState == vmstore.ObservedStateRunning || observed.ObservedState == vmstore.ObservedStatePaused {
 		if !force {
 			return nil, fmt.Errorf("VM %s is running or paused; use --force to stop and delete", ref)
 		}
-		observed, err = r.stopVMLocked(ctx, rec.ID, backend.StopOptions{Force: true})
+		observed, err = r.stopVMLocked(ctx, rec.ID, backend.StopOptions{Force: true}, metering.ReasonDelete)
 		if err != nil {
 			return nil, err
+		}
+		if deleteComputeOpen {
+			if err := r.requireComputeStop(ctx, observed, metering.ReasonDelete); err != nil {
+				return nil, fmt.Errorf("record final VM usage: %w", err)
+			}
+		}
+	}
+	if observed.StartedAt != nil && observed.StoppedAt == nil {
+		if err := r.vmUpdater.UpdateStates([]string{observed.ID}, vmstore.StateStopped); err != nil {
+			return nil, err
+		}
+		observed, err = r.vmReader.Inspect(observed.ID)
+		if err != nil {
+			return nil, err
+		}
+		if err := r.requireComputeStop(ctx, observed, metering.ReasonDelete); err != nil {
+			return nil, fmt.Errorf("record final VM usage: %w", err)
 		}
 	}
 
