@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kumabox/kumabox/internal/batch"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/ocibuild"
 	"github.com/kumabox/kumabox/internal/ociresolver"
@@ -214,16 +215,23 @@ func newImageImportCommand(opts *rootOptions) *cobra.Command {
 }
 
 func newImagePullCommand(opts *rootOptions) *cobra.Command {
-	var name string
+	var names []string
 	var firmware string
 	var qemuImg string
 	var sha256Digest string
+	var concurrency int
 
 	cmd := &cobra.Command{
-		Use:   "pull URL",
+		Use:   "pull URL...",
 		Short: "Pull a cloud image URL",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateBatchConcurrency(concurrency); err != nil {
+				return err
+			}
+			if len(names) != len(args) {
+				return fmt.Errorf("provide one --name for each URL: got %d name(s) for %d URL(s)", len(names), len(args))
+			}
 			cfg, err := loadConfig(opts)
 			if err != nil {
 				return err
@@ -237,23 +245,22 @@ func newImagePullCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 			defer mutation.Release() //nolint:errcheck
-			rec, err := stores.Images.Pull(imagestore.PullRequest{
-				Name:        name,
-				URL:         args[0],
-				Firmware:    firmware,
-				QemuImgPath: qemuImg,
-				SHA256:      sha256Digest,
+			result := batch.Run(cmd.Context(), args, batch.Options{Concurrency: concurrency}, "pull image", func(_ context.Context, index int, ref string) (*imagestore.ImageRecord, error) {
+				return stores.Images.Pull(imagestore.PullRequest{
+					Name: names[index], URL: ref, Firmware: firmware,
+					QemuImgPath: qemuImg, SHA256: sha256Digest,
+				})
 			})
-			if err != nil {
-				return err
-			}
-			return writeJSON(cmd.OutOrStdout(), rec)
+			return writeResourceBatchResult(func(value any) error {
+				return writeJSON(cmd.OutOrStdout(), value)
+			}, args, "pull image", result)
 		},
 	}
-	cmd.Flags().StringVar(&name, "name", "", "image name")
+	cmd.Flags().StringArrayVar(&names, "name", nil, "image name, repeat once per URL")
 	cmd.Flags().StringVar(&firmware, "firmware", "", "UEFI firmware path")
 	cmd.Flags().StringVar(&qemuImg, "qemu-img", "qemu-img", "qemu-img binary path")
 	cmd.Flags().StringVar(&sha256Digest, "sha256", "", "expected image sha256 digest")
+	addResourceBatchConcurrencyFlag(cmd, &concurrency)
 	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("firmware")
 	return cmd
@@ -321,13 +328,18 @@ func newImageInspectCommand(opts *rootOptions) *cobra.Command {
 
 func newImageRMCommand(opts *rootOptions) *cobra.Command {
 	var force bool
+	var concurrency int
 
 	cmd := &cobra.Command{
-		Use:     "rm IMAGE",
+		Use:     "rm IMAGE...",
 		Aliases: []string{"remove"},
 		Short:   "Remove an unused image",
-		Args:    cobra.ExactArgs(1),
+		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateBatchConcurrency(concurrency); err != nil {
+				return err
+			}
+			args = batch.Distinct(args)
 			cfg, err := loadConfig(opts)
 			if err != nil {
 				return err
@@ -341,37 +353,43 @@ func newImageRMCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 			defer mutation.Release() //nolint:errcheck
-			image, err := stores.Images.Inspect(args[0])
-			if err != nil {
-				return err
-			}
-			imageLock, err := stores.Guard.LockEntity(cmd.Context(), resourceguard.EntityImage, image.ID)
-			if err != nil {
-				return err
-			}
-			defer imageLock.Release() //nolint:errcheck
 			refs, err := imageReferencesFromVMs(stores)
 			if err != nil {
 				return err
 			}
-			if explicit, err := explicitImageReferences(cmd.Context(), stores, args[0]); err != nil {
-				return err
-			} else if len(explicit) > 0 {
-				refs = explicit
-			}
-			rec, err := stores.Images.Remove(imagestore.RemoveRequest{
-				Ref:        args[0],
-				Force:      force,
-				References: refs,
+			result := batch.Run(cmd.Context(), args, batch.Options{Concurrency: concurrency}, "remove image", func(ctx context.Context, _ int, ref string) (*imagestore.ImageRecord, error) {
+				return removeImage(ctx, stores, ref, force, refs)
 			})
-			if err != nil {
-				return err
-			}
-			return writeJSON(cmd.OutOrStdout(), rec)
+			return writeResourceBatchResult(func(value any) error {
+				return writeJSON(cmd.OutOrStdout(), value)
+			}, args, "remove image", result)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "allow removal of damaged unreferenced image directories")
+	addResourceBatchConcurrencyFlag(cmd, &concurrency)
 	return cmd
+}
+
+func removeImage(ctx context.Context, stores resources.StoreSet, ref string, force bool, references []imagestore.Reference) (record *imagestore.ImageRecord, err error) {
+	image, err := stores.Images.Inspect(ref)
+	if err != nil {
+		return nil, err
+	}
+	imageLock, err := stores.Guard.LockEntity(ctx, resourceguard.EntityImage, image.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if releaseErr := imageLock.Release(); releaseErr != nil {
+			err = errors.Join(err, fmt.Errorf("release image lock: %w", releaseErr))
+		}
+	}()
+	if explicit, explicitErr := explicitImageReferences(ctx, stores, ref); explicitErr != nil {
+		return nil, explicitErr
+	} else if len(explicit) > 0 {
+		references = explicit
+	}
+	return stores.Images.Remove(imagestore.RemoveRequest{Ref: ref, Force: force, References: references})
 }
 
 func explicitImageReferences(ctx context.Context, stores resources.StoreSet, ref string) ([]imagestore.Reference, error) {

@@ -24,6 +24,7 @@ import (
 	"github.com/kumabox/kumabox/internal/reference"
 	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/resources"
+	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -1036,6 +1037,121 @@ func TestImageRemoveRejectsReferencedImage(t *testing.T) {
 	}
 	if removed.ID != image.ID {
 		t.Fatalf("removed id = %s, want %s", removed.ID, image.ID)
+	}
+}
+
+func TestImageRemoveBestEffortBatch(t *testing.T) {
+	rootDir := t.TempDir()
+	store := imagestore.New(rootDir)
+	created := make([]*imagestore.ImageRecord, 0, 2)
+	for _, name := range []string{"batch-image-a", "batch-image-b"} {
+		record, err := store.Create(imagestore.CreateRequest{
+			Name: name, Source: imagestore.Source{Type: "test", URI: name},
+			RootDisk: imagestore.RootDisk{Path: name + ".qcow2", Format: "qcow2"},
+			Boot:     imagestore.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		created = append(created, record)
+	}
+	cmd := newTestRootCommand(rootDir)
+	cmd.SetArgs([]string{"image", "rm", "batch-image-a", "missing", "batch-image-b", "batch-image-a", "--concurrency", "2"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "remove image") {
+		t.Fatalf("error = %v", err)
+	}
+	var result struct {
+		Succeeded []*imagestore.ImageRecord `json:"succeeded"`
+		Failed    []resourceBatchFailure    `json:"failed"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Succeeded) != 2 || result.Succeeded[0].ID != created[0].ID || result.Succeeded[1].ID != created[1].ID {
+		t.Fatalf("succeeded = %+v", result.Succeeded)
+	}
+	if len(result.Failed) != 1 || result.Failed[0].Ref != "missing" {
+		t.Fatalf("failed = %+v", result.Failed)
+	}
+}
+
+func TestImagePullBatchRequiresOneNamePerURL(t *testing.T) {
+	cmd := newTestRootCommand(t.TempDir())
+	cmd.SetArgs([]string{
+		"image", "pull", "https://example.invalid/a.img", "https://example.invalid/b.img",
+		"--name", "only-one", "--firmware", "firmware.fd",
+	})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "provide one --name for each URL") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestImageAndSnapshotBatchCommandsExposeConcurrency(t *testing.T) {
+	opts := &rootOptions{}
+	commands := []*cobra.Command{newImagePullCommand(opts), newImageRMCommand(opts), newSnapshotRMCommand(opts)}
+	for _, cmd := range commands {
+		t.Run(cmd.CommandPath(), func(t *testing.T) {
+			if err := cmd.Args(cmd, []string{"first", "second"}); err != nil {
+				t.Fatalf("batch args rejected: %v", err)
+			}
+			if cmd.Flags().Lookup("concurrency") == nil {
+				t.Fatal("concurrency flag is missing")
+			}
+		})
+	}
+}
+
+func TestSnapshotRemoveBestEffortBatch(t *testing.T) {
+	rootDir := t.TempDir()
+	store := snapshot.NewStore(rootDir)
+	created := make([]*snapshot.Record, 0, 2)
+	for _, name := range []string{"batch-snapshot-a", "batch-snapshot-b"} {
+		build, err := store.Reserve(t.Context(), name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pending := build.Record()
+		manifest := snapshot.Manifest{
+			SchemaVersion: "kumabox.snapshot.v2", ID: pending.ID, Name: pending.Name,
+			Type: "stopped", Consistency: "crash", Source: snapshot.Source{VMID: "vm-source"},
+		}
+		raw, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(pending.StagingDir, snapshot.ManifestFile), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		record, err := build.Finalize(int64(len(raw)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		created = append(created, record)
+	}
+	cmd := newTestRootCommand(rootDir)
+	cmd.SetArgs([]string{"snapshot", "rm", "batch-snapshot-a", "missing", "batch-snapshot-b", "--concurrency", "2"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "remove snapshot") {
+		t.Fatalf("error = %v", err)
+	}
+	var result struct {
+		Succeeded []*snapshot.Record     `json:"succeeded"`
+		Failed    []resourceBatchFailure `json:"failed"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Succeeded) != 2 || result.Succeeded[0].ID != created[0].ID || result.Succeeded[1].ID != created[1].ID {
+		t.Fatalf("succeeded = %+v", result.Succeeded)
+	}
+	if len(result.Failed) != 1 || result.Failed[0].Ref != "missing" {
+		t.Fatalf("failed = %+v", result.Failed)
 	}
 }
 

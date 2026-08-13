@@ -18,9 +18,20 @@ func addBatchConcurrencyFlag(cmd *cobra.Command, concurrency *int) {
 	cmd.Flags().IntVar(concurrency, "concurrency", 0, "maximum concurrent VM operations; 0 uses host CPU count")
 }
 
-func lifecycleBatchOptions(concurrency int) (kbruntime.BatchOptions, error) {
+func addResourceBatchConcurrencyFlag(cmd *cobra.Command, concurrency *int) {
+	cmd.Flags().IntVar(concurrency, "concurrency", 0, "maximum concurrent operations; 0 uses host CPU count")
+}
+
+func validateBatchConcurrency(concurrency int) error {
 	if concurrency < 0 {
-		return kbruntime.BatchOptions{}, errors.New("concurrency must be greater than or equal to zero")
+		return errors.New("concurrency must be greater than or equal to zero")
+	}
+	return nil
+}
+
+func lifecycleBatchOptions(concurrency int) (kbruntime.BatchOptions, error) {
+	if err := validateBatchConcurrency(concurrency); err != nil {
+		return kbruntime.BatchOptions{}, err
 	}
 	return kbruntime.BatchOptions{Concurrency: concurrency}, nil
 }

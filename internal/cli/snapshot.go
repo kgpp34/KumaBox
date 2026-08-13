@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -8,7 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kumabox/kumabox/internal/batch"
 	"github.com/kumabox/kumabox/internal/config"
+	"github.com/kumabox/kumabox/internal/resources"
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/snapshot"
 )
@@ -246,9 +249,14 @@ func newSnapshotInspectCommand(opts *rootOptions) *cobra.Command {
 }
 
 func newSnapshotRMCommand(opts *rootOptions) *cobra.Command {
-	return &cobra.Command{
-		Use: "rm SNAPSHOT", Aliases: []string{"remove"}, Short: "Remove an unused snapshot", Args: cobra.ExactArgs(1),
+	var concurrency int
+	cmd := &cobra.Command{
+		Use: "rm SNAPSHOT...", Aliases: []string{"remove"}, Short: "Remove unused snapshots", Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateBatchConcurrency(concurrency); err != nil {
+				return err
+			}
+			args = batch.Distinct(args)
 			cfg, err := loadConfig(opts)
 			if err != nil {
 				return err
@@ -262,31 +270,42 @@ func newSnapshotRMCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 			defer mutation.Release() //nolint:errcheck
-			if stores.References != nil {
-				record, inspectErr := stores.Snapshots.Inspect(args[0])
-				if inspectErr != nil {
-					return inspectErr
-				}
-				refs, listErr := stores.References.ListTarget(cmd.Context(), "snapshot", record.ID)
-				if listErr != nil {
-					return listErr
-				}
-				if len(refs) > 0 {
-					return fmt.Errorf("SNAPSHOT_IN_USE: snapshot %s has %d explicit reference(s)", record.Name, len(refs))
-				}
-			}
-			rec, err := stores.Snapshots.Remove(args[0])
-			if err != nil {
-				return err
-			}
-			if stores.References != nil {
-				if err := stores.References.DeleteSource(cmd.Context(), "snapshot", rec.ID); err != nil {
-					return fmt.Errorf("remove snapshot references: %w", err)
-				}
-			}
-			return writeJSON(cmd.OutOrStdout(), rec)
+			result := batch.Run(cmd.Context(), args, batch.Options{Concurrency: concurrency}, "remove snapshot", func(ctx context.Context, _ int, ref string) (*snapshot.Record, error) {
+				return removeSnapshot(ctx, stores, ref)
+			})
+			return writeResourceBatchResult(func(value any) error {
+				return writeJSON(cmd.OutOrStdout(), value)
+			}, args, "remove snapshot", result)
 		},
 	}
+	addResourceBatchConcurrencyFlag(cmd, &concurrency)
+	return cmd
+}
+
+func removeSnapshot(ctx context.Context, stores resources.StoreSet, ref string) (*snapshot.Record, error) {
+	if stores.References != nil {
+		record, err := stores.Snapshots.Inspect(ref)
+		if err != nil {
+			return nil, err
+		}
+		refs, err := stores.References.ListTarget(ctx, "snapshot", record.ID)
+		if err != nil {
+			return nil, err
+		}
+		if len(refs) > 0 {
+			return nil, fmt.Errorf("SNAPSHOT_IN_USE: snapshot %s has %d explicit reference(s)", record.Name, len(refs))
+		}
+	}
+	record, err := stores.Snapshots.Remove(ref)
+	if err != nil {
+		return nil, err
+	}
+	if stores.References != nil {
+		if err := stores.References.DeleteSource(ctx, "snapshot", record.ID); err != nil {
+			return nil, fmt.Errorf("remove snapshot references: %w", err)
+		}
+	}
+	return record, nil
 }
 
 func writeSnapshotTable(w io.Writer, records []*snapshot.Record) error {

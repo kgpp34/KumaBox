@@ -2,12 +2,9 @@ package runtime
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"runtime"
-	"sync"
 
 	"github.com/kumabox/kumabox/internal/backend"
+	"github.com/kumabox/kumabox/internal/batch"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -18,21 +15,18 @@ type BatchOptions struct {
 }
 
 // BatchFailure describes one VM that could not complete a batch operation.
-type BatchFailure struct {
-	Ref   string `json:"ref"`
-	Error string `json:"error"`
-}
+type BatchFailure = batch.Failure
 
 // BatchResult is the stable, input-ordered outcome of a best-effort batch.
 type BatchResult struct {
 	Succeeded []*vmstore.VMRecord `json:"succeeded"`
 	Failed    []BatchFailure      `json:"failed,omitempty"`
-	errors    []error
+	err       error
 }
 
 // Err joins all per-VM failures while retaining their original error chains.
 func (r BatchResult) Err() error {
-	return errors.Join(r.errors...)
+	return r.err
 }
 
 // StartVMsContext starts each distinct VM reference using bounded concurrency.
@@ -69,78 +63,19 @@ func (r *Runtime) DeleteVMsContext(ctx context.Context, refs []string, force boo
 	})
 }
 
-type vmBatchItem struct {
-	ref    string
-	record *vmstore.VMRecord
-	err    error
-}
-
 func runVMBatch(
 	ctx context.Context,
 	refs []string,
 	opts BatchOptions,
 	fn func(context.Context, string) (*vmstore.VMRecord, error),
 ) BatchResult {
-	refs = distinctVMRefs(refs)
+	refs = batch.Distinct(refs)
 	if len(refs) == 0 {
 		return BatchResult{Succeeded: []*vmstore.VMRecord{}}
 	}
-
-	concurrency := opts.Concurrency
-	if concurrency <= 0 {
-		concurrency = runtime.NumCPU()
-	}
-	concurrency = min(concurrency, len(refs))
-
-	items := make([]vmBatchItem, len(refs))
-	jobs := make(chan int)
-	var workers sync.WaitGroup
-	workers.Add(concurrency)
-	for range concurrency {
-		go func() {
-			defer workers.Done()
-			for index := range jobs {
-				ref := refs[index]
-				if err := ctx.Err(); err != nil {
-					items[index] = vmBatchItem{ref: ref, err: err}
-					continue
-				}
-				record, err := fn(ctx, ref)
-				items[index] = vmBatchItem{ref: ref, record: record, err: err}
-			}
-		}()
-	}
-	for index := range refs {
-		jobs <- index
-	}
-	close(jobs)
-	workers.Wait()
-
-	result := BatchResult{
-		Succeeded: make([]*vmstore.VMRecord, 0, len(items)),
-		Failed:    make([]BatchFailure, 0),
-		errors:    make([]error, 0),
-	}
-	for _, item := range items {
-		if item.err == nil {
-			result.Succeeded = append(result.Succeeded, item.record)
-			continue
-		}
-		result.Failed = append(result.Failed, BatchFailure{Ref: item.ref, Error: item.err.Error()})
-		result.errors = append(result.errors, fmt.Errorf("VM %s: %w", item.ref, item.err))
-	}
-	return result
-}
-
-func distinctVMRefs(refs []string) []string {
-	distinct := make([]string, 0, len(refs))
-	seen := make(map[string]struct{}, len(refs))
-	for _, ref := range refs {
-		if _, exists := seen[ref]; exists {
-			continue
-		}
-		seen[ref] = struct{}{}
-		distinct = append(distinct, ref)
-	}
-	return distinct
+	result := batch.Run(ctx, refs, batch.Options{Concurrency: opts.Concurrency}, "VM",
+		func(ctx context.Context, _ int, ref string) (*vmstore.VMRecord, error) {
+			return fn(ctx, ref)
+		})
+	return BatchResult{Succeeded: result.Succeeded, Failed: result.Failed, err: result.Err()}
 }
