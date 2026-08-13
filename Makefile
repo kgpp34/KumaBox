@@ -10,7 +10,7 @@ LDFLAGS := -X github.com/kumabox/kumabox/internal/version.Version=$(VERSION) \
 	-X github.com/kumabox/kumabox/internal/version.Commit=$(COMMIT) \
 	-X github.com/kumabox/kumabox/internal/version.BuildTime=$(BUILD_TIME)
 
-.PHONY: build build-agent build-agent-linux-amd64 build-agent-linux-arm64 test clean
+.PHONY: build build-agent build-agent-linux-amd64 build-agent-linux-arm64 test test-e2e clean
 
 build: build-agent
 	mkdir -p $(BIN_DIR)
@@ -27,6 +27,9 @@ build-agent-linux-arm64:
 
 test:
 	go test ./...
+
+test-e2e:
+	test/e2e/e2e.sh $(E2E_ARGS)
 
 clean:
 	rm -rf $(BIN_DIR)

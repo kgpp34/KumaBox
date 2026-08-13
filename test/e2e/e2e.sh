@@ -25,10 +25,11 @@ expected_agent_version=
 
 usage() {
   cat <<'EOF'
-Usage: scripts/linux/e2e.sh [options]
+Usage: test/e2e/e2e.sh [options]
 
-Builds a Linux guest image and verifies OCI boot, agent exec, CNI cleanup,
-stopped and native snapshots, restore/clone, and disk hotplug.
+Builds a Linux guest image and verifies image auto-detection, launch dry-run,
+OCI boot, agent exec, CNI cleanup, package/directory/native snapshots,
+restore/clone, and disk hotplug.
 
 All runtime paths are fixed to KumaBox system defaults:
   /var/lib/kumabox, /var/lib/kumabox/run, /var/log/kumabox
@@ -141,15 +142,21 @@ resolve_agent_version() {
   fi
 }
 
-names=(e2e-exec e2e-boot e2e-cni e2e-stopped-source e2e-stopped-restored e2e-native-source e2e-native-clone e2e-hotplug)
-snapshots=(e2e-stopped e2e-stopped-import e2e-native)
+names=(e2e-exec e2e-boot e2e-cni e2e-stopped-source e2e-stopped-restored e2e-stopped-dir-restored e2e-native-source e2e-native-clone e2e-hotplug)
+snapshots=(e2e-stopped e2e-stopped-import e2e-stopped-dir-import e2e-native)
+temporary_images=(e2e-local-image)
 
 cleanup() {
-  local name snapshot
+  local name snapshot temporary_image
   for name in "${names[@]}"; do kb delete "$name" --force >/dev/null 2>&1 || true; done
   for snapshot in "${snapshots[@]}"; do kb snapshot rm "$snapshot" >/dev/null 2>&1 || true; done
+  for temporary_image in "${temporary_images[@]}"; do kb image rm "$temporary_image" >/dev/null 2>&1 || true; done
   "${run[@]}" rm -f /var/lib/kumabox/e2e-hotplug.raw /var/lib/kumabox/e2e-stopped.kbsnap \
+    /var/lib/kumabox/e2e-local.qcow2 /var/lib/kumabox/e2e-firmware.fd \
     /var/lib/kumabox/e2e-metadata-backup.db /var/lib/kumabox/e2e-metadata-backup.db.backup.lock 2>/dev/null || true
+  "${run[@]}" rm -rf /var/lib/kumabox/e2e-stopped-dir \
+    /var/lib/kumabox/run/vms/kb_preview /var/lib/kumabox/storage/vms/kb_preview \
+    /var/log/kumabox/vms/kb_preview 2>/dev/null || true
 }
 
 failure_context() {
@@ -180,7 +187,7 @@ build_image() {
       exit 1
     fi
   fi
-  kb image build "$image_ref" --source daemon --name "$image" --platform linux/amd64 --json | jq .
+  kb image add "$image_ref" --source daemon --name "$image" --platform linux/amd64 | jq .
 }
 
 ensure_image() {
@@ -210,6 +217,46 @@ if [[ "$metadata_backend" == sqlite ]]; then
   fi
 fi
 ensure_image
+
+step "local image auto-detection"
+"${run[@]}" "$qemu_img" create -q -f qcow2 /var/lib/kumabox/e2e-local.qcow2 8M
+printf 'e2e firmware placeholder\n' | "${run[@]}" tee /var/lib/kumabox/e2e-firmware.fd >/dev/null
+local_image=$(kb image add /var/lib/kumabox/e2e-local.qcow2 \
+  --name e2e-local-image --firmware /var/lib/kumabox/e2e-firmware.fd \
+  --qemu-img "$qemu_img")
+printf '%s\n' "$local_image" | jq -e '
+  .name == "e2e-local-image" and
+  .source.type == "local-file" and
+  .rootDisk.format == "qcow2" and
+  .boot.mode == "uefi"
+' >/dev/null
+kb image rm e2e-local-image >/dev/null
+"${run[@]}" rm -f /var/lib/kumabox/e2e-local.qcow2 /var/lib/kumabox/e2e-firmware.fd
+
+step "launch plan dry-run"
+vm_count_before=$(kb ps --json | jq 'length')
+launch_plan=$(kb debug launch "$image" --storage "$storage" --json)
+printf '%s\n' "$launch_plan" | jq -e '
+  .schemaVersion == "kumabox.debug.launch.v1" and
+  .dryRun == true and
+  .vm.id == "kb_preview" and
+  .vm.networks == ["none"] and
+  (.launch.args | length > 0)
+' >/dev/null
+vm_count_after=$(kb ps --json | jq 'length')
+[[ "$vm_count_before" == "$vm_count_after" ]] || {
+  printf 'debug launch changed VM count: before=%s after=%s\n' "$vm_count_before" "$vm_count_after" >&2
+  exit 1
+}
+for preview_path in \
+  /var/lib/kumabox/run/vms/kb_preview \
+  /var/lib/kumabox/storage/vms/kb_preview \
+  /var/log/kumabox/vms/kb_preview; do
+  if "${run[@]}" test -e "$preview_path"; then
+    printf 'debug launch created preview path: %s\n' "$preview_path" >&2
+    exit 1
+  fi
+done
 
 step "OCI boot and guest exec"
 run_vm e2e-exec none | jq .
@@ -260,8 +307,17 @@ kb snapshot restore "$imported_snapshot" --name e2e-stopped-restored --network n
 kb start e2e-stopped-restored >/dev/null
 wait_agent e2e-stopped-restored
 [[ $(kb exec e2e-stopped-restored -- cat /var/tmp/e2e-stopped) == stopped ]]
-kb delete e2e-stopped-source --force >/dev/null
 kb delete e2e-stopped-restored --force >/dev/null
+
+step "stopped snapshot directory export import restore"
+kb snapshot export "$stopped_snapshot" --to-dir /var/lib/kumabox/e2e-stopped-dir >/dev/null
+directory_snapshot=$(kb snapshot import --from-dir /var/lib/kumabox/e2e-stopped-dir --name e2e-stopped-dir-import | jq -r .id)
+kb snapshot restore "$directory_snapshot" --name e2e-stopped-dir-restored --network none >/dev/null
+kb start e2e-stopped-dir-restored >/dev/null
+wait_agent e2e-stopped-dir-restored
+[[ $(kb exec e2e-stopped-dir-restored -- cat /var/tmp/e2e-stopped) == stopped ]]
+kb delete e2e-stopped-source --force >/dev/null
+kb delete e2e-stopped-dir-restored --force >/dev/null
 
 step "native snapshot and clone"
 step "native source start"
