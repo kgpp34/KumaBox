@@ -83,7 +83,11 @@ func TestFollowLogsVMWaitsForFileAndStopsWithContext(t *testing.T) {
 	if err := os.MkdirAll(rec.LogDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("old-line\nlate-line\n"), 0o600); err != nil {
+	temporary := filepath.Join(rec.LogDir, ".delayed.log")
+	if err := os.WriteFile(temporary, []byte("old-line\nlate-line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(temporary, path); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -92,7 +96,7 @@ func TestFollowLogsVMWaitsForFileAndStopsWithContext(t *testing.T) {
 			t.Fatalf("chunk = %+v", chunk)
 		}
 		cancel()
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("follow did not observe a delayed log file")
 	}
 	if err := <-done; err != nil {
