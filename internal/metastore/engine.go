@@ -1,7 +1,7 @@
-// Package meta defines the persistence boundary shared by metadata engines.
+// Package metastore defines the persistence boundary shared by metadata engines.
 // It deliberately knows nothing about JSON files, SQLite tables, or host
 // resources.
-package meta
+package metastore
 
 import (
 	"context"

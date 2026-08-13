@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/kumabox/kumabox/internal/meta"
+	"github.com/kumabox/kumabox/internal/metastore"
 )
 
 // Init creates a new SQLite metadata database in one transaction. Existing
@@ -28,7 +28,7 @@ func InitForRecovery(ctx context.Context, path string, definitions ...Namespace)
 
 func initStore(ctx context.Context, path string, definitions ...Namespace) (err error) {
 	if path == "" || len(definitions) == 0 {
-		return fmt.Errorf("sqlite metadata path and namespace definitions are required: %w", meta.ErrScope)
+		return fmt.Errorf("sqlite metadata path and namespace definitions are required: %w", metastore.ErrScope)
 	}
 	namespaces, err := validateDefinitions(definitions)
 	if err != nil {
@@ -43,7 +43,7 @@ func initStore(ctx context.Context, path string, definitions ...Namespace) (err 
 			return inspectErr
 		}
 		if !empty {
-			return fmt.Errorf("sqlite metadata database %s already exists: %w", path, meta.ErrConflict)
+			return fmt.Errorf("sqlite metadata database %s already exists: %w", path, metastore.ErrConflict)
 		}
 		if err := os.Remove(path); err != nil {
 			return fmt.Errorf("remove incomplete sqlite metadata database: %w", err)
@@ -108,7 +108,7 @@ func isEmptyDatabase(path string) (empty bool, err error) {
 	return tables == 0, nil
 }
 
-func createSchema(ctx context.Context, tx *sql.Tx, namespaces map[meta.Namespace]map[meta.Table]struct{}) error {
+func createSchema(ctx context.Context, tx *sql.Tx, namespaces map[metastore.Namespace]map[metastore.Table]struct{}) error {
 	if _, err := tx.ExecContext(ctx, "CREATE TABLE "+metadataStateTable+" (namespace TEXT PRIMARY KEY NOT NULL, state TEXT NOT NULL, schema_version INTEGER NOT NULL, source TEXT NOT NULL DEFAULT '', digest TEXT NOT NULL DEFAULT '', records INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)"); err != nil {
 		return mapError(err)
 	}

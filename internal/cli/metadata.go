@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
+	metasqlite "github.com/kumabox/kumabox/internal/metastore/sqlite"
 	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/resources"
 )

@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/meta"
-	metajson "github.com/kumabox/kumabox/internal/meta/json"
+	"github.com/kumabox/kumabox/internal/metastore"
+	metajson "github.com/kumabox/kumabox/internal/metastore/json"
 	"github.com/kumabox/kumabox/internal/ociresolver"
 	"github.com/kumabox/kumabox/internal/ocisource"
 )
@@ -25,7 +25,7 @@ import (
 // Store caches OCI manifest/config/layer blobs by digest.
 type Store struct {
 	rootDir   string
-	engine    meta.MetaEngine
+	engine    metastore.MetaEngine
 	blobsDir  string
 	stageDir  string
 	blobLocks sync.Map
@@ -89,7 +89,7 @@ type indexFile struct {
 	Refs          map[string]*RefRecord  `json:"refs"`
 }
 
-var contentIndexCollection = meta.NewCollection[indexFile]("oci-content", contentIndexTable)
+var contentIndexCollection = metastore.NewCollection[indexFile]("oci-content", contentIndexTable)
 
 // New returns an OCI content store under rootDir.
 func New(rootDir string) *Store {
@@ -103,15 +103,15 @@ func JSONNamespace(rootDir string) metajson.Namespace {
 }
 
 // NewWithEngine creates an OCI content store with an injected metadata engine.
-func NewWithEngine(rootDir string, engine meta.MetaEngine) *Store {
+func NewWithEngine(rootDir string, engine metastore.MetaEngine) *Store {
 	base := filepath.Join(rootDir, "oci", "content")
 	return &Store{rootDir: base, engine: engine, blobsDir: filepath.Join(base, "blobs"), stageDir: filepath.Join(base, "staging")}
 }
 
 // MetadataEngine exposes the persistence boundary to migration tools.
-func (s *Store) MetadataEngine() meta.MetaEngine { return s.engine }
+func (s *Store) MetadataEngine() metastore.MetaEngine { return s.engine }
 
-func mustOpenContentEngine(namespace metajson.Namespace) meta.MetaEngine {
+func mustOpenContentEngine(namespace metajson.Namespace) metastore.MetaEngine {
 	engine, err := metajson.Open(namespace)
 	if err != nil {
 		panic(fmt.Sprintf("open OCI content metadata engine: %v", err))
@@ -199,9 +199,9 @@ func (s *Store) Pull(ctx context.Context, req PullRequest) (*PullResult, error) 
 		emitProgress(req.Progress, ProgressEvent{Phase: "layer", Index: i, Total: len(layers), Digest: rec.Digest, Cached: cached})
 	}
 
-	err = s.engine.Update(ctx, meta.Scope{Write: "oci-content"}, meta.CommitDurable, func(writer meta.Writer) error {
+	err = s.engine.Update(ctx, metastore.Scope{Write: "oci-content"}, metastore.CommitDurable, func(writer metastore.Writer) error {
 		idx, err := contentIndexCollection.Get(ctx, writer, contentIndexRecord)
-		if errors.Is(err, meta.ErrNotFound) {
+		if errors.Is(err, metastore.ErrNotFound) {
 			idx = &indexFile{}
 		} else if err != nil {
 			return fmt.Errorf("read OCI content index: %w", err)

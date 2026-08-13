@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/kumabox/kumabox/internal/meta"
+	"github.com/kumabox/kumabox/internal/metastore"
 )
 
 func TestStoreListsExplicitTargetReferences(t *testing.T) {
-	engine, err := meta.NewMemoryEngine(string(namespace))
+	engine, err := metastore.NewMemoryEngine(string(namespace))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestStoreListsExplicitTargetReferences(t *testing.T) {
 }
 
 func TestStoreDeletesAllReferencesForSource(t *testing.T) {
-	engine, err := meta.NewMemoryEngine(string(namespace))
+	engine, err := metastore.NewMemoryEngine(string(namespace))
 	if err != nil {
 		t.Fatal(err)
 	}

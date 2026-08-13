@@ -11,13 +11,13 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/meta"
-	metajson "github.com/kumabox/kumabox/internal/meta/json"
+	"github.com/kumabox/kumabox/internal/metastore"
+	metajson "github.com/kumabox/kumabox/internal/metastore/json"
 )
 
 const (
-	namespace meta.Namespace = "operations"
-	table     meta.Table     = "records"
+	namespace metastore.Namespace = "operations"
+	table     metastore.Table     = "records"
 )
 
 const (
@@ -64,8 +64,8 @@ type Record struct {
 }
 
 type Journal struct {
-	engine     meta.MetaEngine
-	collection *meta.Collection[Record]
+	engine     metastore.MetaEngine
+	collection *metastore.Collection[Record]
 }
 
 // NewID returns a process-independent operation identifier.
@@ -90,11 +90,11 @@ func JSONNamespace(rootDir string) metajson.Namespace {
 	}
 }
 
-func NewWithEngine(engine meta.MetaEngine) *Journal {
-	return &Journal{engine: engine, collection: meta.NewCollection[Record](namespace, table)}
+func NewWithEngine(engine metastore.MetaEngine) *Journal {
+	return &Journal{engine: engine, collection: metastore.NewCollection[Record](namespace, table)}
 }
 
-func (j *Journal) MetadataEngine() meta.MetaEngine { return j.engine }
+func (j *Journal) MetadataEngine() metastore.MetaEngine { return j.engine }
 
 func (j *Journal) Begin(ctx context.Context, id, kind, resourceID string) (*Record, error) {
 	return j.begin(ctx, id, kind, resourceID, "")
@@ -106,18 +106,18 @@ func (j *Journal) BeginWithRelated(ctx context.Context, id, kind, resourceID, re
 
 func (j *Journal) begin(ctx context.Context, id, kind, resourceID, relatedID string) (*Record, error) {
 	if id == "" || kind == "" || resourceID == "" {
-		return nil, fmt.Errorf("operation id, kind, and resource id are required: %w", meta.ErrScope)
+		return nil, fmt.Errorf("operation id, kind, and resource id are required: %w", metastore.ErrScope)
 	}
 	now := time.Now().UTC()
 	record := &Record{ID: id, Kind: kind, ResourceID: resourceID, RelatedID: relatedID, Status: StatusRunning, StartedAt: now, Attempt: 1}
-	err := j.engine.Update(ctx, meta.Scope{Write: namespace}, meta.CommitDurable, func(writer meta.Writer) error {
-		previous, err := j.collection.Get(ctx, writer, meta.RecordID(id))
+	err := j.engine.Update(ctx, metastore.Scope{Write: namespace}, metastore.CommitDurable, func(writer metastore.Writer) error {
+		previous, err := j.collection.Get(ctx, writer, metastore.RecordID(id))
 		if err == nil {
 			record.Attempt = previous.Attempt + 1
-		} else if !errors.Is(err, meta.ErrNotFound) {
+		} else if !errors.Is(err, metastore.ErrNotFound) {
 			return err
 		}
-		return j.collection.Upsert(ctx, writer, meta.RecordID(id), record)
+		return j.collection.Upsert(ctx, writer, metastore.RecordID(id), record)
 	})
 	if err != nil {
 		return nil, err
@@ -131,7 +131,7 @@ func (j *Journal) Complete(ctx context.Context, id string) (*Record, error) {
 
 func (j *Journal) Fail(ctx context.Context, id, reason string) (*Record, error) {
 	if reason == "" {
-		return nil, fmt.Errorf("operation failure reason is required: %w", meta.ErrScope)
+		return nil, fmt.Errorf("operation failure reason is required: %w", metastore.ErrScope)
 	}
 	return j.finish(ctx, id, StatusFailed, reason)
 }
@@ -140,16 +140,16 @@ func (j *Journal) Fail(ctx context.Context, id, reason string) (*Record, error) 
 // output identity was not known when the operation began.
 func (j *Journal) BindResource(ctx context.Context, id, resourceID string) (*Record, error) {
 	if id == "" || resourceID == "" {
-		return nil, fmt.Errorf("operation id and resource id are required: %w", meta.ErrScope)
+		return nil, fmt.Errorf("operation id and resource id are required: %w", metastore.ErrScope)
 	}
 	var result Record
-	err := j.engine.Update(ctx, meta.Scope{Write: namespace}, meta.CommitDurable, func(writer meta.Writer) error {
-		record, err := j.collection.Get(ctx, writer, meta.RecordID(id))
+	err := j.engine.Update(ctx, metastore.Scope{Write: namespace}, metastore.CommitDurable, func(writer metastore.Writer) error {
+		record, err := j.collection.Get(ctx, writer, metastore.RecordID(id))
 		if err != nil {
 			return err
 		}
 		record.ResourceID = resourceID
-		if err := j.collection.Replace(ctx, writer, meta.RecordID(id), record); err != nil {
+		if err := j.collection.Replace(ctx, writer, metastore.RecordID(id), record); err != nil {
 			return err
 		}
 		result = *record
@@ -163,8 +163,8 @@ func (j *Journal) BindResource(ctx context.Context, id, resourceID string) (*Rec
 
 func (j *Journal) finish(ctx context.Context, id string, status Status, reason string) (*Record, error) {
 	var result Record
-	err := j.engine.Update(ctx, meta.Scope{Write: namespace}, meta.CommitDurable, func(writer meta.Writer) error {
-		record, err := j.collection.Get(ctx, writer, meta.RecordID(id))
+	err := j.engine.Update(ctx, metastore.Scope{Write: namespace}, metastore.CommitDurable, func(writer metastore.Writer) error {
+		record, err := j.collection.Get(ctx, writer, metastore.RecordID(id))
 		if err != nil {
 			return err
 		}
@@ -172,7 +172,7 @@ func (j *Journal) finish(ctx context.Context, id string, status Status, reason s
 		record.Status = status
 		record.FinishedAt = &now
 		record.Error = reason
-		if err := j.collection.Replace(ctx, writer, meta.RecordID(id), record); err != nil {
+		if err := j.collection.Replace(ctx, writer, metastore.RecordID(id), record); err != nil {
 			return err
 		}
 		result = *record
@@ -189,8 +189,8 @@ func (j *Journal) finish(ctx context.Context, id string, status Status, reason s
 // each operation; the journal does not guess at backend state.
 func (j *Journal) Recoverable(ctx context.Context) ([]Record, error) {
 	var records []Record
-	err := j.engine.View(ctx, []meta.Namespace{namespace}, func(reader meta.Reader) error {
-		return j.collection.Scan(ctx, reader, func(_ meta.RecordID, record *Record) error {
+	err := j.engine.View(ctx, []metastore.Namespace{namespace}, func(reader metastore.Reader) error {
+		return j.collection.Scan(ctx, reader, func(_ metastore.RecordID, record *Record) error {
 			if record.Status == StatusRunning {
 				records = append(records, *record)
 			}
@@ -206,7 +206,7 @@ func (j *Journal) Recoverable(ctx context.Context) ([]Record, error) {
 // it may inspect host resources without holding a database transaction.
 func (j *Journal) Reconcile(ctx context.Context, repair func(context.Context, Record) error) error {
 	if repair == nil {
-		return fmt.Errorf("operation repair callback must not be nil: %w", meta.ErrScope)
+		return fmt.Errorf("operation repair callback must not be nil: %w", metastore.ErrScope)
 	}
 	records, err := j.Recoverable(ctx)
 	if err != nil {
@@ -234,7 +234,7 @@ func clone(record Record) *Record {
 	return &record
 }
 
-func mustOpenEngine(rootDir string) meta.MetaEngine {
+func mustOpenEngine(rootDir string) metastore.MetaEngine {
 	engine, err := metajson.Open(JSONNamespace(rootDir))
 	if err != nil {
 		panic(fmt.Sprintf("open operation metadata engine: %v", err))

@@ -1,4 +1,4 @@
-package meta
+package metastore
 
 import (
 	"context"
@@ -31,7 +31,7 @@ type TransferReport struct {
 // in the destination are retained; deletion is deliberately a separate
 // operation so an interrupted migration never erases unrelated state.
 // Encoded records stay inside this package boundary. Callers migrate typed
-// data by declaring the same tables they use with meta.Collection.
+// data by declaring the same tables they use with metastore.Collection.
 func Transfer(ctx context.Context, source, destination MetaEngine, tables []TableSet) error {
 	_, err := TransferWithReport(ctx, source, destination, tables)
 	return err

@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/fault"
-	"github.com/kumabox/kumabox/internal/meta"
-	metajson "github.com/kumabox/kumabox/internal/meta/json"
+	"github.com/kumabox/kumabox/internal/metastore"
+	metajson "github.com/kumabox/kumabox/internal/metastore/json"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -24,14 +24,14 @@ import (
 type Store struct {
 	dataRoot string
 	rootDir  string
-	engine   meta.MetaEngine
+	engine   metastore.MetaEngine
 	leaser   *leaser
 	vmReader interface {
 		List() ([]*vmstore.VMRecord, error)
 	}
 }
 
-var snapshotIndexCollection = meta.NewCollection[snapshotIndex]("snapshots", snapshotIndexTable)
+var snapshotIndexCollection = metastore.NewCollection[snapshotIndex]("snapshots", snapshotIndexTable)
 
 // NewStore creates a snapshot store under rootDir.
 func NewStore(rootDir string) *Store {
@@ -61,13 +61,13 @@ func NewStoreWithVMReader(rootDir string, vmReader interface {
 }
 
 // NewStoreWithEngine creates a snapshot store with an injected metadata engine.
-func NewStoreWithEngine(rootDir string, engine meta.MetaEngine) *Store {
+func NewStoreWithEngine(rootDir string, engine metastore.MetaEngine) *Store {
 	return NewStoreWithEngineAndVMReader(rootDir, engine, vmstore.New(rootDir))
 }
 
 // NewStoreWithEngineAndVMReader creates a snapshot store with an injected
 // read-only VM dependency used for dependency checks during deletion.
-func NewStoreWithEngineAndVMReader(rootDir string, engine meta.MetaEngine, vmReader interface {
+func NewStoreWithEngineAndVMReader(rootDir string, engine metastore.MetaEngine, vmReader interface {
 	List() ([]*vmstore.VMRecord, error)
 }) *Store {
 	dir := filepath.Join(rootDir, "snapshot")
@@ -75,9 +75,9 @@ func NewStoreWithEngineAndVMReader(rootDir string, engine meta.MetaEngine, vmRea
 }
 
 // MetadataEngine exposes the persistence boundary to migration tools.
-func (s *Store) MetadataEngine() meta.MetaEngine { return s.engine }
+func (s *Store) MetadataEngine() metastore.MetaEngine { return s.engine }
 
-func mustOpenSnapshotEngine(namespace metajson.Namespace) meta.MetaEngine {
+func mustOpenSnapshotEngine(namespace metajson.Namespace) metastore.MetaEngine {
 	engine, err := metajson.Open(namespace)
 	if err != nil {
 		panic(fmt.Sprintf("open snapshot metadata engine: %v", err))
@@ -502,7 +502,7 @@ func (s *Store) update(fn func(*snapshotIndex) error) error {
 func (s *Store) withIndex(write bool, fn func(*snapshotIndex) error) error {
 	ctx := context.Background()
 	if write {
-		return s.engine.Update(ctx, meta.Scope{Write: "snapshots"}, meta.CommitDurable, func(writer meta.Writer) error {
+		return s.engine.Update(ctx, metastore.Scope{Write: "snapshots"}, metastore.CommitDurable, func(writer metastore.Writer) error {
 			idx, err := s.readIndex(ctx, writer)
 			if err != nil {
 				return err
@@ -513,7 +513,7 @@ func (s *Store) withIndex(write bool, fn func(*snapshotIndex) error) error {
 			return snapshotIndexCollection.Upsert(ctx, writer, snapshotIndexRecord, idx)
 		})
 	}
-	return s.engine.View(ctx, []meta.Namespace{"snapshots"}, func(reader meta.Reader) error {
+	return s.engine.View(ctx, []metastore.Namespace{"snapshots"}, func(reader metastore.Reader) error {
 		idx, err := s.readIndex(ctx, reader)
 		if err != nil {
 			return err
@@ -522,9 +522,9 @@ func (s *Store) withIndex(write bool, fn func(*snapshotIndex) error) error {
 	})
 }
 
-func (s *Store) readIndex(ctx context.Context, reader meta.Reader) (*snapshotIndex, error) {
+func (s *Store) readIndex(ctx context.Context, reader metastore.Reader) (*snapshotIndex, error) {
 	idx, err := snapshotIndexCollection.Get(ctx, reader, snapshotIndexRecord)
-	if errors.Is(err, meta.ErrNotFound) {
+	if errors.Is(err, metastore.ErrNotFound) {
 		idx = &snapshotIndex{}
 	} else if err != nil {
 		return nil, fmt.Errorf("read snapshot index: %w", err)

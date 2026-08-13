@@ -14,8 +14,8 @@ import (
 
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/fileutil"
-	"github.com/kumabox/kumabox/internal/metadata"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
+	"github.com/kumabox/kumabox/internal/nocloud"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -118,7 +118,7 @@ type Annotations struct {
 	VMName string `json:"vmName"`
 }
 
-// Renderer writes Cloud Hypervisor config and first-boot metadata.
+// Renderer writes Cloud Hypervisor config and first-boot nocloud.
 type Renderer struct {
 	cfg config.Config
 }
@@ -144,7 +144,7 @@ func (r Renderer) RenderConfig(rec *vmstore.VMRecord) error {
 		return fmt.Errorf("create VM log dir: %w", err)
 	}
 	if meta := activeMetadata(rec); meta != nil && meta.Type == "nocloud" {
-		if err := metadata.WriteNoCloud(meta.CidataDir, meta.CidataDisk, metadata.Config{
+		if err := nocloud.WriteNoCloud(meta.CidataDir, meta.CidataDisk, nocloud.Config{
 			InstanceID: rec.ID,
 			Hostname:   rec.Name,
 			Username:   "kumabox",
@@ -165,16 +165,16 @@ func (r Renderer) RenderConfig(rec *vmstore.VMRecord) error {
 	return nil
 }
 
-func metadataMounts(rec *vmstore.VMRecord) []metadata.Mount {
+func metadataMounts(rec *vmstore.VMRecord) []nocloud.Mount {
 	if rec == nil {
 		return nil
 	}
-	mounts := make([]metadata.Mount, 0)
+	mounts := make([]nocloud.Mount, 0)
 	for _, storage := range rec.StorageConfigs {
 		if storage.EffectiveRole() != vmstore.StorageRoleData || storage.MountPoint == "" || storage.Filesystem == "" || storage.Filesystem == vmstore.FilesystemNone {
 			continue
 		}
-		mounts = append(mounts, metadata.Mount{
+		mounts = append(mounts, nocloud.Mount{
 			Device:     "/dev/disk/by-id/virtio-" + storage.Serial,
 			MountPoint: storage.MountPoint,
 			Filesystem: storage.Filesystem,
@@ -193,13 +193,13 @@ func validateNetworkQueues(rec *vmstore.VMRecord) error {
 	return nil
 }
 
-func metadataNetworks(rec *vmstore.VMRecord) []metadata.Network {
-	networks := make([]metadata.Network, 0, len(rec.NetworkConfigs))
+func metadataNetworks(rec *vmstore.VMRecord) []nocloud.Network {
+	networks := make([]nocloud.Network, 0, len(rec.NetworkConfigs))
 	for _, nc := range rec.NetworkConfigs {
 		if nc.MAC == "" || nc.Network == nil || nc.Network.IP == "" {
 			continue
 		}
-		networks = append(networks, metadata.Network{
+		networks = append(networks, nocloud.Network{
 			MAC:     nc.MAC,
 			IP:      nc.Network.IP,
 			Prefix:  nc.Network.Prefix,

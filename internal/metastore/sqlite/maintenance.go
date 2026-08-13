@@ -10,7 +10,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/lockfile"
-	"github.com/kumabox/kumabox/internal/meta"
+	"github.com/kumabox/kumabox/internal/metastore"
 )
 
 // Backup atomically replaces destination with a verified, single-file SQLite
@@ -18,7 +18,7 @@ import (
 // previously published backup intact.
 func Backup(ctx context.Context, sourcePath, destinationPath string) (err error) {
 	if sourcePath == "" || destinationPath == "" {
-		return fmt.Errorf("sqlite backup source and destination are required: %w", meta.ErrScope)
+		return fmt.Errorf("sqlite backup source and destination are required: %w", metastore.ErrScope)
 	}
 	sourcePath, err = filepath.Abs(sourcePath)
 	if err != nil {
@@ -29,7 +29,7 @@ func Backup(ctx context.Context, sourcePath, destinationPath string) (err error)
 		return fmt.Errorf("resolve sqlite backup destination: %w", err)
 	}
 	if sourcePath == destinationPath {
-		return fmt.Errorf("sqlite backup destination must differ from source: %w", meta.ErrScope)
+		return fmt.Errorf("sqlite backup destination must differ from source: %w", metastore.ErrScope)
 	}
 	if _, err := os.Stat(sourcePath); err != nil {
 		return fmt.Errorf("stat sqlite backup source: %w", err)
@@ -114,7 +114,7 @@ func verifyDatabaseFile(ctx context.Context, path string) (err error) {
 		return mapError(err)
 	}
 	if result != "ok" {
-		return fmt.Errorf("sqlite integrity check returned %q: %w", result, meta.ErrCorrupt)
+		return fmt.Errorf("sqlite integrity check returned %q: %w", result, metastore.ErrCorrupt)
 	}
 	return nil
 }
@@ -125,13 +125,13 @@ func verifyDatabaseIdentity(ctx context.Context, db *sql.DB) error {
 		return mapError(err)
 	}
 	if applicationID != databaseApplicationID {
-		return fmt.Errorf("sqlite application id %d is not KumaBox: %w", applicationID, meta.ErrCorrupt)
+		return fmt.Errorf("sqlite application id %d is not KumaBox: %w", applicationID, metastore.ErrCorrupt)
 	}
 	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&schemaVersion); err != nil {
 		return mapError(err)
 	}
 	if schemaVersion != databaseSchemaVersion {
-		return fmt.Errorf("unsupported sqlite schema version %d: %w", schemaVersion, meta.ErrCorrupt)
+		return fmt.Errorf("unsupported sqlite schema version %d: %w", schemaVersion, metastore.ErrCorrupt)
 	}
 	var namespaces, invalidStates int
 	query := "SELECT count(*), coalesce(sum(CASE WHEN state IN ('initialized', 'converted') THEN 0 ELSE 1 END), 0) FROM " + metadataStateTable
@@ -139,7 +139,7 @@ func verifyDatabaseIdentity(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("read sqlite metadata namespace state: %w", mapError(err))
 	}
 	if namespaces == 0 || invalidStates != 0 {
-		return fmt.Errorf("sqlite metadata namespace state is incomplete: %w", meta.ErrCorrupt)
+		return fmt.Errorf("sqlite metadata namespace state is incomplete: %w", metastore.ErrCorrupt)
 	}
 	return nil
 }

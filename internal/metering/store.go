@@ -10,13 +10,13 @@ import (
 	"sort"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/meta"
-	metajson "github.com/kumabox/kumabox/internal/meta/json"
+	"github.com/kumabox/kumabox/internal/metastore"
+	metajson "github.com/kumabox/kumabox/internal/metastore/json"
 )
 
 const (
-	Namespace meta.Namespace = "metering"
-	Table     meta.Table     = "events"
+	Namespace metastore.Namespace = "metering"
+	Table     metastore.Table     = "events"
 
 	KindComputeStart Kind = "vm.compute.start"
 	KindComputeStop  Kind = "vm.compute.stop"
@@ -72,8 +72,8 @@ type Query struct {
 }
 
 type Store struct {
-	engine     meta.MetaEngine
-	collection *meta.Collection[Event]
+	engine     metastore.MetaEngine
+	collection *metastore.Collection[Event]
 }
 
 func New(rootDir string) *Store {
@@ -92,41 +92,41 @@ func JSONNamespace(rootDir string) metajson.Namespace {
 	}
 }
 
-func NewWithEngine(engine meta.MetaEngine) *Store {
-	return &Store{engine: engine, collection: meta.NewCollection[Event](Namespace, Table)}
+func NewWithEngine(engine metastore.MetaEngine) *Store {
+	return &Store{engine: engine, collection: metastore.NewCollection[Event](Namespace, Table)}
 }
 
-func (s *Store) MetadataEngine() meta.MetaEngine { return s.engine }
+func (s *Store) MetadataEngine() metastore.MetaEngine { return s.engine }
 
 // Append inserts one event. Repeating the same ID with the same value is
 // idempotent; conflicting reuse fails closed.
 func (s *Store) Append(ctx context.Context, event Event) error {
 	if event.ID == "" || event.VMID == "" || event.VMName == "" || event.EmittedAt.IsZero() {
-		return fmt.Errorf("metering event identity and timestamp are required: %w", meta.ErrScope)
+		return fmt.Errorf("metering event identity and timestamp are required: %w", metastore.ErrScope)
 	}
 	if event.Kind != KindComputeStart && event.Kind != KindComputeStop {
-		return fmt.Errorf("unknown metering event kind %q: %w", event.Kind, meta.ErrScope)
+		return fmt.Errorf("unknown metering event kind %q: %w", event.Kind, metastore.ErrScope)
 	}
 	event.EmittedAt = event.EmittedAt.UTC()
-	return s.engine.Update(ctx, meta.Scope{Write: Namespace}, meta.CommitDurable, func(writer meta.Writer) error {
-		existing, err := s.collection.Get(ctx, writer, meta.RecordID(event.ID))
+	return s.engine.Update(ctx, metastore.Scope{Write: Namespace}, metastore.CommitDurable, func(writer metastore.Writer) error {
+		existing, err := s.collection.Get(ctx, writer, metastore.RecordID(event.ID))
 		if err == nil {
 			if equalEvent(*existing, event) {
 				return nil
 			}
-			return fmt.Errorf("metering event id %q has conflicting content: %w", event.ID, meta.ErrConflict)
+			return fmt.Errorf("metering event id %q has conflicting content: %w", event.ID, metastore.ErrConflict)
 		}
-		if !errors.Is(err, meta.ErrNotFound) {
+		if !errors.Is(err, metastore.ErrNotFound) {
 			return err
 		}
-		return s.collection.Insert(ctx, writer, meta.RecordID(event.ID), &event)
+		return s.collection.Insert(ctx, writer, metastore.RecordID(event.ID), &event)
 	})
 }
 
 func (s *Store) Events(ctx context.Context, vmRef string) ([]Event, error) {
 	events := make([]Event, 0)
-	err := s.engine.View(ctx, []meta.Namespace{Namespace}, func(reader meta.Reader) error {
-		return s.collection.Scan(ctx, reader, func(_ meta.RecordID, event *Event) error {
+	err := s.engine.View(ctx, []metastore.Namespace{Namespace}, func(reader metastore.Reader) error {
+		return s.collection.Scan(ctx, reader, func(_ metastore.RecordID, event *Event) error {
 			if vmRef == "" || event.VMID == vmRef || event.VMName == vmRef {
 				events = append(events, *event)
 			}

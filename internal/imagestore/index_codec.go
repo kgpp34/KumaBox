@@ -4,7 +4,7 @@ import (
 	stdjson "encoding/json"
 	"fmt"
 
-	metajson "github.com/kumabox/kumabox/internal/meta/json"
+	metajson "github.com/kumabox/kumabox/internal/metastore/json"
 )
 
 const imageIndexTable = "image-index"

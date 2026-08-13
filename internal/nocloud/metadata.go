@@ -1,9 +1,9 @@
-// Package metadata renders NoCloud seed data for cloud-image guests.
+// Package nocloud renders NoCloud seed data for cloud-image guests.
 //
 // Cloud images rely on cloud-init to set hostname, users, and first-boot
 // networking. KumaBox writes the standard NoCloud files both as plain files for
 // inspection and as a small CIDATA disk consumed by the guest.
-package metadata
+package nocloud
 
 import (
 	"bytes"

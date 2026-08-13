@@ -17,17 +17,17 @@ import (
 
 	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/kumabox/kumabox/internal/imageimport"
-	"github.com/kumabox/kumabox/internal/meta"
-	metajson "github.com/kumabox/kumabox/internal/meta/json"
+	"github.com/kumabox/kumabox/internal/metastore"
+	metajson "github.com/kumabox/kumabox/internal/metastore/json"
 )
 
 // Store persists image metadata in the KumaBox image index.
 type Store struct {
 	cloudimgDir string
-	engine      meta.MetaEngine
+	engine      metastore.MetaEngine
 }
 
-var imageIndexCollection = meta.NewCollection[imageIndex]("images", imageIndexTable)
+var imageIndexCollection = metastore.NewCollection[imageIndex]("images", imageIndexTable)
 
 // New returns a Store rooted under rootDir.
 func New(rootDir string) *Store {
@@ -47,14 +47,14 @@ func JSONNamespace(rootDir string) metajson.Namespace {
 }
 
 // NewWithEngine creates an image store with an injected metadata engine.
-func NewWithEngine(rootDir string, engine meta.MetaEngine) *Store {
+func NewWithEngine(rootDir string, engine metastore.MetaEngine) *Store {
 	return &Store{cloudimgDir: filepath.Join(rootDir, "cloudimg"), engine: engine}
 }
 
 // MetadataEngine exposes the persistence boundary to migration tools.
-func (s *Store) MetadataEngine() meta.MetaEngine { return s.engine }
+func (s *Store) MetadataEngine() metastore.MetaEngine { return s.engine }
 
-func mustOpenImageEngine(namespace metajson.Namespace) meta.MetaEngine {
+func mustOpenImageEngine(namespace metajson.Namespace) metastore.MetaEngine {
 	engine, err := metajson.Open(namespace)
 	if err != nil {
 		panic(fmt.Sprintf("open image metadata engine: %v", err))
@@ -501,7 +501,7 @@ func (s *Store) createStagingDir(prefix string) (string, func(), error) {
 
 func (s *Store) withIndex(fn func(*imageIndex) error) error {
 	ctx := context.Background()
-	return s.engine.View(ctx, []meta.Namespace{"images"}, func(reader meta.Reader) error {
+	return s.engine.View(ctx, []metastore.Namespace{"images"}, func(reader metastore.Reader) error {
 		idx, err := s.readIndex(ctx, reader)
 		if err != nil {
 			return err
@@ -512,7 +512,7 @@ func (s *Store) withIndex(fn func(*imageIndex) error) error {
 
 func (s *Store) update(fn func(*imageIndex) error) error {
 	ctx := context.Background()
-	return s.engine.Update(ctx, meta.Scope{Write: "images"}, meta.CommitDurable, func(writer meta.Writer) error {
+	return s.engine.Update(ctx, metastore.Scope{Write: "images"}, metastore.CommitDurable, func(writer metastore.Writer) error {
 		idx, err := s.readIndex(ctx, writer)
 		if err != nil {
 			return err
@@ -524,9 +524,9 @@ func (s *Store) update(fn func(*imageIndex) error) error {
 	})
 }
 
-func (s *Store) readIndex(ctx context.Context, reader meta.Reader) (*imageIndex, error) {
+func (s *Store) readIndex(ctx context.Context, reader metastore.Reader) (*imageIndex, error) {
 	idx, err := imageIndexCollection.Get(ctx, reader, imageIndexRecord)
-	if errors.Is(err, meta.ErrNotFound) {
+	if errors.Is(err, metastore.ErrNotFound) {
 		idx = &imageIndex{}
 	} else if err != nil {
 		return nil, fmt.Errorf("read image index: %w", err)

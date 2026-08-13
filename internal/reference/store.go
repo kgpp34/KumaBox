@@ -9,13 +9,13 @@ import (
 	"sort"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/meta"
-	metajson "github.com/kumabox/kumabox/internal/meta/json"
+	"github.com/kumabox/kumabox/internal/metastore"
+	metajson "github.com/kumabox/kumabox/internal/metastore/json"
 )
 
 const (
-	namespace meta.Namespace = "references"
-	table     meta.Table     = "records"
+	namespace metastore.Namespace = "references"
+	table     metastore.Table     = "records"
 )
 
 type Record struct {
@@ -29,8 +29,8 @@ type Record struct {
 }
 
 type Store struct {
-	engine     meta.MetaEngine
-	collection *meta.Collection[Record]
+	engine     metastore.MetaEngine
+	collection *metastore.Collection[Record]
 }
 
 func New(rootDir string) *Store {
@@ -49,27 +49,27 @@ func JSONNamespace(rootDir string) metajson.Namespace {
 	}
 }
 
-func NewWithEngine(engine meta.MetaEngine) *Store {
-	return &Store{engine: engine, collection: meta.NewCollection[Record](namespace, table)}
+func NewWithEngine(engine metastore.MetaEngine) *Store {
+	return &Store{engine: engine, collection: metastore.NewCollection[Record](namespace, table)}
 }
 
-func (s *Store) MetadataEngine() meta.MetaEngine { return s.engine }
+func (s *Store) MetadataEngine() metastore.MetaEngine { return s.engine }
 
 func (s *Store) Upsert(ctx context.Context, record Record) error {
 	if record.ID == "" || record.SourceKind == "" || record.SourceID == "" || record.TargetKind == "" || record.TargetID == "" {
-		return fmt.Errorf("reference identity is incomplete: %w", meta.ErrScope)
+		return fmt.Errorf("reference identity is incomplete: %w", metastore.ErrScope)
 	}
 	if record.CreatedAt.IsZero() {
 		record.CreatedAt = time.Now().UTC()
 	}
-	return s.engine.Update(ctx, meta.Scope{Write: namespace}, meta.CommitDurable, func(writer meta.Writer) error {
-		return s.collection.Upsert(ctx, writer, meta.RecordID(record.ID), &record)
+	return s.engine.Update(ctx, metastore.Scope{Write: namespace}, metastore.CommitDurable, func(writer metastore.Writer) error {
+		return s.collection.Upsert(ctx, writer, metastore.RecordID(record.ID), &record)
 	})
 }
 
 func (s *Store) Delete(ctx context.Context, id string) error {
-	return s.engine.Update(ctx, meta.Scope{Write: namespace}, meta.CommitDurable, func(writer meta.Writer) error {
-		return s.collection.Delete(ctx, writer, meta.RecordID(id))
+	return s.engine.Update(ctx, metastore.Scope{Write: namespace}, metastore.CommitDurable, func(writer metastore.Writer) error {
+		return s.collection.Delete(ctx, writer, metastore.RecordID(id))
 	})
 }
 
@@ -77,11 +77,11 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 // single metadata transaction.
 func (s *Store) DeleteSource(ctx context.Context, kind, id string) error {
 	if kind == "" || id == "" {
-		return fmt.Errorf("reference source identity is incomplete: %w", meta.ErrScope)
+		return fmt.Errorf("reference source identity is incomplete: %w", metastore.ErrScope)
 	}
-	return s.engine.Update(ctx, meta.Scope{Write: namespace}, meta.CommitDurable, func(writer meta.Writer) error {
-		var ids []meta.RecordID
-		if err := s.collection.Scan(ctx, writer, func(recordID meta.RecordID, record *Record) error {
+	return s.engine.Update(ctx, metastore.Scope{Write: namespace}, metastore.CommitDurable, func(writer metastore.Writer) error {
+		var ids []metastore.RecordID
+		if err := s.collection.Scan(ctx, writer, func(recordID metastore.RecordID, record *Record) error {
 			if record.SourceKind == kind && record.SourceID == id {
 				ids = append(ids, recordID)
 			}
@@ -108,8 +108,8 @@ func (s *Store) ListSource(ctx context.Context, kind, id string) ([]Record, erro
 
 func (s *Store) list(ctx context.Context, matches func(Record) bool) ([]Record, error) {
 	var result []Record
-	err := s.engine.View(ctx, []meta.Namespace{namespace}, func(reader meta.Reader) error {
-		return s.collection.Scan(ctx, reader, func(_ meta.RecordID, record *Record) error {
+	err := s.engine.View(ctx, []metastore.Namespace{namespace}, func(reader metastore.Reader) error {
+		return s.collection.Scan(ctx, reader, func(_ metastore.RecordID, record *Record) error {
 			if matches(*record) {
 				result = append(result, *record)
 			}

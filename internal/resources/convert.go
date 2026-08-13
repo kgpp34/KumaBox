@@ -17,9 +17,9 @@ import (
 	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/lockfile"
-	"github.com/kumabox/kumabox/internal/meta"
-	metajson "github.com/kumabox/kumabox/internal/meta/json"
-	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
+	"github.com/kumabox/kumabox/internal/metastore"
+	metajson "github.com/kumabox/kumabox/internal/metastore/json"
+	metasqlite "github.com/kumabox/kumabox/internal/metastore/sqlite"
 	"github.com/kumabox/kumabox/internal/metering"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/ocistore"
@@ -40,15 +40,15 @@ type ConversionResult struct {
 
 // ConversionNamespace is the verified identity of one logical namespace.
 type ConversionNamespace struct {
-	Namespace meta.Namespace `json:"namespace"`
-	Records   int            `json:"records"`
-	Digest    string         `json:"digest"`
+	Namespace metastore.Namespace `json:"namespace"`
+	Records   int                 `json:"records"`
+	Digest    string              `json:"digest"`
 }
 
 type conversionManifest struct {
-	Target     string                              `json:"target"`
-	StartedAt  time.Time                           `json:"startedAt"`
-	Namespaces map[meta.Namespace]*conversionState `json:"namespaces"`
+	Target     string                                   `json:"target"`
+	StartedAt  time.Time                                `json:"startedAt"`
+	Namespaces map[metastore.Namespace]*conversionState `json:"namespaces"`
 }
 
 type conversionState struct {
@@ -117,11 +117,11 @@ func ConvertMetadata(ctx context.Context, cfg config.Config) (result ConversionR
 	return conversionResult(cfg.Metadata.Backend, databasePath, manifest), nil
 }
 
-func checkConversionQuiesced(ctx context.Context, target string, source meta.MetaEngine, definitions []metasqlite.Namespace, jsonDefinitions []metajson.Namespace) error {
+func checkConversionQuiesced(ctx context.Context, target string, source metastore.MetaEngine, definitions []metasqlite.Namespace, jsonDefinitions []metajson.Namespace) error {
 	probeContext, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	if target == "json" {
-		err := source.Update(probeContext, meta.Scope{Write: definitions[0].Name}, meta.CommitDurable, func(meta.Writer) error { return nil })
+		err := source.Update(probeContext, metastore.Scope{Write: definitions[0].Name}, metastore.CommitDurable, func(metastore.Writer) error { return nil })
 		if err != nil {
 			return fmt.Errorf("sqlite metadata source is busy; stop KumaBox commands before converting: %w", err)
 		}
@@ -212,7 +212,7 @@ func copyConversionNamespaces(ctx context.Context, target, databasePath string, 
 	return nil
 }
 
-func copyConversionNamespace(ctx context.Context, source, destination meta.MetaEngine, definition metasqlite.Namespace, state *conversionState) error {
+func copyConversionNamespace(ctx context.Context, source, destination metastore.MetaEngine, definition metasqlite.Namespace, state *conversionState) error {
 	sourceDigest, sourceRecords, err := namespaceDigest(ctx, source, definition)
 	if err != nil {
 		return err
@@ -230,7 +230,7 @@ func copyConversionNamespace(ctx context.Context, source, destination meta.MetaE
 	if targetRecords != 0 {
 		return fmt.Errorf("target is not fresh: contains %d record(s)", targetRecords)
 	}
-	if _, err := meta.TransferWithReport(ctx, source, destination, []meta.TableSet{{Namespace: definition.Name, Tables: definition.Tables}}); err != nil {
+	if _, err := metastore.TransferWithReport(ctx, source, destination, []metastore.TableSet{{Namespace: definition.Name, Tables: definition.Tables}}); err != nil {
 		return err
 	}
 	targetDigest, targetRecords, err = namespaceDigest(ctx, destination, definition)
@@ -243,8 +243,8 @@ func copyConversionNamespace(ctx context.Context, source, destination meta.MetaE
 	return nil
 }
 
-func newConversionManifest(ctx context.Context, target, databasePath string, source meta.MetaEngine, definitions []metasqlite.Namespace, jsonDefinitions []metajson.Namespace) (*conversionManifest, error) {
-	manifest := &conversionManifest{Target: target, StartedAt: time.Now().UTC(), Namespaces: make(map[meta.Namespace]*conversionState, len(definitions))}
+func newConversionManifest(ctx context.Context, target, databasePath string, source metastore.MetaEngine, definitions []metasqlite.Namespace, jsonDefinitions []metajson.Namespace) (*conversionManifest, error) {
+	manifest := &conversionManifest{Target: target, StartedAt: time.Now().UTC(), Namespaces: make(map[metastore.Namespace]*conversionState, len(definitions))}
 	for _, definition := range definitions {
 		digest, records, err := namespaceDigest(ctx, source, definition)
 		if err != nil {
@@ -259,17 +259,17 @@ func newConversionManifest(ctx context.Context, target, databasePath string, sou
 	return manifest, nil
 }
 
-func namespaceDigest(ctx context.Context, engine meta.MetaEngine, definition metasqlite.Namespace) (string, int, error) {
+func namespaceDigest(ctx context.Context, engine metastore.MetaEngine, definition metasqlite.Namespace) (string, int, error) {
 	hash := sha256.New()
 	records := 0
-	err := engine.View(ctx, []meta.Namespace{definition.Name}, func(reader meta.Reader) error {
+	err := engine.View(ctx, []metastore.Namespace{definition.Name}, func(reader metastore.Reader) error {
 		for _, table := range definition.Tables {
 			type row struct {
-				id  meta.RecordID
+				id  metastore.RecordID
 				raw json.RawMessage
 			}
 			var rows []row
-			if err := reader.ScanRaw(ctx, definition.Name, table, func(id meta.RecordID, raw json.RawMessage) error {
+			if err := reader.ScanRaw(ctx, definition.Name, table, func(id metastore.RecordID, raw json.RawMessage) error {
 				rows = append(rows, row{id: id, raw: append(json.RawMessage(nil), raw...)})
 				return nil
 			}); err != nil {
@@ -289,7 +289,7 @@ func namespaceDigest(ctx context.Context, engine meta.MetaEngine, definition met
 	return hex.EncodeToString(hash.Sum(nil)), records, nil
 }
 
-func openConversionSource(target, databasePath string, definitions []metasqlite.Namespace, jsonDefinitions []metajson.Namespace) (meta.MetaEngine, error) {
+func openConversionSource(target, databasePath string, definitions []metasqlite.Namespace, jsonDefinitions []metajson.Namespace) (metastore.MetaEngine, error) {
 	if target == "sqlite" {
 		return metajson.Open(jsonDefinitions...)
 	}
@@ -299,7 +299,7 @@ func openConversionSource(target, databasePath string, definitions []metasqlite.
 	return metasqlite.OpenForRecovery(databasePath, definitions...)
 }
 
-func openConversionTarget(ctx context.Context, target, databasePath string, definitions []metasqlite.Namespace, jsonDefinitions []metajson.Namespace) (meta.MetaEngine, error) {
+func openConversionTarget(ctx context.Context, target, databasePath string, definitions []metasqlite.Namespace, jsonDefinitions []metajson.Namespace) (metastore.MetaEngine, error) {
 	if target == "json" {
 		return metajson.Open(jsonDefinitions...)
 	}
@@ -380,7 +380,7 @@ func sourceFileCandidates(target, path string) []string {
 	return []string{path}
 }
 
-func conversionSourceFiles(target, databasePath string, definitions []metajson.Namespace, namespace meta.Namespace) []string {
+func conversionSourceFiles(target, databasePath string, definitions []metajson.Namespace, namespace metastore.Namespace) []string {
 	if target == "json" {
 		return []string{databasePath}
 	}
@@ -392,7 +392,7 @@ func conversionSourceFiles(target, databasePath string, definitions []metajson.N
 	return nil
 }
 
-func duplicateJSONGeneration(definitions []metajson.Namespace, namespace meta.Namespace) error {
+func duplicateJSONGeneration(definitions []metajson.Namespace, namespace metastore.Namespace) error {
 	for _, definition := range definitions {
 		if definition.Name != string(namespace) {
 			continue
@@ -438,7 +438,7 @@ func loadConversionManifest(path string) (*conversionManifest, error) {
 		return nil, fmt.Errorf("decode metadata conversion manifest: %w", err)
 	}
 	if manifest.Target == "" || len(manifest.Namespaces) == 0 {
-		return nil, fmt.Errorf("metadata conversion manifest is incomplete: %w", meta.ErrCorrupt)
+		return nil, fmt.Errorf("metadata conversion manifest is incomplete: %w", metastore.ErrCorrupt)
 	}
 	return &manifest, nil
 }

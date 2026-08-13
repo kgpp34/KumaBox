@@ -9,7 +9,7 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/imagestore"
-	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
+	metasqlite "github.com/kumabox/kumabox/internal/metastore/sqlite"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/ocistore"
 	"github.com/kumabox/kumabox/internal/operation"

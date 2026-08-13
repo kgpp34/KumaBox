@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/kumabox/kumabox/internal/meta"
+	"github.com/kumabox/kumabox/internal/metastore"
 )
 
 func TestSplitDigest(t *testing.T) {
@@ -43,7 +43,7 @@ func TestSplitDigest(t *testing.T) {
 func TestEnsureBlobReportsCacheAndAdoptsContent(t *testing.T) {
 	t.Parallel()
 
-	engine, err := meta.NewMemoryEngine("oci-content")
+	engine, err := metastore.NewMemoryEngine("oci-content")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestEnsureBlobReportsCacheAndAdoptsContent(t *testing.T) {
 func TestEnsureBlobSerializesConcurrentDigestWriters(t *testing.T) {
 	t.Parallel()
 
-	engine, err := meta.NewMemoryEngine("oci-content")
+	engine, err := metastore.NewMemoryEngine("oci-content")
 	if err != nil {
 		t.Fatal(err)
 	}

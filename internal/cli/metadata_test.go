@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/kumabox/kumabox/internal/config"
-	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
+	metasqlite "github.com/kumabox/kumabox/internal/metastore/sqlite"
 	"github.com/kumabox/kumabox/internal/reference"
 	"github.com/kumabox/kumabox/internal/resources"
 )

@@ -1,4 +1,4 @@
-package metadata
+package nocloud
 
 import (
 	"encoding/binary"

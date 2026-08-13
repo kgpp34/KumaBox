@@ -8,8 +8,8 @@ import (
 
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
-	"github.com/kumabox/kumabox/internal/meta"
-	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
+	"github.com/kumabox/kumabox/internal/metastore"
+	metasqlite "github.com/kumabox/kumabox/internal/metastore/sqlite"
 	"github.com/kumabox/kumabox/internal/metering"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/ocistore"
@@ -33,7 +33,7 @@ type StoreSet struct {
 	Operations state.OperationState
 	References state.ReferenceState
 	Metering   *metering.Store
-	Metadata   meta.MetaEngine
+	Metadata   metastore.MetaEngine
 	Guard      *resourceguard.Guard
 }
 
@@ -87,16 +87,16 @@ func SQLiteMetadataPath(cfg config.Config) string {
 
 func sqliteDefinitions() []metasqlite.Namespace {
 	return []metasqlite.Namespace{
-		{Name: "vms", Tables: []meta.Table{"vm-index"}},
-		{Name: "images", Tables: []meta.Table{"image-index"}},
-		{Name: "snapshots", Tables: []meta.Table{"snapshot-index"}},
-		{Name: "networks", Tables: []meta.Table{"network-index"}},
-		{Name: "leases", Tables: []meta.Table{"network-leases"}},
-		{Name: "host-tap", Tables: []meta.Table{"host-tap"}},
-		{Name: "oci-content", Tables: []meta.Table{"oci-content"}},
-		{Name: "operations", Tables: []meta.Table{"records"}},
-		{Name: "references", Tables: []meta.Table{"records"}},
-		{Name: metering.Namespace, Tables: []meta.Table{metering.Table}},
+		{Name: "vms", Tables: []metastore.Table{"vm-index"}},
+		{Name: "images", Tables: []metastore.Table{"image-index"}},
+		{Name: "snapshots", Tables: []metastore.Table{"snapshot-index"}},
+		{Name: "networks", Tables: []metastore.Table{"network-index"}},
+		{Name: "leases", Tables: []metastore.Table{"network-leases"}},
+		{Name: "host-tap", Tables: []metastore.Table{"host-tap"}},
+		{Name: "oci-content", Tables: []metastore.Table{"oci-content"}},
+		{Name: "operations", Tables: []metastore.Table{"records"}},
+		{Name: "references", Tables: []metastore.Table{"records"}},
+		{Name: metering.Namespace, Tables: []metastore.Table{metering.Table}},
 	}
 }
 
