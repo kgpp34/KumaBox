@@ -15,8 +15,8 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/fileutil"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	"github.com/kumabox/kumabox/internal/nocloud"
 	"github.com/kumabox/kumabox/internal/vm"
+	"github.com/kumabox/kumabox/internal/vm/nocloud"
 )
 
 const defaultKernelCmdline = "console=ttyS0 reboot=k panic=1 root=/dev/vda rw"
