@@ -477,12 +477,8 @@ func newImageRMCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 			defer mutation.Release() //nolint:errcheck
-			refs, err := imageReferencesFromVMs(stores)
-			if err != nil {
-				return err
-			}
 			result := batch.Run(cmd.Context(), args, batch.Options{Concurrency: concurrency}, "remove image", func(ctx context.Context, _ int, ref string) (*imagestore.ImageRecord, error) {
-				return removeImage(ctx, stores, ref, force, refs)
+				return removeImage(ctx, stores, ref, force)
 			})
 			return writeResourceBatchResult(func(value any) error {
 				return writeJSON(cmd.OutOrStdout(), value)
@@ -494,7 +490,7 @@ func newImageRMCommand(opts *rootOptions) *cobra.Command {
 	return cmd
 }
 
-func removeImage(ctx context.Context, stores resources.StoreSet, ref string, force bool, references []imagestore.Reference) (record *imagestore.ImageRecord, err error) {
+func removeImage(ctx context.Context, stores resources.StoreSet, ref string, force bool) (record *imagestore.ImageRecord, err error) {
 	image, err := stores.Images.Inspect(ref)
 	if err != nil {
 		return nil, err
@@ -508,12 +504,32 @@ func removeImage(ctx context.Context, stores resources.StoreSet, ref string, for
 			err = errors.Join(err, fmt.Errorf("release image lock: %w", releaseErr))
 		}
 	}()
+	references, err := imageReferencesFromVMs(stores)
+	if err != nil {
+		return nil, fmt.Errorf("recheck image references: %w", err)
+	}
 	if explicit, explicitErr := explicitImageReferences(ctx, stores, ref); explicitErr != nil {
 		return nil, explicitErr
 	} else if len(explicit) > 0 {
-		references = explicit
+		references = mergeImageReferences(references, explicit)
 	}
 	return stores.Images.Remove(imagestore.RemoveRequest{Ref: ref, Force: force, References: references})
+}
+
+func mergeImageReferences(groups ...[]imagestore.Reference) []imagestore.Reference {
+	seen := make(map[string]struct{})
+	var merged []imagestore.Reference
+	for _, group := range groups {
+		for _, reference := range group {
+			key := reference.Kind + "\x00" + reference.VMID + "\x00" + reference.ImageID
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			merged = append(merged, reference)
+		}
+	}
+	return merged
 }
 
 func explicitImageReferences(ctx context.Context, stores resources.StoreSet, ref string) ([]imagestore.Reference, error) {
