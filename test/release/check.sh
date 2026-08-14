@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
-checker="$repo_root/doctor/check.sh"
+checker="$repo_root/scripts/check.sh"
 
 help=$($checker --help)
 grep -Fq -- '--subnet CIDR' <<< "$help"

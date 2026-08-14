@@ -42,7 +42,7 @@ jobs:
           mkdir -p dist
           GOOS=linux CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/kumabox/kumabox/internal/version.Version=${VERSION} -X github.com/kumabox/kumabox/internal/version.Commit=${COMMIT} -X github.com/kumabox/kumabox/internal/version.BuildTime=${BUILD_TIME}" -o dist/kumabox ./cmd/kumabox
           GOOS=linux CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/kumabox/kumabox/internal/version.Version=${VERSION} -X github.com/kumabox/kumabox/internal/version.Commit=${COMMIT} -X github.com/kumabox/kumabox/internal/version.BuildTime=${BUILD_TIME}" -o dist/kumabox-agent ./cmd/agent
-          install -m 0755 doctor/check.sh dist/kumabox-check
+          install -m 0755 scripts/check.sh dist/kumabox-check
           cp LICENSE README.md dist/
           tar -C dist -czf "kumabox-${VERSION}-linux-${GOARCH}.tar.gz" kumabox kumabox-agent kumabox-check LICENSE README.md
           sha256sum "kumabox-${VERSION}-linux-${GOARCH}.tar.gz" > "kumabox-${VERSION}-linux-${GOARCH}.tar.gz.sha256"
