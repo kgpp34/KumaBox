@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 	"github.com/kumabox/kumabox/internal/backend"
-	kbruntime "github.com/kumabox/kumabox/internal/runtime"
+	kbruntime "github.com/kumabox/kumabox/internal/vm/runtime"
 	"github.com/spf13/cobra"
 )
 

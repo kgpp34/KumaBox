@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	kbruntime "github.com/kumabox/kumabox/internal/runtime"
+	kbruntime "github.com/kumabox/kumabox/internal/vm/runtime"
 )
 
 type lifecycleBatchOutput struct {

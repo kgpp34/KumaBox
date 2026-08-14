@@ -4,7 +4,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kumabox/kumabox/internal/config"
-	kbruntime "github.com/kumabox/kumabox/internal/runtime"
+	kbruntime "github.com/kumabox/kumabox/internal/vm/runtime"
 )
 
 func newCloneCommand(opts *rootOptions) *cobra.Command {

@@ -11,8 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	agentclient "github.com/kumabox/kumabox/internal/agent/client"
-	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vm"
+	kbruntime "github.com/kumabox/kumabox/internal/vm/runtime"
 )
 
 func newAgentCommand(opts *rootOptions) *cobra.Command {

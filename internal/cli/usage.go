@@ -8,7 +8,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/backend/cloudhypervisor"
 	"github.com/kumabox/kumabox/internal/metering"
-	kbruntime "github.com/kumabox/kumabox/internal/runtime"
+	kbruntime "github.com/kumabox/kumabox/internal/vm/runtime"
 )
 
 func newUsageCommand(opts *rootOptions) *cobra.Command {

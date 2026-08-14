@@ -10,8 +10,8 @@ import (
 	"github.com/kumabox/kumabox/internal/doctor"
 	"github.com/kumabox/kumabox/internal/image"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vm"
+	kbruntime "github.com/kumabox/kumabox/internal/vm/runtime"
 )
 
 func writeJSON(w io.Writer, value any) error {

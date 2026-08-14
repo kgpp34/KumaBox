@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vm"
+	kbruntime "github.com/kumabox/kumabox/internal/vm/runtime"
 )
 
 func TestWriteVMEventTable(t *testing.T) {

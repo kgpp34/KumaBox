@@ -9,8 +9,8 @@ import (
 
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/config"
-	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vm"
+	kbruntime "github.com/kumabox/kumabox/internal/vm/runtime"
 )
 
 const (

@@ -8,8 +8,8 @@ import (
 	"github.com/spf13/cobra"
 
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vm"
+	kbruntime "github.com/kumabox/kumabox/internal/vm/runtime"
 )
 
 func newNetworkCommand(opts *rootOptions) *cobra.Command {

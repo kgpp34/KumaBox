@@ -14,8 +14,8 @@ import (
 	"golang.org/x/term"
 
 	agentclient "github.com/kumabox/kumabox/internal/agent/client"
-	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vm"
+	kbruntime "github.com/kumabox/kumabox/internal/vm/runtime"
 )
 
 func newExecCommand(opts *rootOptions) *cobra.Command {

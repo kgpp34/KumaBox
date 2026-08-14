@@ -11,9 +11,9 @@ import (
 
 	"github.com/kumabox/kumabox/internal/batch"
 	"github.com/kumabox/kumabox/internal/config"
-	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/state"
+	kbruntime "github.com/kumabox/kumabox/internal/vm/runtime"
 )
 
 func newSnapshotCommand(opts *rootOptions) *cobra.Command {
