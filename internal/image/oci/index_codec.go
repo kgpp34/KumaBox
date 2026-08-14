@@ -1,4 +1,4 @@
-package ocistore
+package oci
 
 import (
 	stdjson "encoding/json"

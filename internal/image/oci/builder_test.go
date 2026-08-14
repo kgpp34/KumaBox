@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package ocibuild
+package oci
 
 import (
 	"archive/tar"
@@ -14,8 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/kumabox/kumabox/internal/ocistore"
 )
 
 func TestEnsureEROFSBuildsAndReusesLayer(t *testing.T) {
@@ -35,8 +33,8 @@ func TestEnsureEROFSBuildsAndReusesLayer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	builder := New(dir)
-	rec, err := builder.ensureEROFS(context.Background(), mkfs, ocistore.BlobRecord{
+	builder := NewBuilder(dir)
+	rec, err := builder.ensureEROFS(context.Background(), mkfs, BlobRecord{
 		Digest:    layerDigest,
 		Path:      layerPath,
 		MediaType: "application/vnd.oci.image.layer.v1.tar+gzip",
@@ -55,7 +53,7 @@ func TestEnsureEROFSBuildsAndReusesLayer(t *testing.T) {
 		t.Fatalf("unexpected EROFS path: %s", rec.Path)
 	}
 
-	cached, err := builder.ensureEROFS(context.Background(), mkfs, ocistore.BlobRecord{
+	cached, err := builder.ensureEROFS(context.Background(), mkfs, BlobRecord{
 		Digest:    layerDigest,
 		Path:      layerPath,
 		MediaType: "application/vnd.oci.image.layer.v1.tar+gzip",
@@ -83,7 +81,7 @@ func TestResolveBootProfileExtractsKernelAndInitrd(t *testing.T) {
 	}
 	sum := sha256.Sum256(layerBytes)
 
-	boot, err := New(dir).resolveBootProfile([]ocistore.BlobRecord{{
+	boot, err := NewBuilder(dir).resolveBootProfile([]BlobRecord{{
 		Digest:    "sha256:" + hex.EncodeToString(sum[:]),
 		Path:      layerPath,
 		MediaType: "application/vnd.oci.image.layer.v1.tar",
@@ -122,7 +120,7 @@ func TestResolveBootProfileRejectsMissingAssets(t *testing.T) {
 	}
 	sum := sha256.Sum256(layerBytes)
 
-	_, err := New(dir).resolveBootProfile([]ocistore.BlobRecord{{
+	_, err := NewBuilder(dir).resolveBootProfile([]BlobRecord{{
 		Digest:    "sha256:" + hex.EncodeToString(sum[:]),
 		Path:      layerPath,
 		MediaType: "application/vnd.oci.image.layer.v1.tar",
@@ -217,7 +215,7 @@ func TestInspectAgentProfileDetectsEmbeddedAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	profile, err := New(dir).inspectAgentProfile([]ocistore.BlobRecord{{
+	profile, err := NewBuilder(dir).inspectAgentProfile([]BlobRecord{{
 		Path:      layerPath,
 		MediaType: "application/vnd.oci.image.layer.v1.tar",
 	}}, "required")
@@ -241,7 +239,7 @@ func TestInspectAgentProfileRejectsRequiredAgentWhenMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := New(dir).inspectAgentProfile([]ocistore.BlobRecord{{
+	_, err := NewBuilder(dir).inspectAgentProfile([]BlobRecord{{
 		Path:      layerPath,
 		MediaType: "application/vnd.oci.image.layer.v1.tar",
 	}}, "required")

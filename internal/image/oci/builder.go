@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
-// Package ocibuild builds KumaBox image manifests from OCI images.
-package ocibuild
+// Builder converts OCI layers into bootable KumaBox image data.
+package oci
 
 import (
 	"archive/tar"
@@ -31,7 +31,6 @@ import (
 	"github.com/kumabox/kumabox/internal/agent/protocol"
 	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/kumabox/kumabox/internal/image"
-	"github.com/kumabox/kumabox/internal/ocistore"
 	"github.com/kumabox/kumabox/internal/vm"
 )
 
@@ -46,7 +45,7 @@ type BuildRequest struct {
 	MkfsEROFS    string
 	Concurrency  int
 	AgentProfile string
-	Progress     func(ocistore.ProgressEvent)
+	Progress     func(ProgressEvent)
 }
 
 // Builder converts OCI layers into shared EROFS blobs and publishes an image record.
@@ -55,21 +54,21 @@ type Builder struct {
 	erofsDir string
 	stageDir string
 	content  interface {
-		Pull(context.Context, ocistore.PullRequest) (*ocistore.PullResult, error)
+		Pull(context.Context, PullRequest) (*PullResult, error)
 	}
 	images interface {
 		Create(image.CreateRequest) (*image.ImageRecord, error)
 	}
 }
 
-// New returns a Builder rooted under rootDir.
-func New(rootDir string) *Builder {
-	return NewWithStores(rootDir, ocistore.New(rootDir), image.New(rootDir))
+// NewBuilder returns a Builder rooted under rootDir.
+func NewBuilder(rootDir string) *Builder {
+	return NewBuilderWithStores(rootDir, NewStore(rootDir), image.New(rootDir))
 }
 
-// NewWithStores creates a builder using caller-owned metadata stores.
-func NewWithStores(rootDir string, content interface {
-	Pull(context.Context, ocistore.PullRequest) (*ocistore.PullResult, error)
+// NewBuilderWithStores creates a builder using caller-owned metadata stores.
+func NewBuilderWithStores(rootDir string, content interface {
+	Pull(context.Context, PullRequest) (*PullResult, error)
 }, images interface {
 	Create(image.CreateRequest) (*image.ImageRecord, error)
 }) *Builder {
@@ -95,7 +94,7 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*image.ImageReco
 		req.MkfsEROFS = "mkfs.erofs"
 	}
 
-	pull, err := b.content.Pull(ctx, ocistore.PullRequest{
+	pull, err := b.content.Pull(ctx, PullRequest{
 		Ref:      req.Ref,
 		Platform: req.Platform,
 		Source:   req.Source,
@@ -148,7 +147,7 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*image.ImageReco
 				results[i].layer.Initrd = initrd.Path
 			}
 			if req.Progress != nil {
-				req.Progress(ocistore.ProgressEvent{Phase: "erofs", Index: i, Total: len(pull.Layers), Digest: layer.Digest})
+				req.Progress(ProgressEvent{Phase: "erofs", Index: i, Total: len(pull.Layers), Digest: layer.Digest})
 			}
 			return nil
 		})
@@ -269,7 +268,7 @@ func decodeOCIImageConfig(configPath string) (image.OCIImageConfig, error) {
 	return cfg, nil
 }
 
-func (b *Builder) inspectAgentProfile(layers []ocistore.BlobRecord, mode string) (*image.AgentProfile, error) {
+func (b *Builder) inspectAgentProfile(layers []BlobRecord, mode string) (*image.AgentProfile, error) {
 	if mode == "" {
 		mode = image.AgentProfileAuto
 	}
@@ -389,7 +388,7 @@ func decodeConfigLabels(config map[string]json.RawMessage, key string) (*map[str
 	return &labels, true, nil
 }
 
-func (b *Builder) resolveBootProfile(layers []ocistore.BlobRecord) (image.Boot, error) {
+func (b *Builder) resolveBootProfile(layers []BlobRecord) (image.Boot, error) {
 	var kernel *bootAsset
 	var initrd *bootAsset
 
@@ -416,7 +415,7 @@ func (b *Builder) resolveBootProfile(layers []ocistore.BlobRecord) (image.Boot, 
 	}, nil
 }
 
-func (b *Builder) scanBootAssets(layer ocistore.BlobRecord) (kernel, initrd *bootAsset, err error) {
+func (b *Builder) scanBootAssets(layer BlobRecord) (kernel, initrd *bootAsset, err error) {
 	in, err := os.Open(layer.Path) //nolint:gosec
 	if err != nil {
 		return nil, nil, fmt.Errorf("open layer blob: %w", err)
@@ -547,12 +546,12 @@ func (b *Builder) commitBootAsset(kind, sourcePath, sourceLayer string, src io.R
 	}, nil
 }
 
-func (b *Builder) ensureEROFS(ctx context.Context, mkfs string, layer ocistore.BlobRecord) (*image.EROFSLayer, error) {
+func (b *Builder) ensureEROFS(ctx context.Context, mkfs string, layer BlobRecord) (*image.EROFSLayer, error) {
 	erofs, _, _, err := b.ensureEROFSWithAssets(ctx, mkfs, layer)
 	return erofs, err
 }
 
-func (b *Builder) ensureEROFSWithAssets(ctx context.Context, mkfs string, layer ocistore.BlobRecord) (*image.EROFSLayer, *bootAsset, *bootAsset, error) {
+func (b *Builder) ensureEROFSWithAssets(ctx context.Context, mkfs string, layer BlobRecord) (*image.EROFSLayer, *bootAsset, *bootAsset, error) {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		erofs, kernel, initrd, err := b.ensureEROFSOnce(ctx, mkfs, layer)
@@ -572,7 +571,7 @@ func (b *Builder) ensureEROFSWithAssets(ctx context.Context, mkfs string, layer 
 	return nil, nil, nil, fmt.Errorf("EROFS_CONVERSION_FAILED after retries: %w", lastErr)
 }
 
-func (b *Builder) ensureEROFSOnce(ctx context.Context, mkfs string, layer ocistore.BlobRecord) (*image.EROFSLayer, *bootAsset, *bootAsset, error) {
+func (b *Builder) ensureEROFSOnce(ctx context.Context, mkfs string, layer BlobRecord) (*image.EROFSLayer, *bootAsset, *bootAsset, error) {
 	algo, value, err := splitDigest(layer.Digest)
 	if err != nil {
 		return nil, nil, nil, err
@@ -748,35 +747,6 @@ func layerTarReader(mediaType string, src io.Reader) (io.Reader, func(), error) 
 	default:
 		return nil, func() {}, fmt.Errorf("OCI_LAYER_MEDIA_TYPE_UNSUPPORTED: %s", mediaType)
 	}
-}
-
-func splitDigest(digest string) (string, string, error) {
-	algo, value, ok := strings.Cut(digest, ":")
-	if !ok || algo != "sha256" || len(value) != sha256.Size*2 {
-		return "", "", fmt.Errorf("OCI_DIGEST_INVALID: %s", digest)
-	}
-	if _, err := hex.DecodeString(value); err != nil {
-		return "", "", fmt.Errorf("OCI_DIGEST_INVALID: %w", err)
-	}
-	return algo, value, nil
-}
-
-func fileSHA256(path string) (sum string, err error) {
-	file, err := os.Open(path) //nolint:gosec
-	if err != nil {
-		return "", fmt.Errorf("open file for sha256: %w", err)
-	}
-	defer func() {
-		if closeErr := file.Close(); err == nil && closeErr != nil {
-			err = fmt.Errorf("close file after sha256: %w", closeErr)
-		}
-	}()
-
-	hasher := sha256.New()
-	if _, err := io.Copy(hasher, file); err != nil {
-		return "", fmt.Errorf("hash file: %w", err)
-	}
-	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
 func operationID() (string, error) {

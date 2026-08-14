@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package ocistore
+package oci
 
 import (
 	"bytes"
@@ -47,7 +47,7 @@ func TestEnsureBlobReportsCacheAndAdoptsContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := NewWithEngine(t.TempDir(), engine)
+	store := NewStoreWithEngine(t.TempDir(), engine)
 	content := []byte("content-addressed layer")
 	digest := sha256Digest(content)
 
@@ -74,7 +74,7 @@ func TestEnsureBlobSerializesConcurrentDigestWriters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := NewWithEngine(t.TempDir(), engine)
+	store := NewStoreWithEngine(t.TempDir(), engine)
 	content := bytes.Repeat([]byte("layer"), 4096)
 	digest := sha256Digest(content)
 

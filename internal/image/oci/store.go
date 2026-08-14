@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package ocistore
+package oci
 
 import (
 	"bytes"
@@ -18,8 +18,6 @@ import (
 
 	"github.com/kumabox/kumabox/internal/meta"
 	metajson "github.com/kumabox/kumabox/internal/meta/json"
-	"github.com/kumabox/kumabox/internal/ociresolver"
-	"github.com/kumabox/kumabox/internal/ocisource"
 )
 
 // Store caches OCI manifest/config/layer blobs by digest.
@@ -60,27 +58,27 @@ type BlobRecord struct {
 
 // RefRecord records the latest digest resolved for a tag/ref.
 type RefRecord struct {
-	Ref            string               `json:"ref"`
-	DigestRef      string               `json:"digestRef"`
-	ResolvedDigest string               `json:"resolvedDigest"`
-	Platform       ociresolver.Platform `json:"platform"`
-	Config         string               `json:"config"`
-	Layers         []string             `json:"layers"`
-	UpdatedAt      time.Time            `json:"updatedAt"`
+	Ref            string    `json:"ref"`
+	DigestRef      string    `json:"digestRef"`
+	ResolvedDigest string    `json:"resolvedDigest"`
+	Platform       Platform  `json:"platform"`
+	Config         string    `json:"config"`
+	Layers         []string  `json:"layers"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 // PullResult summarizes a content-store pull.
 type PullResult struct {
-	SchemaVersion string               `json:"schemaVersion"`
-	Ref           string               `json:"ref"`
-	Source        string               `json:"source"`
-	DigestRef     string               `json:"digestRef"`
-	Platform      ociresolver.Platform `json:"platform"`
-	Manifest      BlobRecord           `json:"manifest"`
-	Config        BlobRecord           `json:"config"`
-	Layers        []BlobRecord         `json:"layers"`
-	Cached        int                  `json:"cached"`
-	Downloaded    int                  `json:"downloaded"`
+	SchemaVersion string       `json:"schemaVersion"`
+	Ref           string       `json:"ref"`
+	Source        string       `json:"source"`
+	DigestRef     string       `json:"digestRef"`
+	Platform      Platform     `json:"platform"`
+	Manifest      BlobRecord   `json:"manifest"`
+	Config        BlobRecord   `json:"config"`
+	Layers        []BlobRecord `json:"layers"`
+	Cached        int          `json:"cached"`
+	Downloaded    int          `json:"downloaded"`
 }
 
 type indexFile struct {
@@ -91,9 +89,9 @@ type indexFile struct {
 
 var contentIndexCollection = meta.NewCollection[indexFile]("oci-content", contentIndexTable)
 
-// New returns an OCI content store under rootDir.
-func New(rootDir string) *Store {
-	return NewWithEngine(rootDir, mustOpenContentEngine(JSONNamespace(rootDir)))
+// NewStore returns an OCI content store under rootDir.
+func NewStore(rootDir string) *Store {
+	return NewStoreWithEngine(rootDir, mustOpenContentEngine(JSONNamespace(rootDir)))
 }
 
 // JSONNamespace describes the OCI content index used by the JSON metadata backend.
@@ -102,8 +100,8 @@ func JSONNamespace(rootDir string) metajson.Namespace {
 	return metajson.Namespace{Name: "oci-content", FilePath: filepath.Join(base, "index.json"), LockPath: filepath.Join(base, "index.lock"), Codec: indexCodec{}}
 }
 
-// NewWithEngine creates an OCI content store with an injected metadata engine.
-func NewWithEngine(rootDir string, engine meta.MetaEngine) *Store {
+// NewStoreWithEngine creates an OCI content store with an injected metadata engine.
+func NewStoreWithEngine(rootDir string, engine meta.MetaEngine) *Store {
 	base := filepath.Join(rootDir, "oci", "content")
 	return &Store{rootDir: base, engine: engine, blobsDir: filepath.Join(base, "blobs"), stageDir: filepath.Join(base, "staging")}
 }
@@ -125,7 +123,7 @@ func (s *Store) Pull(ctx context.Context, req PullRequest) (*PullResult, error) 
 		return nil, fmt.Errorf("OCI_REF_REQUIRED: ref must not be empty")
 	}
 
-	sourceResult, err := ocisource.Open(ctx, ocisource.Request{
+	sourceResult, err := openSource(ctx, SourceRequest{
 		Ref:      req.Ref,
 		Platform: req.Platform,
 		Source:   req.Source,

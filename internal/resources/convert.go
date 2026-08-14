@@ -16,13 +16,13 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/image"
+	"github.com/kumabox/kumabox/internal/image/oci"
 	"github.com/kumabox/kumabox/internal/lock"
 	"github.com/kumabox/kumabox/internal/meta"
 	metajson "github.com/kumabox/kumabox/internal/meta/json"
 	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
 	"github.com/kumabox/kumabox/internal/metering"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	"github.com/kumabox/kumabox/internal/ocistore"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/reference"
 	"github.com/kumabox/kumabox/internal/snapshot"
@@ -417,7 +417,7 @@ func metadataJSONDefinitions(rootDir string) []metajson.Namespace {
 	}
 	definitions = append(definitions, kbnetwork.JSONNamespaces(rootDir)...)
 	definitions = append(definitions,
-		ocistore.JSONNamespace(rootDir),
+		oci.JSONNamespace(rootDir),
 		operation.JSONNamespace(rootDir),
 		reference.JSONNamespace(rootDir),
 		metering.JSONNamespace(rootDir),

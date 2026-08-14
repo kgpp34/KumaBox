@@ -8,12 +8,12 @@ import (
 
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/image"
+	"github.com/kumabox/kumabox/internal/image/oci"
 	"github.com/kumabox/kumabox/internal/lock"
 	"github.com/kumabox/kumabox/internal/meta"
 	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
 	"github.com/kumabox/kumabox/internal/metering"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	"github.com/kumabox/kumabox/internal/ocistore"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/reference"
 	"github.com/kumabox/kumabox/internal/snapshot"
@@ -58,7 +58,7 @@ func NewStoreSetForConfig(cfg config.Config) (StoreSet, error) {
 		Images:     image.NewWithEngine(cfg.Runtime.RootDir, engine),
 		Snapshots:  snapshot.NewStoreWithEngineAndVMReader(cfg.Runtime.RootDir, engine, vm),
 		Networks:   kbnetwork.NewStoreWithEngines(cfg.Runtime.RootDir, engine, engine, engine),
-		OCI:        ocistore.NewWithEngine(cfg.Runtime.RootDir, engine),
+		OCI:        oci.NewStoreWithEngine(cfg.Runtime.RootDir, engine),
 		Operations: operation.NewWithEngine(engine),
 		References: reference.NewWithEngine(engine),
 		Metering:   metering.NewWithEngine(engine),
@@ -108,7 +108,7 @@ func NewStoreSet(rootDir string) StoreSet {
 		Images:     image.New(rootDir),
 		Snapshots:  snapshot.NewStoreWithVMReader(rootDir, vm),
 		Networks:   kbnetwork.NewStore(rootDir),
-		OCI:        ocistore.New(rootDir),
+		OCI:        oci.NewStore(rootDir),
 		Operations: operation.New(rootDir),
 		References: reference.New(rootDir),
 		Metering:   metering.New(rootDir),

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package ociresolver
+package oci
 
 import "testing"
 

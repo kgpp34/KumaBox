@@ -5,8 +5,8 @@ import (
 
 	"github.com/kumabox/kumabox/internal/backend"
 	kbimage "github.com/kumabox/kumabox/internal/image"
+	"github.com/kumabox/kumabox/internal/image/oci"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	"github.com/kumabox/kumabox/internal/ocistore"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/reference"
 	"github.com/kumabox/kumabox/internal/snapshot"
@@ -68,7 +68,7 @@ var _ NetworkState = (*kbnetwork.Store)(nil)
 
 // OCIState is the content metadata capability used by image workflows.
 type OCIState interface {
-	Pull(context.Context, ocistore.PullRequest) (*ocistore.PullResult, error)
+	Pull(context.Context, oci.PullRequest) (*oci.PullResult, error)
 }
 
 // OperationState records control-plane work that can require reconciliation.
@@ -82,7 +82,7 @@ type OperationState interface {
 	Reconcile(context.Context, func(context.Context, operation.Record) error) error
 }
 
-var _ OCIState = (*ocistore.Store)(nil)
+var _ OCIState = (*oci.Store)(nil)
 var _ OperationState = (*operation.Journal)(nil)
 
 type ReferenceState interface {

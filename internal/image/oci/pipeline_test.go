@@ -7,33 +7,31 @@ import (
 	"testing"
 
 	"github.com/kumabox/kumabox/internal/image"
-	"github.com/kumabox/kumabox/internal/ocibuild"
-	"github.com/kumabox/kumabox/internal/ocistore"
 )
 
 type fakeContentStore struct {
-	result *ocistore.PullResult
-	req    ocistore.PullRequest
+	result *PullResult
+	req    PullRequest
 }
 
-func (f *fakeContentStore) Pull(_ context.Context, req ocistore.PullRequest) (*ocistore.PullResult, error) {
+func (f *fakeContentStore) Pull(_ context.Context, req PullRequest) (*PullResult, error) {
 	f.req = req
 	return f.result, nil
 }
 
 type fakeImageBuilder struct {
 	result *image.ImageRecord
-	req    ocibuild.BuildRequest
+	req    BuildRequest
 }
 
-func (f *fakeImageBuilder) Build(_ context.Context, req ocibuild.BuildRequest) (*image.ImageRecord, error) {
+func (f *fakeImageBuilder) Build(_ context.Context, req BuildRequest) (*image.ImageRecord, error) {
 	f.req = req
 	return f.result, nil
 }
 
 func TestImagePipelineDelegatesWorkflowSteps(t *testing.T) {
 	ref := "registry.example/test:latest"
-	pullResult := &ocistore.PullResult{Ref: ref}
+	pullResult := &PullResult{Ref: ref}
 	imageResult := &image.ImageRecord{Name: "test"}
 	content := &fakeContentStore{result: pullResult}
 	builder := &fakeImageBuilder{result: imageResult}

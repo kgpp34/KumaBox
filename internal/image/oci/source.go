@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 
-// Package ocisource acquires OCI images from supported local and remote
-// sources. It does not persist manifests or blobs.
-package ocisource
+// Source acquisition supports local Docker images and remote registries.
+package oci
 
 import (
 	"bytes"
@@ -19,27 +18,25 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
-
-	"github.com/kumabox/kumabox/internal/ociresolver"
 )
 
-// Request describes an OCI image source.
-type Request struct {
+// SourceRequest describes an OCI image source.
+type SourceRequest struct {
 	Ref      string
 	Platform string
 	Source   string
 }
 
-// Result contains an acquired OCI image and its resolved metadata.
-type Result struct {
+// SourceResult contains an acquired OCI image and its resolved metadata.
+type SourceResult struct {
 	Image    v1.Image
-	Resolved *ociresolver.Result
+	Resolved *ResolveResult
 	Source   string
 }
 
-// Open acquires an OCI image from the requested source. Source "auto" tries
+// openSource acquires an OCI image from the requested source. Source "auto" tries
 // the local Docker daemon before falling back to a registry.
-func Open(ctx context.Context, req Request) (*Result, error) {
+func openSource(ctx context.Context, req SourceRequest) (*SourceResult, error) {
 	source := req.Source
 	if source == "" {
 		source = "auto"
@@ -60,8 +57,8 @@ func Open(ctx context.Context, req Request) (*Result, error) {
 	}
 }
 
-func openRegistry(ctx context.Context, req Request) (*Result, error) {
-	resolved, err := (ociresolver.Resolver{}).Resolve(ctx, req.Ref, req.Platform)
+func openRegistry(ctx context.Context, req SourceRequest) (*SourceResult, error) {
+	resolved, err := (Resolver{}).Resolve(ctx, req.Ref, req.Platform)
 	if err != nil {
 		return nil, err
 	}
@@ -77,11 +74,11 @@ func openRegistry(ctx context.Context, req Request) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("OCI_PULL_FAILED: %w", err)
 	}
-	return &Result{Image: img, Resolved: resolved, Source: "registry"}, nil
+	return &SourceResult{Image: img, Resolved: resolved, Source: "registry"}, nil
 }
 
-func openDaemon(ctx context.Context, req Request) (*Result, error) {
-	platform, err := ociresolver.ParsePlatform(req.Platform)
+func openDaemon(ctx context.Context, req SourceRequest) (*SourceResult, error) {
+	platform, err := ParsePlatform(req.Platform)
 	if err != nil {
 		return nil, err
 	}
@@ -114,21 +111,21 @@ func openDaemon(ctx context.Context, req Request) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("OCI_MANIFEST_FAILED: %w", err)
 	}
-	layers := make([]ociresolver.Descriptor, 0, len(manifest.Layers))
+	layers := make([]Descriptor, 0, len(manifest.Layers))
 	for _, layer := range manifest.Layers {
-		layers = append(layers, ociresolver.Descriptor{
+		layers = append(layers, Descriptor{
 			Digest:    layer.Digest.String(),
 			MediaType: string(layer.MediaType),
 			SizeBytes: layer.Size,
 		})
 	}
-	resolved := &ociresolver.Result{
+	resolved := &ResolveResult{
 		Ref:            req.Ref,
 		Repository:     parsed.Context().String(),
 		ResolvedDigest: digest.String(),
 		DigestRef:      parsed.Context().String() + "@" + digest.String(),
 		Platform:       platform,
-		Config: ociresolver.Descriptor{
+		Config: Descriptor{
 			Digest:    manifest.Config.Digest.String(),
 			MediaType: string(manifest.Config.MediaType),
 			SizeBytes: manifest.Config.Size,
@@ -136,10 +133,10 @@ func openDaemon(ctx context.Context, req Request) (*Result, error) {
 		Layers:     layers,
 		ResolvedAt: time.Now().UTC(),
 	}
-	return &Result{Image: img, Resolved: resolved, Source: "daemon"}, nil
+	return &SourceResult{Image: img, Resolved: resolved, Source: "daemon"}, nil
 }
 
-func validatePlatform(img v1.Image, want ociresolver.Platform) error {
+func validatePlatform(img v1.Image, want Platform) error {
 	raw, err := img.RawConfigFile()
 	if err != nil {
 		return fmt.Errorf("OCI_CONFIG_FAILED: %w", err)

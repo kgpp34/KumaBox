@@ -16,8 +16,8 @@ import (
 	"github.com/kumabox/kumabox/internal/batch"
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/image"
+	"github.com/kumabox/kumabox/internal/image/oci"
 	"github.com/kumabox/kumabox/internal/lock"
-	"github.com/kumabox/kumabox/internal/oci"
 	"github.com/kumabox/kumabox/internal/resources"
 )
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package ociresolver
+package oci
 
 import (
 	"context"
@@ -38,8 +38,8 @@ type Descriptor struct {
 	SizeBytes int64  `json:"sizeBytes"`
 }
 
-// Result is the digest-pinned view of an OCI image reference.
-type Result struct {
+// ResolveResult is the digest-pinned view of an OCI image reference.
+type ResolveResult struct {
 	Ref            string       `json:"ref"`
 	Repository     string       `json:"repository"`
 	ResolvedDigest string       `json:"resolvedDigest"`
@@ -54,7 +54,7 @@ type Result struct {
 type Resolver struct{}
 
 // Resolve resolves ref to a single image manifest and returns its pinned digest.
-func (Resolver) Resolve(ctx context.Context, ref string, platform string) (*Result, error) {
+func (Resolver) Resolve(ctx context.Context, ref string, platform string) (*ResolveResult, error) {
 	parsed, err := name.ParseReference(ref)
 	if err != nil {
 		return nil, fmt.Errorf("OCI_REF_INVALID: %w", err)
@@ -91,7 +91,7 @@ func (Resolver) Resolve(ctx context.Context, ref string, platform string) (*Resu
 		})
 	}
 
-	return &Result{
+	return &ResolveResult{
 		Ref:            parsed.String(),
 		Repository:     parsed.Context().String(),
 		ResolvedDigest: digest.String(),
