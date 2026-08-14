@@ -47,6 +47,7 @@ RUN if [ -n "$APT_MIRROR" ]; then \
         arm64) install -m 0755 /usr/local/share/kumabox/kumabox-agent-linux-arm64 /usr/local/bin/kumabox-agent ;; \
         *) echo "unsupported target architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
+    && rm -f /usr/local/share/kumabox/kumabox-agent-linux-* \
     && chmod 0755 /usr/local/share/kumabox/kumabox-agent.openrc \
     && printf "erofs\noverlay\next4\nvirtio_blk\nvirtio_pci\nvirtio_ring\nvirtio_net\nvsock\nvmw_vsock_virtio_transport\n" >> /etc/initramfs-tools/modules \
     && sed -i 's/^COMPRESS=.*/COMPRESS=gzip/' /etc/initramfs-tools/initramfs.conf \
