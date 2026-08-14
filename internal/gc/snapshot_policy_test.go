@@ -11,8 +11,8 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/reference"
-	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
+	"github.com/kumabox/kumabox/internal/state"
 )
 
 func TestBuildSnapshotPolicyPlan(t *testing.T) {
@@ -94,7 +94,7 @@ func TestSnapshotPolicyGCMatchesJSONAndSQLite(t *testing.T) {
 	for _, backend := range []string{"json", "sqlite"} {
 		t.Run(backend, func(t *testing.T) {
 			cfg := snapshotPolicyConfig(t, backend)
-			stores, err := resources.NewStoreSetForConfig(cfg)
+			stores, err := state.Open(cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -138,7 +138,7 @@ func TestSnapshotPolicyGCMatchesJSONAndSQLite(t *testing.T) {
 			if got := candidateIDs(repaired.SnapshotPolicy.Deleted); !equalStrings(got, []string{middle.ID}) {
 				t.Fatalf("deleted = %v", got)
 			}
-			verifyStores, err := resources.NewStoreSetForConfig(cfg)
+			verifyStores, err := state.Open(cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -159,7 +159,7 @@ func TestSnapshotPolicyGCMatchesJSONAndSQLite(t *testing.T) {
 
 func TestSnapshotPolicyFailureBeforeDeleteKeepsSnapshot(t *testing.T) {
 	cfg := snapshotPolicyConfig(t, "json")
-	stores, err := resources.NewStoreSetForConfig(cfg)
+	stores, err := state.Open(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,14 +196,14 @@ func snapshotPolicyConfig(t *testing.T, backend string) config.Config {
 	cfg.Metadata.Backend = backend
 	if backend == "sqlite" {
 		cfg.Metadata.Path = filepath.Join(cfg.Runtime.RootDir, "metadata", "kumabox.db")
-		if err := resources.InitSQLiteMetadata(t.Context(), cfg); err != nil {
+		if err := state.InitSQLiteMetadata(t.Context(), cfg); err != nil {
 			t.Fatal(err)
 		}
 	}
 	return cfg
 }
 
-func createPolicySnapshot(t *testing.T, stores resources.StoreSet, name, source string, size int64) *snapshot.Record {
+func createPolicySnapshot(t *testing.T, stores state.Set, name, source string, size int64) *snapshot.Record {
 	t.Helper()
 	build, err := stores.Snapshots.Reserve(t.Context(), name)
 	if err != nil {

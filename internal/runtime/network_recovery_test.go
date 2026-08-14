@@ -13,7 +13,7 @@ import (
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/config"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	"github.com/kumabox/kumabox/internal/resources"
+	"github.com/kumabox/kumabox/internal/state"
 	"github.com/kumabox/kumabox/internal/vm"
 )
 
@@ -56,7 +56,7 @@ func TestStartVMRecoversPersistedNetworks(t *testing.T) {
 					t.Fatalf("request %d identity = %+v, want %+v", index, req.Existing, want)
 				}
 			}
-			records, err := rt.storeSet.Networks.List()
+			records, err := rt.data.Networks.List()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,7 +102,7 @@ func TestStartVMRollsBackPartialNetworkRecovery(t *testing.T) {
 	if len(deleted) != 1 || deleted[0].IfName != "eth0" || !deleted[0].PreserveNetNS {
 		t.Fatalf("rollback deletes = %+v", deleted)
 	}
-	records, err := rt.storeSet.Networks.List()
+	records, err := rt.data.Networks.List()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestStartVMRepairsMissingNetworkProviderRecord(t *testing.T) {
 			if _, err := rt.StartVMContext(t.Context(), rec.ID); err != nil {
 				t.Fatal(err)
 			}
-			records, err := rt.storeSet.Networks.List()
+			records, err := rt.data.Networks.List()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -190,11 +190,11 @@ func newNetworkRecoveryRuntime(t *testing.T, metadataBackend string, interfaceCo
 	cfg.Metadata.Backend = metadataBackend
 	if metadataBackend == "sqlite" {
 		cfg.Metadata.Path = filepath.Join(rootDir, "metadata", "kumabox.db")
-		if err := resources.InitSQLiteMetadata(t.Context(), cfg); err != nil {
+		if err := state.InitSQLiteMetadata(t.Context(), cfg); err != nil {
 			t.Fatal(err)
 		}
 	}
-	stores, err := resources.NewStoreSetForConfig(cfg)
+	stores, err := state.Open(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func newNetworkRecoveryRuntime(t *testing.T, metadataBackend string, interfaceCo
 		})
 	}
 	var nextPID atomic.Int32
-	rt, err := NewWithBackendAndStores(stores, backendFake{
+	rt, err := NewWithBackendAndState(stores, backendFake{
 		render: func(*vm.VMRecord) error { return nil },
 		start: func(*vm.VMRecord) (*backend.StartResult, error) {
 			pid := nextPID.Add(1)

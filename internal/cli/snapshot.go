@@ -11,9 +11,9 @@ import (
 
 	"github.com/kumabox/kumabox/internal/batch"
 	"github.com/kumabox/kumabox/internal/config"
-	"github.com/kumabox/kumabox/internal/resources"
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/snapshot"
+	"github.com/kumabox/kumabox/internal/state"
 )
 
 func newSnapshotCommand(opts *rootOptions) *cobra.Command {
@@ -323,7 +323,7 @@ func newSnapshotRMCommand(opts *rootOptions) *cobra.Command {
 	return cmd
 }
 
-func removeSnapshot(ctx context.Context, stores resources.StoreSet, ref string) (*snapshot.Record, error) {
+func removeSnapshot(ctx context.Context, stores state.Set, ref string) (*snapshot.Record, error) {
 	if stores.References != nil {
 		record, err := stores.Snapshots.Inspect(ref)
 		if err != nil {

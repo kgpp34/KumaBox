@@ -1,5 +1,5 @@
-// Package resources composes KumaBox's persisted resource stores.
-package resources
+// Package state defines and opens KumaBox's durable state capabilities.
+package state
 
 import (
 	"context"
@@ -17,43 +17,42 @@ import (
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/reference"
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/state"
 	"github.com/kumabox/kumabox/internal/vm"
 )
 
-// StoreSet is the complete persisted resource composition used by one
+// Set is the complete persisted resource composition used by one
 // KumaBox process. Store implementations can be replaced before handing the
 // set to Runtime, GC, or a CLI command.
-type StoreSet struct {
-	VM         state.VMState
-	Images     state.ImageState
-	Snapshots  state.SnapshotState
-	Networks   state.NetworkState
-	OCI        state.OCIState
-	Operations state.OperationState
-	References state.ReferenceState
+type Set struct {
+	VM         VMState
+	Images     ImageState
+	Snapshots  SnapshotState
+	Networks   NetworkState
+	OCI        OCIState
+	Operations OperationState
+	References ReferenceState
 	Metering   *metering.Store
 	Metadata   meta.MetaEngine
 	Guard      *lock.Guard
 }
 
-// NewStoreSetForConfig composes every persisted resource over the configured
+// Open composes every persisted resource over the configured
 // metadata backend. All SQLite-backed resources share one database and one
 // transaction boundary; the JSON path keeps the existing file layout.
-func NewStoreSetForConfig(cfg config.Config) (StoreSet, error) {
+func Open(cfg config.Config) (Set, error) {
 	if err := metasqlite.RefuseConversion(SQLiteMetadataPath(cfg)); err != nil {
-		return StoreSet{}, err
+		return Set{}, err
 	}
 	if cfg.Metadata.Backend != "sqlite" {
-		return NewStoreSet(cfg.Runtime.RootDir), nil
+		return OpenJSON(cfg.Runtime.RootDir), nil
 	}
 	path := SQLiteMetadataPath(cfg)
 	engine, err := metasqlite.Open(path, sqliteDefinitions()...)
 	if err != nil {
-		return StoreSet{}, fmt.Errorf("open configured metadata backend: %w", err)
+		return Set{}, fmt.Errorf("open configured metadata backend: %w", err)
 	}
 	vm := vm.NewWithEngine(cfg.Runtime.RootDir, engine)
-	return StoreSet{
+	return Set{
 		VM:         vm,
 		Images:     image.NewWithEngine(cfg.Runtime.RootDir, engine),
 		Snapshots:  snapshot.NewStoreWithEngineAndVMReader(cfg.Runtime.RootDir, engine, vm),
@@ -100,10 +99,10 @@ func sqliteDefinitions() []metasqlite.Namespace {
 	}
 }
 
-// NewStoreSet creates the default JSON-backed resource stores.
-func NewStoreSet(rootDir string) StoreSet {
+// OpenJSON creates the default JSON-backed resource stores.
+func OpenJSON(rootDir string) Set {
 	vm := vm.New(rootDir)
-	return StoreSet{
+	return Set{
 		VM:         vm,
 		Images:     image.New(rootDir),
 		Snapshots:  snapshot.NewStoreWithVMReader(rootDir, vm),

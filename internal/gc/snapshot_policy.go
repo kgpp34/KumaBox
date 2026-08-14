@@ -10,8 +10,8 @@ import (
 
 	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/reference"
-	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
+	"github.com/kumabox/kumabox/internal/state"
 )
 
 // SnapshotPolicy selects ready snapshots for deterministic LRU eviction.
@@ -67,7 +67,7 @@ func (p SnapshotPolicy) validate() error {
 	return nil
 }
 
-func planSnapshotPolicy(ctx context.Context, stores resources.StoreSet, policy SnapshotPolicy, now time.Time) (*SnapshotPolicyReport, error) {
+func planSnapshotPolicy(ctx context.Context, stores state.Set, policy SnapshotPolicy, now time.Time) (*SnapshotPolicyReport, error) {
 	if err := policy.validate(); err != nil {
 		return nil, err
 	}
@@ -235,7 +235,7 @@ func snapshotAccessTime(record *snapshot.Record) time.Time {
 	return record.CreatedAt
 }
 
-func applySnapshotPolicy(ctx context.Context, stores resources.StoreSet, report *SnapshotPolicyReport) error {
+func applySnapshotPolicy(ctx context.Context, stores state.Set, report *SnapshotPolicyReport) error {
 	for _, candidate := range report.Candidates {
 		if err := ctx.Err(); err != nil {
 			return err

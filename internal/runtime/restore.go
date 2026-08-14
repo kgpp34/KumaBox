@@ -51,7 +51,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	}
 	defer func() { resultErr = r.finishOperation(ctx, operationID, resultErr) }()
 
-	snapshotStore := r.storeSet.Snapshots
+	snapshotStore := r.data.Snapshots
 	snapshotRec, lease, err := snapshotStore.AcquireRead(ctx, ref)
 	if err != nil {
 		return nil, err
@@ -62,7 +62,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	if err != nil {
 		return nil, err
 	}
-	image, err := r.storeSet.Images.Inspect(manifest.Source.ImageID)
+	image, err := r.data.Images.Inspect(manifest.Source.ImageID)
 	if err != nil {
 		return nil, fmt.Errorf("BASE_IMAGE_MISSING: resolve image %s: %w", manifest.Source.ImageID, err)
 	}
@@ -71,7 +71,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 		return nil, err
 	}
 	defer imageLock.Release() //nolint:errcheck
-	image, err = r.storeSet.Images.Inspect(image.ID)
+	image, err = r.data.Images.Inspect(image.ID)
 	if err != nil {
 		return nil, fmt.Errorf("BASE_IMAGE_MISSING: revalidate image %s: %w", manifest.Source.ImageID, err)
 	}

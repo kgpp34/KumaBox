@@ -16,7 +16,6 @@ import (
 	"github.com/kumabox/kumabox/internal/image"
 	"github.com/kumabox/kumabox/internal/lock"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/state"
 	"github.com/kumabox/kumabox/internal/vm"
@@ -55,9 +54,9 @@ func DryRun(cfg config.Config) (*Report, error) {
 	return DryRunContext(context.Background(), cfg, Options{})
 }
 
-// DryRunContext scans with optional policy rules without deleting resources.
+// DryRunContext scans with optional policy rules without deleting state.
 func DryRunContext(ctx context.Context, cfg config.Config, options Options) (report *Report, err error) {
-	stores, err := resources.NewStoreSetForConfig(cfg)
+	stores, err := state.Open(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open resource stores: %w", err)
 	}
@@ -71,7 +70,7 @@ func DryRunContext(ctx context.Context, cfg config.Config, options Options) (rep
 	return scan(ctx, cfg, stores, options)
 }
 
-func scan(ctx context.Context, cfg config.Config, stores resources.StoreSet, options Options) (*Report, error) {
+func scan(ctx context.Context, cfg config.Config, stores state.Set, options Options) (*Report, error) {
 	records, err := stores.VM.List()
 	if err != nil {
 		return nil, fmt.Errorf("read VM store: %w", err)
@@ -190,7 +189,7 @@ func RepairWithOptions(ctx context.Context, cfg config.Config, options Options) 
 		}
 	}()
 
-	stores, err := resources.NewStoreSetForConfig(cfg)
+	stores, err := state.Open(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open resource stores for repair: %w", err)
 	}

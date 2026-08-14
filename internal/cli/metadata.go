@@ -9,7 +9,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/lock"
 	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
-	"github.com/kumabox/kumabox/internal/resources"
+	"github.com/kumabox/kumabox/internal/state"
 )
 
 func newMetadataCommand(opts *rootOptions) *cobra.Command {
@@ -37,7 +37,7 @@ func newMetadataBackupCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("resolve metadata backup destination: %w", err)
 			}
-			if err := metasqlite.Backup(cmd.Context(), resources.SQLiteMetadataPath(cfg), destination); err != nil {
+			if err := metasqlite.Backup(cmd.Context(), state.SQLiteMetadataPath(cfg), destination); err != nil {
 				return err
 			}
 			info, err := os.Stat(destination)
@@ -59,11 +59,11 @@ func newMetadataInitCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := resources.InitSQLiteMetadata(cmd.Context(), cfg); err != nil {
+			if err := state.InitSQLiteMetadata(cmd.Context(), cfg); err != nil {
 				return err
 			}
 			return writeJSON(cmd.OutOrStdout(), map[string]any{
-				"backend": "sqlite", "path": resources.SQLiteMetadataPath(cfg), "initialized": true,
+				"backend": "sqlite", "path": state.SQLiteMetadataPath(cfg), "initialized": true,
 			})
 		},
 	}
@@ -82,7 +82,7 @@ func newMetadataConvertCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 			defer maintenance.Release() //nolint:errcheck
-			result, err := resources.ConvertMetadata(cmd.Context(), cfg)
+			result, err := state.ConvertMetadata(cmd.Context(), cfg)
 			if err != nil {
 				return err
 			}
@@ -105,7 +105,7 @@ func newMetadataStatusCommand(opts *rootOptions) *cobra.Command {
 			}
 			result := map[string]any{"backend": cfg.Metadata.Backend}
 			if cfg.Metadata.Backend == "sqlite" {
-				path := resources.SQLiteMetadataPath(cfg)
+				path := state.SQLiteMetadataPath(cfg)
 				result["path"] = path
 				engine, ok := stores.Metadata.(*metasqlite.Store)
 				if !ok {

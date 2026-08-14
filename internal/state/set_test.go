@@ -1,4 +1,4 @@
-package resources
+package state
 
 import (
 	"context"
@@ -26,7 +26,7 @@ func TestNewStoreSetForConfigUsesOneSQLiteEngine(t *testing.T) {
 	if err := InitSQLiteMetadata(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	stores, err := NewStoreSetForConfig(cfg)
+	stores, err := Open(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestInitSQLiteMetadataUpgradesPreMeteringDatabase(t *testing.T) {
 	if err := InitSQLiteMetadata(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	stores, err := NewStoreSetForConfig(cfg)
+	stores, err := Open(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestConvertMetadataResumesAfterCommittedNamespace(t *testing.T) {
 	if !errors.Is(err, injected) {
 		t.Fatalf("interrupted conversion error = %v", err)
 	}
-	if _, err := NewStoreSetForConfig(cfg); err == nil {
+	if _, err := Open(cfg); err == nil {
 		t.Fatal("ordinary store open succeeded while conversion manifest existed")
 	}
 	if _, err := ConvertMetadata(t.Context(), cfg); err != nil {
@@ -198,7 +198,7 @@ func testMetadataConfig(t *testing.T) config.Config {
 
 func seedJSONMetadata(t *testing.T, rootDir string) {
 	t.Helper()
-	stores := NewStoreSet(rootDir)
+	stores := OpenJSON(rootDir)
 	if _, err := stores.Operations.Begin(t.Context(), "op-convert", operation.KindVMStart, "vm-convert"); err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func seedJSONMetadata(t *testing.T, rootDir string) {
 
 func assertConvertedRecords(t *testing.T, cfg config.Config) {
 	t.Helper()
-	stores, err := NewStoreSetForConfig(cfg)
+	stores, err := Open(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func assertConvertedRecords(t *testing.T, cfg config.Config) {
 	}
 }
 
-func closeJSONStoreSet(t *testing.T, stores StoreSet) {
+func closeJSONStoreSet(t *testing.T, stores Set) {
 	t.Helper()
 	engines := []interface{ Close() error }{
 		stores.VM.(*vm.Store).MetadataEngine(),

@@ -18,7 +18,7 @@ import (
 	"github.com/kumabox/kumabox/internal/image"
 	"github.com/kumabox/kumabox/internal/image/oci"
 	"github.com/kumabox/kumabox/internal/lock"
-	"github.com/kumabox/kumabox/internal/resources"
+	"github.com/kumabox/kumabox/internal/state"
 )
 
 func newImageCommand(opts *rootOptions) *cobra.Command {
@@ -490,7 +490,7 @@ func newImageRMCommand(opts *rootOptions) *cobra.Command {
 	return cmd
 }
 
-func removeImage(ctx context.Context, stores resources.StoreSet, ref string, force bool) (record *image.ImageRecord, err error) {
+func removeImage(ctx context.Context, stores state.Set, ref string, force bool) (record *image.ImageRecord, err error) {
 	imageRecord, err := stores.Images.Inspect(ref)
 	if err != nil {
 		return nil, err
@@ -532,7 +532,7 @@ func mergeImageReferences(groups ...[]image.Reference) []image.Reference {
 	return merged
 }
 
-func explicitImageReferences(ctx context.Context, stores resources.StoreSet, ref string) ([]image.Reference, error) {
+func explicitImageReferences(ctx context.Context, stores state.Set, ref string) ([]image.Reference, error) {
 	if stores.References == nil {
 		return nil, nil
 	}
@@ -568,7 +568,7 @@ func explicitImageReferences(ctx context.Context, stores resources.StoreSet, ref
 	return refs, nil
 }
 
-func liveImageReferenceSources(stores resources.StoreSet) (map[string]struct{}, map[string]struct{}, error) {
+func liveImageReferenceSources(stores state.Set) (map[string]struct{}, map[string]struct{}, error) {
 	vms, err := stores.VM.List()
 	if err != nil {
 		return nil, nil, fmt.Errorf("list VMs for image references: %w", err)
@@ -592,7 +592,7 @@ func liveImageReferenceSources(stores resources.StoreSet) (map[string]struct{}, 
 	return liveVMs, liveSnapshots, nil
 }
 
-func imageReferencesFromVMs(stores resources.StoreSet) ([]image.Reference, error) {
+func imageReferencesFromVMs(stores state.Set) ([]image.Reference, error) {
 	records, err := stores.VM.List()
 	if err != nil {
 		return nil, err

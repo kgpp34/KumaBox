@@ -9,7 +9,7 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
 	"github.com/kumabox/kumabox/internal/reference"
-	"github.com/kumabox/kumabox/internal/resources"
+	"github.com/kumabox/kumabox/internal/state"
 )
 
 func TestMetadataInitCommandCreatesVerifiedSQLiteStore(t *testing.T) {
@@ -37,7 +37,7 @@ func TestMetadataInitCommandCreatesVerifiedSQLiteStore(t *testing.T) {
 		t.Fatal("metadata init did not report success")
 	}
 
-	stores, err := resources.NewStoreSetForConfig(cfg)
+	stores, err := state.Open(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,10 +62,10 @@ func TestMetadataBackupCommandCreatesUsableDatabase(t *testing.T) {
 	cfg.Runtime.RunDir = filepath.Join(rootDir, "run")
 	cfg.Runtime.LogDir = filepath.Join(rootDir, "log")
 	cfg.Metadata.Backend = "sqlite"
-	if err := resources.InitSQLiteMetadata(t.Context(), cfg); err != nil {
+	if err := state.InitSQLiteMetadata(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	stores, err := resources.NewStoreSetForConfig(cfg)
+	stores, err := state.Open(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestMetadataBackupCommandCreatesUsableDatabase(t *testing.T) {
 
 	backupConfig := cfg
 	backupConfig.Metadata.Path = destination
-	backupStores, err := resources.NewStoreSetForConfig(backupConfig)
+	backupStores, err := state.Open(backupConfig)
 	if err != nil {
 		t.Fatal(err)
 	}

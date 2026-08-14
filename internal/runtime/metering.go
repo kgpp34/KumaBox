@@ -9,24 +9,24 @@ import (
 )
 
 func (r *Runtime) recordComputeStart(ctx context.Context, rec *vm.VMRecord, reason metering.Reason) {
-	if r.storeSet.Metering == nil || rec == nil || rec.StartedAt == nil {
+	if r.data.Metering == nil || rec == nil || rec.StartedAt == nil {
 		return
 	}
-	_ = r.storeSet.Metering.Append(ctx, computeEvent(rec, metering.KindComputeStart, reason, *rec.StartedAt))
+	_ = r.data.Metering.Append(ctx, computeEvent(rec, metering.KindComputeStart, reason, *rec.StartedAt))
 }
 
 func (r *Runtime) recordComputeStop(ctx context.Context, rec *vm.VMRecord, reason metering.Reason) {
-	if r.storeSet.Metering == nil || rec == nil || rec.StoppedAt == nil {
+	if r.data.Metering == nil || rec == nil || rec.StoppedAt == nil {
 		return
 	}
-	_ = r.storeSet.Metering.Append(ctx, computeEvent(rec, metering.KindComputeStop, reason, *rec.StoppedAt))
+	_ = r.data.Metering.Append(ctx, computeEvent(rec, metering.KindComputeStop, reason, *rec.StoppedAt))
 }
 
 func (r *Runtime) requireComputeStop(ctx context.Context, rec *vm.VMRecord, reason metering.Reason) error {
-	if r.storeSet.Metering == nil || rec == nil || rec.StoppedAt == nil {
+	if r.data.Metering == nil || rec == nil || rec.StoppedAt == nil {
 		return nil
 	}
-	return r.storeSet.Metering.Append(ctx, computeEvent(rec, metering.KindComputeStop, reason, *rec.StoppedAt))
+	return r.data.Metering.Append(ctx, computeEvent(rec, metering.KindComputeStop, reason, *rec.StoppedAt))
 }
 
 func computeEvent(rec *vm.VMRecord, kind metering.Kind, reason metering.Reason, at time.Time) metering.Event {
@@ -39,14 +39,14 @@ func computeEvent(rec *vm.VMRecord, kind metering.Kind, reason metering.Reason, 
 // ReconcileMetering idempotently reconstructs lifecycle endpoints represented
 // by durable VM timestamps. It does not guess timestamps from wall-clock time.
 func (r *Runtime) ReconcileMetering(ctx context.Context) error {
-	if r.storeSet.Metering == nil {
+	if r.data.Metering == nil {
 		return nil
 	}
 	records, err := r.vmReader.List()
 	if err != nil {
 		return err
 	}
-	events, err := r.storeSet.Metering.Events(ctx, "")
+	events, err := r.data.Metering.Events(ctx, "")
 	if err != nil {
 		return err
 	}
@@ -62,7 +62,7 @@ func (r *Runtime) ReconcileMetering(ctx context.Context) error {
 			}
 			event := computeEvent(rec, metering.KindComputeStart, reason, *rec.StartedAt)
 			if _, ok := existing[event.ID]; !ok {
-				if err := r.storeSet.Metering.Append(ctx, event); err != nil {
+				if err := r.data.Metering.Append(ctx, event); err != nil {
 					return err
 				}
 			}
@@ -76,7 +76,7 @@ func (r *Runtime) ReconcileMetering(ctx context.Context) error {
 			if _, ok := existing[event.ID]; ok {
 				continue
 			}
-			if err := r.storeSet.Metering.Append(ctx, event); err != nil {
+			if err := r.data.Metering.Append(ctx, event); err != nil {
 				return err
 			}
 		}

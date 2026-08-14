@@ -247,7 +247,7 @@ func TestCloneNativeSnapshotPublishesRunningVMWhenGuestAgentIsUnavailable(t *tes
 func TestCloneNativeSnapshotStopsBackendWhenSnapshotReferenceFails(t *testing.T) {
 	rt, store, _, ready := newNativeCloneRuntime(t)
 	referenceErr := errors.New("injected reference failure")
-	rt.storeSet.References = failingReferenceState{ReferenceState: rt.storeSet.References, err: referenceErr}
+	rt.data.References = failingReferenceState{ReferenceState: rt.data.References, err: referenceErr}
 	originalIdentity := configureGuestIdentity
 	configureGuestIdentity = func(context.Context, string, *vm.VMRecord) error { return nil }
 	t.Cleanup(func() { configureGuestIdentity = originalIdentity })
@@ -295,7 +295,7 @@ func TestCloneNativeSnapshotPreservesOnDemandMemoryWhenRollbackStopFails(t *test
 	rt, store, _, ready := newNativeCloneRuntime(t)
 	referenceErr := errors.New("injected reference failure")
 	stopErr := errors.New("injected stop failure")
-	rt.storeSet.References = failingReferenceState{ReferenceState: rt.storeSet.References, err: referenceErr}
+	rt.data.References = failingReferenceState{ReferenceState: rt.data.References, err: referenceErr}
 	originalIdentity := configureGuestIdentity
 	configureGuestIdentity = func(context.Context, string, *vm.VMRecord) error { return nil }
 	t.Cleanup(func() { configureGuestIdentity = originalIdentity })

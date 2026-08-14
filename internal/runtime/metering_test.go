@@ -50,7 +50,7 @@ func TestLifecycleRecordsComputeUsageIntervals(t *testing.T) {
 	if _, err := rt.StopVMContext(t.Context(), rec.ID, backend.StopOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	usage, err := rt.storeSet.Metering.Usage(t.Context(), metering.Query{VMRef: rec.ID})
+	usage, err := rt.data.Metering.Usage(t.Context(), metering.Query{VMRef: rec.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestReconcileMeteringIsIdempotent(t *testing.T) {
 	if err := rt.ReconcileMetering(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	events, err := rt.storeSet.Metering.Events(t.Context(), rec.ID)
+	events, err := rt.data.Metering.Events(t.Context(), rec.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

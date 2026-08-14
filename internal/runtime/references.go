@@ -22,45 +22,45 @@ func vmSnapshotReferenceID(vmID, snapshotID string) string {
 }
 
 func (r *Runtime) recordVMImageReference(ctx context.Context, rec *vm.VMRecord) error {
-	if r.storeSet.References == nil || rec == nil || rec.Image == nil || rec.Image.ID == "" {
+	if r.data.References == nil || rec == nil || rec.Image == nil || rec.Image.ID == "" {
 		return nil
 	}
-	return r.storeSet.References.Upsert(ctx, reference.Record{
+	return r.data.References.Upsert(ctx, reference.Record{
 		ID: imageReferenceID(rec.ID), SourceKind: referenceKindVM, SourceID: rec.ID,
 		TargetKind: referenceKindImage, TargetID: rec.Image.ID, Mode: "runtime",
 	})
 }
 
 func (r *Runtime) recordSnapshotImageReference(ctx context.Context, snapshotID, imageID string) error {
-	if r.storeSet.References == nil || snapshotID == "" || imageID == "" {
+	if r.data.References == nil || snapshotID == "" || imageID == "" {
 		return nil
 	}
-	return r.storeSet.References.Upsert(ctx, reference.Record{
+	return r.data.References.Upsert(ctx, reference.Record{
 		ID: snapshotImageReferenceID(snapshotID), SourceKind: referenceKindSnapshot, SourceID: snapshotID,
 		TargetKind: referenceKindImage, TargetID: imageID, Mode: "base",
 	})
 }
 
 func (r *Runtime) recordVMSnapshotReference(ctx context.Context, vmID, snapshotID string) error {
-	if r.storeSet.References == nil || vmID == "" || snapshotID == "" {
+	if r.data.References == nil || vmID == "" || snapshotID == "" {
 		return nil
 	}
-	return r.storeSet.References.Upsert(ctx, reference.Record{
+	return r.data.References.Upsert(ctx, reference.Record{
 		ID: vmSnapshotReferenceID(vmID, snapshotID), SourceKind: referenceKindVM, SourceID: vmID,
 		TargetKind: referenceKindSnapshot, TargetID: snapshotID, Mode: "restore",
 	})
 }
 
 func (r *Runtime) removeVMSnapshotReference(ctx context.Context, vmID, snapshotID string) error {
-	if r.storeSet.References == nil || vmID == "" || snapshotID == "" {
+	if r.data.References == nil || vmID == "" || snapshotID == "" {
 		return nil
 	}
-	return r.storeSet.References.Delete(ctx, vmSnapshotReferenceID(vmID, snapshotID))
+	return r.data.References.Delete(ctx, vmSnapshotReferenceID(vmID, snapshotID))
 }
 
 func (r *Runtime) removeVMReferences(ctx context.Context, vmID string) error {
-	if r.storeSet.References == nil {
+	if r.data.References == nil {
 		return nil
 	}
-	return r.storeSet.References.DeleteSource(ctx, referenceKindVM, vmID)
+	return r.data.References.DeleteSource(ctx, referenceKindVM, vmID)
 }

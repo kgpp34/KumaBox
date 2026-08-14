@@ -1,4 +1,4 @@
-package resources
+package state
 
 import (
 	"testing"
@@ -19,7 +19,7 @@ func TestMeteringStoreBackendContract(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			stores, err := NewStoreSetForConfig(cfg)
+			stores, err := Open(cfg)
 			if err != nil {
 				t.Fatal(err)
 			}

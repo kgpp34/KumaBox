@@ -92,7 +92,7 @@ func (r *Runtime) resizeNetworksLocked(ctx context.Context, controller backend.N
 		if err != nil {
 			return err
 		}
-		if err := cleanupNetworkConfig(ctx, r.storeSet.Networks, kbnetwork.NewAllocatorWithStore(providerStore, r.cfg.Network), r.cfg, rec, network, false); err != nil {
+		if err := cleanupNetworkConfig(ctx, r.data.Networks, kbnetwork.NewAllocatorWithStore(providerStore, r.cfg.Network), r.cfg, rec, network, false); err != nil {
 			return err
 		}
 	}

@@ -89,7 +89,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 		return nil, errors.New("BACKEND_OPERATION_UNSUPPORTED: backend does not expose native compatibility")
 	}
 
-	snapshotStore := r.storeSet.Snapshots
+	snapshotStore := r.data.Snapshots
 	snapshotRec, lease, err := snapshotStore.AcquireRead(ctx, snapshotRef)
 	if err != nil {
 		return nil, err

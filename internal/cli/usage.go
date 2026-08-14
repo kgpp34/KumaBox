@@ -28,7 +28,7 @@ func newUsageCommand(opts *rootOptions) *cobra.Command {
 			if stores.Metadata != nil {
 				defer func() { _ = stores.Metadata.Close() }()
 			}
-			rt, err := kbruntime.NewWithBackendAndStores(stores, cloudhypervisor.NewBackend(cfg))
+			rt, err := kbruntime.NewWithBackendAndState(stores, cloudhypervisor.NewBackend(cfg))
 			if err != nil {
 				return err
 			}

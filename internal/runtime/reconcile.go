@@ -91,10 +91,10 @@ func (r *Runtime) requireVMRestore(record operation.Record) error {
 }
 
 func (r *Runtime) requireSnapshotForVM(ctx context.Context, record operation.Record, snapshotRef string) error {
-	if r.storeSet.Snapshots == nil {
+	if r.data.Snapshots == nil {
 		return fmt.Errorf("SNAPSHOT_RECONCILIATION_UNAVAILABLE: snapshot state is not configured")
 	}
-	snapshots, err := r.storeSet.Snapshots.Scan()
+	snapshots, err := r.data.Snapshots.Scan()
 	if err != nil {
 		return err
 	}
@@ -105,7 +105,7 @@ func (r *Runtime) requireSnapshotForVM(ctx context.Context, record operation.Rec
 		if candidate.ID != snapshotRef && candidate.Name != snapshotRef {
 			continue
 		}
-		manifest, err := r.storeSet.Snapshots.PeekManifest(ctx, candidate.ID)
+		manifest, err := r.data.Snapshots.PeekManifest(ctx, candidate.ID)
 		if err != nil {
 			return err
 		}
@@ -117,10 +117,10 @@ func (r *Runtime) requireSnapshotForVM(ctx context.Context, record operation.Rec
 }
 
 func (r *Runtime) requireNetworkAttached(record operation.Record) error {
-	if r.storeSet.Networks == nil {
+	if r.data.Networks == nil {
 		return fmt.Errorf("NETWORK_RECONCILIATION_UNAVAILABLE: network state is not configured")
 	}
-	result, err := r.storeSet.Networks.Inspect(record.ResourceID)
+	result, err := r.data.Networks.Inspect(record.ResourceID)
 	if err != nil {
 		return err
 	}
@@ -131,10 +131,10 @@ func (r *Runtime) requireNetworkAttached(record operation.Record) error {
 }
 
 func (r *Runtime) requireNetworkClean(record operation.Record) error {
-	if r.storeSet.Networks == nil {
+	if r.data.Networks == nil {
 		return fmt.Errorf("NETWORK_RECONCILIATION_UNAVAILABLE: network state is not configured")
 	}
-	result, err := r.storeSet.Networks.Inspect(record.ResourceID)
+	result, err := r.data.Networks.Inspect(record.ResourceID)
 	if err != nil {
 		return err
 	}

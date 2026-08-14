@@ -33,5 +33,5 @@ func (r *Runtime) VerifyNativeSnapshot(ctx context.Context, snapshotRef, vmRef s
 	if err != nil {
 		return nil, fmt.Errorf("inspect native compatibility: %w", err)
 	}
-	return r.storeSet.Snapshots.VerifyNative(ctx, snapshotRef, snapshot.NativeVerifyTarget{VM: rec, Host: host})
+	return r.data.Snapshots.VerifyNative(ctx, snapshotRef, snapshot.NativeVerifyTarget{VM: rec, Host: host})
 }

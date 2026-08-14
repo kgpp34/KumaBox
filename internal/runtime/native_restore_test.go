@@ -161,7 +161,7 @@ func TestRestoreNativeVMStopsBackendWhenSnapshotReferenceFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rt.storeSet.References = failingReferenceState{ReferenceState: rt.storeSet.References, err: referenceErr}
+	rt.data.References = failingReferenceState{ReferenceState: rt.data.References, err: referenceErr}
 
 	_, err = rt.RestoreNativeVM(context.Background(), rec.ID, ready.ID, NativeRestoreOptions{})
 	if !errors.Is(err, referenceErr) {
@@ -203,7 +203,7 @@ func TestRestoreNativeVMPreservesOnDemandMemoryWhenRollbackStopFails(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	rt.storeSet.References = failingReferenceState{ReferenceState: rt.storeSet.References, err: referenceErr}
+	rt.data.References = failingReferenceState{ReferenceState: rt.data.References, err: referenceErr}
 
 	_, err = rt.RestoreNativeVM(t.Context(), rec.ID, ready.ID, NativeRestoreOptions{Mode: RestoreModeOnDemand})
 	if !errors.Is(err, referenceErr) || !errors.Is(err, stopErr) {

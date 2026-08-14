@@ -72,7 +72,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		return nil, errors.New("BACKEND_OPERATION_UNSUPPORTED: backend does not expose native compatibility")
 	}
 
-	snapshotStore := r.storeSet.Snapshots
+	snapshotStore := r.data.Snapshots
 	snapshotRec, lease, err := snapshotStore.AcquireRead(ctx, snapshotRef)
 	if err != nil {
 		return nil, err
@@ -93,7 +93,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err != nil {
 		return nil, err
 	}
-	image, err := r.storeSet.Images.Inspect(manifest.Source.ImageID)
+	image, err := r.data.Images.Inspect(manifest.Source.ImageID)
 	if err != nil {
 		return nil, fmt.Errorf("BASE_IMAGE_MISSING: resolve image %s: %w", manifest.Source.ImageID, err)
 	}
@@ -102,7 +102,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		return nil, err
 	}
 	defer imageLock.Release() //nolint:errcheck
-	image, err = r.storeSet.Images.Inspect(image.ID)
+	image, err = r.data.Images.Inspect(image.ID)
 	if err != nil {
 		return nil, fmt.Errorf("BASE_IMAGE_MISSING: revalidate image %s: %w", manifest.Source.ImageID, err)
 	}

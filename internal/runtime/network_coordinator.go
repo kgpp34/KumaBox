@@ -25,7 +25,7 @@ func (r *Runtime) initNetworkCoordinator() {
 }
 
 func (r *networkCoordinator) providerStore() (*kbnetwork.Store, error) {
-	store, ok := r.storeSet.Networks.(*kbnetwork.Store)
+	store, ok := r.data.Networks.(*kbnetwork.Store)
 	if !ok {
 		return nil, fmt.Errorf("network provider operations require a concrete network store")
 	}
@@ -44,7 +44,7 @@ func (r *networkCoordinator) ensureNetwork(ctx context.Context, rec *vm.VMRecord
 	if rec == nil || len(rec.NetworkConfigs) == 0 {
 		return nil
 	}
-	records, err := r.storeSet.Networks.List()
+	records, err := r.data.Networks.List()
 	if err != nil {
 		return fmt.Errorf("list network provider records: %w", err)
 	}
@@ -105,7 +105,7 @@ func (r *networkCoordinator) repairNetworkRecord(
 		record.CreatedAt = existing.CreatedAt
 		record.Cleanup = existing.Cleanup
 	}
-	if err := r.storeSet.Networks.UpsertRecord(record); err != nil {
+	if err := r.data.Networks.UpsertRecord(record); err != nil {
 		return fmt.Errorf("repair network provider record %s: %w", config.ID, err)
 	}
 	return nil
@@ -150,16 +150,16 @@ func (r *networkCoordinator) rollbackRecoveredNetworks(
 		} else if err := deleteHostTap(item.config.TAP); err != nil {
 			rollbackErrs = append(rollbackErrs, err)
 		}
-		if err := r.storeSet.Networks.DeleteRecord(item.config.ID); err != nil {
+		if err := r.data.Networks.DeleteRecord(item.config.ID); err != nil {
 			rollbackErrs = append(rollbackErrs, err)
 		}
 		if item.hostRefAdded {
-			if err := r.storeSet.Networks.DecrementHostTapRef(1); err != nil {
+			if err := r.data.Networks.DecrementHostTapRef(1); err != nil {
 				rollbackErrs = append(rollbackErrs, err)
 			}
 		}
 		if item.previous != nil {
-			if err := r.storeSet.Networks.UpsertRecord(*item.previous); err != nil {
+			if err := r.data.Networks.UpsertRecord(*item.previous); err != nil {
 				rollbackErrs = append(rollbackErrs, err)
 			}
 		}

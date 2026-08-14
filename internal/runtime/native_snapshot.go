@@ -62,7 +62,7 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 		return nil, errors.New("BACKEND_OPERATION_UNSUPPORTED: backend does not expose native compatibility")
 	}
 
-	build, err := r.storeSet.Snapshots.Reserve(ctx, name)
+	build, err := r.data.Snapshots.Reserve(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +118,7 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 	}
 	if rec.Image != nil {
 		if err := r.recordSnapshotImageReference(ctx, ready.ID, rec.Image.ID); err != nil {
-			_, _ = r.storeSet.Snapshots.Remove(ready.ID)
+			_, _ = r.data.Snapshots.Remove(ready.ID)
 			return nil, fmt.Errorf("record snapshot image reference: %w", err)
 		}
 	}

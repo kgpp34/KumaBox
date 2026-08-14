@@ -17,7 +17,6 @@ import (
 	"github.com/kumabox/kumabox/internal/metering"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/operation"
-	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/state"
 	"github.com/kumabox/kumabox/internal/vm"
@@ -38,7 +37,7 @@ type Runtime struct {
 	vmUpdater     state.VMUpdater
 	vmRestore     state.VMRestore
 	operations    state.OperationState
-	storeSet      StoreSet
+	data          state.Set
 	backend       backend.Lifecycle
 	cfg           config.Config
 	vmLocks       *lock.Locker
@@ -77,7 +76,7 @@ func (r *Runtime) CreateStoppedSnapshot(ctx context.Context, ref, name string) (
 	if observed.State != vm.StateStopped {
 		return nil, fmt.Errorf("VM_NOT_STOPPED: VM %s state is %s", rec.Name, observed.State)
 	}
-	build, err := r.storeSet.Snapshots.Reserve(ctx, name)
+	build, err := r.data.Snapshots.Reserve(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +91,7 @@ func (r *Runtime) CreateStoppedSnapshot(ctx context.Context, ref, name string) (
 	}
 	if rec.Image != nil {
 		if err := r.recordSnapshotImageReference(ctx, ready.ID, rec.Image.ID); err != nil {
-			_, _ = r.storeSet.Snapshots.Remove(ready.ID)
+			_, _ = r.data.Snapshots.Remove(ready.ID)
 			return nil, fmt.Errorf("record snapshot image reference: %w", err)
 		}
 	}
@@ -110,11 +109,11 @@ var mkfsExt4 = func(path string) ([]byte, error) {
 
 // New creates a Runtime backed by the configured Cloud Hypervisor backend.
 func New(cfg config.Config) (*Runtime, error) {
-	stores, err := resources.NewStoreSetForConfig(cfg)
+	data, err := state.Open(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("open configured resource stores: %w", err)
+		return nil, fmt.Errorf("open configured state: %w", err)
 	}
-	rt, err := NewWithBackendAndStores(stores, cloudhypervisor.NewBackend(cfg))
+	rt, err := NewWithBackendAndState(data, cloudhypervisor.NewBackend(cfg))
 	if err != nil {
 		return nil, err
 	}
@@ -124,43 +123,42 @@ func New(cfg config.Config) (*Runtime, error) {
 }
 
 // NewWithBackend creates a Runtime with an injected VM store and backend.
-func NewWithBackend(store state.VMState, vmBackend backend.Lifecycle) *Runtime {
-	stores := newStoreSet(store.RootDir(), store)
+func NewWithBackend(vmState state.VMState, vmBackend backend.Lifecycle) *Runtime {
+	data := openStateWithVM(vmState.RootDir(), vmState)
 	rt := &Runtime{
-		vmReader:      store,
-		vmRecords:     store,
-		vmUpdater:     store,
-		vmRestore:     store,
-		operations:    stores.Operations,
-		storeSet:      stores,
+		vmReader:      vmState,
+		vmRecords:     vmState,
+		vmUpdater:     vmState,
+		vmRestore:     vmState,
+		operations:    data.Operations,
+		data:          data,
 		backend:       vmBackend,
-		vmLocks:       lock.NewLocker(filepath.Join(store.RootDir(), "locks", "vms")),
-		resourceGuard: stores.Guard,
+		vmLocks:       lock.NewLocker(filepath.Join(vmState.RootDir(), "locks", "vms")),
+		resourceGuard: data.Guard,
 		qemuImg:       disk.NewQEMUImg(defaultQEMUImgBinary),
 	}
 	rt.initNetworkCoordinator()
 	return rt
 }
 
-// NewWithBackendAndStores creates a Runtime with an explicit resource-store
-// composition. This is the seam used when switching metadata engines.
-func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) (*Runtime, error) {
-	if stores.VM == nil {
-		return nil, errors.New("runtime store set must include a VM store")
+// NewWithBackendAndState creates a Runtime with explicit durable state.
+func NewWithBackendAndState(data state.Set, vmBackend backend.Lifecycle) (*Runtime, error) {
+	if data.VM == nil {
+		return nil, errors.New("runtime state must include VM records")
 	}
-	if stores.Guard == nil {
-		stores.Guard = lock.NewGuard(stores.VM.RootDir())
+	if data.Guard == nil {
+		data.Guard = lock.NewGuard(data.VM.RootDir())
 	}
 	rt := &Runtime{
-		vmReader:      stores.VM,
-		vmRecords:     stores.VM,
-		vmUpdater:     stores.VM,
-		vmRestore:     stores.VM,
-		operations:    stores.Operations,
-		storeSet:      stores,
+		vmReader:      data.VM,
+		vmRecords:     data.VM,
+		vmUpdater:     data.VM,
+		vmRestore:     data.VM,
+		operations:    data.Operations,
+		data:          data,
 		backend:       vmBackend,
-		vmLocks:       lock.NewLocker(filepath.Join(stores.VM.RootDir(), "locks", "vms")),
-		resourceGuard: stores.Guard,
+		vmLocks:       lock.NewLocker(filepath.Join(data.VM.RootDir(), "locks", "vms")),
+		resourceGuard: data.Guard,
 		qemuImg:       disk.NewQEMUImg(defaultQEMUImgBinary),
 	}
 	rt.initNetworkCoordinator()
@@ -469,7 +467,7 @@ func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.Sto
 	return r.applyObservation(stopped), nil
 }
 
-// DeleteVM removes a VM record and KumaBox-managed resources.
+// DeleteVM removes a VM record and KumaBox-managed state.
 //
 // A running VM must be deleted with force so runtime can stop the backend first.
 // Network cleanup is performed before deleting the VM record; if cleanup fails,
@@ -605,7 +603,7 @@ func (r *networkCoordinator) inspectNetwork(rec *vm.VMRecord) *kbnetwork.Inspect
 	if rec == nil {
 		return nil
 	}
-	result, err := r.storeSet.Networks.InspectVM(rec.ID, rec.Name, rec.Network, rec.Networks, rec.NetworkConfigs)
+	result, err := r.data.Networks.InspectVM(rec.ID, rec.Name, rec.Network, rec.Networks, rec.NetworkConfigs)
 	if err != nil {
 		return &kbnetwork.InspectResult{
 			VMID:       rec.ID,
@@ -750,7 +748,7 @@ func (r *networkCoordinator) attachCNIConfig(
 		})
 		return nil, errors.Join(err, rollbackErr)
 	}
-	networkStore := r.storeSet.Networks
+	networkStore := r.data.Networks
 	if err := networkStore.UpsertRecord(allocation.Record); err != nil {
 		_ = deleteCNI(ctx, r.cfg.Runtime.RootDir, r.cfg.Network, kbnetwork.CNIDeleteRequest{
 			VMID:      rec.ID,
@@ -780,7 +778,7 @@ func (r *networkCoordinator) cleanupNetwork(ctx context.Context, rec *vm.VMRecor
 	if rec == nil || len(rec.NetworkConfigs) == 0 {
 		return nil
 	}
-	store := r.storeSet.Networks
+	store := r.data.Networks
 	providerStore, err := r.providerStore()
 	if err != nil {
 		return err

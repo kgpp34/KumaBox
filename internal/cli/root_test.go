@@ -23,8 +23,8 @@ import (
 	"github.com/kumabox/kumabox/internal/lock"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/reference"
-	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
+	"github.com/kumabox/kumabox/internal/state"
 	"github.com/kumabox/kumabox/internal/vm"
 )
 
@@ -1186,11 +1186,11 @@ func testImageRemoveRechecksReferencesAfterEntityLock(t *testing.T, backend stri
 	cfg.Metadata.Backend = backend
 	if backend == "sqlite" {
 		cfg.Metadata.Path = filepath.Join(rootDir, "metadata", "kumabox.db")
-		if err := resources.InitSQLiteMetadata(t.Context(), cfg); err != nil {
+		if err := state.InitSQLiteMetadata(t.Context(), cfg); err != nil {
 			t.Fatal(err)
 		}
 	}
-	stores, err := resources.NewStoreSetForConfig(cfg)
+	stores, err := state.Open(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
