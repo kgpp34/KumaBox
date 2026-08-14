@@ -64,41 +64,90 @@ The CLI is the control plane. Durable records allow later commands to inspect an
 | --- | --- |
 | Host | Linux with hardware virtualization enabled |
 | Virtualization | KVM available at `/dev/kvm` with read/write permission |
-| Go | Go 1.24.4 or newer (building from source) |
+| Go | Go 1.24.4 or newer, only when building from source |
 | VMM | `cloud-hypervisor` available on `PATH` or supplied by flag/config |
 | Disk tooling | `qemu-img` available on `PATH` or supplied by flag/config |
 | Host networking | `/dev/net/tun`, `ip`, root privileges, and `iptables` or `nft` |
 | CNI networking | CNI configuration under `/etc/cni/net.d` and plugins under `/opt/cni/bin` for the default network path |
 
-Run the built-in preflight check before creating a VM:
+The released `kumabox-check` command installs and verifies these host
+dependencies. It currently supports Ubuntu/Debian (`apt`) and Fedora/RHEL
+(`dnf`) hosts on amd64 and arm64.
+
+## Quick Start
+
+### 1. Install KumaBox and prepare the host
 
 ```bash
-sudo ./bin/kumabox doctor
+curl -fsSLO https://github.com/kgpp34/KumaBox/releases/latest/download/kumabox-install.sh
+curl -fsSLO https://github.com/kgpp34/KumaBox/releases/latest/download/kumabox-install.sh.sha256
+sha256sum --check kumabox-install.sh.sha256
+sudo sh kumabox-install.sh
+sudo kumabox-check --upgrade
+sudo kumabox doctor
 ```
 
-For a stricter development-host check, including networking:
+Review the verified installer before running it as root. It downloads the
+latest GitHub Release, verifies that archive's SHA256 file, and installs
+`kumabox` and `kumabox-check` under `/usr/local/bin`. `kumabox-check --upgrade`
+installs pinned Cloud Hypervisor, firmware, CNI plugins, EROFS tools and host
+packages, then creates the default `cni:default` network.
+
+### 2. Pull and prepare the guest image
 
 ```bash
-sudo scripts/linux/env-check.sh --strict --network
+sudo kumabox image build \
+  ghcr.io/kgpp34/kumabox/ubuntu:24.04 \
+  --name ubuntu
+sudo kumabox image inspect ubuntu --json
 ```
 
-For a standalone check on a fresh Linux host, download the KumaBox doctor:
+`image build` resolves the OCI image by digest and converts its layers to
+shared EROFS images. The published guest already contains the matching
+`kumabox-agent`, kernel and initramfs; users do not need Docker or Go.
+
+### 3. Run and interact with a sandbox
 
 ```bash
-curl -fsSL -o kumabox-doctor https://raw.githubusercontent.com/kgpp34/KumaBox/master/scripts/linux/kumabox-doctor.sh
-install -m 0755 kumabox-doctor /usr/local/bin/
-sudo kumabox-doctor --upgrade
-kumabox-doctor
+sudo kumabox run ubuntu --name my-vm --cpus 2 --memory 1G --storage 4G
+sudo kumabox exec my-vm -- uname -a
+sudo kumabox exec -it my-vm -- sh
 ```
 
-`--upgrade` installs the host packages, Cloud Hypervisor, UEFI firmware, and
-the CNI plugins required by the default networking path. Use `--json` for
-automation and set `KUMABOX_*` environment variables to pin versions or
-override installation paths.
+Connect to the VM's boot console from a separate terminal when needed:
 
-## Getting Started
+```bash
+sudo kumabox console my-vm
+```
 
-### 1. Build
+### 4. Snapshot and clone
+
+```bash
+sudo kumabox snapshot create my-vm --name base --type running
+sudo kumabox clone base --name fresh
+sudo kumabox exec fresh -- hostname
+```
+
+The running snapshot captures VMM state, guest memory and writable disks.
+`clone` restores that state into a new VM, allocates a new network identity,
+and reseeds the guest identity before reporting it ready.
+
+### 5. Clean up
+
+```bash
+sudo kumabox delete fresh --force
+sudo kumabox delete my-vm --force
+sudo kumabox snapshot rm base
+sudo kumabox image rm ubuntu
+sudo kumabox gc
+```
+
+Use `kumabox <command> --help` for all flags. KumaBox uses JSON metadata by
+default; pass `--metadata-backend sqlite` consistently when SQLite is desired.
+
+## Building from Source
+
+Source builds are for contributors and custom guest-image development:
 
 ```bash
 git clone https://github.com/kgpp34/KumaBox.git
@@ -107,58 +156,14 @@ make build
 ./bin/kumabox version
 ```
 
-The binary is written to `bin/kumabox`.
-
-### 2. Build an OCI VM image
-
-Resolve an OCI image and publish a managed direct-boot image:
+Build the Ubuntu guest OCI image locally:
 
 ```bash
-sudo ./bin/kumabox image build docker.io/library/ubuntu:24.04 \
-  --name ubuntu-oci \
-  --platform linux/amd64
+docker buildx build --load \
+  -f oci-images/ubuntu/24.04/Dockerfile \
+  -t kumabox/ubuntu:24.04 \
+  oci-images/ubuntu
 ```
-
-Verify the registered image:
-
-```bash
-sudo ./bin/kumabox image ls
-sudo ./bin/kumabox image inspect ubuntu-oci --json
-```
-
-### 3. Run a sandbox
-
-```bash
-sudo ./bin/kumabox run ubuntu-oci \
-  --name devbox \
-  --cpus 2 \
-  --memory 1G
-```
-
-Inspect the runtime and read its logs:
-
-```bash
-sudo ./bin/kumabox ps
-sudo ./bin/kumabox inspect devbox --json
-sudo ./bin/kumabox logs devbox
-```
-
-If the image contains `kumabox-agent`, commands can be executed inside the running guest:
-
-```bash
-sudo ./bin/kumabox agent ping devbox
-sudo ./bin/kumabox exec devbox -- uname -a
-```
-
-### 4. Stop and clean up
-
-```bash
-sudo ./bin/kumabox stop devbox
-sudo ./bin/kumabox delete devbox
-sudo ./bin/kumabox gc
-```
-
-Use `kumabox <command> --help` for the complete flags and examples supported by a command.
 
 ## Capability Matrix
 
@@ -199,7 +204,7 @@ KumaBox loads built-in defaults, optionally overlays a TOML file supplied with `
 ```toml
 [runtime]
 root_dir = "/var/lib/kumabox"
-run_dir = "/run/kumabox"
+run_dir = "/var/lib/kumabox/run"
 log_dir = "/var/log/kumabox"
 
 [backend.cloud_hypervisor]
@@ -212,7 +217,7 @@ qemu_img_binary = "qemu-img"
 
 [network]
 mode = "cni"
-default = "cni"
+default = "default"
 bridge = "kumabox0"
 cidr = "10.88.0.0/16"
 gateway = "10.88.0.1"
@@ -238,7 +243,7 @@ The default filesystem layout is:
 | Path | Purpose |
 | --- | --- |
 | `/var/lib/kumabox` | Durable images, VM records, snapshots, network leases, and content |
-| `/run/kumabox` | Ephemeral PID files, API sockets, and rendered runtime configuration |
+| `/var/lib/kumabox/run` | PID files, API sockets, native restore staging, and rendered runtime configuration |
 | `/var/log/kumabox` | VM and runtime logs |
 
 Use separate root directories when isolating development environments or test runs. Do not modify state files while KumaBox commands or managed VMs are active.
@@ -253,13 +258,17 @@ make test
 go vet ./...
 ```
 
-The Linux verification suite exercises the runtime in phased scenarios:
+The Linux E2E suite exercises the full OCI, agent, CNI, snapshot/clone and
+hotplug flow:
 
 ```bash
-sudo scripts/linux/verify.sh
+GO_BIN="$(go env GOROOT)/bin/go"
+sudo test/e2e/e2e.sh --go-bin "$GO_BIN" --network cni:default
 ```
 
-The consolidated scripts cover environment, OCI, CNI and snapshot/runtime behavior. Most runtime verification requires Linux, KVM, Cloud Hypervisor, CNI plugins and prepared boot assets.
+This developer E2E builds the host binary and guest image. It requires Linux,
+KVM, Cloud Hypervisor, CNI plugins, Docker and Go. Release engineering is
+documented in [docs/releasing.md](docs/releasing.md).
 
 ## Security Model
 
@@ -281,7 +290,7 @@ Issues and pull requests are welcome. Before submitting a change:
 1. Keep the change focused and document user-visible behavior.
 2. Add or update tests for the affected package.
 3. Run `make test` and `go vet ./...`.
-4. Run the relevant Linux verification scripts for runtime-facing changes.
+4. Run `test/e2e/e2e.sh` for runtime-facing changes.
 
 ## License
 

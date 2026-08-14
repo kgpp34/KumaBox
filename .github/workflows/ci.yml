@@ -103,6 +103,9 @@ jobs:
             bash -n "$script"
           done < <(find . -type f -name '*.sh' -not -path './.git/*' -print0)
 
+      - name: Test release installer
+        run: test/release/install.sh
+
   build:
     name: Linux build
     runs-on: ubuntu-latest

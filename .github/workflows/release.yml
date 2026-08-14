@@ -46,6 +46,9 @@ jobs:
           cp LICENSE README.md dist/
           tar -C dist -czf "kumabox-${VERSION}-linux-${GOARCH}.tar.gz" kumabox kumabox-agent kumabox-check LICENSE README.md
           sha256sum "kumabox-${VERSION}-linux-${GOARCH}.tar.gz" > "kumabox-${VERSION}-linux-${GOARCH}.tar.gz.sha256"
+          sha256sum --check "kumabox-${VERSION}-linux-${GOARCH}.tar.gz.sha256"
+          tar -tzf "kumabox-${VERSION}-linux-${GOARCH}.tar.gz" | sort > archive-files.txt
+          diff -u <(printf '%s\n' LICENSE README.md kumabox kumabox-agent kumabox-check | sort) archive-files.txt
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
@@ -119,13 +122,21 @@ jobs:
       - build
       - guest-image
     steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: release-*
           merge-multiple: true
 
+      - name: Prepare bootstrap installer
+        run: |
+          install -m 0755 scripts/install.sh kumabox-install.sh
+          sha256sum kumabox-install.sh > kumabox-install.sh.sha256
+
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" kumabox-*.tar.gz kumabox-*.sha256 --generate-notes --verify-tag
+        run: gh release create "${{ github.ref_name }}" kumabox-*.tar.gz kumabox-*.tar.gz.sha256 kumabox-install.sh kumabox-install.sh.sha256 --generate-notes --verify-tag
