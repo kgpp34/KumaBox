@@ -93,6 +93,10 @@ latest GitHub Release, verifies that archive's SHA256 file, and installs
 installs pinned Cloud Hypervisor, firmware, CNI plugins, EROFS tools and host
 packages, then creates the default `cni:kumabox` network.
 
+Use `--subnet CIDR` to choose a different CNI subnet. SQLite users should run
+`kumabox-check --metadata-backend sqlite`; this additionally rejects network
+filesystems that are unsafe for SQLite WAL metadata.
+
 ### 2. Pull and prepare the guest image
 
 ```bash

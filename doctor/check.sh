@@ -13,16 +13,22 @@ cni_version=${KUMABOX_CNI_VERSION:-v1.9.0}
 erofs_version=${KUMABOX_EROFS_VERSION:-v1.8.10}
 network_name=${KUMABOX_NETWORK_NAME:-kumabox}
 subnet=${KUMABOX_NETWORK_SUBNET:-10.88.0.0/16}
+metadata_backend=${KUMABOX_METADATA_BACKEND:-json}
+firmware_path=${KUMABOX_FIRMWARE_PATH:-$root_dir/firmware/CLOUDHV.fd}
 upgrade=false
 fix=false
 
 usage() {
 	cat <<EOF
-Usage: kumabox-check [--fix] [--upgrade]
+Usage: kumabox-check [--fix] [--upgrade] [--subnet CIDR]
 
 Check a Linux host for KumaBox. --fix creates runtime/network configuration;
 --upgrade also installs host packages, Cloud Hypervisor, firmware, EROFS tools,
 and CNI plugins. Both mutation modes require root.
+
+Options:
+  --subnet CIDR             generated CNI network (default: ${subnet})
+  --metadata-backend NAME   metadata backend to validate: json or sqlite
 
 Pinned dependency defaults:
   Cloud Hypervisor ${cloud_hypervisor_version}
@@ -30,7 +36,8 @@ Pinned dependency defaults:
   CNI plugins      ${cni_version}
   erofs-utils      ${erofs_version}
 
-Environment overrides use the KUMABOX_* variables documented in README.md.
+Environment overrides use the KUMABOX_* variables documented in README.md,
+including KUMABOX_FIRMWARE_PATH and KUMABOX_METADATA_BACKEND.
 EOF
 }
 
@@ -38,10 +45,19 @@ while (($#)); do
 	case "$1" in
 		--fix) fix=true; shift ;;
 		--upgrade) fix=true; upgrade=true; shift ;;
+		--subnet) [[ $# -ge 2 ]] || { echo "--subnet requires a value" >&2; exit 2; }; subnet=$2; shift 2 ;;
+		--subnet=*) subnet=${1#*=}; shift ;;
+		--metadata-backend) [[ $# -ge 2 ]] || { echo "--metadata-backend requires a value" >&2; exit 2; }; metadata_backend=$2; shift 2 ;;
+		--metadata-backend=*) metadata_backend=${1#*=}; shift ;;
 		-h|--help) usage; exit 0 ;;
 		*) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
 	esac
 done
+
+[[ $metadata_backend == json || $metadata_backend == sqlite ]] || {
+	echo "--metadata-backend must be json or sqlite" >&2
+	exit 2
+}
 
 pass_count=0
 warn_count=0
@@ -74,10 +90,10 @@ install_packages() {
 		apt-get update
 		DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
 			build-essential autoconf automake ca-certificates curl git iproute2 \
-			iptables jq liblz4-dev liblzma-dev libtool libuuid1 libuuid-dev \
+			e2fsprogs iptables jq liblz4-dev liblzma-dev libtool libuuid1 libuuid-dev \
 			libzstd-dev nftables pkg-config qemu-utils tar xz-utils zlib1g-dev
 	elif exists dnf; then
-		dnf install -y autoconf automake ca-certificates curl gcc git iproute \
+		dnf install -y autoconf automake ca-certificates curl e2fsprogs gcc git iproute \
 			iptables jq libtool libuuid-devel libzstd-devel lz4-devel make \
 			nftables pkgconf-pkg-config qemu-img tar xz-devel zlib-devel
 	else
@@ -87,11 +103,12 @@ install_packages() {
 	fixed "host packages installed"
 }
 
-download_binary() {
-	local url=$1 destination=$2 temporary
+download_asset() {
+	local url=$1 destination=$2 mode=$3 temporary
 	temporary=$(mktemp)
 	curl -fsSL --retry 3 -o "$temporary" "$url"
-	install -m 0755 "$temporary" "$destination"
+	install -d -m 0755 "$(dirname "$destination")"
+	install -m "$mode" "$temporary" "$destination"
 	rm -f "$temporary"
 }
 
@@ -133,15 +150,14 @@ install_dependencies() {
 	[[ $(uname -s) == Linux && -n "$go_arch" ]] || { echo "unsupported host: $(uname -s)/$arch" >&2; exit 1; }
 	install_packages
 	section "Cloud Hypervisor ${cloud_hypervisor_version}"
-	download_binary \
+	download_asset \
 		"https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/${cloud_hypervisor_version}/cloud-hypervisor-static${ch_suffix}" \
-		/usr/local/bin/cloud-hypervisor
+		/usr/local/bin/cloud-hypervisor 0755
 	fixed "cloud-hypervisor installed"
 	section "hypervisor firmware ${firmware_version}"
-	install -d -m 0755 "$root_dir/firmware"
-	download_binary \
+	download_asset \
 		"https://github.com/cloud-hypervisor/rust-hypervisor-firmware/releases/download/${firmware_version}/hypervisor-fw${firmware_suffix}" \
-		"$root_dir/firmware/CLOUDHV.fd"
+		"$firmware_path" 0644
 	fixed "firmware installed"
 	section "CNI plugins ${cni_version}"
 	local temporary
@@ -220,6 +236,8 @@ EOF
 		iptables -C FORWARD -i kbcni0 -j ACCEPT 2>/dev/null || iptables -A FORWARD -i kbcni0 -j ACCEPT
 		iptables -C FORWARD -o kbcni0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
 			iptables -A FORWARD -o kbcni0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+		iptables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || \
+			iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
 	fi
 	fixed "KumaBox directories, sysctl, and CNI configuration are ready"
 }
@@ -234,22 +252,56 @@ if [[ -r /dev/kvm && -w /dev/kvm ]]; then pass "/dev/kvm is accessible"; else fa
 if [[ -e /dev/net/tun ]]; then pass "/dev/net/tun exists"; else fail "/dev/net/tun is missing"; fi
 
 section "Binaries"
-for binary in cloud-hypervisor qemu-img ip jq; do
+for binary in cloud-hypervisor qemu-img mkfs.ext4 ip jq; do
 	if exists "$binary"; then pass "$binary: $(command -v "$binary")"; else fail "$binary is missing"; fi
 done
 if exists mkfs.erofs && erofs_version_ok; then pass "mkfs.erofs 1.8+"; else fail "mkfs.erofs 1.8+ is required"; fi
+
+section "Firmware"
+if [[ -s $firmware_path ]]; then
+	pass "CLOUDHV.fd: $firmware_path"
+else
+	fail "CLOUDHV.fd is missing or empty: $firmware_path"
+fi
 
 section "CNI"
 for plugin in bridge host-local loopback; do
 	if [[ -x "$cni_bin_dir/$plugin" ]]; then pass "$plugin plugin"; else fail "$plugin plugin is missing"; fi
 done
-if [[ -f "$cni_config_dir/10-kumabox.conflist" ]]; then pass "cni:${network_name} configuration"; else fail "KumaBox CNI conflist is missing"; fi
+if [[ -f "$cni_config_dir/10-kumabox.conflist" ]]; then
+	configured_network=$(jq -r '.name // empty' "$cni_config_dir/10-kumabox.conflist" 2>/dev/null || true)
+	if [[ $configured_network == "$network_name" ]]; then
+		pass "cni:${network_name} configuration"
+	else
+		fail "10-kumabox.conflist name is ${configured_network:-invalid}; expected ${network_name}"
+	fi
+else
+	fail "KumaBox CNI conflist is missing"
+fi
 if [[ $(sysctl -n net.ipv4.ip_forward 2>/dev/null || true) == 1 ]]; then pass "IPv4 forwarding"; else fail "IPv4 forwarding is disabled"; fi
+if [[ $(sysctl -n net.bridge.bridge-nf-call-iptables 2>/dev/null || true) == 1 ]]; then pass "bridge netfilter"; else fail "bridge netfilter is disabled"; fi
+
+section "CNI forwarding"
+if exists iptables; then
+	if iptables -C FORWARD -i kbcni0 -j ACCEPT 2>/dev/null; then pass "inbound bridge forwarding"; else fail "inbound bridge forwarding rule is missing"; fi
+	if iptables -C FORWARD -o kbcni0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; then pass "return bridge forwarding"; else fail "return bridge forwarding rule is missing"; fi
+	if iptables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; then pass "TCP MSS path-MTU clamp"; else fail "TCP MSS path-MTU clamp is missing"; fi
+else
+	fail "iptables is required by the generated CNI bridge configuration"
+fi
 
 section "Directories"
 for directory in "$root_dir" "$run_dir" "$log_dir"; do
 	if [[ -d "$directory" ]]; then pass "$directory"; else fail "$directory is missing"; fi
 done
+
+if [[ $metadata_backend == sqlite && -d $root_dir ]]; then
+	metadata_fs=$(stat -f -c %T "$root_dir" 2>/dev/null || echo unknown)
+	case "$metadata_fs" in
+		nfs*|cifs|smb*|fuse*) fail "SQLite WAL metadata is unsafe on $metadata_fs: $root_dir" ;;
+		*) pass "SQLite metadata filesystem: $metadata_fs" ;;
+	esac
+fi
 
 printf '\nSummary: pass=%d warn=%d fail=%d\n' "$pass_count" "$warn_count" "$fail_count"
 if ((fail_count > 0)); then

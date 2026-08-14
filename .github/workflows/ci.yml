@@ -104,7 +104,9 @@ jobs:
           done < <(find . -type f -name '*.sh' -not -path './.git/*' -print0)
 
       - name: Test release installer
-        run: test/release/install.sh
+        run: |
+          test/release/install.sh
+          test/release/check.sh
 
   build:
     name: Linux build
