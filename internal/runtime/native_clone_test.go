@@ -15,13 +15,13 @@ import (
 	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestCloneNativeSnapshotCreatesIndependentRunningVM(t *testing.T) {
 	rt, store, source, ready := newNativeCloneRuntime(t)
 	originalIdentity := configureGuestIdentity
-	configureGuestIdentity = func(_ context.Context, socket string, rec *vmstore.VMRecord) error {
+	configureGuestIdentity = func(_ context.Context, socket string, rec *vm.VMRecord) error {
 		if rec.ID == source.ID || rec.Name != "clone" {
 			t.Fatalf("clone identity = %s/%s", rec.ID, rec.Name)
 		}
@@ -32,13 +32,13 @@ func TestCloneNativeSnapshotCreatesIndependentRunningVM(t *testing.T) {
 	}
 	defer func() { configureGuestIdentity = originalIdentity }()
 
-	state := vmstore.ObservedStateRunning
+	state := vm.ObservedStateRunning
 	rt.backend = backendFake{
-		render: func(*vmstore.VMRecord) error { return nil },
-		observe: func(*vmstore.VMRecord) vmstore.Observation {
-			return vmstore.Observation{State: state, CheckedAt: time.Now().UTC()}
+		render: func(*vm.VMRecord) error { return nil },
+		observe: func(*vm.VMRecord) vm.Observation {
+			return vm.Observation{State: state, CheckedAt: time.Now().UTC()}
 		},
-		clone: func(_ context.Context, rec *vmstore.VMRecord, nativeDir, mode string) (*backend.StartResult, error) {
+		clone: func(_ context.Context, rec *vm.VMRecord, nativeDir, mode string) (*backend.StartResult, error) {
 			if rec.ID == source.ID || rec.Restore == nil || mode != "copy" {
 				t.Fatalf("clone backend record = %+v", rec)
 			}
@@ -62,7 +62,7 @@ func TestCloneNativeSnapshotCreatesIndependentRunningVM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cloned.ID == source.ID || cloned.State != vmstore.StateRunning || cloned.PID != 9876 || cloned.Restore != nil {
+	if cloned.ID == source.ID || cloned.State != vm.StateRunning || cloned.PID != 9876 || cloned.Restore != nil {
 		t.Fatalf("cloned record = %+v", cloned)
 	}
 	if cloned.StorageConfigs[1].Path == source.StorageConfigs[1].Path {
@@ -79,7 +79,7 @@ func TestCloneNativeSnapshotCreatesIndependentRunningVM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persistedSource.State != vmstore.StateRunning || persistedSource.PID != source.PID {
+	if persistedSource.State != vm.StateRunning || persistedSource.PID != source.PID {
 		t.Fatalf("source changed = %+v", persistedSource)
 	}
 	if cloned.LastRestore == nil || cloned.LastRestore.DiskStageDurationMs < 0 || cloned.LastRestore.IdentityDurationMs < 0 || cloned.LastRestore.ReadinessDurationMs < 0 {
@@ -97,8 +97,8 @@ func TestCloneNativeSnapshotPreservesFailedBackend(t *testing.T) {
 	rt, store, _, ready := newNativeCloneRuntime(t)
 	cloneErr := errors.New("injected clone failure")
 	rt.backend = backendFake{
-		render: func(*vmstore.VMRecord) error { return nil },
-		clone: func(context.Context, *vmstore.VMRecord, string, string) (*backend.StartResult, error) {
+		render: func(*vm.VMRecord) error { return nil },
+		clone: func(context.Context, *vm.VMRecord, string, string) (*backend.StartResult, error) {
 			return nil, cloneErr
 		},
 	}
@@ -109,7 +109,7 @@ func TestCloneNativeSnapshotPreservesFailedBackend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inspect failed clone: %v", err)
 	}
-	if preserved.State != vmstore.StateError || preserved.Restore == nil || preserved.Restore.State != "failed" {
+	if preserved.State != vm.StateError || preserved.Restore == nil || preserved.Restore.State != "failed" {
 		t.Fatalf("failed clone = %+v", preserved)
 	}
 }
@@ -125,7 +125,7 @@ func TestCloneNativeSnapshotFailureBoundaries(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rt, store, _, ready := newNativeCloneRuntime(t)
-			rt.backend = backendFake{render: func(*vmstore.VMRecord) error { return nil }}
+			rt.backend = backendFake{render: func(*vm.VMRecord) error { return nil }}
 			injected := errors.New("injected clone interruption")
 			ctx := fault.WithInjector(t.Context(), fault.InjectorFunc(func(point fault.Point) error {
 				if point == tt.point {
@@ -140,7 +140,7 @@ func TestCloneNativeSnapshotFailureBoundaries(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if preserved.State != vmstore.StateError || preserved.Restore == nil || preserved.Restore.State != "failed" {
+			if preserved.State != vm.StateError || preserved.Restore == nil || preserved.Restore.State != "failed" {
 				t.Fatalf("failed clone state = %+v", preserved)
 			}
 			if _, err := os.Stat(filepath.Join(preserved.RunDir, ".restore-staging")); !errors.Is(err, os.ErrNotExist) {
@@ -165,25 +165,25 @@ func TestCloneNativeSnapshotPinsDelayedMemoryPayload(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			rt, store, _, ready := newNativeCloneRuntime(t)
 			originalIdentity := configureGuestIdentity
-			configureGuestIdentity = func(context.Context, string, *vmstore.VMRecord) error { return nil }
+			configureGuestIdentity = func(context.Context, string, *vm.VMRecord) error { return nil }
 			defer func() { configureGuestIdentity = originalIdentity }()
 
 			rt.backend = backendFake{
-				nativeHost: func(context.Context, *vmstore.VMRecord) (backend.NativeHost, error) {
+				nativeHost: func(context.Context, *vm.VMRecord) (backend.NativeHost, error) {
 					return backend.NativeHost{
 						BackendName: "cloud-hypervisor", BackendVersion: "test", SnapshotFormat: "cloud-hypervisor-native-v1",
 						Architecture: "test", CPUVendor: "test", RestoreModes: []string{"copy", string(test.mode)},
 					}, nil
 				},
-				render: func(*vmstore.VMRecord) error { return nil },
-				clone: func(_ context.Context, rec *vmstore.VMRecord, _ string, mode string) (*backend.StartResult, error) {
+				render: func(*vm.VMRecord) error { return nil },
+				clone: func(_ context.Context, rec *vm.VMRecord, _ string, mode string) (*backend.StartResult, error) {
 					if mode != string(test.mode) {
 						t.Fatalf("backend mode = %q, want %q", mode, test.mode)
 					}
 					return &backend.StartResult{PID: 9876, APISocket: filepath.Join(rec.RunDir, "ch.sock")}, nil
 				},
-				observe: func(*vmstore.VMRecord) vmstore.Observation {
-					return vmstore.Observation{State: vmstore.ObservedStateRunning, CheckedAt: time.Now().UTC()}
+				observe: func(*vm.VMRecord) vm.Observation {
+					return vm.Observation{State: vm.ObservedStateRunning, CheckedAt: time.Now().UTC()}
 				},
 			}
 
@@ -210,16 +210,16 @@ func TestCloneNativeSnapshotPublishesRunningVMWhenGuestAgentIsUnavailable(t *tes
 	rt, store, _, ready := newNativeCloneRuntime(t)
 	agentErr := errors.New("agent unavailable")
 	originalIdentity := configureGuestIdentity
-	configureGuestIdentity = func(context.Context, string, *vmstore.VMRecord) error { return agentErr }
+	configureGuestIdentity = func(context.Context, string, *vm.VMRecord) error { return agentErr }
 	defer func() { configureGuestIdentity = originalIdentity }()
 
 	rt.backend = backendFake{
-		render: func(*vmstore.VMRecord) error { return nil },
-		clone: func(_ context.Context, rec *vmstore.VMRecord, _ string, _ string) (*backend.StartResult, error) {
+		render: func(*vm.VMRecord) error { return nil },
+		clone: func(_ context.Context, rec *vm.VMRecord, _ string, _ string) (*backend.StartResult, error) {
 			return &backend.StartResult{PID: 9876, APISocket: filepath.Join(rec.RunDir, "ch.sock")}, nil
 		},
-		observe: func(*vmstore.VMRecord) vmstore.Observation {
-			return vmstore.Observation{State: vmstore.ObservedStateRunning, CheckedAt: time.Now().UTC()}
+		observe: func(*vm.VMRecord) vm.Observation {
+			return vm.Observation{State: vm.ObservedStateRunning, CheckedAt: time.Now().UTC()}
 		},
 	}
 
@@ -229,7 +229,7 @@ func TestCloneNativeSnapshotPublishesRunningVMWhenGuestAgentIsUnavailable(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cloned.State != vmstore.StateRunning || cloned.LastRestore == nil {
+	if cloned.State != vm.StateRunning || cloned.LastRestore == nil {
 		t.Fatalf("cloned record = %+v", cloned)
 	}
 	if !strings.Contains(cloned.LastRestore.GuestAgentWarning, agentErr.Error()) {
@@ -239,7 +239,7 @@ func TestCloneNativeSnapshotPublishesRunningVMWhenGuestAgentIsUnavailable(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.State != vmstore.StateRunning || persisted.Restore != nil {
+	if persisted.State != vm.StateRunning || persisted.Restore != nil {
 		t.Fatalf("persisted clone = %+v", persisted)
 	}
 }
@@ -249,22 +249,22 @@ func TestCloneNativeSnapshotStopsBackendWhenSnapshotReferenceFails(t *testing.T)
 	referenceErr := errors.New("injected reference failure")
 	rt.storeSet.References = failingReferenceState{ReferenceState: rt.storeSet.References, err: referenceErr}
 	originalIdentity := configureGuestIdentity
-	configureGuestIdentity = func(context.Context, string, *vmstore.VMRecord) error { return nil }
+	configureGuestIdentity = func(context.Context, string, *vm.VMRecord) error { return nil }
 	t.Cleanup(func() { configureGuestIdentity = originalIdentity })
 
 	var restoredBackendStopped bool
 	rt.backend = backendFake{
-		nativeHost: func(context.Context, *vmstore.VMRecord) (backend.NativeHost, error) {
+		nativeHost: func(context.Context, *vm.VMRecord) (backend.NativeHost, error) {
 			return backend.NativeHost{
 				BackendName: "cloud-hypervisor", BackendVersion: "test", SnapshotFormat: "cloud-hypervisor-native-v1",
 				Architecture: "test", CPUVendor: "test", RestoreModes: []string{"copy", "ondemand"},
 			}, nil
 		},
-		render: func(*vmstore.VMRecord) error { return nil },
-		clone: func(_ context.Context, rec *vmstore.VMRecord, _ string, _ string) (*backend.StartResult, error) {
+		render: func(*vm.VMRecord) error { return nil },
+		clone: func(_ context.Context, rec *vm.VMRecord, _ string, _ string) (*backend.StartResult, error) {
 			return &backend.StartResult{PID: 9876, APISocket: filepath.Join(rec.RunDir, "ch.sock")}, nil
 		},
-		stop: func(stopped *vmstore.VMRecord, _ backend.StopOptions) (*backend.StopResult, error) {
+		stop: func(stopped *vm.VMRecord, _ backend.StopOptions) (*backend.StopResult, error) {
 			restoredBackendStopped = stopped.PID == 9876
 			return &backend.StopResult{}, nil
 		},
@@ -283,7 +283,7 @@ func TestCloneNativeSnapshotStopsBackendWhenSnapshotReferenceFails(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.State != vmstore.StateError || persisted.PID != 0 {
+	if persisted.State != vm.StateError || persisted.PID != 0 {
 		t.Fatalf("failed clone record = %+v", persisted)
 	}
 	if _, err := os.Stat(filepath.Join(persisted.RunDir, ".restore-staging")); !errors.Is(err, os.ErrNotExist) {
@@ -297,20 +297,20 @@ func TestCloneNativeSnapshotPreservesOnDemandMemoryWhenRollbackStopFails(t *test
 	stopErr := errors.New("injected stop failure")
 	rt.storeSet.References = failingReferenceState{ReferenceState: rt.storeSet.References, err: referenceErr}
 	originalIdentity := configureGuestIdentity
-	configureGuestIdentity = func(context.Context, string, *vmstore.VMRecord) error { return nil }
+	configureGuestIdentity = func(context.Context, string, *vm.VMRecord) error { return nil }
 	t.Cleanup(func() { configureGuestIdentity = originalIdentity })
 	rt.backend = backendFake{
-		nativeHost: func(context.Context, *vmstore.VMRecord) (backend.NativeHost, error) {
+		nativeHost: func(context.Context, *vm.VMRecord) (backend.NativeHost, error) {
 			return backend.NativeHost{
 				BackendName: "cloud-hypervisor", BackendVersion: "test", SnapshotFormat: "cloud-hypervisor-native-v1",
 				Architecture: "test", CPUVendor: "test", RestoreModes: []string{"ondemand"},
 			}, nil
 		},
-		render: func(*vmstore.VMRecord) error { return nil },
-		clone: func(_ context.Context, rec *vmstore.VMRecord, _ string, _ string) (*backend.StartResult, error) {
+		render: func(*vm.VMRecord) error { return nil },
+		clone: func(_ context.Context, rec *vm.VMRecord, _ string, _ string) (*backend.StartResult, error) {
 			return &backend.StartResult{PID: 9876, APISocket: filepath.Join(rec.RunDir, "ch.sock")}, nil
 		},
-		stop: func(*vmstore.VMRecord, backend.StopOptions) (*backend.StopResult, error) {
+		stop: func(*vm.VMRecord, backend.StopOptions) (*backend.StopResult, error) {
 			return nil, stopErr
 		},
 	}
@@ -330,7 +330,7 @@ func TestCloneNativeSnapshotPreservesOnDemandMemoryWhenRollbackStopFails(t *test
 	}
 }
 
-func newNativeCloneRuntime(t *testing.T) (*Runtime, *vmstore.Store, *vmstore.VMRecord, *snapshot.Record) {
+func newNativeCloneRuntime(t *testing.T) (*Runtime, *vm.Store, *vm.VMRecord, *snapshot.Record) {
 	t.Helper()
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")
@@ -353,14 +353,14 @@ func newNativeCloneRuntime(t *testing.T) (*Runtime, *vmstore.Store, *vmstore.VMR
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := vmstore.New(rootDir)
-	source, err := store.Create(vmstore.CreateRequest{
+	store := vm.New(rootDir)
+	source, err := store.Create(vm.CreateRequest{
 		Name: "source", Kernel: kernel, Initrd: initrd, Network: "none",
 		RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
-		Image: &vmstore.ImageRef{ID: image.ID, Name: image.Name, BootMode: "direct", Digest: manifestDigest, LayerDigests: []string{layerDigest}},
-		StorageConfigs: []vmstore.StorageConfig{
-			{ID: "layer0", Role: vmstore.StorageRoleLayer, Path: layer, Readonly: true, Format: "raw", Filesystem: "erofs", Serial: "kumabox-layer0", SourceLayer: layerDigest, VirtualSizeBytes: 5},
-			{ID: "cow", Role: vmstore.StorageRoleCOW, Format: "raw", Filesystem: "ext4", Serial: "kumabox-cow", VirtualSizeBytes: 10, Base: &vmstore.StorageBase{Family: "oci", ImageID: image.ID, Digest: manifestDigest, LayerDigests: []string{layerDigest}}},
+		Image: &vm.ImageRef{ID: image.ID, Name: image.Name, BootMode: "direct", Digest: manifestDigest, LayerDigests: []string{layerDigest}},
+		StorageConfigs: []vm.StorageConfig{
+			{ID: "layer0", Role: vm.StorageRoleLayer, Path: layer, Readonly: true, Format: "raw", Filesystem: "erofs", Serial: "kumabox-layer0", SourceLayer: layerDigest, VirtualSizeBytes: 5},
+			{ID: "cow", Role: vm.StorageRoleCOW, Format: "raw", Filesystem: "ext4", Serial: "kumabox-cow", VirtualSizeBytes: 10, Base: &vm.StorageBase{Family: "oci", ImageID: image.ID, Digest: manifestDigest, LayerDigests: []string{layerDigest}}},
 		},
 	})
 	if err != nil {

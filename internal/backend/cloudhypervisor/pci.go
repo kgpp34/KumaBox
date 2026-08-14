@@ -10,12 +10,12 @@ import (
 	"strings"
 
 	"github.com/kumabox/kumabox/internal/backend"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const pciSysfsPrefix = "/sys/bus/pci/devices/"
 
-func (b Backend) AttachPCIDevice(ctx context.Context, rec *vmstore.VMRecord, spec backend.PCIDeviceSpec) (backend.AttachedPCIDevice, error) {
+func (b Backend) AttachPCIDevice(ctx context.Context, rec *vm.VMRecord, spec backend.PCIDeviceSpec) (backend.AttachedPCIDevice, error) {
 	if rec == nil {
 		return backend.AttachedPCIDevice{}, fmt.Errorf("VM record is nil")
 	}
@@ -53,7 +53,7 @@ func (b Backend) AttachPCIDevice(ctx context.Context, rec *vmstore.VMRecord, spe
 	return backend.AttachedPCIDevice{ID: id, PCI: path}, nil
 }
 
-func (b Backend) DetachPCIDevice(ctx context.Context, rec *vmstore.VMRecord, id string) error {
+func (b Backend) DetachPCIDevice(ctx context.Context, rec *vm.VMRecord, id string) error {
 	if rec == nil {
 		return fmt.Errorf("VM record is nil")
 	}
@@ -71,7 +71,7 @@ func (b Backend) DetachPCIDevice(ctx context.Context, rec *vmstore.VMRecord, id 
 	return fmt.Errorf("PCI device %q is not attached", id)
 }
 
-func (b Backend) ListPCIDevices(ctx context.Context, rec *vmstore.VMRecord) ([]backend.AttachedPCIDevice, error) {
+func (b Backend) ListPCIDevices(ctx context.Context, rec *vm.VMRecord) ([]backend.AttachedPCIDevice, error) {
 	if rec == nil {
 		return nil, fmt.Errorf("VM record is nil")
 	}

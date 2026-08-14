@@ -20,7 +20,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/disk"
 	"github.com/kumabox/kumabox/internal/fileutil"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const (
@@ -250,13 +250,13 @@ func validateImportedPayload(qemuBinary, staging string, manifest *Manifest, che
 			return fmt.Errorf("CHECKSUM_MISMATCH: disk %s", manifestDisk.ID)
 		}
 		switch manifestDisk.Format {
-		case vmstore.FormatQCOW2:
+		case vm.FormatQCOW2:
 			info, err := disk.NewQEMUImg(qemuBinary).Info(context.Background(), path)
 			if err != nil || info.Format != "qcow2" {
 				return fmt.Errorf("SNAPSHOT_CORRUPT: disk %s is not qcow2", manifestDisk.ID)
 			}
-		case vmstore.FormatRaw:
-			if manifestDisk.Filesystem == vmstore.FilesystemEXT4 {
+		case vm.FormatRaw:
+			if manifestDisk.Filesystem == vm.FilesystemEXT4 {
 				if err := validateExt4(path); err != nil {
 					return err
 				}

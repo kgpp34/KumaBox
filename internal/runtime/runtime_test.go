@@ -14,73 +14,73 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/fault"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 type backendFake struct {
-	render     func(*vmstore.VMRecord) error
-	start      func(*vmstore.VMRecord) (*backend.StartResult, error)
-	stop       func(*vmstore.VMRecord, backend.StopOptions) (*backend.StopResult, error)
-	pause      func(context.Context, *vmstore.VMRecord) error
-	resume     func(context.Context, *vmstore.VMRecord) error
-	snapshot   func(context.Context, *vmstore.VMRecord, string) error
-	nativeHost func(context.Context, *vmstore.VMRecord) (backend.NativeHost, error)
-	restore    func(context.Context, *vmstore.VMRecord, string, string) (*backend.StartResult, error)
-	clone      func(context.Context, *vmstore.VMRecord, string, string) (*backend.StartResult, error)
-	observe    func(*vmstore.VMRecord) vmstore.Observation
+	render     func(*vm.VMRecord) error
+	start      func(*vm.VMRecord) (*backend.StartResult, error)
+	stop       func(*vm.VMRecord, backend.StopOptions) (*backend.StopResult, error)
+	pause      func(context.Context, *vm.VMRecord) error
+	resume     func(context.Context, *vm.VMRecord) error
+	snapshot   func(context.Context, *vm.VMRecord, string) error
+	nativeHost func(context.Context, *vm.VMRecord) (backend.NativeHost, error)
+	restore    func(context.Context, *vm.VMRecord, string, string) (*backend.StartResult, error)
+	clone      func(context.Context, *vm.VMRecord, string, string) (*backend.StartResult, error)
+	observe    func(*vm.VMRecord) vm.Observation
 }
 
-func (b backendFake) CloneVM(ctx context.Context, rec *vmstore.VMRecord, sourceDir, mode string) (*backend.StartResult, error) {
+func (b backendFake) CloneVM(ctx context.Context, rec *vm.VMRecord, sourceDir, mode string) (*backend.StartResult, error) {
 	if b.clone != nil {
 		return b.clone(ctx, rec, sourceDir, mode)
 	}
 	return nil, errors.New("clone is not configured")
 }
 
-func (b backendFake) RestoreVM(ctx context.Context, rec *vmstore.VMRecord, sourceDir, mode string) (*backend.StartResult, error) {
+func (b backendFake) RestoreVM(ctx context.Context, rec *vm.VMRecord, sourceDir, mode string) (*backend.StartResult, error) {
 	if b.restore != nil {
 		return b.restore(ctx, rec, sourceDir, mode)
 	}
 	return nil, errors.New("restore is not configured")
 }
 
-func (b backendFake) RenderConfig(rec *vmstore.VMRecord) error {
+func (b backendFake) RenderConfig(rec *vm.VMRecord) error {
 	return b.render(rec)
 }
 
-func (b backendFake) StartVM(rec *vmstore.VMRecord) (*backend.StartResult, error) {
+func (b backendFake) StartVM(rec *vm.VMRecord) (*backend.StartResult, error) {
 	return b.start(rec)
 }
 
-func (b backendFake) StopVM(rec *vmstore.VMRecord, opts backend.StopOptions) (*backend.StopResult, error) {
+func (b backendFake) StopVM(rec *vm.VMRecord, opts backend.StopOptions) (*backend.StopResult, error) {
 	if b.stop != nil {
 		return b.stop(rec, opts)
 	}
 	return &backend.StopResult{}, nil
 }
 
-func (b backendFake) PauseVM(ctx context.Context, rec *vmstore.VMRecord) error {
+func (b backendFake) PauseVM(ctx context.Context, rec *vm.VMRecord) error {
 	if b.pause != nil {
 		return b.pause(ctx, rec)
 	}
 	return nil
 }
 
-func (b backendFake) ResumeVM(ctx context.Context, rec *vmstore.VMRecord) error {
+func (b backendFake) ResumeVM(ctx context.Context, rec *vm.VMRecord) error {
 	if b.resume != nil {
 		return b.resume(ctx, rec)
 	}
 	return nil
 }
 
-func (b backendFake) SnapshotVM(ctx context.Context, rec *vmstore.VMRecord, destination string) error {
+func (b backendFake) SnapshotVM(ctx context.Context, rec *vm.VMRecord, destination string) error {
 	if b.snapshot != nil {
 		return b.snapshot(ctx, rec, destination)
 	}
 	return nil
 }
 
-func (b backendFake) InspectNativeHost(ctx context.Context, rec *vmstore.VMRecord) (backend.NativeHost, error) {
+func (b backendFake) InspectNativeHost(ctx context.Context, rec *vm.VMRecord) (backend.NativeHost, error) {
 	if b.nativeHost != nil {
 		return b.nativeHost(ctx, rec)
 	}
@@ -90,12 +90,12 @@ func (b backendFake) InspectNativeHost(ctx context.Context, rec *vmstore.VMRecor
 	}, nil
 }
 
-func (b backendFake) ObserveVM(rec *vmstore.VMRecord) vmstore.Observation {
+func (b backendFake) ObserveVM(rec *vm.VMRecord) vm.Observation {
 	if b.observe != nil {
 		return b.observe(rec)
 	}
-	return vmstore.Observation{
-		State:     vmstore.ObservedStateCreated,
+	return vm.Observation{
+		State:     vm.ObservedStateCreated,
 		Reason:    "test observation",
 		CheckedAt: time.Now().UTC(),
 	}
@@ -103,13 +103,13 @@ func (b backendFake) ObserveVM(rec *vmstore.VMRecord) vmstore.Observation {
 
 func TestCreateVMRollsBackRecordOnRenderFailure(t *testing.T) {
 	dir := t.TempDir()
-	store := vmstore.New(filepath.Join(dir, "data"))
+	store := vm.New(filepath.Join(dir, "data"))
 	renderErr := errors.New("render failed")
 	rt := NewWithBackend(store, backendFake{
-		render: func(*vmstore.VMRecord) error { return renderErr },
+		render: func(*vm.VMRecord) error { return renderErr },
 	})
 
-	_, err := rt.CreateVM(vmstore.CreateRequest{
+	_, err := rt.CreateVM(vm.CreateRequest{
 		Name:     "rollback",
 		RootDisk: "base.qcow2",
 		Kernel:   "vmlinuz",
@@ -121,24 +121,24 @@ func TestCreateVMRollsBackRecordOnRenderFailure(t *testing.T) {
 		t.Fatalf("error = %v, want %v", err, renderErr)
 	}
 
-	if _, err := store.Inspect("rollback"); !errors.Is(err, vmstore.ErrNotFound) {
+	if _, err := store.Inspect("rollback"); !errors.Is(err, vm.ErrNotFound) {
 		t.Fatalf("inspect after rollback error = %v", err)
 	}
 }
 
 func TestStartVMMarksRunningWithoutGuestAgent(t *testing.T) {
 	dir := t.TempDir()
-	store := vmstore.New(filepath.Join(dir, "data"))
+	store := vm.New(filepath.Join(dir, "data"))
 	rt := NewWithBackend(
 		store,
 		backendFake{
-			render: func(*vmstore.VMRecord) error { return nil },
-			start: func(*vmstore.VMRecord) (*backend.StartResult, error) {
+			render: func(*vm.VMRecord) error { return nil },
+			start: func(*vm.VMRecord) (*backend.StartResult, error) {
 				return &backend.StartResult{PID: 1234, APISocket: "/tmp/ch.sock"}, nil
 			},
-			observe: func(*vmstore.VMRecord) vmstore.Observation {
-				return vmstore.Observation{
-					State:     vmstore.ObservedStateRunning,
+			observe: func(*vm.VMRecord) vm.Observation {
+				return vm.Observation{
+					State:     vm.ObservedStateRunning,
 					Reason:    "running",
 					CheckedAt: time.Now().UTC(),
 				}
@@ -146,14 +146,14 @@ func TestStartVMMarksRunningWithoutGuestAgent(t *testing.T) {
 		},
 	)
 
-	rec, err := rt.CreateVM(vmstore.CreateRequest{
+	rec, err := rt.CreateVM(vm.CreateRequest{
 		Name:     "start-me",
 		RootDisk: "base.qcow2",
 		Kernel:   "vmlinuz",
 		Initrd:   "initrd.img",
 		RunDir:   filepath.Join(dir, "run"),
 		LogDir:   filepath.Join(dir, "log"),
-		Image:    &vmstore.ImageRef{ID: "img_direct", BootMode: "direct"},
+		Image:    &vm.ImageRef{ID: "img_direct", BootMode: "direct"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -163,13 +163,13 @@ func TestStartVMMarksRunningWithoutGuestAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if started.State != vmstore.StateRunning {
+	if started.State != vm.StateRunning {
 		t.Fatalf("state = %s", started.State)
 	}
 	if started.PID != 1234 || started.APISocket != "/tmp/ch.sock" {
 		t.Fatalf("runtime fields = pid %d socket %s", started.PID, started.APISocket)
 	}
-	if started.ObservedState != vmstore.ObservedStateRunning {
+	if started.ObservedState != vm.ObservedStateRunning {
 		t.Fatalf("observed state = %s", started.ObservedState)
 	}
 	if started.Performance == nil || started.Performance.ReadyDurationMs != started.Performance.VMMAPIReadyDurationMs {
@@ -179,21 +179,21 @@ func TestStartVMMarksRunningWithoutGuestAgent(t *testing.T) {
 
 func TestStartVMContextSerializesSameVM(t *testing.T) {
 	dir := t.TempDir()
-	store := vmstore.New(filepath.Join(dir, "data"))
+	store := vm.New(filepath.Join(dir, "data"))
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	rt := NewWithBackend(store, backendFake{
-		render: func(*vmstore.VMRecord) error { return nil },
-		start: func(*vmstore.VMRecord) (*backend.StartResult, error) {
+		render: func(*vm.VMRecord) error { return nil },
+		start: func(*vm.VMRecord) (*backend.StartResult, error) {
 			close(entered)
 			<-release
 			return &backend.StartResult{PID: 1234, APISocket: "/tmp/ch.sock"}, nil
 		},
-		observe: func(*vmstore.VMRecord) vmstore.Observation {
-			return vmstore.Observation{State: vmstore.ObservedStateRunning, CheckedAt: time.Now().UTC()}
+		observe: func(*vm.VMRecord) vm.Observation {
+			return vm.Observation{State: vm.ObservedStateRunning, CheckedAt: time.Now().UTC()}
 		},
 	})
-	rec, err := rt.CreateVM(vmstore.CreateRequest{
+	rec, err := rt.CreateVM(vm.CreateRequest{
 		Name: "locked", RootDisk: "base.qcow2", Kernel: "vmlinuz", Initrd: "initrd",
 		RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
 	})
@@ -222,21 +222,21 @@ func TestStartVMContextSerializesSameVM(t *testing.T) {
 
 func TestVMOperationLockDoesNotBlockDifferentVM(t *testing.T) {
 	dir := t.TempDir()
-	store := vmstore.New(filepath.Join(dir, "data"))
+	store := vm.New(filepath.Join(dir, "data"))
 	rt := NewWithBackend(store, backendFake{
-		render: func(*vmstore.VMRecord) error { return nil },
-		start: func(*vmstore.VMRecord) (*backend.StartResult, error) {
+		render: func(*vm.VMRecord) error { return nil },
+		start: func(*vm.VMRecord) (*backend.StartResult, error) {
 			return &backend.StartResult{PID: 1234, APISocket: "/tmp/ch.sock"}, nil
 		},
 	})
-	first, err := rt.CreateVM(vmstore.CreateRequest{
+	first, err := rt.CreateVM(vm.CreateRequest{
 		Name: "first", RootDisk: "base.qcow2", Kernel: "vmlinuz", Initrd: "initrd",
 		RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := rt.CreateVM(vmstore.CreateRequest{
+	second, err := rt.CreateVM(vm.CreateRequest{
 		Name: "second", RootDisk: "base.qcow2", Kernel: "vmlinuz", Initrd: "initrd",
 		RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
 	})
@@ -258,27 +258,27 @@ func TestVMOperationLockDoesNotBlockDifferentVM(t *testing.T) {
 
 func TestStartVMRerendersAfterFirstBoot(t *testing.T) {
 	dir := t.TempDir()
-	store := vmstore.New(filepath.Join(dir, "data"))
+	store := vm.New(filepath.Join(dir, "data"))
 	var renderFirstBooted []bool
 	rt := NewWithBackend(
 		store,
 		backendFake{
-			render: func(rec *vmstore.VMRecord) error {
+			render: func(rec *vm.VMRecord) error {
 				renderFirstBooted = append(renderFirstBooted, rec.FirstBooted)
 				return nil
 			},
-			start: func(*vmstore.VMRecord) (*backend.StartResult, error) {
+			start: func(*vm.VMRecord) (*backend.StartResult, error) {
 				return &backend.StartResult{PID: 1234, APISocket: filepath.Join(dir, "run", "ch.sock")}, nil
 			},
-			observe: func(rec *vmstore.VMRecord) vmstore.Observation {
-				state := vmstore.ObservedStateCreated
-				if rec.State == vmstore.StateRunning {
-					state = vmstore.ObservedStateRunning
+			observe: func(rec *vm.VMRecord) vm.Observation {
+				state := vm.ObservedStateCreated
+				if rec.State == vm.StateRunning {
+					state = vm.ObservedStateRunning
 				}
-				if rec.State == vmstore.StateStopped {
-					state = vmstore.ObservedStateStopped
+				if rec.State == vm.StateStopped {
+					state = vm.ObservedStateStopped
 				}
-				return vmstore.Observation{
+				return vm.Observation{
 					State:     state,
 					Reason:    string(state),
 					CheckedAt: time.Now().UTC(),
@@ -287,7 +287,7 @@ func TestStartVMRerendersAfterFirstBoot(t *testing.T) {
 		},
 	)
 
-	rec, err := rt.CreateVM(vmstore.CreateRequest{
+	rec, err := rt.CreateVM(vm.CreateRequest{
 		Name:     "cloudimg",
 		RootDisk: "ubuntu.img",
 		Firmware: "CLOUDHV.fd",
@@ -320,17 +320,17 @@ func TestStartVMRerendersAfterFirstBoot(t *testing.T) {
 
 func TestStartVMMarksErrorOnStartFailure(t *testing.T) {
 	dir := t.TempDir()
-	store := vmstore.New(filepath.Join(dir, "data"))
+	store := vm.New(filepath.Join(dir, "data"))
 	startErr := errors.New("start failed")
 	rt := NewWithBackend(
 		store,
 		backendFake{
-			render: func(*vmstore.VMRecord) error { return nil },
-			start:  func(*vmstore.VMRecord) (*backend.StartResult, error) { return nil, startErr },
+			render: func(*vm.VMRecord) error { return nil },
+			start:  func(*vm.VMRecord) (*backend.StartResult, error) { return nil, startErr },
 		},
 	)
 
-	rec, err := rt.CreateVM(vmstore.CreateRequest{
+	rec, err := rt.CreateVM(vm.CreateRequest{
 		Name:     "fail-me",
 		RootDisk: "base.qcow2",
 		Kernel:   "vmlinuz",
@@ -349,32 +349,32 @@ func TestStartVMMarksErrorOnStartFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.State != vmstore.StateError || updated.Error == "" {
+	if updated.State != vm.StateError || updated.Error == "" {
 		t.Fatalf("updated record = %+v", updated)
 	}
 }
 
 func TestInspectVMReconcilesStaleRunningRecord(t *testing.T) {
 	dir := t.TempDir()
-	store := vmstore.New(filepath.Join(dir, "data"))
+	store := vm.New(filepath.Join(dir, "data"))
 	checkedAt := time.Date(2026, 6, 29, 1, 2, 3, 0, time.UTC)
 	rt := NewWithBackend(
 		store,
 		backendFake{
-			render: func(*vmstore.VMRecord) error { return nil },
-			start: func(*vmstore.VMRecord) (*backend.StartResult, error) {
+			render: func(*vm.VMRecord) error { return nil },
+			start: func(*vm.VMRecord) (*backend.StartResult, error) {
 				return &backend.StartResult{PID: 4321, APISocket: filepath.Join(dir, "run", "ch.sock")}, nil
 			},
-			observe: func(rec *vmstore.VMRecord) vmstore.Observation {
-				if rec.State == vmstore.StateRunning {
-					return vmstore.Observation{
-						State:     vmstore.ObservedStateStopped,
+			observe: func(rec *vm.VMRecord) vm.Observation {
+				if rec.State == vm.StateRunning {
+					return vm.Observation{
+						State:     vm.ObservedStateStopped,
 						Reason:    "process 4321 is not alive",
 						CheckedAt: checkedAt,
 					}
 				}
-				return vmstore.Observation{
-					State:     vmstore.ObservedStateCreated,
+				return vm.Observation{
+					State:     vm.ObservedStateCreated,
 					Reason:    "created",
 					CheckedAt: checkedAt,
 				}
@@ -382,7 +382,7 @@ func TestInspectVMReconcilesStaleRunningRecord(t *testing.T) {
 		},
 	)
 
-	rec, err := rt.CreateVM(vmstore.CreateRequest{
+	rec, err := rt.CreateVM(vm.CreateRequest{
 		Name:     "stale",
 		RootDisk: "base.qcow2",
 		Kernel:   "vmlinuz",
@@ -401,10 +401,10 @@ func TestInspectVMReconcilesStaleRunningRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inspected.State != vmstore.StateRunning {
+	if inspected.State != vm.StateRunning {
 		t.Fatalf("persisted state = %s", inspected.State)
 	}
-	if inspected.ObservedState != vmstore.ObservedStateStopped {
+	if inspected.ObservedState != vm.ObservedStateStopped {
 		t.Fatalf("observed state = %s", inspected.ObservedState)
 	}
 	if inspected.ObservedReason == "" || inspected.ObservedAt == nil {
@@ -422,16 +422,16 @@ func TestInspectVMReconcilesStaleRunningRecord(t *testing.T) {
 
 func TestStopVMMarksStopped(t *testing.T) {
 	dir := t.TempDir()
-	store := vmstore.New(filepath.Join(dir, "data"))
+	store := vm.New(filepath.Join(dir, "data"))
 	stopCalled := false
 	rt := NewWithBackend(
 		store,
 		backendFake{
-			render: func(*vmstore.VMRecord) error { return nil },
-			start: func(*vmstore.VMRecord) (*backend.StartResult, error) {
+			render: func(*vm.VMRecord) error { return nil },
+			start: func(*vm.VMRecord) (*backend.StartResult, error) {
 				return &backend.StartResult{PID: 12345, APISocket: filepath.Join(dir, "run", "ch.sock")}, nil
 			},
-			stop: func(rec *vmstore.VMRecord, opts backend.StopOptions) (*backend.StopResult, error) {
+			stop: func(rec *vm.VMRecord, opts backend.StopOptions) (*backend.StopResult, error) {
 				stopCalled = true
 				if rec.PID != 12345 {
 					t.Fatalf("stop pid = %d", rec.PID)
@@ -441,18 +441,18 @@ func TestStopVMMarksStopped(t *testing.T) {
 				}
 				return &backend.StopResult{}, nil
 			},
-			observe: func(rec *vmstore.VMRecord) vmstore.Observation {
-				state := vmstore.ObservedStateCreated
+			observe: func(rec *vm.VMRecord) vm.Observation {
+				state := vm.ObservedStateCreated
 				reason := "created"
-				if rec.State == vmstore.StateRunning {
-					state = vmstore.ObservedStateRunning
+				if rec.State == vm.StateRunning {
+					state = vm.ObservedStateRunning
 					reason = "running"
 				}
-				if rec.State == vmstore.StateStopped {
-					state = vmstore.ObservedStateStopped
+				if rec.State == vm.StateStopped {
+					state = vm.ObservedStateStopped
 					reason = "stopped"
 				}
-				return vmstore.Observation{
+				return vm.Observation{
 					State:     state,
 					Reason:    reason,
 					CheckedAt: time.Now().UTC(),
@@ -461,7 +461,7 @@ func TestStopVMMarksStopped(t *testing.T) {
 		},
 	)
 
-	rec, err := rt.CreateVM(vmstore.CreateRequest{
+	rec, err := rt.CreateVM(vm.CreateRequest{
 		Name:     "stop-me",
 		RootDisk: "base.qcow2",
 		Kernel:   "vmlinuz",
@@ -483,13 +483,13 @@ func TestStopVMMarksStopped(t *testing.T) {
 	if !stopCalled {
 		t.Fatal("backend stop was not called")
 	}
-	if stopped.State != vmstore.StateStopped {
+	if stopped.State != vm.StateStopped {
 		t.Fatalf("state = %s", stopped.State)
 	}
 	if stopped.PID != 0 || stopped.APISocket != "" {
 		t.Fatalf("runtime fields not cleared: %+v", stopped)
 	}
-	if stopped.ObservedState != vmstore.ObservedStateStopped {
+	if stopped.ObservedState != vm.ObservedStateStopped {
 		t.Fatalf("observed state = %s", stopped.ObservedState)
 	}
 
@@ -504,15 +504,15 @@ func TestStopVMMarksStopped(t *testing.T) {
 
 func TestLogsVMTailsKnownLogFiles(t *testing.T) {
 	dir := t.TempDir()
-	store := vmstore.New(filepath.Join(dir, "data"))
+	store := vm.New(filepath.Join(dir, "data"))
 	rt := NewWithBackend(
 		store,
 		backendFake{
-			render: func(*vmstore.VMRecord) error { return nil },
+			render: func(*vm.VMRecord) error { return nil },
 		},
 	)
 
-	rec, err := rt.CreateVM(vmstore.CreateRequest{
+	rec, err := rt.CreateVM(vm.CreateRequest{
 		Name:     "logs",
 		RootDisk: "base.qcow2",
 		Kernel:   "vmlinuz",
@@ -575,15 +575,15 @@ func TestDeleteVMRemovesRecordAndManagedDirsOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := vmstore.New(filepath.Join(dir, "data"))
+	store := vm.New(filepath.Join(dir, "data"))
 	rt := NewWithBackend(
 		store,
 		backendFake{
-			render: func(*vmstore.VMRecord) error { return nil },
+			render: func(*vm.VMRecord) error { return nil },
 		},
 	)
 
-	rec, err := rt.CreateVM(vmstore.CreateRequest{
+	rec, err := rt.CreateVM(vm.CreateRequest{
 		Name:     "delete-me",
 		RootDisk: rootDisk,
 		Kernel:   "vmlinuz",
@@ -615,7 +615,7 @@ func TestDeleteVMRemovesRecordAndManagedDirsOnly(t *testing.T) {
 	if deleted.ID != rec.ID {
 		t.Fatalf("deleted ID = %s, want %s", deleted.ID, rec.ID)
 	}
-	if _, err := store.Inspect(rec.ID); !errors.Is(err, vmstore.ErrNotFound) {
+	if _, err := store.Inspect(rec.ID); !errors.Is(err, vm.ErrNotFound) {
 		t.Fatalf("inspect after delete error = %v", err)
 	}
 	if _, err := os.Stat(rootDisk); err != nil {
@@ -634,28 +634,28 @@ func TestDeleteVMRemovesRecordAndManagedDirsOnly(t *testing.T) {
 
 func TestDeleteVMRequiresForceForRunningVM(t *testing.T) {
 	dir := t.TempDir()
-	store := vmstore.New(filepath.Join(dir, "data"))
+	store := vm.New(filepath.Join(dir, "data"))
 	stopCalled := false
 	rt := NewWithBackend(
 		store,
 		backendFake{
-			render: func(*vmstore.VMRecord) error { return nil },
-			start: func(*vmstore.VMRecord) (*backend.StartResult, error) {
+			render: func(*vm.VMRecord) error { return nil },
+			start: func(*vm.VMRecord) (*backend.StartResult, error) {
 				return &backend.StartResult{PID: 12345, APISocket: filepath.Join(dir, "run", "ch.sock")}, nil
 			},
-			stop: func(*vmstore.VMRecord, backend.StopOptions) (*backend.StopResult, error) {
+			stop: func(*vm.VMRecord, backend.StopOptions) (*backend.StopResult, error) {
 				stopCalled = true
 				return &backend.StopResult{}, nil
 			},
-			observe: func(rec *vmstore.VMRecord) vmstore.Observation {
-				state := vmstore.ObservedStateCreated
-				if rec.State == vmstore.StateRunning {
-					state = vmstore.ObservedStateRunning
+			observe: func(rec *vm.VMRecord) vm.Observation {
+				state := vm.ObservedStateCreated
+				if rec.State == vm.StateRunning {
+					state = vm.ObservedStateRunning
 				}
-				if rec.State == vmstore.StateStopped {
-					state = vmstore.ObservedStateStopped
+				if rec.State == vm.StateStopped {
+					state = vm.ObservedStateStopped
 				}
-				return vmstore.Observation{
+				return vm.Observation{
 					State:     state,
 					Reason:    string(state),
 					CheckedAt: time.Now().UTC(),
@@ -664,7 +664,7 @@ func TestDeleteVMRequiresForceForRunningVM(t *testing.T) {
 		},
 	)
 
-	rec, err := rt.CreateVM(vmstore.CreateRequest{
+	rec, err := rt.CreateVM(vm.CreateRequest{
 		Name:     "running-delete",
 		RootDisk: "base.qcow2",
 		Kernel:   "vmlinuz",
@@ -695,7 +695,7 @@ func TestDeleteVMRequiresForceForRunningVM(t *testing.T) {
 	if !stopCalled {
 		t.Fatal("force delete did not stop VM")
 	}
-	if _, err := store.Inspect(rec.ID); !errors.Is(err, vmstore.ErrNotFound) {
+	if _, err := store.Inspect(rec.ID); !errors.Is(err, vm.ErrNotFound) {
 		t.Fatalf("inspect after force delete error = %v", err)
 	}
 }
@@ -703,23 +703,23 @@ func TestDeleteVMRequiresForceForRunningVM(t *testing.T) {
 func TestStopVMPreservesNetworkResources(t *testing.T) {
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")
-	store := vmstore.New(rootDir)
+	store := vm.New(rootDir)
 	rt := NewWithBackend(
 		store,
 		backendFake{
-			render: func(*vmstore.VMRecord) error { return nil },
-			start: func(*vmstore.VMRecord) (*backend.StartResult, error) {
+			render: func(*vm.VMRecord) error { return nil },
+			start: func(*vm.VMRecord) (*backend.StartResult, error) {
 				return &backend.StartResult{PID: 12345, APISocket: filepath.Join(dir, "run", "ch.sock")}, nil
 			},
-			observe: func(rec *vmstore.VMRecord) vmstore.Observation {
-				state := vmstore.ObservedStateCreated
-				if rec.State == vmstore.StateRunning {
-					state = vmstore.ObservedStateRunning
+			observe: func(rec *vm.VMRecord) vm.Observation {
+				state := vm.ObservedStateCreated
+				if rec.State == vm.StateRunning {
+					state = vm.ObservedStateRunning
 				}
-				if rec.State == vmstore.StateStopped {
-					state = vmstore.ObservedStateStopped
+				if rec.State == vm.StateStopped {
+					state = vm.ObservedStateStopped
 				}
-				return vmstore.Observation{
+				return vm.Observation{
 					State:     state,
 					Reason:    string(state),
 					CheckedAt: time.Now().UTC(),
@@ -758,8 +758,8 @@ func TestStopVMPreservesNetworkResources(t *testing.T) {
 func TestDeleteVMCleansNetworkResources(t *testing.T) {
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")
-	store := vmstore.New(rootDir)
-	rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	store := vm.New(rootDir)
+	rt := NewWithBackend(store, backendFake{render: func(*vm.VMRecord) error { return nil }})
 	rt.cfg = testRuntimeConfig(rootDir)
 	deletedTaps := []string{}
 	withDeleteHostTap(t, func(tap string) error {
@@ -774,7 +774,7 @@ func TestDeleteVMCleansNetworkResources(t *testing.T) {
 	if len(deletedTaps) != 1 || deletedTaps[0] != allocation.Record.TAP {
 		t.Fatalf("deleted taps = %+v", deletedTaps)
 	}
-	if _, err := store.Inspect(rec.ID); !errors.Is(err, vmstore.ErrNotFound) {
+	if _, err := store.Inspect(rec.ID); !errors.Is(err, vm.ErrNotFound) {
 		t.Fatalf("inspect after delete error = %v", err)
 	}
 	networkStore := kbnetwork.NewStore(rootDir)
@@ -796,10 +796,10 @@ func TestDeleteVMCleansNetworkResources(t *testing.T) {
 
 func TestDeleteVMRetriesAfterManagedCleanup(t *testing.T) {
 	rootDir := t.TempDir()
-	store := vmstore.New(rootDir)
-	rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	store := vm.New(rootDir)
+	rt := NewWithBackend(store, backendFake{render: func(*vm.VMRecord) error { return nil }})
 	rt.cfg = testRuntimeConfig(rootDir)
-	rec, err := store.Create(vmstore.CreateRequest{
+	rec, err := store.Create(vm.CreateRequest{
 		Name: "retry-delete", RootDisk: filepath.Join(rootDir, "root.raw"),
 		Kernel: filepath.Join(rootDir, "vmlinuz"), Initrd: filepath.Join(rootDir, "initrd"),
 		RunDir: filepath.Join(rootDir, "run"), LogDir: filepath.Join(rootDir, "log"), Network: "none",
@@ -820,7 +820,7 @@ func TestDeleteVMRetriesAfterManagedCleanup(t *testing.T) {
 	if _, err := store.Inspect(rec.ID); err != nil {
 		t.Fatalf("VM record unavailable for retry: %v", err)
 	}
-	recovered := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	recovered := NewWithBackend(store, backendFake{render: func(*vm.VMRecord) error { return nil }})
 	recovered.cfg = testRuntimeConfig(rootDir)
 	if _, err := recovered.DeleteVMContext(t.Context(), rec.ID, false); err != nil {
 		t.Fatalf("retry DeleteVMContext(): %v", err)
@@ -831,7 +831,7 @@ func TestDeleteVMRetriesAfterManagedCleanup(t *testing.T) {
 	if recoverable, err := recovered.operations.Recoverable(t.Context()); err != nil || len(recoverable) != 0 {
 		t.Fatalf("recoverable operations after retry = %+v, err = %v", recoverable, err)
 	}
-	if _, err := store.Inspect(rec.ID); !errors.Is(err, vmstore.ErrNotFound) {
+	if _, err := store.Inspect(rec.ID); !errors.Is(err, vm.ErrNotFound) {
 		t.Fatalf("VM after retry error = %v, want ErrNotFound", err)
 	}
 }
@@ -839,8 +839,8 @@ func TestDeleteVMRetriesAfterManagedCleanup(t *testing.T) {
 func TestDeleteVMMarksNetworkCleanupPendingOnFailure(t *testing.T) {
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")
-	store := vmstore.New(rootDir)
-	rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	store := vm.New(rootDir)
+	rt := NewWithBackend(store, backendFake{render: func(*vm.VMRecord) error { return nil }})
 	rt.cfg = testRuntimeConfig(rootDir)
 	tapErr := errors.New("tap delete failed")
 	withDeleteHostTap(t, func(string) error { return tapErr })
@@ -875,8 +875,8 @@ func TestDeleteVMMarksNetworkCleanupPendingOnFailure(t *testing.T) {
 func TestDeleteVMCleansCNIResources(t *testing.T) {
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")
-	store := vmstore.New(rootDir)
-	rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	store := vm.New(rootDir)
+	rt := NewWithBackend(store, backendFake{render: func(*vm.VMRecord) error { return nil }})
 	rt.cfg = testRuntimeConfig(rootDir)
 	withAddCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIAddRequest) (*kbnetwork.Allocation, error) {
 		return testCNIAllocation(req.VMID), nil
@@ -910,8 +910,8 @@ func TestDeleteVMCleansCNIResources(t *testing.T) {
 func TestCNIFailureBoundariesRollbackAndRetry(t *testing.T) {
 	t.Run("add rolls back provider side effect", func(t *testing.T) {
 		rootDir := t.TempDir()
-		store := vmstore.New(rootDir)
-		rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+		store := vm.New(rootDir)
+		rt := NewWithBackend(store, backendFake{render: func(*vm.VMRecord) error { return nil }})
 		rt.cfg = testRuntimeConfig(rootDir)
 		withAddCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIAddRequest) (*kbnetwork.Allocation, error) {
 			return testCNIAllocation(req.VMID), nil
@@ -928,7 +928,7 @@ func TestCNIFailureBoundariesRollbackAndRetry(t *testing.T) {
 			}
 			return nil
 		}))
-		_, err := rt.createVMContext(ctx, vmstore.CreateRequest{
+		_, err := rt.createVMContext(ctx, vm.CreateRequest{
 			Name: "cni-add-boundary", RootDisk: "base.qcow2", Kernel: "vmlinuz", Initrd: "initrd.img",
 			Network: "cni:default", RunDir: filepath.Join(rootDir, "run"), LogDir: filepath.Join(rootDir, "log"),
 		}, nil)
@@ -952,8 +952,8 @@ func TestCNIFailureBoundariesRollbackAndRetry(t *testing.T) {
 
 	t.Run("delete retains record for retry", func(t *testing.T) {
 		rootDir := t.TempDir()
-		store := vmstore.New(rootDir)
-		rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+		store := vm.New(rootDir)
+		rt := NewWithBackend(store, backendFake{render: func(*vm.VMRecord) error { return nil }})
 		rt.cfg = testRuntimeConfig(rootDir)
 		withAddCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIAddRequest) (*kbnetwork.Allocation, error) {
 			return testCNIAllocation(req.VMID), nil
@@ -994,8 +994,8 @@ func TestCNIFailureBoundariesRollbackAndRetry(t *testing.T) {
 func TestDeleteVMCleansMultipleCNIResourcesAndNetNS(t *testing.T) {
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")
-	store := vmstore.New(rootDir)
-	rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	store := vm.New(rootDir)
+	rt := NewWithBackend(store, backendFake{render: func(*vm.VMRecord) error { return nil }})
 	rt.cfg = testRuntimeConfig(rootDir)
 	withAddCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIAddRequest) (*kbnetwork.Allocation, error) {
 		return testIndexedCNIAllocation(req.VMID, req.Network, req.Index), nil
@@ -1039,8 +1039,8 @@ func TestDeleteVMCleansMultipleCNIResourcesAndNetNS(t *testing.T) {
 func TestDeleteVMMarksCNICleanupPendingOnFailure(t *testing.T) {
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")
-	store := vmstore.New(rootDir)
-	rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	store := vm.New(rootDir)
+	rt := NewWithBackend(store, backendFake{render: func(*vm.VMRecord) error { return nil }})
 	rt.cfg = testRuntimeConfig(rootDir)
 	withAddCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIAddRequest) (*kbnetwork.Allocation, error) {
 		return testCNIAllocation(req.VMID), nil
@@ -1066,8 +1066,8 @@ func TestDeleteVMMarksCNICleanupPendingOnFailure(t *testing.T) {
 func TestDeleteVMMultiCNIPreservesNetNSOnPartialFailure(t *testing.T) {
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")
-	store := vmstore.New(rootDir)
-	rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	store := vm.New(rootDir)
+	rt := NewWithBackend(store, backendFake{render: func(*vm.VMRecord) error { return nil }})
 	rt.cfg = testRuntimeConfig(rootDir)
 	withAddCNI(t, func(_ context.Context, _ string, _ config.NetworkConfig, req kbnetwork.CNIAddRequest) (*kbnetwork.Allocation, error) {
 		return testIndexedCNIAllocation(req.VMID, req.Network, req.Index), nil
@@ -1104,8 +1104,8 @@ func TestDeleteVMMultiCNIPreservesNetNSOnPartialFailure(t *testing.T) {
 func TestCreateVMAttachesMultipleNetworkConfigs(t *testing.T) {
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")
-	store := vmstore.New(rootDir)
-	rt := NewWithBackend(store, backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	store := vm.New(rootDir)
+	rt := NewWithBackend(store, backendFake{render: func(*vm.VMRecord) error { return nil }})
 	rt.cfg = testRuntimeConfig(rootDir)
 
 	var requests []kbnetwork.CNIAddRequest
@@ -1117,7 +1117,7 @@ func TestCreateVMAttachesMultipleNetworkConfigs(t *testing.T) {
 		return allocation, nil
 	})
 
-	rec, err := rt.CreateVM(vmstore.CreateRequest{
+	rec, err := rt.CreateVM(vm.CreateRequest{
 		Name:     "multi-cni",
 		RootDisk: "base.qcow2",
 		Kernel:   "vmlinuz",
@@ -1223,11 +1223,11 @@ func withDeleteCNINetNS(t *testing.T, fn func(string, string) error) {
 func createVMWithNetwork(
 	t *testing.T,
 	rt *Runtime,
-	store *vmstore.Store,
+	store *vm.Store,
 	name string,
-) (*vmstore.VMRecord, *kbnetwork.Allocation) {
+) (*vm.VMRecord, *kbnetwork.Allocation) {
 	t.Helper()
-	rec, err := rt.CreateVM(vmstore.CreateRequest{
+	rec, err := rt.CreateVM(vm.CreateRequest{
 		Name:     name,
 		RootDisk: "base.qcow2",
 		Kernel:   "vmlinuz",
@@ -1260,9 +1260,9 @@ func createVMWithNetwork(
 	return updated, allocation
 }
 
-func createVMWithCNIConfig(t *testing.T, rt *Runtime, name string) *vmstore.VMRecord {
+func createVMWithCNIConfig(t *testing.T, rt *Runtime, name string) *vm.VMRecord {
 	t.Helper()
-	rec, err := rt.CreateVM(vmstore.CreateRequest{
+	rec, err := rt.CreateVM(vm.CreateRequest{
 		Name:     name,
 		RootDisk: "base.qcow2",
 		Kernel:   "vmlinuz",
@@ -1277,9 +1277,9 @@ func createVMWithCNIConfig(t *testing.T, rt *Runtime, name string) *vmstore.VMRe
 	return rec
 }
 
-func createVMWithMultiCNIConfig(t *testing.T, rt *Runtime, name string) *vmstore.VMRecord {
+func createVMWithMultiCNIConfig(t *testing.T, rt *Runtime, name string) *vm.VMRecord {
 	t.Helper()
-	rec, err := rt.CreateVM(vmstore.CreateRequest{
+	rec, err := rt.CreateVM(vm.CreateRequest{
 		Name:     name,
 		RootDisk: "base.qcow2",
 		Kernel:   "vmlinuz",
@@ -1344,23 +1344,23 @@ func TestPrepareStorageCreatesCOWAndChecksLayers(t *testing.T) {
 	}
 	defer func() { mkfsExt4 = oldMkfs }()
 
-	rec := &vmstore.VMRecord{
+	rec := &vm.VMRecord{
 		ID:     "kb_storage",
 		RunDir: filepath.Join(dir, "run", "vms", "kb_storage"),
-		Image: &vmstore.ImageRef{
+		Image: &vm.ImageRef{
 			ID:       "img_oci",
 			BootMode: "direct",
 		},
-		StorageConfigs: []vmstore.StorageConfig{
-			{ID: "layer0", Role: vmstore.StorageRoleLayer, Path: layer, Readonly: true, Format: "raw", Filesystem: "erofs"},
+		StorageConfigs: []vm.StorageConfig{
+			{ID: "layer0", Role: vm.StorageRoleLayer, Path: layer, Readonly: true, Format: "raw", Filesystem: "erofs"},
 			{
 				ID:               "cow",
-				Role:             vmstore.StorageRoleCOW,
+				Role:             vm.StorageRoleCOW,
 				Path:             cow,
 				Format:           "raw",
 				Filesystem:       "ext4",
 				VirtualSizeBytes: 2 * 1024 * 1024,
-				Base: &vmstore.StorageBase{
+				Base: &vm.StorageBase{
 					Family:       "oci",
 					ImageID:      "img_oci",
 					Digest:       "sha256:manifest",
@@ -1383,11 +1383,11 @@ func TestPrepareStorageCreatesCOWAndChecksLayers(t *testing.T) {
 
 func TestPrepareStorageRejectsMissingLayer(t *testing.T) {
 	dir := t.TempDir()
-	err := prepareStorage(&vmstore.VMRecord{
+	err := prepareStorage(&vm.VMRecord{
 		ID:     "kb_missing",
 		RunDir: filepath.Join(dir, "run", "vms", "kb_missing"),
-		StorageConfigs: []vmstore.StorageConfig{
-			{ID: "layer0", Role: vmstore.StorageRoleLayer, Path: "/missing/layer.erofs", Readonly: true, Format: "raw", Filesystem: "erofs"},
+		StorageConfigs: []vm.StorageConfig{
+			{ID: "layer0", Role: vm.StorageRoleLayer, Path: "/missing/layer.erofs", Readonly: true, Format: "raw", Filesystem: "erofs"},
 		},
 	}, filepath.Join(dir, "data"))
 	if err == nil {
@@ -1399,13 +1399,13 @@ func TestCreateStoppedSnapshotCapturesManagedCOW(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")
-	store := vmstore.New(rootDir)
-	rec, err := store.Create(vmstore.CreateRequest{
+	store := vm.New(rootDir)
+	rec, err := store.Create(vm.CreateRequest{
 		Name: "snapshot-source", Kernel: "vmlinuz", Initrd: "initrd", RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
-		Image: &vmstore.ImageRef{ID: "img_oci", Digest: "sha256:manifest"},
-		StorageConfigs: []vmstore.StorageConfig{{
-			ID: "cow", Role: vmstore.StorageRoleCOW, Format: "raw", Filesystem: "ext4", VirtualSizeBytes: 4096,
-			Base: &vmstore.StorageBase{Family: "oci", ImageID: "img_oci", Digest: "sha256:manifest", LayerDigests: []string{"sha256:layer"}},
+		Image: &vm.ImageRef{ID: "img_oci", Digest: "sha256:manifest"},
+		StorageConfigs: []vm.StorageConfig{{
+			ID: "cow", Role: vm.StorageRoleCOW, Format: "raw", Filesystem: "ext4", VirtualSizeBytes: 4096,
+			Base: &vm.StorageBase{Family: "oci", ImageID: "img_oci", Digest: "sha256:manifest", LayerDigests: []string{"sha256:layer"}},
 		}},
 	})
 	if err != nil {
@@ -1417,11 +1417,11 @@ func TestCreateStoppedSnapshotCapturesManagedCOW(t *testing.T) {
 	if err := os.WriteFile(rec.StorageConfigs[0].Path, []byte("writable"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.UpdateStates([]string{rec.ID}, vmstore.StateStopped); err != nil {
+	if err := store.UpdateStates([]string{rec.ID}, vm.StateStopped); err != nil {
 		t.Fatal(err)
 	}
-	rt := NewWithBackend(store, backendFake{observe: func(*vmstore.VMRecord) vmstore.Observation {
-		return vmstore.Observation{State: vmstore.ObservedStateStopped, Reason: "stopped", CheckedAt: time.Now().UTC()}
+	rt := NewWithBackend(store, backendFake{observe: func(*vm.VMRecord) vm.Observation {
+		return vm.Observation{State: vm.ObservedStateStopped, Reason: "stopped", CheckedAt: time.Now().UTC()}
 	}})
 	snap, err := rt.CreateStoppedSnapshot(context.Background(), rec.ID, "snap-one")
 	if err != nil {

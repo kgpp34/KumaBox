@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/state"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const (
@@ -18,13 +18,13 @@ const (
 
 // VMStatusEvent describes one change in the selected VM set.
 type VMStatusEvent struct {
-	Event string            `json:"event"`
-	VM    *vmstore.VMRecord `json:"vm"`
+	Event string       `json:"event"`
+	VM    *vm.VMRecord `json:"vm"`
 }
 
 // VMStatusUpdate is emitted only when the selected VM status changes.
 type VMStatusUpdate struct {
-	Records []*vmstore.VMRecord
+	Records []*vm.VMRecord
 	Events  []VMStatusEvent
 }
 
@@ -79,12 +79,12 @@ func (r *Runtime) WatchVMs(
 	}
 }
 
-func (r *Runtime) listSelectedVMs(refs []string) ([]*vmstore.VMRecord, error) {
+func (r *Runtime) listSelectedVMs(refs []string) ([]*vm.VMRecord, error) {
 	records, err := r.ListVMs()
 	if err != nil || len(refs) == 0 {
 		return records, err
 	}
-	selected := make([]*vmstore.VMRecord, 0, len(refs))
+	selected := make([]*vm.VMRecord, 0, len(refs))
 	seen := make(map[string]struct{}, len(refs))
 	for _, ref := range refs {
 		for _, record := range records {
@@ -114,14 +114,14 @@ func (r *Runtime) subscribeVMEvents(ctx context.Context) (<-chan struct{}, func(
 }
 
 type vmStatusEntry struct {
-	record   *vmstore.VMRecord
+	record   *vm.VMRecord
 	snapshot vmStatusSnapshot
 }
 
 type vmStatusSnapshot struct {
 	Name           string
-	State          vmstore.VMState
-	ObservedState  vmstore.ObservedState
+	State          vm.VMState
+	ObservedState  vm.ObservedState
 	ObservedReason string
 	Backend        string
 	PID            int
@@ -129,7 +129,7 @@ type vmStatusSnapshot struct {
 	UpdatedAt      time.Time
 }
 
-func snapshotVMStatuses(records []*vmstore.VMRecord) map[string]vmStatusEntry {
+func snapshotVMStatuses(records []*vm.VMRecord) map[string]vmStatusEntry {
 	result := make(map[string]vmStatusEntry, len(records))
 	for _, record := range records {
 		if record == nil {

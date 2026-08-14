@@ -12,7 +12,7 @@ import (
 
 	agentclient "github.com/kumabox/kumabox/internal/agent/client"
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func newAgentCommand(opts *rootOptions) *cobra.Command {
@@ -73,8 +73,8 @@ func newAgentReseedCommand(opts *rootOptions) *cobra.Command {
 type agentStatusView struct {
 	VMID          string                        `json:"vmId"`
 	VMName        string                        `json:"vmName"`
-	VMState       vmstore.VMState               `json:"vmState"`
-	ObservedState vmstore.ObservedState         `json:"observedState,omitempty"`
+	VMState       vm.VMState                    `json:"vmState"`
+	ObservedState vm.ObservedState              `json:"observedState,omitempty"`
 	Readiness     string                        `json:"readiness"`
 	Ready         bool                          `json:"ready"`
 	VsockSocket   string                        `json:"vsockSocket,omitempty"`
@@ -112,7 +112,7 @@ func newAgentStatusCommand(opts *rootOptions) *cobra.Command {
 	return cmd
 }
 
-func inspectAgentStatus(parent context.Context, rec *vmstore.VMRecord, timeout time.Duration) agentStatusView {
+func inspectAgentStatus(parent context.Context, rec *vm.VMRecord, timeout time.Duration) agentStatusView {
 	view := agentStatusView{
 		VMID:          rec.ID,
 		VMName:        rec.Name,
@@ -121,7 +121,7 @@ func inspectAgentStatus(parent context.Context, rec *vmstore.VMRecord, timeout t
 		Readiness:     "vm-not-running",
 		CheckedAt:     time.Now().UTC(),
 	}
-	if rec.State != vmstore.StateRunning {
+	if rec.State != vm.StateRunning {
 		view.Error = fmt.Sprintf("VM %s is not running", rec.Name)
 		view.Diagnostics = guestDiagnostics(rec)
 		return view
@@ -151,7 +151,7 @@ func inspectAgentStatus(parent context.Context, rec *vmstore.VMRecord, timeout t
 	return view
 }
 
-func guestDiagnostics(rec *vmstore.VMRecord) map[string]string {
+func guestDiagnostics(rec *vm.VMRecord) map[string]string {
 	diagnostics := make(map[string]string, 2)
 	for name, path := range map[string]string{
 		"consoleTail":   filepath.Join(rec.LogDir, "console.log"),
@@ -202,7 +202,7 @@ func newAgentPingCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if rec.State != vmstore.StateRunning {
+			if rec.State != vm.StateRunning {
 				return fmt.Errorf("AGENT_NOT_READY: VM %s is not running", rec.Name)
 			}
 			if rec.VsockSocket == "" {

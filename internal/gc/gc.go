@@ -19,7 +19,7 @@ import (
 	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/state"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 // Candidate describes one file or directory that GC would remove in a future
@@ -444,7 +444,7 @@ func parseSnapshotDigest(digest string) (string, string, error) {
 	return algorithm, value, nil
 }
 
-func staleRestoreStaging(rec *vmstore.VMRecord, now time.Time) []Candidate {
+func staleRestoreStaging(rec *vm.VMRecord, now time.Time) []Candidate {
 	if rec == nil {
 		return nil
 	}
@@ -506,11 +506,11 @@ func addLiveImageOCI(paths map[string]struct{}, digests map[string]struct{}, ima
 }
 
 func networkCandidates(
-	vms []*vmstore.VMRecord,
+	vms []*vm.VMRecord,
 	records []kbnetwork.Record,
 	leases map[string]kbnetwork.Lease,
 ) []Candidate {
-	liveVMs := map[string]*vmstore.VMRecord{}
+	liveVMs := map[string]*vm.VMRecord{}
 	vmConfigsByID := map[string]kbnetwork.Config{}
 	liveIPs := map[string]struct{}{}
 	for _, rec := range vms {
@@ -630,8 +630,8 @@ func firstString(values []string) string {
 	return values[0]
 }
 
-func staleRuntimeFiles(rec *vmstore.VMRecord) []Candidate {
-	if rec == nil || rec.State == vmstore.StateRunning {
+func staleRuntimeFiles(rec *vm.VMRecord) []Candidate {
+	if rec == nil || rec.State == vm.StateRunning {
 		return nil
 	}
 	var candidates []Candidate

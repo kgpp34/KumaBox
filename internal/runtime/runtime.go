@@ -20,7 +20,7 @@ import (
 	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/state"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const forcedStopTimeout = 5 * time.Second
@@ -71,10 +71,10 @@ func (r *Runtime) CreateStoppedSnapshot(ctx context.Context, ref, name string) (
 		return nil, err
 	}
 	observed := r.applyObservation(rec)
-	if observed.ObservedState == vmstore.ObservedStateRunning || observed.State == vmstore.StateRunning {
+	if observed.ObservedState == vm.ObservedStateRunning || observed.State == vm.StateRunning {
 		return nil, fmt.Errorf("VM_RUNNING: VM %s must be stopped before snapshot", rec.Name)
 	}
-	if observed.State != vmstore.StateStopped {
+	if observed.State != vm.StateStopped {
 		return nil, fmt.Errorf("VM_NOT_STOPPED: VM %s state is %s", rec.Name, observed.State)
 	}
 	build, err := r.storeSet.Snapshots.Reserve(ctx, name)
@@ -172,7 +172,7 @@ func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) (*Run
 // Network allocation is part of creation because the rendered VMM config needs
 // stable tap/MAC/IP values. If rendering fails, runtime rolls back any provider
 // resources before removing the VM record.
-func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
+func (r *Runtime) CreateVM(req vm.CreateRequest) (*vm.VMRecord, error) {
 	mutation, err := r.resourceGuard.BeginMutation(context.Background())
 	if err != nil {
 		return nil, err
@@ -181,7 +181,7 @@ func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error)
 	return r.createVMContext(context.Background(), req, nil)
 }
 
-func (r *Runtime) createVMContext(ctx context.Context, req vmstore.CreateRequest, metrics *lifecycleMetrics) (*vmstore.VMRecord, error) {
+func (r *Runtime) createVMContext(ctx context.Context, req vm.CreateRequest, metrics *lifecycleMetrics) (*vm.VMRecord, error) {
 	if req.Image != nil && req.Image.ID != "" {
 		imageLock, err := r.resourceGuard.LockEntity(ctx, lock.EntityImage, req.Image.ID)
 		if err != nil {
@@ -237,13 +237,13 @@ func (r *Runtime) createVMContext(ctx context.Context, req vmstore.CreateRequest
 // The backend config is rendered again immediately before start. That keeps the
 // run directory recoverable after tmp cleanup and allows later phases to update
 // generated metadata without mutating durable VM intent.
-func (r *Runtime) StartVM(ref string) (*vmstore.VMRecord, error) {
+func (r *Runtime) StartVM(ref string) (*vm.VMRecord, error) {
 	return r.StartVMContext(context.Background(), ref)
 }
 
 // StartVMContext starts an existing VM while holding its cross-process
 // operation lock. Waiting for the lock observes ctx cancellation.
-func (r *Runtime) StartVMContext(ctx context.Context, ref string) (*vmstore.VMRecord, error) {
+func (r *Runtime) StartVMContext(ctx context.Context, ref string) (*vm.VMRecord, error) {
 	mutation, err := r.resourceGuard.BeginMutation(ctx)
 	if err != nil {
 		return nil, err
@@ -270,7 +270,7 @@ func (r *Runtime) StartVMContext(ctx context.Context, ref string) (*vmstore.VMRe
 	return result, r.finishOperation(ctx, operationID, startErr)
 }
 
-func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecycleMetrics) (*vmstore.VMRecord, error) {
+func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecycleMetrics) (*vm.VMRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("start VM: %w", err)
 	}
@@ -341,12 +341,12 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecy
 }
 
 // RunVM creates and starts a VM.
-func (r *Runtime) RunVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
+func (r *Runtime) RunVM(req vm.CreateRequest) (*vm.VMRecord, error) {
 	return r.RunVMContext(context.Background(), req)
 }
 
 // RunVMContext creates and starts a VM with cancellation propagated to start.
-func (r *Runtime) RunVMContext(ctx context.Context, req vmstore.CreateRequest) (*vmstore.VMRecord, error) {
+func (r *Runtime) RunVMContext(ctx context.Context, req vm.CreateRequest) (*vm.VMRecord, error) {
 	mutation, err := r.resourceGuard.BeginMutation(ctx)
 	if err != nil {
 		return nil, err
@@ -365,7 +365,7 @@ func (r *Runtime) RunVMContext(ctx context.Context, req vmstore.CreateRequest) (
 	return started, nil
 }
 
-func (r *Runtime) startVMWithMetrics(ctx context.Context, ref string, metrics *lifecycleMetrics) (*vmstore.VMRecord, error) {
+func (r *Runtime) startVMWithMetrics(ctx context.Context, ref string, metrics *lifecycleMetrics) (*vm.VMRecord, error) {
 	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err
@@ -383,12 +383,12 @@ func (r *Runtime) startVMWithMetrics(ctx context.Context, ref string, metrics *l
 // Stop does not release network leases, delete tap devices, or remove provider
 // records. Those resources are part of the VM's restartable identity and are
 // released only by DeleteVM.
-func (r *Runtime) StopVM(ref string, opts backend.StopOptions) (*vmstore.VMRecord, error) {
+func (r *Runtime) StopVM(ref string, opts backend.StopOptions) (*vm.VMRecord, error) {
 	return r.StopVMContext(context.Background(), ref, opts)
 }
 
 // StopVMContext stops a VM while holding its cross-process operation lock.
-func (r *Runtime) StopVMContext(ctx context.Context, ref string, opts backend.StopOptions) (*vmstore.VMRecord, error) {
+func (r *Runtime) StopVMContext(ctx context.Context, ref string, opts backend.StopOptions) (*vm.VMRecord, error) {
 	mutation, err := r.resourceGuard.BeginMutation(ctx)
 	if err != nil {
 		return nil, err
@@ -412,7 +412,7 @@ func (r *Runtime) StopVMContext(ctx context.Context, ref string, opts backend.St
 	return result, r.finishOperation(ctx, operationID, stopErr)
 }
 
-func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.StopOptions, reason metering.Reason) (*vmstore.VMRecord, error) {
+func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.StopOptions, reason metering.Reason) (*vm.VMRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("stop VM: %w", err)
 	}
@@ -422,9 +422,9 @@ func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.Sto
 	}
 	observed := r.applyObservation(rec)
 	computeOpen := observed.StartedAt != nil && observed.StoppedAt == nil
-	if (observed.State == vmstore.StateRunning || observed.State == vmstore.StatePaused) &&
-		observed.ObservedState != vmstore.ObservedStateRunning && observed.ObservedState != vmstore.ObservedStatePaused {
-		if err := r.vmUpdater.UpdateStates([]string{observed.ID}, vmstore.StateStopped); err != nil {
+	if (observed.State == vm.StateRunning || observed.State == vm.StatePaused) &&
+		observed.ObservedState != vm.ObservedStateRunning && observed.ObservedState != vm.ObservedStatePaused {
+		if err := r.vmUpdater.UpdateStates([]string{observed.ID}, vm.StateStopped); err != nil {
 			return nil, err
 		}
 		stopped, err := r.vmReader.Inspect(observed.ID)
@@ -434,14 +434,14 @@ func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.Sto
 		if computeOpen {
 			r.recordComputeStop(ctx, stopped, metering.ReasonStopCrash)
 		}
-		_ = writeVMEvent(stopped, "backend.stop.completed", vmstore.Observation{
-			State:     vmstore.ObservedStateStopped,
+		_ = writeVMEvent(stopped, "backend.stop.completed", vm.Observation{
+			State:     vm.ObservedStateStopped,
 			Reason:    "VM was already not running",
 			CheckedAt: time.Now().UTC(),
 		})
 		return r.applyObservation(stopped), nil
 	}
-	if observed.ObservedState != vmstore.ObservedStateRunning && observed.ObservedState != vmstore.ObservedStatePaused {
+	if observed.ObservedState != vm.ObservedStateRunning && observed.ObservedState != vm.ObservedStatePaused {
 		return observed, nil
 	}
 
@@ -451,7 +451,7 @@ func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.Sto
 		}
 		return nil, err
 	}
-	if err := r.vmUpdater.UpdateStates([]string{observed.ID}, vmstore.StateStopped); err != nil {
+	if err := r.vmUpdater.UpdateStates([]string{observed.ID}, vm.StateStopped); err != nil {
 		return nil, err
 	}
 	stopped, err := r.vmReader.Inspect(observed.ID)
@@ -461,8 +461,8 @@ func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.Sto
 	if computeOpen {
 		r.recordComputeStop(ctx, stopped, reason)
 	}
-	_ = writeVMEvent(stopped, "backend.stop.completed", vmstore.Observation{
-		State:     vmstore.ObservedStateStopped,
+	_ = writeVMEvent(stopped, "backend.stop.completed", vm.Observation{
+		State:     vm.ObservedStateStopped,
 		Reason:    "VM stopped",
 		CheckedAt: time.Now().UTC(),
 	})
@@ -475,13 +475,13 @@ func (r *Runtime) stopVMLocked(ctx context.Context, ref string, opts backend.Sto
 // Network cleanup is performed before deleting the VM record; if cleanup fails,
 // the record remains available for inspect/logs/retry and the provider record is
 // marked cleanup-pending.
-func (r *Runtime) DeleteVM(ref string, force bool) (*vmstore.VMRecord, error) {
+func (r *Runtime) DeleteVM(ref string, force bool) (*vm.VMRecord, error) {
 	return r.DeleteVMContext(context.Background(), ref, force)
 }
 
 // DeleteVMContext deletes a VM while serializing stop and cleanup under one
 // operation lock.
-func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (result *vmstore.VMRecord, resultErr error) {
+func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (result *vm.VMRecord, resultErr error) {
 	mutation, err := r.resourceGuard.BeginMutation(ctx)
 	if err != nil {
 		return nil, err
@@ -512,7 +512,7 @@ func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (
 	}
 	observed := r.applyObservation(rec)
 	deleteComputeOpen := observed.StartedAt != nil && observed.StoppedAt == nil
-	if observed.ObservedState == vmstore.ObservedStateRunning || observed.ObservedState == vmstore.ObservedStatePaused {
+	if observed.ObservedState == vm.ObservedStateRunning || observed.ObservedState == vm.ObservedStatePaused {
 		if !force {
 			return nil, fmt.Errorf("VM %s is running or paused; use --force to stop and delete", ref)
 		}
@@ -527,7 +527,7 @@ func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (
 		}
 	}
 	if observed.StartedAt != nil && observed.StoppedAt == nil {
-		if err := r.vmUpdater.UpdateStates([]string{observed.ID}, vmstore.StateStopped); err != nil {
+		if err := r.vmUpdater.UpdateStates([]string{observed.ID}, vm.StateStopped); err != nil {
 			return nil, err
 		}
 		observed, err = r.vmReader.Inspect(observed.ID)
@@ -546,7 +546,7 @@ func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (
 		return nil, fmt.Errorf("remove VM references: %w", err)
 	}
 
-	_ = writeVMEvent(observed, "backend.delete.completed", vmstore.Observation{
+	_ = writeVMEvent(observed, "backend.delete.completed", vm.Observation{
 		State:     observed.ObservedState,
 		Reason:    "VM deleted",
 		CheckedAt: time.Now().UTC(),
@@ -564,7 +564,7 @@ func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (
 }
 
 // InspectVM returns a VM record with a fresh backend observation.
-func (r *Runtime) InspectVM(ref string) (*vmstore.VMRecord, error) {
+func (r *Runtime) InspectVM(ref string) (*vm.VMRecord, error) {
 	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err
@@ -575,7 +575,7 @@ func (r *Runtime) InspectVM(ref string) (*vmstore.VMRecord, error) {
 }
 
 // ListVMs returns all VM records with fresh backend observations.
-func (r *Runtime) ListVMs() ([]*vmstore.VMRecord, error) {
+func (r *Runtime) ListVMs() ([]*vm.VMRecord, error) {
 	records, err := r.vmReader.List()
 	if err != nil {
 		return nil, err
@@ -586,7 +586,7 @@ func (r *Runtime) ListVMs() ([]*vmstore.VMRecord, error) {
 	return records, nil
 }
 
-func (r *Runtime) applyObservation(rec *vmstore.VMRecord) *vmstore.VMRecord {
+func (r *Runtime) applyObservation(rec *vm.VMRecord) *vm.VMRecord {
 	if rec == nil {
 		return nil
 	}
@@ -594,14 +594,14 @@ func (r *Runtime) applyObservation(rec *vmstore.VMRecord) *vmstore.VMRecord {
 	rec.ObservedState = obs.State
 	rec.ObservedReason = obs.Reason
 	rec.ObservedAt = &obs.CheckedAt
-	if (rec.State == vmstore.StateRunning || rec.State == vmstore.StatePaused) &&
-		obs.State != vmstore.ObservedStateRunning && obs.State != vmstore.ObservedStatePaused {
+	if (rec.State == vm.StateRunning || rec.State == vm.StatePaused) &&
+		obs.State != vm.ObservedStateRunning && obs.State != vm.ObservedStatePaused {
 		_ = writeVMEvent(rec, "backend.exit.detected", obs)
 	}
 	return rec
 }
 
-func (r *networkCoordinator) inspectNetwork(rec *vmstore.VMRecord) *kbnetwork.InspectResult {
+func (r *networkCoordinator) inspectNetwork(rec *vm.VMRecord) *kbnetwork.InspectResult {
 	if rec == nil {
 		return nil
 	}
@@ -620,7 +620,7 @@ func (r *networkCoordinator) inspectNetwork(rec *vmstore.VMRecord) *kbnetwork.In
 	return result
 }
 
-func (r *networkCoordinator) attachNetwork(ctx context.Context, rec *vmstore.VMRecord) (resultErr error) {
+func (r *networkCoordinator) attachNetwork(ctx context.Context, rec *vm.VMRecord) (resultErr error) {
 	operationID, err := r.beginOperation(ctx, operation.KindNetworkAttach, rec.ID)
 	if err != nil {
 		return err
@@ -649,14 +649,14 @@ func (r *networkCoordinator) attachNetwork(ctx context.Context, rec *vmstore.VMR
 	return nil
 }
 
-func (r *networkCoordinator) attachNetworkConfig(ctx context.Context, rec *vmstore.VMRecord, selection string, index int) (*kbnetwork.Allocation, error) {
+func (r *networkCoordinator) attachNetworkConfig(ctx context.Context, rec *vm.VMRecord, selection string, index int) (*kbnetwork.Allocation, error) {
 	allocation, _, err := r.attachNetworkConfigWithExisting(ctx, rec, selection, index, nil)
 	return allocation, err
 }
 
 func (r *networkCoordinator) attachNetworkConfigWithExisting(
 	ctx context.Context,
-	rec *vmstore.VMRecord,
+	rec *vm.VMRecord,
 	selection string,
 	index int,
 	existing *kbnetwork.Config,
@@ -725,7 +725,7 @@ func (r *networkCoordinator) attachNetworkConfigWithExisting(
 
 func (r *networkCoordinator) attachCNIConfig(
 	ctx context.Context,
-	rec *vmstore.VMRecord,
+	rec *vm.VMRecord,
 	selection string,
 	index int,
 	existing *kbnetwork.Config,
@@ -764,14 +764,14 @@ func (r *networkCoordinator) attachCNIConfig(
 	return allocation, nil
 }
 
-func (r *networkCoordinator) rollbackNetwork(rec *vmstore.VMRecord) {
+func (r *networkCoordinator) rollbackNetwork(rec *vm.VMRecord) {
 	if rec == nil {
 		return
 	}
 	r.rollbackNetworkConfigs(rec, rec.NetworkConfigs)
 }
 
-func (r *networkCoordinator) cleanupNetwork(ctx context.Context, rec *vmstore.VMRecord) (resultErr error) {
+func (r *networkCoordinator) cleanupNetwork(ctx context.Context, rec *vm.VMRecord) (resultErr error) {
 	operationID, err := r.beginOperation(ctx, operation.KindNetworkCleanup, rec.ID)
 	if err != nil {
 		return err
@@ -824,7 +824,7 @@ func cleanupNetworkConfig(
 	store state.NetworkState,
 	allocator *kbnetwork.Allocator,
 	cfg config.Config,
-	rec *vmstore.VMRecord,
+	rec *vm.VMRecord,
 	nc kbnetwork.Config,
 	preserveCNINetNS bool,
 ) error {
@@ -890,7 +890,7 @@ func cniIfName(nc kbnetwork.Config) string {
 	return nc.TAP
 }
 
-func networkSelections(rec *vmstore.VMRecord) []string {
+func networkSelections(rec *vm.VMRecord) []string {
 	if rec == nil {
 		return nil
 	}
@@ -908,7 +908,7 @@ func networkSelections(rec *vmstore.VMRecord) []string {
 	return filtered
 }
 
-func networkSelectionForConfig(rec *vmstore.VMRecord, nc kbnetwork.Config) string {
+func networkSelectionForConfig(rec *vm.VMRecord, nc kbnetwork.Config) string {
 	if nc.NetworkName != "" {
 		return nc.NetworkName
 	}
@@ -918,7 +918,7 @@ func networkSelectionForConfig(rec *vmstore.VMRecord, nc kbnetwork.Config) strin
 	return ""
 }
 
-func (r *networkCoordinator) rollbackNetworkConfigs(rec *vmstore.VMRecord, configs []kbnetwork.Config) {
+func (r *networkCoordinator) rollbackNetworkConfigs(rec *vm.VMRecord, configs []kbnetwork.Config) {
 	store, err := r.providerStore()
 	if err != nil {
 		return

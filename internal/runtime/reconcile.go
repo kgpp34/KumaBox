@@ -6,7 +6,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 // ReconcileOperations closes operation records left running by an interrupted
@@ -30,13 +30,13 @@ func (r *Runtime) ReconcileOperations(ctx context.Context) error {
 func (r *Runtime) reconcileOperation(ctx context.Context, record operation.Record) error {
 	switch record.Kind {
 	case operation.KindVMStart:
-		return r.requireVMState(record, vmstore.ObservedStateRunning)
+		return r.requireVMState(record, vm.ObservedStateRunning)
 	case operation.KindVMStop:
-		return r.requireVMState(record, vmstore.ObservedStateStopped)
+		return r.requireVMState(record, vm.ObservedStateStopped)
 	case operation.KindVMPause:
-		return r.requireVMState(record, vmstore.ObservedStatePaused)
+		return r.requireVMState(record, vm.ObservedStatePaused)
 	case operation.KindVMResume:
-		return r.requireVMState(record, vmstore.ObservedStateRunning)
+		return r.requireVMState(record, vm.ObservedStateRunning)
 	case operation.KindVMDelete:
 		if _, err := r.vmReader.Inspect(record.ResourceID); err != nil {
 			return nil
@@ -144,7 +144,7 @@ func (r *Runtime) requireNetworkClean(record operation.Record) error {
 	return nil
 }
 
-func (r *Runtime) requireVMState(record operation.Record, expected vmstore.ObservedState) error {
+func (r *Runtime) requireVMState(record operation.Record, expected vm.ObservedState) error {
 	rec, err := r.vmReader.Inspect(record.ResourceID)
 	if err != nil {
 		return err

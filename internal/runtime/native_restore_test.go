@@ -13,7 +13,7 @@ import (
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/reference"
 	"github.com/kumabox/kumabox/internal/state"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestLinkNativeMemorySharesSourceInode(t *testing.T) {
@@ -41,7 +41,7 @@ func TestLinkNativeMemorySharesSourceInode(t *testing.T) {
 
 func TestRestoreNativeVMReplacesWritableStateAndResumesIdentity(t *testing.T) {
 	rt, store, rec, sourceDisk := newRunningSnapshotRuntime(t)
-	backendState := vmstore.ObservedStateRunning
+	backendState := vm.ObservedStateRunning
 	rt.backend = nativeRestoreBackend(t, rec, &backendState, nil)
 	originalReseed := reseedRestoredGuest
 	t.Cleanup(func() { reseedRestoredGuest = originalReseed })
@@ -66,7 +66,7 @@ func TestRestoreNativeVMReplacesWritableStateAndResumesIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored.ID != rec.ID || restored.Name != rec.Name || restored.State != vmstore.StateRunning || restored.Restore != nil {
+	if restored.ID != rec.ID || restored.Name != rec.Name || restored.State != vm.StateRunning || restored.Restore != nil {
 		t.Fatalf("restored record = %+v", restored)
 	}
 	content, err := os.ReadFile(sourceDisk)
@@ -93,7 +93,7 @@ func TestRestoreNativeVMReplacesWritableStateAndResumesIdentity(t *testing.T) {
 
 func TestRestoreNativeVMFailureQuarantinesColdStart(t *testing.T) {
 	rt, store, rec, _ := newRunningSnapshotRuntime(t)
-	backendState := vmstore.ObservedStateRunning
+	backendState := vm.ObservedStateRunning
 	restoreErr := errors.New("injected backend restore failure")
 	rt.backend = nativeRestoreBackend(t, rec, &backendState, restoreErr)
 	ready, err := rt.CreateRunningSnapshot(context.Background(), rec.ID, "restore-failure")
@@ -108,7 +108,7 @@ func TestRestoreNativeVMFailureQuarantinesColdStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.State != vmstore.StateError || persisted.Restore == nil || persisted.Restore.State != "failed" {
+	if persisted.State != vm.StateError || persisted.Restore == nil || persisted.Restore.State != "failed" {
 		t.Fatalf("failed restore record = %+v", persisted)
 	}
 	if _, err := rt.StartVM(rec.ID); err == nil || !containsError(err, "VM_RESTORE_DIRTY") {
@@ -118,7 +118,7 @@ func TestRestoreNativeVMFailureQuarantinesColdStart(t *testing.T) {
 
 func TestRestoreNativeVMSucceedsWithoutGuestAgent(t *testing.T) {
 	rt, store, rec, _ := newRunningSnapshotRuntime(t)
-	backendState := vmstore.ObservedStateRunning
+	backendState := vm.ObservedStateRunning
 	rt.backend = nativeRestoreBackend(t, rec, &backendState, nil)
 	agentErr := errors.New("agent unavailable")
 	reseedRestoredGuest = func(context.Context, string, bool) error { return agentErr }
@@ -135,7 +135,7 @@ func TestRestoreNativeVMSucceedsWithoutGuestAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored.State != vmstore.StateRunning || persisted.State != vmstore.StateRunning || persisted.Restore != nil {
+	if restored.State != vm.StateRunning || persisted.State != vm.StateRunning || persisted.Restore != nil {
 		t.Fatalf("restored record = %+v persisted = %+v", restored, persisted)
 	}
 	if restored.LastRestore == nil || !strings.Contains(restored.LastRestore.GuestAgentWarning, agentErr.Error()) {
@@ -145,12 +145,12 @@ func TestRestoreNativeVMSucceedsWithoutGuestAgent(t *testing.T) {
 
 func TestRestoreNativeVMStopsBackendWhenSnapshotReferenceFails(t *testing.T) {
 	rt, store, rec, _ := newRunningSnapshotRuntime(t)
-	backendState := vmstore.ObservedStateRunning
+	backendState := vm.ObservedStateRunning
 	referenceErr := errors.New("injected reference failure")
 	backendImpl := nativeRestoreBackend(t, rec, &backendState, nil)
 	baseStop := backendImpl.stop
 	var restoredBackendStopped bool
-	backendImpl.stop = func(stopped *vmstore.VMRecord, options backend.StopOptions) (*backend.StopResult, error) {
+	backendImpl.stop = func(stopped *vm.VMRecord, options backend.StopOptions) (*backend.StopResult, error) {
 		if stopped.PID == 4321 {
 			restoredBackendStopped = true
 		}
@@ -174,7 +174,7 @@ func TestRestoreNativeVMStopsBackendWhenSnapshotReferenceFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.State != vmstore.StateError || persisted.PID != 0 {
+	if persisted.State != vm.StateError || persisted.PID != 0 {
 		t.Fatalf("failed restore record = %+v", persisted)
 	}
 	if _, err := os.Stat(filepath.Join(rec.RunDir, ".restore-staging")); !errors.Is(err, os.ErrNotExist) {
@@ -184,18 +184,18 @@ func TestRestoreNativeVMStopsBackendWhenSnapshotReferenceFails(t *testing.T) {
 
 func TestRestoreNativeVMPreservesOnDemandMemoryWhenRollbackStopFails(t *testing.T) {
 	rt, _, rec, _ := newRunningSnapshotRuntime(t)
-	backendState := vmstore.ObservedStateRunning
+	backendState := vm.ObservedStateRunning
 	referenceErr := errors.New("injected reference failure")
 	stopErr := errors.New("injected stop failure")
 	backendImpl := nativeRestoreBackend(t, rec, &backendState, nil)
-	backendImpl.nativeHost = func(context.Context, *vmstore.VMRecord) (backend.NativeHost, error) {
+	backendImpl.nativeHost = func(context.Context, *vm.VMRecord) (backend.NativeHost, error) {
 		return backend.NativeHost{RestoreModes: []string{string(RestoreModeOnDemand)}}, nil
 	}
-	backendImpl.stop = func(stopped *vmstore.VMRecord, _ backend.StopOptions) (*backend.StopResult, error) {
+	backendImpl.stop = func(stopped *vm.VMRecord, _ backend.StopOptions) (*backend.StopResult, error) {
 		if stopped.PID == 4321 {
 			return nil, stopErr
 		}
-		backendState = vmstore.ObservedStateStopped
+		backendState = vm.ObservedStateStopped
 		return &backend.StopResult{}, nil
 	}
 	rt.backend = backendImpl
@@ -226,25 +226,25 @@ func (s failingReferenceState) Upsert(ctx context.Context, record reference.Reco
 	return s.ReferenceState.Upsert(ctx, record)
 }
 
-func nativeRestoreBackend(t *testing.T, rec *vmstore.VMRecord, state *vmstore.ObservedState, restoreErr error) backendFake {
+func nativeRestoreBackend(t *testing.T, rec *vm.VMRecord, state *vm.ObservedState, restoreErr error) backendFake {
 	t.Helper()
 	originalReseed := reseedRestoredGuest
 	reseedRestoredGuest = func(context.Context, string, bool) error { return nil }
 	t.Cleanup(func() { reseedRestoredGuest = originalReseed })
 	return backendFake{
-		render: func(*vmstore.VMRecord) error { return nil },
-		observe: func(*vmstore.VMRecord) vmstore.Observation {
-			return vmstore.Observation{State: *state, CheckedAt: time.Now().UTC()}
+		render: func(*vm.VMRecord) error { return nil },
+		observe: func(*vm.VMRecord) vm.Observation {
+			return vm.Observation{State: *state, CheckedAt: time.Now().UTC()}
 		},
-		pause: func(context.Context, *vmstore.VMRecord) error {
-			*state = vmstore.ObservedStatePaused
+		pause: func(context.Context, *vm.VMRecord) error {
+			*state = vm.ObservedStatePaused
 			return nil
 		},
-		resume: func(context.Context, *vmstore.VMRecord) error {
-			*state = vmstore.ObservedStateRunning
+		resume: func(context.Context, *vm.VMRecord) error {
+			*state = vm.ObservedStateRunning
 			return nil
 		},
-		snapshot: func(_ context.Context, _ *vmstore.VMRecord, destination string) error {
+		snapshot: func(_ context.Context, _ *vm.VMRecord, destination string) error {
 			files := map[string]string{
 				"config.json": fmt.Sprintf(`{"cpus":{"boot_vcpus":1},"memory":{"size":536870912},"disks":[{"path":%q,"readonly":false}],"vsock":{}}`, rec.StorageConfigs[0].Path),
 				"state.json":  "{}", "memory-range-0": "memory",
@@ -256,11 +256,11 @@ func nativeRestoreBackend(t *testing.T, rec *vmstore.VMRecord, state *vmstore.Ob
 			}
 			return nil
 		},
-		stop: func(*vmstore.VMRecord, backend.StopOptions) (*backend.StopResult, error) {
-			*state = vmstore.ObservedStateStopped
+		stop: func(*vm.VMRecord, backend.StopOptions) (*backend.StopResult, error) {
+			*state = vm.ObservedStateStopped
 			return &backend.StopResult{}, nil
 		},
-		restore: func(_ context.Context, dirty *vmstore.VMRecord, sourceDir, mode string) (*backend.StartResult, error) {
+		restore: func(_ context.Context, dirty *vm.VMRecord, sourceDir, mode string) (*backend.StartResult, error) {
 			if dirty.Restore == nil || dirty.Restore.State != "dirty" || (mode != "copy" && mode != "ondemand") {
 				t.Fatalf("restore input = %+v mode=%s", dirty.Restore, mode)
 			}
@@ -270,7 +270,7 @@ func nativeRestoreBackend(t *testing.T, rec *vmstore.VMRecord, state *vmstore.Ob
 			if restoreErr != nil {
 				return nil, restoreErr
 			}
-			*state = vmstore.ObservedStateRunning
+			*state = vm.ObservedStateRunning
 			return &backend.StartResult{PID: 4321, APISocket: filepath.Join(rec.RunDir, "ch.sock")}, nil
 		},
 	}

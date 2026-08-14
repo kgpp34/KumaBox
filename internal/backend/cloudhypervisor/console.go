@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const backendConsoleTimeout = 5 * time.Second
@@ -28,7 +28,7 @@ func (f *consoleFile) SetSize(rows, columns uint16) error {
 // OpenConsole resolves the PTY allocated by Cloud Hypervisor for direct boot.
 // The PTY path is intentionally read from vm.info instead of guessed from the
 // host, because Cloud Hypervisor owns its allocation.
-func (b Backend) OpenConsole(ctx context.Context, rec *vmstore.VMRecord) (io.ReadWriteCloser, error) {
+func (b Backend) OpenConsole(ctx context.Context, rec *vm.VMRecord) (io.ReadWriteCloser, error) {
 	if rec == nil {
 		return nil, fmt.Errorf("VM record is nil")
 	}

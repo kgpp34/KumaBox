@@ -7,10 +7,10 @@ import (
 
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/operation"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
-func (r *Runtime) AttachFilesystem(ctx context.Context, ref string, spec backend.FilesystemSpec) (*vmstore.VMRecord, error) {
+func (r *Runtime) AttachFilesystem(ctx context.Context, ref string, spec backend.FilesystemSpec) (*vm.VMRecord, error) {
 	mutation, err := r.resourceGuard.BeginMutation(ctx)
 	if err != nil {
 		return nil, err
@@ -40,8 +40,8 @@ func (r *Runtime) AttachFilesystem(ctx context.Context, ref string, spec backend
 	}
 	attached, opErr := controller.AttachFilesystem(ctx, rec, spec)
 	if opErr == nil {
-		disks := append([]vmstore.AttachedFilesystem(nil), rec.AttachedFilesystems...)
-		disks = append(disks, vmstore.AttachedFilesystem{ID: attached.ID, Tag: attached.Tag, Socket: attached.Socket})
+		disks := append([]vm.AttachedFilesystem(nil), rec.AttachedFilesystems...)
+		disks = append(disks, vm.AttachedFilesystem{ID: attached.ID, Tag: attached.Tag, Socket: attached.Socket})
 		_, opErr = r.vmRecords.SetAttachedFilesystems(rec.ID, disks)
 	}
 	opErr = r.finishOperation(ctx, opID, opErr)
@@ -49,7 +49,7 @@ func (r *Runtime) AttachFilesystem(ctx context.Context, ref string, spec backend
 	return updated, errors.Join(opErr, inspectErr)
 }
 
-func (r *Runtime) DetachFilesystem(ctx context.Context, ref, tag string) (*vmstore.VMRecord, error) {
+func (r *Runtime) DetachFilesystem(ctx context.Context, ref, tag string) (*vm.VMRecord, error) {
 	mutation, err := r.resourceGuard.BeginMutation(ctx)
 	if err != nil {
 		return nil, err
@@ -79,7 +79,7 @@ func (r *Runtime) DetachFilesystem(ctx context.Context, ref, tag string) (*vmsto
 	}
 	opErr := controller.DetachFilesystem(ctx, rec, tag)
 	if opErr == nil {
-		kept := make([]vmstore.AttachedFilesystem, 0, len(rec.AttachedFilesystems))
+		kept := make([]vm.AttachedFilesystem, 0, len(rec.AttachedFilesystems))
 		for _, fs := range rec.AttachedFilesystems {
 			if fs.Tag != tag {
 				kept = append(kept, fs)

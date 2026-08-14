@@ -6,12 +6,12 @@ import (
 	"fmt"
 
 	"github.com/kumabox/kumabox/internal/backend"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 // RefreshDeviceState reconciles durable hotplug metadata with one live
 // vm.info response while holding the VM operation lock.
-func (r *Runtime) RefreshDeviceState(ctx context.Context, ref string) (*vmstore.VMRecord, error) {
+func (r *Runtime) RefreshDeviceState(ctx context.Context, ref string) (*vm.VMRecord, error) {
 	mutation, err := r.resourceGuard.BeginMutation(ctx)
 	if err != nil {
 		return nil, err
@@ -54,26 +54,26 @@ func (r *Runtime) RefreshDeviceState(ctx context.Context, ref string) (*vmstore.
 	return updated, nil
 }
 
-func toVMDisks(items []backend.AttachedDisk) []vmstore.AttachedDisk {
-	result := make([]vmstore.AttachedDisk, 0, len(items))
+func toVMDisks(items []backend.AttachedDisk) []vm.AttachedDisk {
+	result := make([]vm.AttachedDisk, 0, len(items))
 	for _, item := range items {
-		result = append(result, vmstore.AttachedDisk{ID: item.ID, Name: item.Name, Path: item.Path, ReadOnly: item.ReadOnly})
+		result = append(result, vm.AttachedDisk{ID: item.ID, Name: item.Name, Path: item.Path, ReadOnly: item.ReadOnly})
 	}
 	return result
 }
 
-func toVMFilesystems(items []backend.AttachedFilesystem) []vmstore.AttachedFilesystem {
-	result := make([]vmstore.AttachedFilesystem, 0, len(items))
+func toVMFilesystems(items []backend.AttachedFilesystem) []vm.AttachedFilesystem {
+	result := make([]vm.AttachedFilesystem, 0, len(items))
 	for _, item := range items {
-		result = append(result, vmstore.AttachedFilesystem{ID: item.ID, Tag: item.Tag, Socket: item.Socket})
+		result = append(result, vm.AttachedFilesystem{ID: item.ID, Tag: item.Tag, Socket: item.Socket})
 	}
 	return result
 }
 
-func toVMPCIDevices(items []backend.AttachedPCIDevice) []vmstore.AttachedPCIDevice {
-	result := make([]vmstore.AttachedPCIDevice, 0, len(items))
+func toVMPCIDevices(items []backend.AttachedPCIDevice) []vm.AttachedPCIDevice {
+	result := make([]vm.AttachedPCIDevice, 0, len(items))
 	for _, item := range items {
-		result = append(result, vmstore.AttachedPCIDevice{ID: item.ID, PCI: item.PCI})
+		result = append(result, vm.AttachedPCIDevice{ID: item.ID, PCI: item.PCI})
 	}
 	return result
 }

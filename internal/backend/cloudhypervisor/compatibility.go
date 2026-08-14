@@ -15,12 +15,12 @@ import (
 	"strings"
 
 	"github.com/kumabox/kumabox/internal/backend"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const nativeSnapshotFormat = "cloud-hypervisor-native-v1"
 
-func (b Backend) InspectNativeHost(ctx context.Context, rec *vmstore.VMRecord) (backend.NativeHost, error) {
+func (b Backend) InspectNativeHost(ctx context.Context, rec *vm.VMRecord) (backend.NativeHost, error) {
 	binary := b.renderer.cfg.Backend.CloudHypervisor.Binary
 	if rec != nil && rec.Config != "" {
 		if cfg, err := readRenderedConfig(rec.Config); err == nil {

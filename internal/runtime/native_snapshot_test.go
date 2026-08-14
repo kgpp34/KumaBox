@@ -10,25 +10,25 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestCreateRunningSnapshotCapturesOnePauseWindow(t *testing.T) {
 	t.Parallel()
 
 	rt, store, rec, sourceDisk := newRunningSnapshotRuntime(t)
-	backendState := vmstore.ObservedStateRunning
+	backendState := vm.ObservedStateRunning
 	steps := make([]string, 0, 3)
 	rt.backend = backendFake{
-		observe: func(*vmstore.VMRecord) vmstore.Observation {
-			return vmstore.Observation{State: backendState, CheckedAt: time.Now().UTC()}
+		observe: func(*vm.VMRecord) vm.Observation {
+			return vm.Observation{State: backendState, CheckedAt: time.Now().UTC()}
 		},
-		pause: func(context.Context, *vmstore.VMRecord) error {
+		pause: func(context.Context, *vm.VMRecord) error {
 			steps = append(steps, "pause")
-			backendState = vmstore.ObservedStatePaused
+			backendState = vm.ObservedStatePaused
 			return nil
 		},
-		snapshot: func(_ context.Context, _ *vmstore.VMRecord, destination string) error {
+		snapshot: func(_ context.Context, _ *vm.VMRecord, destination string) error {
 			steps = append(steps, "snapshot")
 			for name, content := range map[string]string{
 				"config.json": fmt.Sprintf(`{"cpus":{"boot_vcpus":1},"memory":{"size":536870912},"disks":[{"path":%q,"readonly":false}],"vsock":{}}`, rec.StorageConfigs[0].Path),
@@ -40,9 +40,9 @@ func TestCreateRunningSnapshotCapturesOnePauseWindow(t *testing.T) {
 			}
 			return nil
 		},
-		resume: func(context.Context, *vmstore.VMRecord) error {
+		resume: func(context.Context, *vm.VMRecord) error {
 			steps = append(steps, "resume")
-			backendState = vmstore.ObservedStateRunning
+			backendState = vm.ObservedStateRunning
 			return nil
 		},
 	}
@@ -79,22 +79,22 @@ func TestCreateRunningSnapshotResumesAfterCaptureFailure(t *testing.T) {
 	t.Parallel()
 
 	rt, store, rec, _ := newRunningSnapshotRuntime(t)
-	backendState := vmstore.ObservedStateRunning
+	backendState := vm.ObservedStateRunning
 	resumed := false
 	rt.backend = backendFake{
-		observe: func(*vmstore.VMRecord) vmstore.Observation {
-			return vmstore.Observation{State: backendState, CheckedAt: time.Now().UTC()}
+		observe: func(*vm.VMRecord) vm.Observation {
+			return vm.Observation{State: backendState, CheckedAt: time.Now().UTC()}
 		},
-		pause: func(context.Context, *vmstore.VMRecord) error {
-			backendState = vmstore.ObservedStatePaused
+		pause: func(context.Context, *vm.VMRecord) error {
+			backendState = vm.ObservedStatePaused
 			return nil
 		},
-		snapshot: func(context.Context, *vmstore.VMRecord, string) error {
+		snapshot: func(context.Context, *vm.VMRecord, string) error {
 			return errors.New("injected capture failure")
 		},
-		resume: func(context.Context, *vmstore.VMRecord) error {
+		resume: func(context.Context, *vm.VMRecord) error {
 			resumed = true
-			backendState = vmstore.ObservedStateRunning
+			backendState = vm.ObservedStateRunning
 			return nil
 		},
 	}
@@ -110,7 +110,7 @@ func TestCreateRunningSnapshotResumesAfterCaptureFailure(t *testing.T) {
 	}
 }
 
-func writeNativeSnapshotFixture(destination string, rec *vmstore.VMRecord) error {
+func writeNativeSnapshotFixture(destination string, rec *vm.VMRecord) error {
 	for name, content := range map[string]string{
 		"config.json": fmt.Sprintf(`{"cpus":{"boot_vcpus":1},"memory":{"size":536870912},"disks":[{"path":%q,"readonly":false}],"vsock":{}}`, rec.StorageConfigs[0].Path),
 		"state.json":  "{}", "memory-range-0": "memory",
@@ -122,10 +122,10 @@ func writeNativeSnapshotFixture(destination string, rec *vmstore.VMRecord) error
 	return nil
 }
 
-func newRunningSnapshotRuntime(t *testing.T) (*Runtime, *vmstore.Store, *vmstore.VMRecord, string) {
+func newRunningSnapshotRuntime(t *testing.T) (*Runtime, *vm.Store, *vm.VMRecord, string) {
 	t.Helper()
 	dir := t.TempDir()
-	store := vmstore.New(filepath.Join(dir, "data"))
+	store := vm.New(filepath.Join(dir, "data"))
 	kernel := filepath.Join(dir, "vmlinuz")
 	initrd := filepath.Join(dir, "initrd")
 	if err := os.WriteFile(kernel, []byte("kernel"), 0o600); err != nil {
@@ -134,11 +134,11 @@ func newRunningSnapshotRuntime(t *testing.T) (*Runtime, *vmstore.Store, *vmstore
 	if err := os.WriteFile(initrd, []byte("initrd"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	rec, err := store.Create(vmstore.CreateRequest{
+	rec, err := store.Create(vm.CreateRequest{
 		Name: "source", Kernel: kernel, Initrd: initrd,
 		RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"), Network: "none",
-		StorageConfigs: []vmstore.StorageConfig{{
-			ID: "cow", Role: vmstore.StorageRoleData, Format: "raw", Filesystem: "ext4",
+		StorageConfigs: []vm.StorageConfig{{
+			ID: "cow", Role: vm.StorageRoleData, Format: "raw", Filesystem: "ext4",
 			VirtualSizeBytes: int64(len("writable")),
 		}},
 	})

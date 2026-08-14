@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/kumabox/kumabox/internal/reference"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const (
@@ -21,7 +21,7 @@ func vmSnapshotReferenceID(vmID, snapshotID string) string {
 	return "vm-snapshot:" + vmID + ":" + snapshotID
 }
 
-func (r *Runtime) recordVMImageReference(ctx context.Context, rec *vmstore.VMRecord) error {
+func (r *Runtime) recordVMImageReference(ctx context.Context, rec *vm.VMRecord) error {
 	if r.storeSet.References == nil || rec == nil || rec.Image == nil || rec.Image.ID == "" {
 		return nil
 	}

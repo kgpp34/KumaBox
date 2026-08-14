@@ -12,22 +12,22 @@ import (
 
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/fileutil"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 // WriteNativeManifest validates the minimum Cloud Hypervisor payload and
 // writes the publication manifest after the source VM has resumed.
-func WriteNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecord, disks []DiskManifest, host backend.NativeHost) (*Manifest, int64, error) {
+func WriteNativeManifest(ctx context.Context, build *Build, rec *vm.VMRecord, disks []DiskManifest, host backend.NativeHost) (*Manifest, int64, error) {
 	return writeNativeManifest(ctx, build, rec, disks, host, true)
 }
 
 // WriteNativeManifestFast publishes a local running snapshot without reading
 // payloads back for fsync and SHA256. Strict integrity is explicit.
-func WriteNativeManifestFast(ctx context.Context, build *Build, rec *vmstore.VMRecord, disks []DiskManifest, host backend.NativeHost) (*Manifest, int64, error) {
+func WriteNativeManifestFast(ctx context.Context, build *Build, rec *vm.VMRecord, disks []DiskManifest, host backend.NativeHost) (*Manifest, int64, error) {
 	return writeNativeManifest(ctx, build, rec, disks, host, false)
 }
 
-func writeNativeManifest(ctx context.Context, build *Build, rec *vmstore.VMRecord, disks []DiskManifest, host backend.NativeHost, strict bool) (*Manifest, int64, error) {
+func writeNativeManifest(ctx context.Context, build *Build, rec *vm.VMRecord, disks []DiskManifest, host backend.NativeHost, strict bool) (*Manifest, int64, error) {
 	if build == nil || rec == nil {
 		return nil, 0, errors.New("snapshot build and VM record are required")
 	}
@@ -136,7 +136,7 @@ func syncAndHashFile(ctx context.Context, path string) (string, error) {
 	return hashFileContext(ctx, path)
 }
 
-func buildBootManifest(ctx context.Context, rec *vmstore.VMRecord, strict bool) (*BootManifest, error) {
+func buildBootManifest(ctx context.Context, rec *vm.VMRecord, strict bool) (*BootManifest, error) {
 	boot := &BootManifest{Mode: "direct"}
 	assets := []struct {
 		path   string

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestRunVMBatchBestEffortPreservesOrderAndDeduplicates(t *testing.T) {
@@ -16,13 +16,13 @@ func TestRunVMBatchBestEffortPreservesOrderAndDeduplicates(t *testing.T) {
 	var calls sync.Map
 
 	result := runVMBatch(t.Context(), []string{"first", "failed", "first", "last"}, BatchOptions{Concurrency: 3},
-		func(_ context.Context, ref string) (*vmstore.VMRecord, error) {
+		func(_ context.Context, ref string) (*vm.VMRecord, error) {
 			count, _ := calls.LoadOrStore(ref, new(atomic.Int32))
 			count.(*atomic.Int32).Add(1)
 			if ref == "failed" {
 				return nil, wantErr
 			}
-			return &vmstore.VMRecord{Name: ref}, nil
+			return &vm.VMRecord{Name: ref}, nil
 		})
 
 	if len(result.Succeeded) != 2 || result.Succeeded[0].Name != "first" || result.Succeeded[1].Name != "last" {
@@ -49,7 +49,7 @@ func TestRunVMBatchHonorsConcurrencyLimit(t *testing.T) {
 	done := make(chan BatchResult, 1)
 	go func() {
 		done <- runVMBatch(t.Context(), []string{"a", "b", "c", "d"}, BatchOptions{Concurrency: 2},
-			func(_ context.Context, ref string) (*vmstore.VMRecord, error) {
+			func(_ context.Context, ref string) (*vm.VMRecord, error) {
 				current := active.Add(1)
 				for {
 					previous := peak.Load()
@@ -60,7 +60,7 @@ func TestRunVMBatchHonorsConcurrencyLimit(t *testing.T) {
 				started <- struct{}{}
 				<-release
 				active.Add(-1)
-				return &vmstore.VMRecord{Name: ref}, nil
+				return &vm.VMRecord{Name: ref}, nil
 			})
 	}()
 
@@ -92,7 +92,7 @@ func TestRunVMBatchReportsCanceledItems(t *testing.T) {
 	cancel()
 
 	result := runVMBatch(ctx, []string{"a", "b"}, BatchOptions{Concurrency: 1},
-		func(context.Context, string) (*vmstore.VMRecord, error) {
+		func(context.Context, string) (*vm.VMRecord, error) {
 			t.Fatal("operation ran after context cancellation")
 			return nil, nil
 		})

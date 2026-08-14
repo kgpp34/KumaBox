@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/kumabox/kumabox/internal/backend"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestVerifyNative(t *testing.T) {
@@ -48,7 +48,7 @@ func TestVerifyNativeRejectsBackendVersionMismatch(t *testing.T) {
 	}
 }
 
-func buildNativeVerificationFixture(t *testing.T) (*Store, *Record, *vmstore.VMRecord, backend.NativeHost) {
+func buildNativeVerificationFixture(t *testing.T) (*Store, *Record, *vm.VMRecord, backend.NativeHost) {
 	t.Helper()
 	dir := t.TempDir()
 	kernel := filepath.Join(dir, "vmlinuz")
@@ -59,11 +59,11 @@ func buildNativeVerificationFixture(t *testing.T) (*Store, *Record, *vmstore.VMR
 			t.Fatal(err)
 		}
 	}
-	target := &vmstore.VMRecord{
+	target := &vm.VMRecord{
 		ID: "kb_source", Name: "source", Backend: "cloud-hypervisor", Kernel: kernel, Initrd: initrd,
 		CPUs: 2, MemoryBytes: 512 << 20, VsockSocket: filepath.Join(dir, "vsock.uds"),
-		StorageConfigs: []vmstore.StorageConfig{{
-			ID: "data", Role: vmstore.StorageRoleData, Path: disk, Format: "raw", VirtualSizeBytes: int64(len("writable")),
+		StorageConfigs: []vm.StorageConfig{{
+			ID: "data", Role: vm.StorageRoleData, Path: disk, Format: "raw", VirtualSizeBytes: int64(len("writable")),
 		}},
 	}
 	host := backend.NativeHost{

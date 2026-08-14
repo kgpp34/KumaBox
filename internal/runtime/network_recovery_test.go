@@ -14,7 +14,7 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/resources"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestStartVMRecoversPersistedNetworks(t *testing.T) {
@@ -40,7 +40,7 @@ func TestStartVMRecoversPersistedNetworks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if started.State != vmstore.StateRunning {
+			if started.State != vm.StateRunning {
 				t.Fatalf("state = %s, want running", started.State)
 			}
 			if len(requests) != 2 {
@@ -183,7 +183,7 @@ func TestConcurrentStartRecoversNetworkOnce(t *testing.T) {
 	}
 }
 
-func newNetworkRecoveryRuntime(t *testing.T, metadataBackend string, interfaceCount int) (*Runtime, *vmstore.VMRecord) {
+func newNetworkRecoveryRuntime(t *testing.T, metadataBackend string, interfaceCount int) (*Runtime, *vm.VMRecord) {
 	t.Helper()
 	rootDir := filepath.Join(t.TempDir(), "data")
 	cfg := testRuntimeConfig(rootDir)
@@ -207,20 +207,20 @@ func newNetworkRecoveryRuntime(t *testing.T, metadataBackend string, interfaceCo
 	}
 	var nextPID atomic.Int32
 	rt, err := NewWithBackendAndStores(stores, backendFake{
-		render: func(*vmstore.VMRecord) error { return nil },
-		start: func(*vmstore.VMRecord) (*backend.StartResult, error) {
+		render: func(*vm.VMRecord) error { return nil },
+		start: func(*vm.VMRecord) (*backend.StartResult, error) {
 			pid := nextPID.Add(1)
 			return &backend.StartResult{PID: int(pid), APISocket: fmt.Sprintf("/tmp/ch-%d.sock", pid)}, nil
 		},
-		observe: func(*vmstore.VMRecord) vmstore.Observation {
-			return vmstore.Observation{State: vmstore.ObservedStateRunning, CheckedAt: time.Now().UTC()}
+		observe: func(*vm.VMRecord) vm.Observation {
+			return vm.Observation{State: vm.ObservedStateRunning, CheckedAt: time.Now().UTC()}
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	rt.cfg = cfg
-	rec, err := stores.VM.Create(vmstore.CreateRequest{
+	rec, err := stores.VM.Create(vm.CreateRequest{
 		Name: "network-recovery", RootDisk: "base.qcow2", Kernel: "vmlinuz", Initrd: "initrd.img",
 		Network: "multi", RunDir: filepath.Join(rootDir, "run"), LogDir: filepath.Join(rootDir, "log"),
 	})

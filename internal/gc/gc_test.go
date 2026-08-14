@@ -15,7 +15,7 @@ import (
 	"github.com/kumabox/kumabox/internal/lock"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestDryRunReportsSnapshotAndStorageOrphansButProtectsLeasedPending(t *testing.T) {
@@ -107,8 +107,8 @@ func TestDryRunProtectsNativeSnapshotAssetsAndExplainsStaleStaging(t *testing.T)
 		}
 	}
 
-	vmStore := vmstore.New(cfg.Runtime.RootDir)
-	vm, err := vmStore.Create(vmstore.CreateRequest{
+	vmStore := vm.New(cfg.Runtime.RootDir)
+	vm, err := vmStore.Create(vm.CreateRequest{
 		Name: "restore-staging", RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd", RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir,
 	})
 	if err != nil {
@@ -214,8 +214,8 @@ func TestDryRunReportsOnlyManagedCandidates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := vmstore.New(cfg.Runtime.RootDir)
-	rec, err := store.Create(vmstore.CreateRequest{
+	store := vm.New(cfg.Runtime.RootDir)
+	rec, err := store.Create(vm.CreateRequest{
 		Name:     "gc",
 		RootDisk: rootDisk,
 		Kernel:   "vmlinuz",
@@ -402,12 +402,12 @@ func TestDryRunReportsImageCandidates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	vmStore := vmstore.New(cfg.Runtime.RootDir)
-	_, err = vmStore.Create(vmstore.CreateRequest{
+	vmStore := vm.New(cfg.Runtime.RootDir)
+	_, err = vmStore.Create(vm.CreateRequest{
 		Name:     "live-image",
 		RootDisk: filepath.Join(vmReferencedMissingFromIndex, "base.qcow2"),
 		Firmware: "CLOUDHV.fd",
-		Image: &vmstore.ImageRef{
+		Image: &vm.ImageRef{
 			ID:       "img_live_missing",
 			Name:     "missing",
 			RootDisk: filepath.Join(vmReferencedMissingFromIndex, "base.qcow2"),
@@ -528,8 +528,8 @@ func TestDryRunReportsNetworkPendingAndOrphans(t *testing.T) {
 	cfg.Runtime.RunDir = filepath.Join(dir, "run")
 	cfg.Runtime.LogDir = filepath.Join(dir, "log")
 
-	vmStore := vmstore.New(cfg.Runtime.RootDir)
-	rec, err := vmStore.Create(vmstore.CreateRequest{
+	vmStore := vm.New(cfg.Runtime.RootDir)
+	rec, err := vmStore.Create(vm.CreateRequest{
 		Name:     "network-live",
 		RootDisk: "base.qcow2",
 		Firmware: "CLOUDHV.fd",
@@ -605,8 +605,8 @@ func TestDryRunReportsNetworkDriftWithoutDeleteGuess(t *testing.T) {
 	cfg.Runtime.RunDir = filepath.Join(dir, "run")
 	cfg.Runtime.LogDir = filepath.Join(dir, "log")
 
-	vmStore := vmstore.New(cfg.Runtime.RootDir)
-	rec, err := vmStore.Create(vmstore.CreateRequest{
+	vmStore := vm.New(cfg.Runtime.RootDir)
+	rec, err := vmStore.Create(vm.CreateRequest{
 		Name:     "network-drift",
 		RootDisk: "base.qcow2",
 		Firmware: "CLOUDHV.fd",
@@ -684,7 +684,7 @@ func TestDryRunFailsWhenNetworkLeasesAreCorrupt(t *testing.T) {
 
 func TestNetworkCandidatesDetectDriftAndOrphanLease(t *testing.T) {
 	t.Parallel()
-	vm := &vmstore.VMRecord{
+	vmRecord := &vm.VMRecord{
 		ID: "vm-live",
 		NetworkConfigs: []kbnetwork.Config{{
 			ID: "net-live", TAP: "tap-live", MAC: "02:00:00:00:00:01",
@@ -700,7 +700,7 @@ func TestNetworkCandidatesDetectDriftAndOrphanLease(t *testing.T) {
 		"10.88.0.99": {VMID: "vm-gone", TAP: "tap-gone"},
 		"10.88.0.2":  {VMID: "vm-live", TAP: "tap-live"},
 	}
-	candidates := networkCandidates([]*vmstore.VMRecord{vm}, records, leases)
+	candidates := networkCandidates([]*vm.VMRecord{vmRecord}, records, leases)
 	assertCandidateList(t, candidates, "net-live", "network_drift")
 	assertCandidateList(t, candidates, "tap-gone", "stale_tap")
 	assertCandidateList(t, candidates, "10.88.0.99", "orphan_lease")

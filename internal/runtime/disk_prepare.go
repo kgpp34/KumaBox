@@ -8,22 +8,22 @@ import (
 	"strings"
 
 	"github.com/kumabox/kumabox/internal/disk"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 type storageCoordinator struct {
 	*Runtime
 }
 
-func (s *storageCoordinator) prepare(ctx context.Context, rec *vmstore.VMRecord) error {
+func (s *storageCoordinator) prepare(ctx context.Context, rec *vm.VMRecord) error {
 	return prepareStorageWithQEMUImg(ctx, rec, s.vmReader.RootDir(), s.qemuImg)
 }
 
-func (s *storageCoordinator) removeManagedDirs(rec *vmstore.VMRecord) error {
+func (s *storageCoordinator) removeManagedDirs(rec *vm.VMRecord) error {
 	return removeManagedDirs(rec, s.vmReader.RootDir())
 }
 
-func removeManagedDirs(rec *vmstore.VMRecord, rootDir string) error {
+func removeManagedDirs(rec *vm.VMRecord, rootDir string) error {
 	storageDir := filepath.Join(rootDir, "storage", "vms", rec.ID)
 	for _, dir := range []string{rec.RunDir, rec.LogDir, storageDir} {
 		if dir == "" {
@@ -36,17 +36,17 @@ func removeManagedDirs(rec *vmstore.VMRecord, rootDir string) error {
 	return nil
 }
 
-func prepareStorage(rec *vmstore.VMRecord, rootDir string) error {
+func prepareStorage(rec *vm.VMRecord, rootDir string) error {
 	return prepareStorageWithQEMUImg(context.Background(), rec, rootDir, disk.NewQEMUImg("qemu-img"))
 }
 
-func prepareStorageWithQEMUImg(ctx context.Context, rec *vmstore.VMRecord, rootDir string, qemuImg *disk.QEMUImg) error {
-	if err := vmstore.ValidateStorageContract(rec, rootDir); err != nil {
+func prepareStorageWithQEMUImg(ctx context.Context, rec *vm.VMRecord, rootDir string, qemuImg *disk.QEMUImg) error {
+	if err := vm.ValidateStorageContract(rec, rootDir); err != nil {
 		return err
 	}
 	for _, cfg := range rec.StorageConfigs {
 		switch cfg.EffectiveRole() {
-		case vmstore.StorageRoleLayer:
+		case vm.StorageRoleLayer:
 			if cfg.Path == "" {
 				return fmt.Errorf("storage layer %s path must not be empty", cfg.ID)
 			}
@@ -57,7 +57,7 @@ func prepareStorageWithQEMUImg(ctx context.Context, rec *vmstore.VMRecord, rootD
 			if info.IsDir() {
 				return fmt.Errorf("storage layer %s must be a file: %s", cfg.ID, cfg.Path)
 			}
-		case vmstore.StorageRoleCOW:
+		case vm.StorageRoleCOW:
 			if cfg.Base != nil && cfg.Base.Family == "cloudimg" {
 				if err := qemuImg.EnsureOverlay(ctx, disk.OverlaySpec{
 					Path:       cfg.Path,
@@ -71,7 +71,7 @@ func prepareStorageWithQEMUImg(ctx context.Context, rec *vmstore.VMRecord, rootD
 			if err := prepareCOW(cfg); err != nil {
 				return err
 			}
-		case vmstore.StorageRoleData:
+		case vm.StorageRoleData:
 			if err := prepareDataDisk(cfg); err != nil {
 				return err
 			}
@@ -80,7 +80,7 @@ func prepareStorageWithQEMUImg(ctx context.Context, rec *vmstore.VMRecord, rootD
 	return nil
 }
 
-func prepareDataDisk(cfg vmstore.StorageConfig) error {
+func prepareDataDisk(cfg vm.StorageConfig) error {
 	if cfg.Path == "" {
 		return fmt.Errorf("data storage path must not be empty")
 	}
@@ -107,7 +107,7 @@ func prepareDataDisk(cfg vmstore.StorageConfig) error {
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close data storage %s: %w", cfg.ID, err)
 	}
-	if cfg.Filesystem == "" || cfg.Filesystem == vmstore.FilesystemNone {
+	if cfg.Filesystem == "" || cfg.Filesystem == vm.FilesystemNone {
 		return nil
 	}
 	out, err := mkfsExt4(cfg.Path)
@@ -118,7 +118,7 @@ func prepareDataDisk(cfg vmstore.StorageConfig) error {
 	return nil
 }
 
-func prepareCOW(cfg vmstore.StorageConfig) error {
+func prepareCOW(cfg vm.StorageConfig) error {
 	if cfg.Path == "" {
 		return fmt.Errorf("COW storage path must not be empty")
 	}

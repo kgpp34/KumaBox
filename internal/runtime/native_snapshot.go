@@ -11,7 +11,7 @@ import (
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const snapshotCleanupTimeout = 30 * time.Second
@@ -46,7 +46,7 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 		return nil, err
 	}
 	rec = r.applyObservation(rec)
-	if rec.ObservedState != vmstore.ObservedStateRunning {
+	if rec.ObservedState != vm.ObservedStateRunning {
 		return nil, fmt.Errorf("VM_NOT_RUNNING: VM %s observed state is %s", rec.Name, rec.ObservedState)
 	}
 	controller, ok := r.backend.(backend.StateController)
@@ -122,15 +122,15 @@ func (r *Runtime) CreateRunningSnapshot(ctx context.Context, ref, name string) (
 			return nil, fmt.Errorf("record snapshot image reference: %w", err)
 		}
 	}
-	_ = writeVMEvent(rec, "snapshot.capture.completed", vmstore.Observation{
-		State:     vmstore.ObservedStateRunning,
+	_ = writeVMEvent(rec, "snapshot.capture.completed", vm.Observation{
+		State:     vm.ObservedStateRunning,
 		Reason:    fmt.Sprintf("native crash-consistent snapshot %s captured", ready.ID),
 		CheckedAt: time.Now().UTC(),
 	})
 	return ready, nil
 }
 
-func captureNativeWindow(ctx context.Context, snapshotter backend.NativeSnapshotter, rec *vmstore.VMRecord, nativeDir, stagingDir string) ([]snapshot.DiskManifest, int64, int64, error) {
+func captureNativeWindow(ctx context.Context, snapshotter backend.NativeSnapshotter, rec *vm.VMRecord, nativeDir, stagingDir string) ([]snapshot.DiskManifest, int64, int64, error) {
 	nativeStarted := time.Now()
 	if err := snapshotter.SnapshotVM(ctx, rec, nativeDir); err != nil {
 		return nil, 0, 0, fmt.Errorf("capture backend state: %w", err)
@@ -144,10 +144,10 @@ func captureNativeWindow(ctx context.Context, snapshotter backend.NativeSnapshot
 	return disks, nativeDuration, time.Since(diskStarted).Milliseconds(), nil
 }
 
-func (r *Runtime) persistSnapshotResumeFailure(rec *vmstore.VMRecord) {
+func (r *Runtime) persistSnapshotResumeFailure(rec *vm.VMRecord) {
 	observation := r.backend.ObserveVM(rec)
-	if observation.State == vmstore.ObservedStatePaused {
-		_ = r.vmUpdater.UpdateStates([]string{rec.ID}, vmstore.StatePaused)
+	if observation.State == vm.ObservedStatePaused {
+		_ = r.vmUpdater.UpdateStates([]string{rec.ID}, vm.StatePaused)
 		return
 	}
 	_, _ = r.vmUpdater.SetError(rec.ID, "failed to resume VM after running snapshot")

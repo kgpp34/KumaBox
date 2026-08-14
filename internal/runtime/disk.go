@@ -9,10 +9,10 @@ import (
 
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/operation"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
-func (r *Runtime) AttachDisk(ctx context.Context, ref string, spec backend.DiskSpec) (*vmstore.VMRecord, error) {
+func (r *Runtime) AttachDisk(ctx context.Context, ref string, spec backend.DiskSpec) (*vm.VMRecord, error) {
 	mutation, err := r.resourceGuard.BeginMutation(ctx)
 	if err != nil {
 		return nil, err
@@ -48,8 +48,8 @@ func (r *Runtime) AttachDisk(ctx context.Context, ref string, spec backend.DiskS
 	}
 	attached, opErr := controller.AttachDisk(ctx, rec, spec)
 	if opErr == nil {
-		disks := append([]vmstore.AttachedDisk(nil), rec.AttachedDisks...)
-		disks = append(disks, vmstore.AttachedDisk{ID: attached.ID, Name: attached.Name, Path: attached.Path, ReadOnly: attached.ReadOnly})
+		disks := append([]vm.AttachedDisk(nil), rec.AttachedDisks...)
+		disks = append(disks, vm.AttachedDisk{ID: attached.ID, Name: attached.Name, Path: attached.Path, ReadOnly: attached.ReadOnly})
 		_, opErr = r.vmRecords.SetAttachedDisks(rec.ID, disks)
 	}
 	opErr = r.finishOperation(ctx, operationID, opErr)
@@ -57,7 +57,7 @@ func (r *Runtime) AttachDisk(ctx context.Context, ref string, spec backend.DiskS
 	return updated, errors.Join(opErr, inspectErr)
 }
 
-func (r *Runtime) DetachDisk(ctx context.Context, ref, name string) (*vmstore.VMRecord, error) {
+func (r *Runtime) DetachDisk(ctx context.Context, ref, name string) (*vm.VMRecord, error) {
 	mutation, err := r.resourceGuard.BeginMutation(ctx)
 	if err != nil {
 		return nil, err
@@ -87,7 +87,7 @@ func (r *Runtime) DetachDisk(ctx context.Context, ref, name string) (*vmstore.VM
 	}
 	opErr := controller.DetachDisk(ctx, rec, name)
 	if opErr == nil {
-		disks := make([]vmstore.AttachedDisk, 0, len(rec.AttachedDisks))
+		disks := make([]vm.AttachedDisk, 0, len(rec.AttachedDisks))
 		for _, disk := range rec.AttachedDisks {
 			if disk.Name != name {
 				disks = append(disks, disk)

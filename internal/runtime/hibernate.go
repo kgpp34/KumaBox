@@ -12,7 +12,7 @@ import (
 	"github.com/kumabox/kumabox/internal/metering"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 type HibernateOptions struct {
@@ -20,8 +20,8 @@ type HibernateOptions struct {
 }
 
 type HibernateResult struct {
-	VM       *vmstore.VMRecord `json:"vm"`
-	Snapshot *snapshot.Record  `json:"snapshot"`
+	VM       *vm.VMRecord     `json:"vm"`
+	Snapshot *snapshot.Record `json:"snapshot"`
 }
 
 // HibernateVM durably captures a paused VM and terminates the VMM without a
@@ -55,7 +55,7 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 		return nil, err
 	}
 	rec = r.applyObservation(rec)
-	if rec.ObservedState != vmstore.ObservedStateRunning {
+	if rec.ObservedState != vm.ObservedStateRunning {
 		return nil, fmt.Errorf("VM_NOT_RUNNING: VM %s observed state is %s", rec.Name, rec.ObservedState)
 	}
 	controller, ok := r.backend.(backend.StateController)
@@ -113,13 +113,13 @@ func (r *Runtime) HibernateVM(ctx context.Context, ref string, opts HibernateOpt
 	if err := r.recordVMSnapshotReference(ctx, hibernated.ID, ready.ID); err != nil {
 		return nil, fmt.Errorf("record hibernate snapshot reference: %w", err)
 	}
-	_ = writeVMEvent(hibernated, "vm.hibernate.completed", vmstore.Observation{
-		State: vmstore.ObservedStateStopped, Reason: "hibernated to native snapshot " + ready.ID, CheckedAt: time.Now().UTC(),
+	_ = writeVMEvent(hibernated, "vm.hibernate.completed", vm.Observation{
+		State: vm.ObservedStateStopped, Reason: "hibernated to native snapshot " + ready.ID, CheckedAt: time.Now().UTC(),
 	})
 	return &HibernateResult{VM: r.applyObservation(hibernated), Snapshot: ready}, nil
 }
 
-func (r *Runtime) persistHibernationSnapshot(ctx context.Context, build *snapshot.Build, rec *vmstore.VMRecord, snapshotter backend.NativeSnapshotter, inspector backend.NativeHostInspector, nativeDir string) (*snapshot.Record, error) {
+func (r *Runtime) persistHibernationSnapshot(ctx context.Context, build *snapshot.Build, rec *vm.VMRecord, snapshotter backend.NativeSnapshotter, inspector backend.NativeHostInspector, nativeDir string) (*snapshot.Record, error) {
 	pending := build.Record()
 	stagedDisks, _, _, err := captureNativeWindow(ctx, snapshotter, rec, nativeDir, pending.StagingDir)
 	if err != nil {
@@ -144,7 +144,7 @@ func (r *Runtime) persistHibernationSnapshot(ctx context.Context, build *snapsho
 	return ready, nil
 }
 
-func (r *Runtime) recoverHibernateGuest(ctx context.Context, controller backend.StateController, rec *vmstore.VMRecord, paused bool) error {
+func (r *Runtime) recoverHibernateGuest(ctx context.Context, controller backend.StateController, rec *vm.VMRecord, paused bool) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), snapshotCleanupTimeout)
 	defer cancel()
 	var resumeErr error

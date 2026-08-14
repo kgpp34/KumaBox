@@ -5,31 +5,31 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/metering"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
-func (r *Runtime) recordComputeStart(ctx context.Context, rec *vmstore.VMRecord, reason metering.Reason) {
+func (r *Runtime) recordComputeStart(ctx context.Context, rec *vm.VMRecord, reason metering.Reason) {
 	if r.storeSet.Metering == nil || rec == nil || rec.StartedAt == nil {
 		return
 	}
 	_ = r.storeSet.Metering.Append(ctx, computeEvent(rec, metering.KindComputeStart, reason, *rec.StartedAt))
 }
 
-func (r *Runtime) recordComputeStop(ctx context.Context, rec *vmstore.VMRecord, reason metering.Reason) {
+func (r *Runtime) recordComputeStop(ctx context.Context, rec *vm.VMRecord, reason metering.Reason) {
 	if r.storeSet.Metering == nil || rec == nil || rec.StoppedAt == nil {
 		return
 	}
 	_ = r.storeSet.Metering.Append(ctx, computeEvent(rec, metering.KindComputeStop, reason, *rec.StoppedAt))
 }
 
-func (r *Runtime) requireComputeStop(ctx context.Context, rec *vmstore.VMRecord, reason metering.Reason) error {
+func (r *Runtime) requireComputeStop(ctx context.Context, rec *vm.VMRecord, reason metering.Reason) error {
 	if r.storeSet.Metering == nil || rec == nil || rec.StoppedAt == nil {
 		return nil
 	}
 	return r.storeSet.Metering.Append(ctx, computeEvent(rec, metering.KindComputeStop, reason, *rec.StoppedAt))
 }
 
-func computeEvent(rec *vmstore.VMRecord, kind metering.Kind, reason metering.Reason, at time.Time) metering.Event {
+func computeEvent(rec *vm.VMRecord, kind metering.Kind, reason metering.Reason, at time.Time) metering.Event {
 	return metering.Event{
 		ID: metering.EventID(rec.ID, kind, at), Kind: kind, VMID: rec.ID, VMName: rec.Name,
 		Reason: reason, Shape: metering.Shape{VCPUs: rec.CPUs, MemoryBytes: rec.MemoryBytes}, EmittedAt: at,
@@ -69,7 +69,7 @@ func (r *Runtime) ReconcileMetering(ctx context.Context) error {
 		}
 		if rec.StoppedAt != nil {
 			reason := metering.ReasonStopUser
-			if rec.State == vmstore.StatePaused {
+			if rec.State == vm.StatePaused {
 				reason = metering.ReasonPause
 			}
 			event := computeEvent(rec, metering.KindComputeStop, reason, *rec.StoppedAt)

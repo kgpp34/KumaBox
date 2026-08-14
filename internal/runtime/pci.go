@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/operation"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
-func (r *Runtime) AttachPCIDevice(ctx context.Context, ref string, spec backend.PCIDeviceSpec) (*vmstore.VMRecord, error) {
+func (r *Runtime) AttachPCIDevice(ctx context.Context, ref string, spec backend.PCIDeviceSpec) (*vm.VMRecord, error) {
 	return r.changePCIDevice(ctx, ref, spec, true)
 }
-func (r *Runtime) changePCIDevice(ctx context.Context, ref string, spec backend.PCIDeviceSpec, attach bool) (*vmstore.VMRecord, error) {
+func (r *Runtime) changePCIDevice(ctx context.Context, ref string, spec backend.PCIDeviceSpec, attach bool) (*vm.VMRecord, error) {
 	mutation, err := r.resourceGuard.BeginMutation(ctx)
 	if err != nil {
 		return nil, err
@@ -49,14 +49,14 @@ func (r *Runtime) changePCIDevice(ctx context.Context, ref string, spec backend.
 		var device backend.AttachedPCIDevice
 		device, opErr = controller.AttachPCIDevice(ctx, rec, spec)
 		if opErr == nil {
-			devices := append([]vmstore.AttachedPCIDevice(nil), rec.AttachedPCIDevices...)
-			devices = append(devices, vmstore.AttachedPCIDevice{ID: device.ID, PCI: device.PCI})
+			devices := append([]vm.AttachedPCIDevice(nil), rec.AttachedPCIDevices...)
+			devices = append(devices, vm.AttachedPCIDevice{ID: device.ID, PCI: device.PCI})
 			_, opErr = r.vmRecords.SetAttachedPCIDevices(rec.ID, devices)
 		}
 	} else {
 		opErr = controller.DetachPCIDevice(ctx, rec, spec.ID)
 		if opErr == nil {
-			devices := make([]vmstore.AttachedPCIDevice, 0)
+			devices := make([]vm.AttachedPCIDevice, 0)
 			for _, device := range rec.AttachedPCIDevices {
 				if device.ID != spec.ID {
 					devices = append(devices, device)
@@ -69,7 +69,7 @@ func (r *Runtime) changePCIDevice(ctx context.Context, ref string, spec backend.
 	updated, inspectErr := r.vmReader.Inspect(rec.ID)
 	return updated, errors.Join(opErr, inspectErr)
 }
-func (r *Runtime) DetachPCIDevice(ctx context.Context, ref, id string) (*vmstore.VMRecord, error) {
+func (r *Runtime) DetachPCIDevice(ctx context.Context, ref, id string) (*vm.VMRecord, error) {
 	return r.changePCIDevice(ctx, ref, backend.PCIDeviceSpec{ID: id}, false)
 }
 func (r *Runtime) ListPCIDevices(ctx context.Context, ref string) ([]backend.AttachedPCIDevice, error) {

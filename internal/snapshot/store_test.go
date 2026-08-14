@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/fault"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestStoreReserveFinalizeAndList(t *testing.T) {
@@ -227,8 +227,8 @@ func TestStoreRemoveRejectsDurableVMDependency(t *testing.T) {
 	rootDir := t.TempDir()
 	store := NewStore(rootDir)
 	ready := createReadySnapshot(t, store, "runtime-pinned")
-	vmStore := vmstore.New(rootDir)
-	rec, err := vmStore.Create(vmstore.CreateRequest{
+	vmStore := vm.New(rootDir)
+	rec, err := vmStore.Create(vm.CreateRequest{
 		Name: "dependent", RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd", RunDir: filepath.Join(rootDir, "run"), LogDir: filepath.Join(rootDir, "log"),
 	})
 	if err != nil {
@@ -246,7 +246,7 @@ func TestStoreRemoveRejectsDurableVMDependency(t *testing.T) {
 	if leased, err := store.IsLeased(ready.ID); err != nil || !leased {
 		t.Fatalf("durable lease = %t, err = %v", leased, err)
 	}
-	if err := vmStore.UpdateStates([]string{rec.ID}, vmstore.StateStopped); err != nil {
+	if err := vmStore.UpdateStates([]string{rec.ID}, vm.StateStopped); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Remove(ready.ID); err != nil {
@@ -259,8 +259,8 @@ func TestStoreRemoveRejectsHibernateSnapshot(t *testing.T) {
 	rootDir := t.TempDir()
 	store := NewStore(rootDir)
 	ready := createReadySnapshot(t, store, "hibernate-pinned")
-	vmStore := vmstore.New(rootDir)
-	rec, err := vmStore.Create(vmstore.CreateRequest{
+	vmStore := vm.New(rootDir)
+	rec, err := vmStore.Create(vm.CreateRequest{
 		Name: "hibernated", RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd", RunDir: filepath.Join(rootDir, "run"), LogDir: filepath.Join(rootDir, "log"),
 	})
 	if err != nil {

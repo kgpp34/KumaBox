@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestWriteVMEventTable(t *testing.T) {
@@ -16,9 +16,9 @@ func TestWriteVMEventTable(t *testing.T) {
 	var output bytes.Buffer
 	events := []kbruntime.VMStatusEvent{{
 		Event: kbruntime.VMEventAdded,
-		VM: &vmstore.VMRecord{
-			ID: "vm-1", Name: "example", State: vmstore.StateRunning,
-			ObservedState: vmstore.ObservedStateRunning, Backend: "cloud-hypervisor",
+		VM: &vm.VMRecord{
+			ID: "vm-1", Name: "example", State: vm.StateRunning,
+			ObservedState: vm.ObservedStateRunning, Backend: "cloud-hypervisor",
 		},
 	}}
 	if err := writeVMEventTable(&output, events, true); err != nil {
@@ -37,7 +37,7 @@ func TestWriteVMEventJSONLine(t *testing.T) {
 	var output bytes.Buffer
 	event := kbruntime.VMStatusEvent{
 		Event: kbruntime.VMEventDeleted,
-		VM:    &vmstore.VMRecord{ID: "vm-1", Name: "example"},
+		VM:    &vm.VMRecord{ID: "vm-1", Name: "example"},
 	}
 	if err := writeJSONLine(&output, event); err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestWriteVMEventJSONLine(t *testing.T) {
 func TestFilterVMRecords(t *testing.T) {
 	t.Parallel()
 
-	records := []*vmstore.VMRecord{{ID: "vm-1", Name: "first"}, {ID: "vm-2", Name: "second"}}
+	records := []*vm.VMRecord{{ID: "vm-1", Name: "first"}, {ID: "vm-2", Name: "second"}}
 	selected := filterVMRecords(records, []string{"second", "vm-1", "second", "missing"})
 	if len(selected) != 2 || selected[0].ID != "vm-2" || selected[1].ID != "vm-1" {
 		t.Fatalf("selected records = %+v", selected)

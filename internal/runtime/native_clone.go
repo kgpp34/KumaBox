@@ -14,7 +14,7 @@ import (
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const (
@@ -42,7 +42,7 @@ type NativeCloneOptions struct {
 
 // CloneNativeSnapshot creates a new running VM from native state while
 // assigning fresh host storage, vsock, and provider network identities.
-func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, opts NativeCloneOptions) (result *vmstore.VMRecord, resultErr error) {
+func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, opts NativeCloneOptions) (result *vm.VMRecord, resultErr error) {
 	mutation, err := r.resourceGuard.BeginMutation(ctx)
 	if err != nil {
 		return nil, err
@@ -216,7 +216,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err := r.recordVMSnapshotReference(ctx, dirty.ID, snapshotRec.ID); err != nil {
 		return nil, stopRestoredBackend(fmt.Errorf("record clone snapshot reference: %w", err))
 	}
-	cloned, err := r.vmRestore.CompleteRestore(rec.ID, backendResult.PID, backendResult.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
+	cloned, err := r.vmRestore.CompleteRestore(rec.ID, backendResult.PID, backendResult.APISocket, time.Since(restoreStarted), &vm.RestoreResult{
 		NativeStageDurationMs:    stageMetrics.nativeStageDuration.Milliseconds(),
 		DiskStageDurationMs:      stageMetrics.diskStageDuration.Milliseconds(),
 		DiskCommitDurationMs:     diskCommitDuration.Milliseconds(),
@@ -233,8 +233,8 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 		staged.retainNativePayload()
 	}
 	committed = true
-	_ = writeVMEvent(cloned, "snapshot.clone.completed", vmstore.Observation{
-		State: vmstore.ObservedStateRunning, Reason: "cloned from native snapshot " + snapshotRec.ID, CheckedAt: time.Now().UTC(),
+	_ = writeVMEvent(cloned, "snapshot.clone.completed", vm.Observation{
+		State: vm.ObservedStateRunning, Reason: "cloned from native snapshot " + snapshotRec.ID, CheckedAt: time.Now().UTC(),
 	})
 	return r.applyObservation(cloned), nil
 }
@@ -263,7 +263,7 @@ func cloneNetworkSelections(requested []string, nicCount int) ([]string, error) 
 	return append([]string(nil), requested...), nil
 }
 
-func configureCloneIdentity(ctx context.Context, socket string, rec *vmstore.VMRecord) error {
+func configureCloneIdentity(ctx context.Context, socket string, rec *vm.VMRecord) error {
 	request := agentclient.IdentityRequest{Hostname: rec.Name, Interfaces: make([]agentclient.InterfaceIdentity, 0, len(rec.NetworkConfigs))}
 	for i, config := range rec.NetworkConfigs {
 		identity := agentclient.InterfaceIdentity{Name: config.IfName, MAC: config.MAC}

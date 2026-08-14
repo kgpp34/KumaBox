@@ -13,7 +13,7 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestRestoreSnapshotCreatesIndependentOCIVM(t *testing.T) {
@@ -84,14 +84,14 @@ func TestRestoreSnapshotCreatesIndependentOCIVM(t *testing.T) {
 	cfg.Runtime.RootDir = rootDir
 	cfg.Runtime.RunDir = filepath.Join(dir, "run")
 	cfg.Runtime.LogDir = filepath.Join(dir, "log")
-	rt := NewWithBackend(vmstore.New(rootDir), backendFake{render: func(*vmstore.VMRecord) error { return nil }})
+	rt := NewWithBackend(vm.New(rootDir), backendFake{render: func(*vm.VMRecord) error { return nil }})
 	rt.cfg = cfg
 
 	restored, err := rt.RestoreSnapshot(context.Background(), ready.ID, RestoreOptions{Name: "restored", CPUs: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored.State != vmstore.StateCreated || restored.ID == manifest.Source.VMID {
+	if restored.State != vm.StateCreated || restored.ID == manifest.Source.VMID {
 		t.Fatalf("restored identity/state = %s/%s", restored.ID, restored.State)
 	}
 	if restored.CPUs != 2 || restored.Network != "none" {

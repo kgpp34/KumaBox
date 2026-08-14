@@ -1,4 +1,4 @@
-package vmstore
+package vm
 
 import (
 	"time"

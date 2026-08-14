@@ -7,7 +7,7 @@ import (
 
 	agentclient "github.com/kumabox/kumabox/internal/agent/client"
 	"github.com/kumabox/kumabox/internal/agent/protocol"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const (
@@ -19,7 +19,7 @@ var reseedRestoredGuest = reseedGuest
 
 // ReseedGuestVM injects fresh entropy into a running guest. Machine identity
 // regeneration is intended for clones, not an in-place restore of the same VM.
-func (r *Runtime) ReseedGuestVM(ctx context.Context, ref string, regenerateMachineID bool) (*vmstore.VMRecord, error) {
+func (r *Runtime) ReseedGuestVM(ctx context.Context, ref string, regenerateMachineID bool) (*vm.VMRecord, error) {
 	rec, err := r.vmReader.Inspect(ref)
 	if err != nil {
 		return nil, err
@@ -34,7 +34,7 @@ func (r *Runtime) ReseedGuestVM(ctx context.Context, ref string, regenerateMachi
 		return nil, err
 	}
 	observed := r.applyObservation(rec)
-	if observed.ObservedState != vmstore.ObservedStateRunning {
+	if observed.ObservedState != vm.ObservedStateRunning {
 		return nil, fmt.Errorf("VM_NOT_RUNNING: VM %s is not running", rec.Name)
 	}
 	if err := reseedGuest(ctx, rec.VsockSocket, regenerateMachineID); err != nil {

@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kumabox/kumabox/internal/backend/cloudhypervisor"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func newDebugCommand(opts *rootOptions) *cobra.Command {
@@ -37,7 +37,7 @@ func newDebugLaunchCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			record, err := vmstore.PreviewRecord(request, cfg.Runtime.RootDir, "kb_preview")
+			record, err := vm.PreviewRecord(request, cfg.Runtime.RootDir, "kb_preview")
 			if err != nil {
 				return err
 			}
@@ -48,7 +48,7 @@ func newDebugLaunchCommand(opts *rootOptions) *cobra.Command {
 			return writeJSON(cmd.OutOrStdout(), struct {
 				SchemaVersion string                 `json:"schemaVersion"`
 				DryRun        bool                   `json:"dryRun"`
-				VM            *vmstore.VMRecord      `json:"vm"`
+				VM            *vm.VMRecord           `json:"vm"`
 				Launch        cloudhypervisor.Config `json:"launch"`
 			}{
 				SchemaVersion: "kumabox.debug.launch.v1",

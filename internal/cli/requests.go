@@ -8,7 +8,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 type createVMFlags struct {
@@ -40,52 +40,52 @@ func addCreateVMFlags(cmd *cobra.Command, flags *createVMFlags) {
 	_ = cmd.MarkFlagRequired("name")
 }
 
-func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vmstore.CreateRequest, error) {
+func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm.CreateRequest, error) {
 	if flags.cpus < 0 {
-		return vmstore.CreateRequest{}, fmt.Errorf("--cpus must be greater than zero")
+		return vm.CreateRequest{}, fmt.Errorf("--cpus must be greater than zero")
 	}
 	if flags.cpus == 0 {
 		flags.cpus = 1
 	}
 	memoryBytes, err := parseMemorySize(defaultString(flags.memory, "512M"))
 	if err != nil {
-		return vmstore.CreateRequest{}, err
+		return vm.CreateRequest{}, err
 	}
 	if len(args) == 0 {
 		if flags.rootDisk == "" {
-			return vmstore.CreateRequest{}, fmt.Errorf("either IMAGE or --root-disk is required")
+			return vm.CreateRequest{}, fmt.Errorf("either IMAGE or --root-disk is required")
 		}
 		dataDisks, err := parseDataDisks(flags.dataDisks)
 		if err != nil {
-			return vmstore.CreateRequest{}, err
+			return vm.CreateRequest{}, err
 		}
-		return vmstore.CreateRequest{Name: flags.name, RootDisk: flags.rootDisk, Kernel: flags.kernel, Initrd: flags.initrd, Firmware: flags.firmware, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedNetworkFlags(flags.networks), DataDisks: dataDisks, SharedMemory: flags.sharedMemory, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}, nil
+		return vm.CreateRequest{Name: flags.name, RootDisk: flags.rootDisk, Kernel: flags.kernel, Initrd: flags.initrd, Firmware: flags.firmware, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedNetworkFlags(flags.networks), DataDisks: dataDisks, SharedMemory: flags.sharedMemory, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}, nil
 	}
 	if flags.rootDisk != "" || flags.kernel != "" || flags.initrd != "" || flags.firmware != "" {
-		return vmstore.CreateRequest{}, fmt.Errorf("IMAGE cannot be combined with --root-disk, --kernel, --initrd, or --firmware")
+		return vm.CreateRequest{}, fmt.Errorf("IMAGE cannot be combined with --root-disk, --kernel, --initrd, or --firmware")
 	}
 	stores, err := configuredStores(cfg)
 	if err != nil {
-		return vmstore.CreateRequest{}, err
+		return vm.CreateRequest{}, err
 	}
 	if stores.Metadata != nil {
 		defer func() { _ = stores.Metadata.Close() }()
 	}
 	image, err := stores.Images.Inspect(args[0])
 	if err != nil {
-		return vmstore.CreateRequest{}, fmt.Errorf("resolve image %q: %w", args[0], err)
+		return vm.CreateRequest{}, fmt.Errorf("resolve image %q: %w", args[0], err)
 	}
 	if image.OCI == nil && image.RootDisk.Path == "" {
-		return vmstore.CreateRequest{}, fmt.Errorf("image %q has no root disk", args[0])
+		return vm.CreateRequest{}, fmt.Errorf("image %q has no root disk", args[0])
 	}
 	if image.OCI != nil {
 		return newOCIImageCreateRequest(flags, image, cfg)
 	}
-	if image.RootDisk.Format != vmstore.FormatQCOW2 {
-		return vmstore.CreateRequest{}, fmt.Errorf("image %q root disk format %q cannot use a qcow2 overlay", image.Name, image.RootDisk.Format)
+	if image.RootDisk.Format != vm.FormatQCOW2 {
+		return vm.CreateRequest{}, fmt.Errorf("image %q root disk format %q cannot use a qcow2 overlay", image.Name, image.RootDisk.Format)
 	}
 	if image.RootDisk.SHA256 == "" {
-		return vmstore.CreateRequest{}, fmt.Errorf("image %q root disk has no pinned sha256 digest", image.Name)
+		return vm.CreateRequest{}, fmt.Errorf("image %q root disk has no pinned sha256 digest", image.Name)
 	}
 	digest := image.RootDisk.SHA256
 	if !strings.HasPrefix(digest, "sha256:") {
@@ -93,60 +93,60 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 	}
 	dataDisks, err := parseDataDisks(flags.dataDisks)
 	if err != nil {
-		return vmstore.CreateRequest{}, err
+		return vm.CreateRequest{}, err
 	}
-	req := vmstore.CreateRequest{Name: flags.name, RootDisk: image.RootDisk.Path, Kernel: image.Boot.Kernel, Initrd: image.Boot.Initrd, Firmware: image.Boot.Firmware, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedNetworkFlags(flags.networks), DataDisks: dataDisks, SharedMemory: flags.sharedMemory, Image: &vmstore.ImageRef{ID: image.ID, Name: image.Name, RootDisk: image.RootDisk.Path, BootMode: image.Boot.Mode, Digest: digest}, StorageConfigs: []vmstore.StorageConfig{{ID: "root", Role: vmstore.StorageRoleCOW, Format: vmstore.FormatQCOW2, VirtualSizeBytes: image.RootDisk.VirtualSizeBytes, Base: &vmstore.StorageBase{Family: "cloudimg", ImageID: image.ID, Digest: digest, Format: image.RootDisk.Format, Path: image.RootDisk.Path}}}, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}
+	req := vm.CreateRequest{Name: flags.name, RootDisk: image.RootDisk.Path, Kernel: image.Boot.Kernel, Initrd: image.Boot.Initrd, Firmware: image.Boot.Firmware, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedNetworkFlags(flags.networks), DataDisks: dataDisks, SharedMemory: flags.sharedMemory, Image: &vm.ImageRef{ID: image.ID, Name: image.Name, RootDisk: image.RootDisk.Path, BootMode: image.Boot.Mode, Digest: digest}, StorageConfigs: []vm.StorageConfig{{ID: "root", Role: vm.StorageRoleCOW, Format: vm.FormatQCOW2, VirtualSizeBytes: image.RootDisk.VirtualSizeBytes, Base: &vm.StorageBase{Family: "cloudimg", ImageID: image.ID, Digest: digest, Format: image.RootDisk.Format, Path: image.RootDisk.Path}}}, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}
 	if req.Firmware == "" && (req.Kernel == "" || req.Initrd == "") {
-		return vmstore.CreateRequest{}, fmt.Errorf("image %q has no usable boot configuration", args[0])
+		return vm.CreateRequest{}, fmt.Errorf("image %q has no usable boot configuration", args[0])
 	}
 	return req, nil
 }
 
-func newOCIImageCreateRequest(flags createVMFlags, image *imagestore.ImageRecord, cfg config.Config) (vmstore.CreateRequest, error) {
+func newOCIImageCreateRequest(flags createVMFlags, image *imagestore.ImageRecord, cfg config.Config) (vm.CreateRequest, error) {
 	if image.Boot.Mode != "direct" || image.Boot.Kernel == "" || image.Boot.Initrd == "" {
-		return vmstore.CreateRequest{}, fmt.Errorf("image %q has no OCI direct boot profile", image.Name)
+		return vm.CreateRequest{}, fmt.Errorf("image %q has no OCI direct boot profile", image.Name)
 	}
 	cowSize, err := parseByteSize(defaultString(flags.storage, defaultOCIStorageSize))
 	if err != nil {
-		return vmstore.CreateRequest{}, err
+		return vm.CreateRequest{}, err
 	}
 	memoryBytes, err := parseMemorySize(defaultString(flags.memory, defaultOCIMemorySize))
 	if err != nil {
-		return vmstore.CreateRequest{}, err
+		return vm.CreateRequest{}, err
 	}
 	manifestDigest := image.OCI.DigestRef
 	if _, digest, found := strings.Cut(manifestDigest, "@"); found {
 		manifestDigest = digest
 	}
 	if manifestDigest == "" {
-		return vmstore.CreateRequest{}, fmt.Errorf("image %q has no OCI manifest digest", image.Name)
+		return vm.CreateRequest{}, fmt.Errorf("image %q has no OCI manifest digest", image.Name)
 	}
-	storageConfigs := make([]vmstore.StorageConfig, 0, len(image.OCI.Layers)+1)
+	storageConfigs := make([]vm.StorageConfig, 0, len(image.OCI.Layers)+1)
 	layerDigests := make([]string, 0, len(image.OCI.Layers))
 	for i, layer := range image.OCI.Layers {
 		if layer.EROFS == nil || layer.EROFS.Path == "" {
-			return vmstore.CreateRequest{}, fmt.Errorf("image %q layer %d has no EROFS blob", image.Name, i)
+			return vm.CreateRequest{}, fmt.Errorf("image %q layer %d has no EROFS blob", image.Name, i)
 		}
 		serial := layer.Serial
 		if serial == "" {
-			serial = vmstore.LayerSerial(i)
+			serial = vm.LayerSerial(i)
 		}
-		storageConfigs = append(storageConfigs, vmstore.StorageConfig{ID: vmstore.LayerID(i), Role: vmstore.StorageRoleLayer, Path: layer.EROFS.Path, Readonly: true, Format: vmstore.FormatRaw, Serial: serial, Filesystem: vmstore.FilesystemEROFS, SourceLayer: layer.Digest, VirtualSizeBytes: layer.EROFS.SizeBytes})
+		storageConfigs = append(storageConfigs, vm.StorageConfig{ID: vm.LayerID(i), Role: vm.StorageRoleLayer, Path: layer.EROFS.Path, Readonly: true, Format: vm.FormatRaw, Serial: serial, Filesystem: vm.FilesystemEROFS, SourceLayer: layer.Digest, VirtualSizeBytes: layer.EROFS.SizeBytes})
 		layerDigests = append(layerDigests, layer.Digest)
 	}
-	storageConfigs = append(storageConfigs, vmstore.StorageConfig{ID: vmstore.StorageIDCOW, Role: vmstore.StorageRoleCOW, Format: vmstore.FormatRaw, Serial: vmstore.StorageSerialCOW, Filesystem: vmstore.FilesystemEXT4, VirtualSizeBytes: cowSize, Base: &vmstore.StorageBase{Family: vmstore.BaseFamilyOCI, ImageID: image.ID, Digest: manifestDigest, LayerDigests: append([]string(nil), layerDigests...)}})
+	storageConfigs = append(storageConfigs, vm.StorageConfig{ID: vm.StorageIDCOW, Role: vm.StorageRoleCOW, Format: vm.FormatRaw, Serial: vm.StorageSerialCOW, Filesystem: vm.FilesystemEXT4, VirtualSizeBytes: cowSize, Base: &vm.StorageBase{Family: vm.BaseFamilyOCI, ImageID: image.ID, Digest: manifestDigest, LayerDigests: append([]string(nil), layerDigests...)}})
 	dataDisks, err := parseDataDisks(flags.dataDisks)
 	if err != nil {
-		return vmstore.CreateRequest{}, err
+		return vm.CreateRequest{}, err
 	}
-	return vmstore.CreateRequest{Name: flags.name, Kernel: image.Boot.Kernel, Initrd: image.Boot.Initrd, KernelCmdline: image.Boot.Cmdline, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedOCIImageNetworkFlags(flags.networks, cfg), DataDisks: dataDisks, SharedMemory: flags.sharedMemory, StorageConfigs: storageConfigs, Image: &vmstore.ImageRef{ID: image.ID, Name: image.Name, RootDisk: image.RootDisk.Path, BootMode: image.Boot.Mode, Digest: manifestDigest, LayerDigests: append([]string(nil), layerDigests...)}, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}, nil
+	return vm.CreateRequest{Name: flags.name, Kernel: image.Boot.Kernel, Initrd: image.Boot.Initrd, KernelCmdline: image.Boot.Cmdline, CPUs: flags.cpus, MemoryBytes: memoryBytes, Networks: normalizedOCIImageNetworkFlags(flags.networks, cfg), DataDisks: dataDisks, SharedMemory: flags.sharedMemory, StorageConfigs: storageConfigs, Image: &vm.ImageRef{ID: image.ID, Name: image.Name, RootDisk: image.RootDisk.Path, BootMode: image.Boot.Mode, Digest: manifestDigest, LayerDigests: append([]string(nil), layerDigests...)}, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}, nil
 }
 
-func parseDataDisks(values []string) ([]vmstore.DataDiskRequest, error) {
+func parseDataDisks(values []string) ([]vm.DataDiskRequest, error) {
 	if len(values) == 0 {
 		return nil, nil
 	}
-	result := make([]vmstore.DataDiskRequest, 0, len(values))
+	result := make([]vm.DataDiskRequest, 0, len(values))
 	usedNames := make(map[string]struct{}, len(values))
 	for _, value := range values {
 		for _, part := range strings.Split(value, ",") {
@@ -157,7 +157,7 @@ func parseDataDisks(values []string) ([]vmstore.DataDiskRequest, error) {
 		}
 	}
 	for _, value := range values {
-		var disk vmstore.DataDiskRequest
+		var disk vm.DataDiskRequest
 		seenKeys := make(map[string]struct{})
 		for _, part := range strings.Split(value, ",") {
 			key, val, ok := strings.Cut(strings.TrimSpace(part), "=")
@@ -183,7 +183,7 @@ func parseDataDisks(values []string) ([]vmstore.DataDiskRequest, error) {
 				disk.SizeBytes = size
 			case "fstype":
 				disk.Filesystem = strings.TrimSpace(val)
-				if disk.Filesystem != vmstore.FilesystemEXT4 && disk.Filesystem != vmstore.FilesystemNone {
+				if disk.Filesystem != vm.FilesystemEXT4 && disk.Filesystem != vm.FilesystemNone {
 					return nil, fmt.Errorf("--data-disk: unsupported fstype %q", disk.Filesystem)
 				}
 			case "mount":

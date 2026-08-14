@@ -14,7 +14,7 @@ import (
 	"github.com/kumabox/kumabox/internal/lock"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 // RestoreOptions defines the new VM identity and runtime attachments.
@@ -26,7 +26,7 @@ type RestoreOptions struct {
 }
 
 // RestoreSnapshot creates a new CREATED VM from portable writable disk state.
-func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreOptions) (result *vmstore.VMRecord, resultErr error) {
+func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreOptions) (result *vm.VMRecord, resultErr error) {
 	mutation, err := r.resourceGuard.BeginMutation(ctx)
 	if err != nil {
 		return nil, err
@@ -125,95 +125,95 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	return r.applyObservation(rec), nil
 }
 
-func restoreCreateRequest(opts RestoreOptions, image *imagestore.ImageRecord, manifest *snapshot.Manifest, cfg config.Config) (vmstore.CreateRequest, error) {
+func restoreCreateRequest(opts RestoreOptions, image *imagestore.ImageRecord, manifest *snapshot.Manifest, cfg config.Config) (vm.CreateRequest, error) {
 	if manifest.Base == nil || image.ID != manifest.Base.ImageID {
-		return vmstore.CreateRequest{}, errors.New("BASE_IMAGE_MISMATCH: snapshot base does not match local image")
+		return vm.CreateRequest{}, errors.New("BASE_IMAGE_MISMATCH: snapshot base does not match local image")
 	}
 	digest := image.RootDisk.SHA256
 	if digest != "" && !strings.HasPrefix(digest, "sha256:") {
 		digest = "sha256:" + digest
 	}
-	imageRef := &vmstore.ImageRef{ID: image.ID, Name: image.Name, RootDisk: image.RootDisk.Path, BootMode: image.Boot.Mode, Digest: manifest.Base.Digest}
-	req := vmstore.CreateRequest{Name: opts.Name, CPUs: opts.CPUs, MemoryBytes: opts.MemoryBytes, Networks: opts.Networks, Image: imageRef, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}
-	var configs []vmstore.StorageConfig
+	imageRef := &vm.ImageRef{ID: image.ID, Name: image.Name, RootDisk: image.RootDisk.Path, BootMode: image.Boot.Mode, Digest: manifest.Base.Digest}
+	req := vm.CreateRequest{Name: opts.Name, CPUs: opts.CPUs, MemoryBytes: opts.MemoryBytes, Networks: opts.Networks, Image: imageRef, RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir}
+	var configs []vm.StorageConfig
 	switch manifest.Base.Family {
 	case "cloudimg":
-		if digest != manifest.Base.Digest || image.RootDisk.Format != vmstore.FormatQCOW2 {
-			return vmstore.CreateRequest{}, errors.New("BASE_IMAGE_MISMATCH: local cloud image digest or format differs")
+		if digest != manifest.Base.Digest || image.RootDisk.Format != vm.FormatQCOW2 {
+			return vm.CreateRequest{}, errors.New("BASE_IMAGE_MISMATCH: local cloud image digest or format differs")
 		}
 		req.RootDisk = image.RootDisk.Path
 		req.Firmware = image.Boot.Firmware
 	case "oci":
 		if image.OCI == nil {
-			return vmstore.CreateRequest{}, errors.New("BASE_IMAGE_MISMATCH: local image has no OCI metadata")
+			return vm.CreateRequest{}, errors.New("BASE_IMAGE_MISMATCH: local image has no OCI metadata")
 		}
 		manifestDigest := image.OCI.DigestRef
 		if _, value, found := strings.Cut(manifestDigest, "@"); found {
 			manifestDigest = value
 		}
 		if manifestDigest != manifest.Base.Digest {
-			return vmstore.CreateRequest{}, errors.New("BASE_IMAGE_MISMATCH: local OCI manifest differs")
+			return vm.CreateRequest{}, errors.New("BASE_IMAGE_MISMATCH: local OCI manifest differs")
 		}
 		req.Kernel = image.Boot.Kernel
 		req.Initrd = image.Boot.Initrd
 		req.KernelCmdline = image.Boot.Cmdline
 		imageRef.LayerDigests = append([]string(nil), manifest.Base.LayerDigests...)
 		if len(image.OCI.Layers) != len(manifest.Base.LayerDigests) {
-			return vmstore.CreateRequest{}, errors.New("BASE_IMAGE_MISMATCH: OCI layer count differs")
+			return vm.CreateRequest{}, errors.New("BASE_IMAGE_MISMATCH: OCI layer count differs")
 		}
 		for i, layer := range image.OCI.Layers {
 			if layer.Digest != manifest.Base.LayerDigests[i] || layer.EROFS == nil {
-				return vmstore.CreateRequest{}, errors.New("BASE_IMAGE_MISMATCH: OCI layer digest differs")
+				return vm.CreateRequest{}, errors.New("BASE_IMAGE_MISMATCH: OCI layer digest differs")
 			}
 			serial := layer.Serial
 			if serial == "" {
-				serial = vmstore.LayerSerial(i)
+				serial = vm.LayerSerial(i)
 			}
-			configs = append(configs, vmstore.StorageConfig{ID: vmstore.LayerID(i), Role: vmstore.StorageRoleLayer, Path: layer.EROFS.Path, Readonly: true, Format: vmstore.FormatRaw, Filesystem: vmstore.FilesystemEROFS, Serial: serial, SourceLayer: layer.Digest, VirtualSizeBytes: layer.EROFS.SizeBytes})
+			configs = append(configs, vm.StorageConfig{ID: vm.LayerID(i), Role: vm.StorageRoleLayer, Path: layer.EROFS.Path, Readonly: true, Format: vm.FormatRaw, Filesystem: vm.FilesystemEROFS, Serial: serial, SourceLayer: layer.Digest, VirtualSizeBytes: layer.EROFS.SizeBytes})
 		}
 	default:
-		return vmstore.CreateRequest{}, fmt.Errorf("unsupported snapshot base family %q", manifest.Base.Family)
+		return vm.CreateRequest{}, fmt.Errorf("unsupported snapshot base family %q", manifest.Base.Family)
 	}
 
 	diskIDs := make(map[string]struct{}, len(manifest.Disks))
 	cowCount := 0
 	for _, disk := range manifest.Disks {
 		if disk.ID == "" || disk.ID == "." || disk.ID == ".." || strings.ContainsAny(disk.ID, `/\\`) {
-			return vmstore.CreateRequest{}, fmt.Errorf("DISK_CONFIG_INVALID: unsafe snapshot disk id %q", disk.ID)
+			return vm.CreateRequest{}, fmt.Errorf("DISK_CONFIG_INVALID: unsafe snapshot disk id %q", disk.ID)
 		}
 		if _, exists := diskIDs[disk.ID]; exists {
-			return vmstore.CreateRequest{}, fmt.Errorf("DISK_CONFIG_INVALID: duplicate snapshot disk id %q", disk.ID)
+			return vm.CreateRequest{}, fmt.Errorf("DISK_CONFIG_INVALID: duplicate snapshot disk id %q", disk.ID)
 		}
 		diskIDs[disk.ID] = struct{}{}
-		role := vmstore.StorageRole(disk.Role)
-		if role != vmstore.StorageRoleCOW && role != vmstore.StorageRoleData {
-			return vmstore.CreateRequest{}, errors.New("DISK_CONFIG_INVALID: snapshot contains non-writable payload")
+		role := vm.StorageRole(disk.Role)
+		if role != vm.StorageRoleCOW && role != vm.StorageRoleData {
+			return vm.CreateRequest{}, errors.New("DISK_CONFIG_INVALID: snapshot contains non-writable payload")
 		}
-		storageConfig := vmstore.StorageConfig{ID: disk.ID, Role: role, Format: disk.Format, Filesystem: disk.Filesystem, VirtualSizeBytes: disk.VirtualSizeBytes}
-		if role == vmstore.StorageRoleCOW {
+		storageConfig := vm.StorageConfig{ID: disk.ID, Role: role, Format: disk.Format, Filesystem: disk.Filesystem, VirtualSizeBytes: disk.VirtualSizeBytes}
+		if role == vm.StorageRoleCOW {
 			cowCount++
-			storageConfig.Base = &vmstore.StorageBase{Family: manifest.Base.Family, ImageID: image.ID, Digest: manifest.Base.Digest, Format: manifest.Base.Format, Path: image.RootDisk.Path, LayerDigests: append([]string(nil), manifest.Base.LayerDigests...)}
-			if manifest.Base.Family == vmstore.BaseFamilyOCI {
-				storageConfig.Serial = vmstore.StorageSerialCOW
+			storageConfig.Base = &vm.StorageBase{Family: manifest.Base.Family, ImageID: image.ID, Digest: manifest.Base.Digest, Format: manifest.Base.Format, Path: image.RootDisk.Path, LayerDigests: append([]string(nil), manifest.Base.LayerDigests...)}
+			if manifest.Base.Family == vm.BaseFamilyOCI {
+				storageConfig.Serial = vm.StorageSerialCOW
 			}
 		}
 		configs = append(configs, storageConfig)
 	}
 	if cowCount != 1 {
-		return vmstore.CreateRequest{}, fmt.Errorf("DISK_CONFIG_INVALID: snapshot contains %d root COW disks, want 1", cowCount)
+		return vm.CreateRequest{}, fmt.Errorf("DISK_CONFIG_INVALID: snapshot contains %d root COW disks, want 1", cowCount)
 	}
 	req.StorageConfigs = configs
 	return req, nil
 }
 
-func restoreWritableDisks(ctx context.Context, rec *vmstore.VMRecord, snapshotDir string, manifest *snapshot.Manifest, qemuImg *disk.QEMUImg) error {
+func restoreWritableDisks(ctx context.Context, rec *vm.VMRecord, snapshotDir string, manifest *snapshot.Manifest, qemuImg *disk.QEMUImg) error {
 	byID := make(map[string]snapshot.DiskManifest, len(manifest.Disks))
 	for _, disk := range manifest.Disks {
 		byID[disk.ID] = disk
 	}
 	for _, target := range rec.StorageConfigs {
 		role := target.EffectiveRole()
-		if role != vmstore.StorageRoleCOW && role != vmstore.StorageRoleData {
+		if role != vm.StorageRoleCOW && role != vm.StorageRoleData {
 			continue
 		}
 		manifestDisk, found := byID[target.ID]

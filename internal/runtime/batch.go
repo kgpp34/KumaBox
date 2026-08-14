@@ -5,7 +5,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/batch"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 // BatchOptions controls the amount of parallel lifecycle work. A zero
@@ -19,8 +19,8 @@ type BatchFailure = batch.Failure
 
 // BatchResult is the stable, input-ordered outcome of a best-effort batch.
 type BatchResult struct {
-	Succeeded []*vmstore.VMRecord `json:"succeeded"`
-	Failed    []BatchFailure      `json:"failed,omitempty"`
+	Succeeded []*vm.VMRecord `json:"succeeded"`
+	Failed    []BatchFailure `json:"failed,omitempty"`
 	err       error
 }
 
@@ -41,7 +41,7 @@ func (r *Runtime) StopVMsContext(
 	stopOpts backend.StopOptions,
 	batchOpts BatchOptions,
 ) BatchResult {
-	return runVMBatch(ctx, refs, batchOpts, func(ctx context.Context, ref string) (*vmstore.VMRecord, error) {
+	return runVMBatch(ctx, refs, batchOpts, func(ctx context.Context, ref string) (*vm.VMRecord, error) {
 		return r.StopVMContext(ctx, ref, stopOpts)
 	})
 }
@@ -58,7 +58,7 @@ func (r *Runtime) ResumeVMs(ctx context.Context, refs []string, opts BatchOption
 
 // DeleteVMsContext deletes each distinct VM reference using bounded concurrency.
 func (r *Runtime) DeleteVMsContext(ctx context.Context, refs []string, force bool, opts BatchOptions) BatchResult {
-	return runVMBatch(ctx, refs, opts, func(ctx context.Context, ref string) (*vmstore.VMRecord, error) {
+	return runVMBatch(ctx, refs, opts, func(ctx context.Context, ref string) (*vm.VMRecord, error) {
 		return r.DeleteVMContext(ctx, ref, force)
 	})
 }
@@ -67,14 +67,14 @@ func runVMBatch(
 	ctx context.Context,
 	refs []string,
 	opts BatchOptions,
-	fn func(context.Context, string) (*vmstore.VMRecord, error),
+	fn func(context.Context, string) (*vm.VMRecord, error),
 ) BatchResult {
 	refs = batch.Distinct(refs)
 	if len(refs) == 0 {
-		return BatchResult{Succeeded: []*vmstore.VMRecord{}}
+		return BatchResult{Succeeded: []*vm.VMRecord{}}
 	}
 	result := batch.Run(ctx, refs, batch.Options{Concurrency: opts.Concurrency}, "VM",
-		func(ctx context.Context, _ int, ref string) (*vmstore.VMRecord, error) {
+		func(ctx context.Context, _ int, ref string) (*vm.VMRecord, error) {
 			return fn(ctx, ref)
 		})
 	return BatchResult{Succeeded: result.Succeeded, Failed: result.Failed, err: result.Err()}

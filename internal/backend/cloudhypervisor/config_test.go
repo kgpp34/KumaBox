@@ -10,12 +10,12 @@ import (
 
 	"github.com/kumabox/kumabox/internal/config"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestRenderConfigWritesResolvedPaths(t *testing.T) {
 	dir := t.TempDir()
-	rec := &vmstore.VMRecord{
+	rec := &vm.VMRecord{
 		ID:       "kb_test",
 		Name:     "test",
 		RootDisk: "/fixtures/base.qcow2",
@@ -65,7 +65,7 @@ func TestRenderConfigWritesResolvedPaths(t *testing.T) {
 
 func TestRenderConfigSupportsFirmwareBoot(t *testing.T) {
 	dir := t.TempDir()
-	rec := &vmstore.VMRecord{
+	rec := &vm.VMRecord{
 		ID:       "kb_uefi",
 		Name:     "uefi",
 		RootDisk: "/fixtures/ubuntu.img",
@@ -73,7 +73,7 @@ func TestRenderConfigSupportsFirmwareBoot(t *testing.T) {
 		RunDir:   filepath.Join(dir, "run", "vms", "kb_uefi"),
 		LogDir:   filepath.Join(dir, "logs", "vms", "kb_uefi"),
 		Config:   filepath.Join(dir, "run", "vms", "kb_uefi", "cloud-hypervisor.json"),
-		Metadata: &vmstore.Metadata{
+		Metadata: &vm.Metadata{
 			Type:       "nocloud",
 			CidataDir:  filepath.Join(dir, "run", "vms", "kb_uefi", "cidata"),
 			CidataDisk: filepath.Join(dir, "run", "vms", "kb_uefi", "cidata.img"),
@@ -128,15 +128,15 @@ func TestRenderConfigSupportsFirmwareBoot(t *testing.T) {
 }
 
 func TestRenderConfigEnablesBackingFilesOnlyForWritableQcow2(t *testing.T) {
-	rec := &vmstore.VMRecord{
+	rec := &vm.VMRecord{
 		ID:       "kb_overlay",
 		Name:     "overlay",
 		Firmware: "/fixtures/CLOUDHV.fd",
 		RunDir:   "/run/kumabox/vms/kb_overlay",
 		LogDir:   "/var/log/kumabox/vms/kb_overlay",
-		StorageConfigs: []vmstore.StorageConfig{
-			{ID: "root", Role: vmstore.StorageRoleCOW, Path: "/data/root.overlay.qcow2", Format: "qcow2"},
-			{ID: "layer", Role: vmstore.StorageRoleLayer, Path: "/data/layer.erofs", Readonly: true, Format: "raw"},
+		StorageConfigs: []vm.StorageConfig{
+			{ID: "root", Role: vm.StorageRoleCOW, Path: "/data/root.overlay.qcow2", Format: "qcow2"},
+			{ID: "layer", Role: vm.StorageRoleLayer, Path: "/data/layer.erofs", Readonly: true, Format: "raw"},
 		},
 	}
 
@@ -154,7 +154,7 @@ func TestRenderConfigEnablesBackingFilesOnlyForWritableQcow2(t *testing.T) {
 
 func TestRenderConfigSupportsOCIStorageDisks(t *testing.T) {
 	dir := t.TempDir()
-	rec := &vmstore.VMRecord{
+	rec := &vm.VMRecord{
 		ID:            "kb_oci",
 		Name:          "oci",
 		Kernel:        "/fixtures/vmlinuz",
@@ -163,7 +163,7 @@ func TestRenderConfigSupportsOCIStorageDisks(t *testing.T) {
 		RunDir:        filepath.Join(dir, "run", "vms", "kb_oci"),
 		LogDir:        filepath.Join(dir, "logs", "vms", "kb_oci"),
 		Config:        filepath.Join(dir, "run", "vms", "kb_oci", "cloud-hypervisor.json"),
-		StorageConfigs: []vmstore.StorageConfig{
+		StorageConfigs: []vm.StorageConfig{
 			{
 				ID:        "layer0",
 				Type:      "layer",
@@ -229,7 +229,7 @@ func TestRenderConfigSupportsOCIStorageDisks(t *testing.T) {
 }
 
 func TestRenderConfigUsesConfiguredDiskIOPolicy(t *testing.T) {
-	rec := &vmstore.VMRecord{
+	rec := &vm.VMRecord{
 		ID:     "kb_disk_policy",
 		Name:   "disk-policy",
 		CPUs:   4,
@@ -237,8 +237,8 @@ func TestRenderConfigUsesConfiguredDiskIOPolicy(t *testing.T) {
 		Initrd: "/fixtures/initrd.img",
 		RunDir: "/run/kumabox/vms/kb_disk_policy",
 		LogDir: "/var/log/kumabox/vms/kb_disk_policy",
-		StorageConfigs: []vmstore.StorageConfig{{
-			ID: "data", Path: "/data/data.raw", Format: vmstore.FormatRaw,
+		StorageConfigs: []vm.StorageConfig{{
+			ID: "data", Path: "/data/data.raw", Format: vm.FormatRaw,
 			DirectIO: boolPtr(false),
 		}},
 	}
@@ -278,7 +278,7 @@ func boolPtr(value bool) *bool { return &value }
 
 func TestRenderConfigIncludesNetworkDevice(t *testing.T) {
 	dir := t.TempDir()
-	rec := &vmstore.VMRecord{
+	rec := &vm.VMRecord{
 		ID:       "kb_net",
 		Name:     "net",
 		RootDisk: "/fixtures/ubuntu.img",
@@ -287,7 +287,7 @@ func TestRenderConfigIncludesNetworkDevice(t *testing.T) {
 		RunDir:   filepath.Join(dir, "run", "vms", "kb_net"),
 		LogDir:   filepath.Join(dir, "logs", "vms", "kb_net"),
 		Config:   filepath.Join(dir, "run", "vms", "kb_net", "cloud-hypervisor.json"),
-		Metadata: &vmstore.Metadata{
+		Metadata: &vm.Metadata{
 			Type:       "nocloud",
 			CidataDir:  filepath.Join(dir, "run", "vms", "kb_net", "cidata"),
 			CidataDisk: filepath.Join(dir, "run", "vms", "kb_net", "cidata.img"),
@@ -358,7 +358,7 @@ func TestRenderConfigIncludesNetworkDevice(t *testing.T) {
 }
 
 func TestConfigGroupsMultipleNetworkValuesUnderOneOption(t *testing.T) {
-	rec := &vmstore.VMRecord{
+	rec := &vm.VMRecord{
 		ID:       "kb_multi_net",
 		Name:     "multi-net",
 		RootDisk: "/fixtures/ubuntu.img",
@@ -387,7 +387,7 @@ func TestConfigGroupsMultipleNetworkValuesUnderOneOption(t *testing.T) {
 
 func TestRenderConfigRejectsInvalidNetworkQueues(t *testing.T) {
 	dir := t.TempDir()
-	rec := &vmstore.VMRecord{
+	rec := &vm.VMRecord{
 		ID:       "kb_bad_queue",
 		Name:     "bad-queue",
 		RootDisk: "/fixtures/ubuntu.img",
@@ -427,7 +427,7 @@ func TestValidateConfigRejectsIncompleteLaunchPlan(t *testing.T) {
 
 func TestRenderConfigSkipsCidataAfterFirstBoot(t *testing.T) {
 	dir := t.TempDir()
-	rec := &vmstore.VMRecord{
+	rec := &vm.VMRecord{
 		ID:          "kb_uefi",
 		Name:        "uefi",
 		RootDisk:    "/fixtures/ubuntu.img",
@@ -436,7 +436,7 @@ func TestRenderConfigSkipsCidataAfterFirstBoot(t *testing.T) {
 		LogDir:      filepath.Join(dir, "logs", "vms", "kb_uefi"),
 		Config:      filepath.Join(dir, "run", "vms", "kb_uefi", "cloud-hypervisor.json"),
 		FirstBooted: true,
-		Metadata: &vmstore.Metadata{
+		Metadata: &vm.Metadata{
 			Type:       "nocloud",
 			CidataDir:  filepath.Join(dir, "run", "vms", "kb_uefi", "cidata"),
 			CidataDisk: filepath.Join(dir, "run", "vms", "kb_uefi", "cidata.img"),

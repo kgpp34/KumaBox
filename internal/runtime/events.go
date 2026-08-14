@@ -7,22 +7,22 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 type eventRecord struct {
-	Time          time.Time             `json:"time"`
-	Type          string                `json:"type"`
-	VMID          string                `json:"vmId"`
-	VMName        string                `json:"vmName"`
-	State         vmstore.VMState       `json:"state"`
-	ObservedState vmstore.ObservedState `json:"observedState"`
-	Reason        string                `json:"reason,omitempty"`
-	PID           int                   `json:"pid,omitempty"`
-	APISocket     string                `json:"apiSocket,omitempty"`
+	Time          time.Time        `json:"time"`
+	Type          string           `json:"type"`
+	VMID          string           `json:"vmId"`
+	VMName        string           `json:"vmName"`
+	State         vm.VMState       `json:"state"`
+	ObservedState vm.ObservedState `json:"observedState"`
+	Reason        string           `json:"reason,omitempty"`
+	PID           int              `json:"pid,omitempty"`
+	APISocket     string           `json:"apiSocket,omitempty"`
 }
 
-func writeVMEvent(rec *vmstore.VMRecord, eventType string, obs vmstore.Observation) (err error) {
+func writeVMEvent(rec *vm.VMRecord, eventType string, obs vm.Observation) (err error) {
 	if rec.LogDir == "" {
 		return nil
 	}

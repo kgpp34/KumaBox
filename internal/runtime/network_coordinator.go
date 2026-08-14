@@ -8,7 +8,7 @@ import (
 	"time"
 
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 // networkCoordinator owns host-side network allocation, provider state, and
@@ -40,7 +40,7 @@ type recoveredNetwork struct {
 
 const networkRollbackTimeout = 30 * time.Second
 
-func (r *networkCoordinator) ensureNetwork(ctx context.Context, rec *vmstore.VMRecord) error {
+func (r *networkCoordinator) ensureNetwork(ctx context.Context, rec *vm.VMRecord) error {
 	if rec == nil || len(rec.NetworkConfigs) == 0 {
 		return nil
 	}
@@ -113,7 +113,7 @@ func (r *networkCoordinator) repairNetworkRecord(
 
 func (r *networkCoordinator) networkRecoveryError(
 	ctx context.Context,
-	rec *vmstore.VMRecord,
+	rec *vm.VMRecord,
 	config kbnetwork.Config,
 	recoveryErr error,
 	recovered []recoveredNetwork,
@@ -129,7 +129,7 @@ func (r *networkCoordinator) networkRecoveryError(
 
 func (r *networkCoordinator) rollbackRecoveredNetworks(
 	ctx context.Context,
-	rec *vmstore.VMRecord,
+	rec *vm.VMRecord,
 	recovered []recoveredNetwork,
 ) error {
 	var rollbackErrs []error

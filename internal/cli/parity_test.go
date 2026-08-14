@@ -13,7 +13,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestClassifyImageSource(t *testing.T) {
@@ -82,7 +82,7 @@ func TestDebugLaunchIsSideEffectFree(t *testing.T) {
 	image, err := imagestore.New(root).Create(imagestore.CreateRequest{
 		Name: "debug-image", Source: imagestore.Source{Type: "test", URI: "source.qcow2"},
 		RootDisk: imagestore.RootDisk{
-			Path: "/images/source.qcow2", Format: vmstore.FormatQCOW2,
+			Path: "/images/source.qcow2", Format: vm.FormatQCOW2,
 			VirtualSizeBytes: 1 << 20, SHA256: strings.Repeat("a", 64),
 		},
 		Boot: imagestore.Boot{Mode: "uefi", Firmware: "/firmware.fd"},
@@ -118,7 +118,7 @@ func TestDebugLaunchIsSideEffectFree(t *testing.T) {
 	if result.VM.MemoryBytes != 256<<20 || len(result.VM.Networks) != 1 || result.VM.Networks[0] != "none" {
 		t.Fatalf("preview VM = %+v", result.VM)
 	}
-	records, err := vmstore.New(root).List()
+	records, err := vm.New(root).List()
 	if err != nil || len(records) != 0 {
 		t.Fatalf("persisted VMs = %+v, err = %v", records, err)
 	}

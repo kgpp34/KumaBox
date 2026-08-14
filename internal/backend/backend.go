@@ -10,19 +10,19 @@ import (
 	"time"
 
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 // StateController exposes live VMM state transitions that do not create or
 // terminate the backend process.
 type StateController interface {
-	PauseVM(context.Context, *vmstore.VMRecord) error
-	ResumeVM(context.Context, *vmstore.VMRecord) error
+	PauseVM(context.Context, *vm.VMRecord) error
+	ResumeVM(context.Context, *vm.VMRecord) error
 }
 
 // ConsoleController opens the live guest console stream for an interactive VM.
 type ConsoleController interface {
-	OpenConsole(context.Context, *vmstore.VMRecord) (io.ReadWriteCloser, error)
+	OpenConsole(context.Context, *vm.VMRecord) (io.ReadWriteCloser, error)
 }
 
 // DiskSpec identifies an externally owned raw disk to hot-plug.
@@ -43,15 +43,15 @@ type AttachedDisk struct {
 // DiskController is implemented by backends that support runtime virtio-blk
 // hotplug. The backing file is never owned by the controller.
 type DiskController interface {
-	AttachDisk(context.Context, *vmstore.VMRecord, DiskSpec) (AttachedDisk, error)
-	DetachDisk(context.Context, *vmstore.VMRecord, string) error
-	ListDisks(context.Context, *vmstore.VMRecord) ([]AttachedDisk, error)
+	AttachDisk(context.Context, *vm.VMRecord, DiskSpec) (AttachedDisk, error)
+	DetachDisk(context.Context, *vm.VMRecord, string) error
+	ListDisks(context.Context, *vm.VMRecord) ([]AttachedDisk, error)
 }
 
 // NetworkController changes virtio-net devices on a running VM.
 type NetworkController interface {
-	AttachNetwork(context.Context, *vmstore.VMRecord, kbnetwork.Config) error
-	DetachNetwork(context.Context, *vmstore.VMRecord, kbnetwork.Config) error
+	AttachNetwork(context.Context, *vm.VMRecord, kbnetwork.Config) error
+	DetachNetwork(context.Context, *vm.VMRecord, kbnetwork.Config) error
 }
 
 type FilesystemSpec struct {
@@ -60,17 +60,17 @@ type FilesystemSpec struct {
 }
 type AttachedFilesystem struct{ ID, Tag, Socket string }
 type FilesystemController interface {
-	AttachFilesystem(context.Context, *vmstore.VMRecord, FilesystemSpec) (AttachedFilesystem, error)
-	DetachFilesystem(context.Context, *vmstore.VMRecord, string) error
-	ListFilesystems(context.Context, *vmstore.VMRecord) ([]AttachedFilesystem, error)
+	AttachFilesystem(context.Context, *vm.VMRecord, FilesystemSpec) (AttachedFilesystem, error)
+	DetachFilesystem(context.Context, *vm.VMRecord, string) error
+	ListFilesystems(context.Context, *vm.VMRecord) ([]AttachedFilesystem, error)
 }
 
 type PCIDeviceSpec struct{ PCI, ID string }
 type AttachedPCIDevice struct{ ID, PCI string }
 type PCIDeviceController interface {
-	AttachPCIDevice(context.Context, *vmstore.VMRecord, PCIDeviceSpec) (AttachedPCIDevice, error)
-	DetachPCIDevice(context.Context, *vmstore.VMRecord, string) error
-	ListPCIDevices(context.Context, *vmstore.VMRecord) ([]AttachedPCIDevice, error)
+	AttachPCIDevice(context.Context, *vm.VMRecord, PCIDeviceSpec) (AttachedPCIDevice, error)
+	DetachPCIDevice(context.Context, *vm.VMRecord, string) error
+	ListPCIDevices(context.Context, *vm.VMRecord) ([]AttachedPCIDevice, error)
 }
 
 // DeviceState is the backend's live view of runtime-hotplugged devices.
@@ -82,13 +82,13 @@ type DeviceState struct {
 
 // DeviceInspector reads live device state without changing the VM.
 type DeviceInspector interface {
-	InspectDevices(context.Context, *vmstore.VMRecord) (DeviceState, error)
+	InspectDevices(context.Context, *vm.VMRecord) (DeviceState, error)
 }
 
 // NativeSnapshotter captures backend-owned memory, device, and VM state into
 // an existing empty directory while the VM is paused.
 type NativeSnapshotter interface {
-	SnapshotVM(context.Context, *vmstore.VMRecord, string) error
+	SnapshotVM(context.Context, *vm.VMRecord, string) error
 }
 
 // NativeRestorer recreates a backend process from validated native state.
@@ -96,13 +96,13 @@ type NativeSnapshotter interface {
 // state transitions; implementations own backend-specific config patching and
 // the restore/resume API sequence.
 type NativeRestorer interface {
-	RestoreVM(context.Context, *vmstore.VMRecord, string, string) (*StartResult, error)
+	RestoreVM(context.Context, *vm.VMRecord, string, string) (*StartResult, error)
 }
 
 // NativeCloner restores native state into a newly allocated VM identity and
 // replaces snapshot network devices before vCPUs resume.
 type NativeCloner interface {
-	CloneVM(context.Context, *vmstore.VMRecord, string, string) (*StartResult, error)
+	CloneVM(context.Context, *vm.VMRecord, string, string) (*StartResult, error)
 }
 
 // NativeHost describes host and backend properties that constrain whether a
@@ -120,7 +120,7 @@ type NativeHost struct {
 // NativeHostInspector reports the compatibility boundary for native backend
 // state captured or restored on the current host.
 type NativeHostInspector interface {
-	InspectNativeHost(context.Context, *vmstore.VMRecord) (NativeHost, error)
+	InspectNativeHost(context.Context, *vm.VMRecord) (NativeHost, error)
 }
 
 // Lifecycle is the backend contract required by runtime.
@@ -128,10 +128,10 @@ type NativeHostInspector interface {
 // Implementations must make ObserveVM cheap and side-effect free because runtime
 // calls it during inspect/list reconciliation.
 type Lifecycle interface {
-	RenderConfig(*vmstore.VMRecord) error
-	StartVM(*vmstore.VMRecord) (*StartResult, error)
-	StopVM(*vmstore.VMRecord, StopOptions) (*StopResult, error)
-	ObserveVM(*vmstore.VMRecord) vmstore.Observation
+	RenderConfig(*vm.VMRecord) error
+	StartVM(*vm.VMRecord) (*StartResult, error)
+	StopVM(*vm.VMRecord, StopOptions) (*StopResult, error)
+	ObserveVM(*vm.VMRecord) vm.Observation
 }
 
 // StartResult contains process identity returned after a successful start.

@@ -8,20 +8,20 @@ import (
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/metering"
 	"github.com/kumabox/kumabox/internal/operation"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 // PauseVM pauses a running VM while holding its cross-process operation lock.
-func (r *Runtime) PauseVM(ctx context.Context, ref string) (*vmstore.VMRecord, error) {
-	return r.transitionVMState(ctx, ref, vmstore.StatePaused)
+func (r *Runtime) PauseVM(ctx context.Context, ref string) (*vm.VMRecord, error) {
+	return r.transitionVMState(ctx, ref, vm.StatePaused)
 }
 
 // ResumeVM resumes a paused VM while holding its cross-process operation lock.
-func (r *Runtime) ResumeVM(ctx context.Context, ref string) (*vmstore.VMRecord, error) {
-	return r.transitionVMState(ctx, ref, vmstore.StateRunning)
+func (r *Runtime) ResumeVM(ctx context.Context, ref string) (*vm.VMRecord, error) {
+	return r.transitionVMState(ctx, ref, vm.StateRunning)
 }
 
-func (r *Runtime) transitionVMState(ctx context.Context, ref string, target vmstore.VMState) (result *vmstore.VMRecord, resultErr error) {
+func (r *Runtime) transitionVMState(ctx context.Context, ref string, target vm.VMState) (result *vm.VMRecord, resultErr error) {
 	mutation, err := r.resourceGuard.BeginMutation(ctx)
 	if err != nil {
 		return nil, err
@@ -54,29 +54,29 @@ func (r *Runtime) transitionVMState(ctx context.Context, ref string, target vmst
 	}
 
 	switch target {
-	case vmstore.StatePaused:
-		if observed.ObservedState == vmstore.ObservedStatePaused {
+	case vm.StatePaused:
+		if observed.ObservedState == vm.ObservedStatePaused {
 			updated, persistErr := r.persistLiveState(observed.ID, target)
 			if persistErr != nil {
 				return nil, persistErr
 			}
 			return r.applyObservation(updated), nil
 		}
-		if observed.ObservedState != vmstore.ObservedStateRunning {
+		if observed.ObservedState != vm.ObservedStateRunning {
 			return nil, fmt.Errorf("VM_NOT_RUNNING: VM %s observed state is %s", observed.Name, observed.ObservedState)
 		}
 		if err := controller.PauseVM(ctx, observed); err != nil {
 			return nil, fmt.Errorf("pause VM %s: %w", observed.Name, err)
 		}
-	case vmstore.StateRunning:
-		if observed.ObservedState == vmstore.ObservedStateRunning {
+	case vm.StateRunning:
+		if observed.ObservedState == vm.ObservedStateRunning {
 			updated, persistErr := r.persistLiveState(observed.ID, target)
 			if persistErr != nil {
 				return nil, persistErr
 			}
 			return r.applyObservation(updated), nil
 		}
-		if observed.ObservedState != vmstore.ObservedStatePaused {
+		if observed.ObservedState != vm.ObservedStatePaused {
 			return nil, fmt.Errorf("VM_NOT_PAUSED: VM %s observed state is %s", observed.Name, observed.ObservedState)
 		}
 		if err := controller.ResumeVM(ctx, observed); err != nil {
@@ -90,22 +90,22 @@ func (r *Runtime) transitionVMState(ctx context.Context, ref string, target vmst
 	if err != nil {
 		return nil, err
 	}
-	if target == vmstore.StatePaused {
+	if target == vm.StatePaused {
 		r.recordComputeStop(ctx, updated, metering.ReasonPause)
 	} else {
 		r.recordComputeStart(ctx, updated, metering.ReasonResume)
 	}
-	expected := vmstore.ObservedStatePaused
+	expected := vm.ObservedStatePaused
 	eventType := "backend.pause.completed"
-	if target == vmstore.StateRunning {
-		expected = vmstore.ObservedStateRunning
+	if target == vm.StateRunning {
+		expected = vm.ObservedStateRunning
 		eventType = "backend.resume.completed"
 	}
 	updated = r.applyObservation(updated)
 	if updated.ObservedState != expected {
 		return nil, fmt.Errorf("BACKEND_STATE_MISMATCH: %s succeeded but backend observed state is %s", target, updated.ObservedState)
 	}
-	_ = writeVMEvent(updated, eventType, vmstore.Observation{
+	_ = writeVMEvent(updated, eventType, vm.Observation{
 		State:     expected,
 		Reason:    "VM " + string(target),
 		CheckedAt: time.Now().UTC(),
@@ -113,18 +113,18 @@ func (r *Runtime) transitionVMState(ctx context.Context, ref string, target vmst
 	return updated, nil
 }
 
-func liveStateOperation(target vmstore.VMState) string {
+func liveStateOperation(target vm.VMState) string {
 	switch target {
-	case vmstore.StatePaused:
+	case vm.StatePaused:
 		return operation.KindVMPause
-	case vmstore.StateRunning:
+	case vm.StateRunning:
 		return operation.KindVMResume
 	default:
 		return "vm.state-transition"
 	}
 }
 
-func (r *Runtime) persistLiveState(ref string, state vmstore.VMState) (*vmstore.VMRecord, error) {
+func (r *Runtime) persistLiveState(ref string, state vm.VMState) (*vm.VMRecord, error) {
 	if err := r.vmUpdater.UpdateStates([]string{ref}, state); err != nil {
 		return nil, err
 	}

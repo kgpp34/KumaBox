@@ -8,10 +8,10 @@ import (
 	"github.com/kumabox/kumabox/internal/backend"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/operation"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
-func (r *Runtime) ResizeNetwork(ctx context.Context, ref string, target int) (*vmstore.VMRecord, error) {
+func (r *Runtime) ResizeNetwork(ctx context.Context, ref string, target int) (*vm.VMRecord, error) {
 	mutation, err := r.resourceGuard.BeginMutation(ctx)
 	if err != nil {
 		return nil, err
@@ -38,7 +38,7 @@ func (r *Runtime) ResizeNetwork(ctx context.Context, ref string, target int) (*v
 	if err != nil {
 		return nil, err
 	}
-	if rec.State != vmstore.StateRunning {
+	if rec.State != vm.StateRunning {
 		return nil, fmt.Errorf("VM must be running")
 	}
 	opID, err := r.beginOperation(ctx, operation.KindNetworkResize, rec.ID)
@@ -51,7 +51,7 @@ func (r *Runtime) ResizeNetwork(ctx context.Context, ref string, target int) (*v
 	return updated, errors.Join(opErr, inspectErr)
 }
 
-func (r *Runtime) resizeNetworksLocked(ctx context.Context, controller backend.NetworkController, rec *vmstore.VMRecord, target int) error {
+func (r *Runtime) resizeNetworksLocked(ctx context.Context, controller backend.NetworkController, rec *vm.VMRecord, target int) error {
 	current := len(rec.NetworkConfigs)
 	if target == current {
 		return nil

@@ -11,7 +11,7 @@ import (
 	"github.com/kumabox/kumabox/internal/imagestore"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func writeJSON(w io.Writer, value any) error {
@@ -31,7 +31,7 @@ func writeDoctorText(w io.Writer, report doctor.Report) {
 	}
 }
 
-func writeVMTable(w io.Writer, records []*vmstore.VMRecord) error {
+func writeVMTable(w io.Writer, records []*vm.VMRecord) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintln(tw, "ID\tNAME\tSTATE\tOBSERVED\tBACKEND"); err != nil {
 		return err

@@ -16,7 +16,7 @@ import (
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/reference"
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestNewStoreSetForConfigUsesOneSQLiteEngine(t *testing.T) {
@@ -244,7 +244,7 @@ func assertConvertedRecords(t *testing.T, cfg config.Config) {
 func closeJSONStoreSet(t *testing.T, stores StoreSet) {
 	t.Helper()
 	engines := []interface{ Close() error }{
-		stores.VM.(*vmstore.Store).MetadataEngine(),
+		stores.VM.(*vm.Store).MetadataEngine(),
 		stores.Images.(*imagestore.Store).MetadataEngine(),
 		stores.Snapshots.(*snapshot.Store).MetadataEngine(),
 		stores.OCI.(*ocistore.Store).MetadataEngine(),

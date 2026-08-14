@@ -7,12 +7,12 @@ import (
 	"net/url"
 	"path/filepath"
 
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 // SnapshotVM asks Cloud Hypervisor to write its native paused VM state into
 // destination. Writable disks are captured separately by runtime.
-func (Backend) SnapshotVM(ctx context.Context, rec *vmstore.VMRecord, destination string) error {
+func (Backend) SnapshotVM(ctx context.Context, rec *vm.VMRecord, destination string) error {
 	if rec == nil {
 		return fmt.Errorf("VM record is nil")
 	}

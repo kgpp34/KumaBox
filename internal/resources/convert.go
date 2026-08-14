@@ -26,7 +26,7 @@ import (
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/reference"
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const convertedSuffix = ".converted-"
@@ -411,7 +411,7 @@ func duplicateJSONGeneration(definitions []metajson.Namespace, namespace meta.Na
 
 func metadataJSONDefinitions(rootDir string) []metajson.Namespace {
 	definitions := []metajson.Namespace{
-		vmstore.JSONNamespace(rootDir),
+		vm.JSONNamespace(rootDir),
 		imagestore.JSONNamespace(rootDir),
 		snapshot.JSONNamespace(rootDir),
 	}

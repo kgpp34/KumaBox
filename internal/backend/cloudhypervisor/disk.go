@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/kumabox/kumabox/internal/backend"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const (
@@ -19,7 +19,7 @@ const (
 	cloudHypervisorRaw = "Raw"
 )
 
-func (b Backend) AttachDisk(ctx context.Context, rec *vmstore.VMRecord, spec backend.DiskSpec) (backend.AttachedDisk, error) {
+func (b Backend) AttachDisk(ctx context.Context, rec *vm.VMRecord, spec backend.DiskSpec) (backend.AttachedDisk, error) {
 	if rec == nil {
 		return backend.AttachedDisk{}, errors.New("VM record is nil")
 	}
@@ -60,7 +60,7 @@ func (b Backend) AttachDisk(ctx context.Context, rec *vmstore.VMRecord, spec bac
 	return backend.AttachedDisk{ID: id, Name: spec.Name, Path: spec.Path, ReadOnly: spec.ReadOnly}, nil
 }
 
-func (b Backend) DetachDisk(ctx context.Context, rec *vmstore.VMRecord, name string) error {
+func (b Backend) DetachDisk(ctx context.Context, rec *vm.VMRecord, name string) error {
 	if rec == nil {
 		return errors.New("VM record is nil")
 	}
@@ -81,7 +81,7 @@ func (b Backend) DetachDisk(ctx context.Context, rec *vmstore.VMRecord, name str
 	return fmt.Errorf("disk %q is not attached", name)
 }
 
-func (b Backend) ListDisks(ctx context.Context, rec *vmstore.VMRecord) ([]backend.AttachedDisk, error) {
+func (b Backend) ListDisks(ctx context.Context, rec *vm.VMRecord) ([]backend.AttachedDisk, error) {
 	if rec == nil {
 		return nil, errors.New("VM record is nil")
 	}

@@ -9,16 +9,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 type lifecycleMetrics struct {
 	started time.Time
-	value   vmstore.PerformanceMetrics
+	value   vm.PerformanceMetrics
 }
 
-func newLifecycleMetrics(operation string, started time.Time, rec *vmstore.VMRecord) *lifecycleMetrics {
-	metrics := &lifecycleMetrics{started: started, value: vmstore.PerformanceMetrics{
+func newLifecycleMetrics(operation string, started time.Time, rec *vm.VMRecord) *lifecycleMetrics {
+	metrics := &lifecycleMetrics{started: started, value: vm.PerformanceMetrics{
 		Operation:              operation,
 		CommandStartedAt:       started.UTC(),
 		EnvironmentFingerprint: environmentFingerprint(rec),
@@ -29,7 +29,7 @@ func newLifecycleMetrics(operation string, started time.Time, rec *vmstore.VMRec
 	return metrics
 }
 
-func (m *lifecycleMetrics) bindRecord(rec *vmstore.VMRecord) {
+func (m *lifecycleMetrics) bindRecord(rec *vm.VMRecord) {
 	if rec == nil {
 		return
 	}
@@ -66,11 +66,11 @@ func (m *lifecycleMetrics) markVMMAPIReady(at time.Time) {
 	m.value.ReadyDurationMs = m.value.VMMAPIReadyDurationMs
 }
 
-func (m *lifecycleMetrics) snapshot() vmstore.PerformanceMetrics {
+func (m *lifecycleMetrics) snapshot() vm.PerformanceMetrics {
 	return m.value
 }
 
-func environmentFingerprint(rec *vmstore.VMRecord) string {
+func environmentFingerprint(rec *vm.VMRecord) string {
 	input := struct {
 		GOOS      string
 		GOARCH    string
@@ -97,7 +97,7 @@ func environmentFingerprint(rec *vmstore.VMRecord) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func backendName(rec *vmstore.VMRecord) string {
+func backendName(rec *vm.VMRecord) string {
 	if rec == nil {
 		return ""
 	}

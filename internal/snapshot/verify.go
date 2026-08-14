@@ -10,7 +10,7 @@ import (
 	"slices"
 
 	"github.com/kumabox/kumabox/internal/backend"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 type nativeConfig struct {
@@ -36,7 +36,7 @@ type nativeDeviceManifest struct {
 }
 
 type NativeVerifyTarget struct {
-	VM   *vmstore.VMRecord
+	VM   *vm.VMRecord
 	Host backend.NativeHost
 }
 
@@ -96,7 +96,7 @@ func (s *Store) VerifyNativePayloadRecord(ctx context.Context, rec *Record, host
 
 // VerifyNativeCloneTarget checks the newly allocated clone shape while
 // intentionally allowing new VM paths and network identities.
-func VerifyNativeCloneTarget(ctx context.Context, manifest *Manifest, target *vmstore.VMRecord) error {
+func VerifyNativeCloneTarget(ctx context.Context, manifest *Manifest, target *vm.VMRecord) error {
 	if manifest == nil || target == nil {
 		return errors.New("SNAPSHOT_INCOMPATIBLE: clone target is required")
 	}
@@ -265,7 +265,7 @@ func readNativeConfig(path string) (*nativeConfig, error) {
 	return &cfg, nil
 }
 
-func buildNativeDeviceManifest(rec *vmstore.VMRecord, nativeDir string) (*nativeDeviceManifest, error) {
+func buildNativeDeviceManifest(rec *vm.VMRecord, nativeDir string) (*nativeDeviceManifest, error) {
 	cfg, err := readNativeConfig(filepath.Join(nativeDir, NativeConfigFile))
 	if err != nil {
 		return nil, err
@@ -300,8 +300,8 @@ func buildNativeDeviceManifest(rec *vmstore.VMRecord, nativeDir string) (*native
 				return nil, errors.New("NATIVE_SNAPSHOT_INCOMPATIBLE: cidata disk is writable")
 			}
 			result.Disks = append(result.Disks, StorageDeviceManifest{
-				ID: vmstore.StorageIDCidata, Role: string(vmstore.StorageRoleCidata), Path: nativeDisk.Path,
-				Readonly: nativeDisk.Readonly, Format: vmstore.FormatRaw,
+				ID: vm.StorageIDCidata, Role: string(vm.StorageRoleCidata), Path: nativeDisk.Path,
+				Readonly: nativeDisk.Readonly, Format: vm.FormatRaw,
 			})
 			matched = true
 		}
@@ -336,7 +336,7 @@ func verifyNativeHost(manifest *Manifest, target NativeVerifyTarget) error {
 	return nil
 }
 
-func verifyNativeVM(ctx context.Context, manifest *Manifest, target *vmstore.VMRecord) error {
+func verifyNativeVM(ctx context.Context, manifest *Manifest, target *vm.VMRecord) error {
 	if manifest.Source.VMID != target.ID {
 		return fmt.Errorf("SNAPSHOT_INCOMPATIBLE: snapshot belongs to VM %s", manifest.Source.VMID)
 	}
@@ -349,7 +349,7 @@ func verifyNativeVM(ctx context.Context, manifest *Manifest, target *vmstore.VMR
 	return verifyNativeVMAssets(ctx, manifest, target)
 }
 
-func verifyNativeVMAssets(ctx context.Context, manifest *Manifest, target *vmstore.VMRecord) error {
+func verifyNativeVMAssets(ctx context.Context, manifest *Manifest, target *vm.VMRecord) error {
 	boot, err := buildBootManifest(ctx, target, true)
 	if err != nil {
 		return fmt.Errorf("SNAPSHOT_INCOMPATIBLE: resolve boot assets: %w", err)
@@ -369,9 +369,9 @@ func verifyNativeVMAssets(ctx context.Context, manifest *Manifest, target *vmsto
 		}
 	}
 	if manifest.Base != nil {
-		var targetBase *vmstore.StorageBase
+		var targetBase *vm.StorageBase
 		for _, disk := range target.StorageConfigs {
-			if disk.EffectiveRole() == vmstore.StorageRoleCOW {
+			if disk.EffectiveRole() == vm.StorageRoleCOW {
 				targetBase = disk.Base
 				break
 			}
@@ -383,17 +383,17 @@ func verifyNativeVMAssets(ctx context.Context, manifest *Manifest, target *vmsto
 	return nil
 }
 
-func cloneDevicesMatch(devices *DeviceManifest, target *vmstore.VMRecord) bool {
+func cloneDevicesMatch(devices *DeviceManifest, target *vm.VMRecord) bool {
 	if devices == nil || devices.NICs != len(target.NetworkConfigs) || devices.Vsock != (target.VsockSocket != "") {
 		return false
 	}
-	storageByID := make(map[string]vmstore.StorageConfig, len(target.StorageConfigs))
+	storageByID := make(map[string]vm.StorageConfig, len(target.StorageConfigs))
 	for _, disk := range target.StorageConfigs {
 		storageByID[disk.ID] = disk
 	}
 	matched := 0
 	for _, device := range devices.Disks {
-		if device.Role == string(vmstore.StorageRoleCidata) {
+		if device.Role == string(vm.StorageRoleCidata) {
 			if target.Metadata == nil || target.Metadata.CidataDisk == "" || !device.Readonly {
 				return false
 			}
@@ -408,17 +408,17 @@ func cloneDevicesMatch(devices *DeviceManifest, target *vmstore.VMRecord) bool {
 	return matched == len(target.StorageConfigs)
 }
 
-func targetDevicesMatch(devices *DeviceManifest, target *vmstore.VMRecord) bool {
+func targetDevicesMatch(devices *DeviceManifest, target *vm.VMRecord) bool {
 	if devices.NICs != len(target.NetworkConfigs) || devices.Vsock != (target.VsockSocket != "") {
 		return false
 	}
-	storageByPath := make(map[string]vmstore.StorageConfig, len(target.StorageConfigs))
+	storageByPath := make(map[string]vm.StorageConfig, len(target.StorageConfigs))
 	for _, disk := range target.StorageConfigs {
 		storageByPath[disk.Path] = disk
 	}
 	matchedStorage := 0
 	for _, device := range devices.Disks {
-		if device.Role == string(vmstore.StorageRoleCidata) {
+		if device.Role == string(vm.StorageRoleCidata) {
 			if target.Metadata == nil || target.Metadata.CidataDisk != device.Path || !device.Readonly {
 				return false
 			}

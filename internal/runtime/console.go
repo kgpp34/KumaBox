@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/kumabox/kumabox/internal/backend"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func (r *Runtime) OpenConsole(ctx context.Context, ref string) (io.ReadWriteCloser, error) {
@@ -15,7 +15,7 @@ func (r *Runtime) OpenConsole(ctx context.Context, ref string) (io.ReadWriteClos
 		return nil, err
 	}
 	observed := r.applyObservation(rec)
-	if observed.ObservedState != vmstore.ObservedStateRunning {
+	if observed.ObservedState != vm.ObservedStateRunning {
 		return nil, fmt.Errorf("VM_NOT_RUNNING: VM %s is not running", rec.Name)
 	}
 	controller, ok := r.backend.(backend.ConsoleController)

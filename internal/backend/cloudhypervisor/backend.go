@@ -3,7 +3,7 @@ package cloudhypervisor
 import (
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/config"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 var _ backend.Lifecycle = Backend{}
@@ -32,14 +32,14 @@ func NewBackend(cfg config.Config) Backend {
 	}
 }
 
-func (b Backend) RenderConfig(rec *vmstore.VMRecord) error {
+func (b Backend) RenderConfig(rec *vm.VMRecord) error {
 	return b.renderer.RenderConfig(rec)
 }
 
-func (b Backend) StartVM(rec *vmstore.VMRecord) (*backend.StartResult, error) {
+func (b Backend) StartVM(rec *vm.VMRecord) (*backend.StartResult, error) {
 	return b.starter.StartConfig(rec.Config)
 }
 
-func (b Backend) ObserveVM(rec *vmstore.VMRecord) vmstore.Observation {
+func (b Backend) ObserveVM(rec *vm.VMRecord) vm.Observation {
 	return ObserveVM(rec)
 }

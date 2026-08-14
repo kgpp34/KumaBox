@@ -32,7 +32,7 @@ import (
 	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/ocistore"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const ociCmdlineTemplate = "console=ttyS0 loglevel=3 clocksource=kvm-clock reboot=k panic=1 boot=kumabox-overlay kumabox.layers={{layers}} kumabox.cow={{cow}} kumabox.timeout=10 rw"
@@ -136,7 +136,7 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 			}
 			results[i] = layerBuildResult{
 				layer: imagestore.OCILayer{
-					Index: i, Digest: layer.Digest, Serial: vmstore.LayerSerial(i),
+					Index: i, Digest: layer.Digest, Serial: vm.LayerSerial(i),
 					MediaType: layer.MediaType, SizeBytes: layer.SizeBytes, EROFS: erofs,
 				},
 				kernel: kernel, initrd: initrd,

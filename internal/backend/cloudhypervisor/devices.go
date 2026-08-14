@@ -6,12 +6,12 @@ import (
 	"strings"
 
 	"github.com/kumabox/kumabox/internal/backend"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 // InspectDevices obtains one vm.info snapshot and derives all KumaBox-owned
 // hotplug devices from it.
-func (b Backend) InspectDevices(ctx context.Context, rec *vmstore.VMRecord) (backend.DeviceState, error) {
+func (b Backend) InspectDevices(ctx context.Context, rec *vm.VMRecord) (backend.DeviceState, error) {
 	if rec == nil {
 		return backend.DeviceState{}, errors.New("VM record is nil")
 	}

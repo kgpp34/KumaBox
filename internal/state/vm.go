@@ -8,14 +8,14 @@ import (
 	"time"
 
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 // VMReader contains read-only VM access. Callers that only inspect state
 // should depend on this interface instead of the complete VM mutation API.
 type VMReader interface {
-	Inspect(string) (*vmstore.VMRecord, error)
-	List() ([]*vmstore.VMRecord, error)
+	Inspect(string) (*vm.VMRecord, error)
+	List() ([]*vm.VMRecord, error)
 	RootDir() string
 }
 
@@ -28,29 +28,29 @@ type VMEvents interface {
 
 // VMRecords contains VM record creation and attachment mutations.
 type VMRecords interface {
-	Create(vmstore.CreateRequest) (*vmstore.VMRecord, error)
+	Create(vm.CreateRequest) (*vm.VMRecord, error)
 	Delete(string) error
-	SetNetworkConfigs(string, []kbnetwork.Config) (*vmstore.VMRecord, error)
-	SetAttachedDisks(string, []vmstore.AttachedDisk) (*vmstore.VMRecord, error)
-	SetAttachedFilesystems(string, []vmstore.AttachedFilesystem) (*vmstore.VMRecord, error)
-	SetAttachedPCIDevices(string, []vmstore.AttachedPCIDevice) (*vmstore.VMRecord, error)
+	SetNetworkConfigs(string, []kbnetwork.Config) (*vm.VMRecord, error)
+	SetAttachedDisks(string, []vm.AttachedDisk) (*vm.VMRecord, error)
+	SetAttachedFilesystems(string, []vm.AttachedFilesystem) (*vm.VMRecord, error)
+	SetAttachedPCIDevices(string, []vm.AttachedPCIDevice) (*vm.VMRecord, error)
 }
 
 // VMUpdater contains durable VM record updates. Ordinary state changes use
 // UpdateStates; the remaining methods carry additional lifecycle data.
 type VMUpdater interface {
-	UpdateStates([]string, vmstore.VMState) error
-	MarkStarted(string, int, string) (*vmstore.VMRecord, error)
-	UpdatePerformance(string, vmstore.PerformanceMetrics) (*vmstore.VMRecord, error)
-	CompleteHibernate(string, string) (*vmstore.VMRecord, error)
-	SetError(string, string) (*vmstore.VMRecord, error)
+	UpdateStates([]string, vm.VMState) error
+	MarkStarted(string, int, string) (*vm.VMRecord, error)
+	UpdatePerformance(string, vm.PerformanceMetrics) (*vm.VMRecord, error)
+	CompleteHibernate(string, string) (*vm.VMRecord, error)
+	SetError(string, string) (*vm.VMRecord, error)
 }
 
 // VMRestore contains durable markers for destructive and completed restores.
 type VMRestore interface {
-	BeginRestore(string, string, string) (*vmstore.VMRecord, error)
-	FailRestore(string, string) (*vmstore.VMRecord, error)
-	CompleteRestore(string, int, string, time.Duration, *vmstore.RestoreResult) (*vmstore.VMRecord, error)
+	BeginRestore(string, string, string) (*vm.VMRecord, error)
+	FailRestore(string, string) (*vm.VMRecord, error)
+	CompleteRestore(string, int, string, time.Duration, *vm.RestoreResult) (*vm.VMRecord, error)
 }
 
 // VMState is the complete VM resource state API consumed by the runtime.
@@ -64,4 +64,4 @@ type VMState interface {
 	VMRestore
 }
 
-var _ VMState = (*vmstore.Store)(nil)
+var _ VMState = (*vm.Store)(nil)

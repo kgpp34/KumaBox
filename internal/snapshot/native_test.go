@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/kumabox/kumabox/internal/backend"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestWriteNativeManifestRejectsIncompletePayload(t *testing.T) {
@@ -25,7 +25,7 @@ func TestWriteNativeManifestRejectsIncompletePayload(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(nativeDir, "config.json"), []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = WriteNativeManifest(context.Background(), build, &vmstore.VMRecord{ID: "kb", Name: "vm"}, nil, backend.NativeHost{})
+	_, _, err = WriteNativeManifest(context.Background(), build, &vm.VMRecord{ID: "kb", Name: "vm"}, nil, backend.NativeHost{})
 	if err == nil {
 		t.Fatal("expected incomplete native payload error")
 	}

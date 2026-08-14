@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestPatchRestoreConfigPreservesBackendFields(t *testing.T) {
@@ -27,9 +27,9 @@ func TestPatchRestoreConfigPreservesBackendFields(t *testing.T) {
 	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	rec := &vmstore.VMRecord{
+	rec := &vm.VMRecord{
 		LogDir: "/new/log", VsockSocket: "/new/vsock.sock",
-		StorageConfigs: []vmstore.StorageConfig{{ID: "cow", Path: "/new/cow.raw"}},
+		StorageConfigs: []vm.StorageConfig{{ID: "cow", Path: "/new/cow.raw"}},
 	}
 	if _, err := patchRestoreConfig(path, rec, false); err != nil {
 		t.Fatal(err)
@@ -71,9 +71,9 @@ func TestPatchRestoreConfigUsesTransientCloneTapWithoutChangingGuestIdentity(t *
 	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	rec := &vmstore.VMRecord{
+	rec := &vm.VMRecord{
 		ID:             "kb_1234567890abcdef",
-		StorageConfigs: []vmstore.StorageConfig{{ID: "cow", Path: "/new/cow.raw"}},
+		StorageConfigs: []vm.StorageConfig{{ID: "cow", Path: "/new/cow.raw"}},
 		NetworkConfigs: []kbnetwork.Config{{TAP: "kbtapclone", MAC: "02:00:00:00:00:02"}},
 	}
 	patched, err := patchRestoreConfig(path, rec, true)
@@ -114,7 +114,7 @@ func TestHotSwapCloneNetworksRemovesOldBeforeAddingNew(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := &vmstore.VMRecord{NetworkConfigs: []kbnetwork.Config{{
+	rec := &vm.VMRecord{NetworkConfigs: []kbnetwork.Config{{
 		TAP: "kbtapnew", MAC: "02:00:00:00:00:02", NumQueues: 2, QueueSize: 256,
 	}}}
 	if err := hotSwapCloneNetworks(context.Background(), client, map[string]json.RawMessage{"net": old}, rec); err != nil {

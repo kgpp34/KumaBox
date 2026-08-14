@@ -18,7 +18,7 @@ import (
 	"github.com/kumabox/kumabox/internal/reference"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/state"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 // StoreSet is the complete persisted resource composition used by one
@@ -52,7 +52,7 @@ func NewStoreSetForConfig(cfg config.Config) (StoreSet, error) {
 	if err != nil {
 		return StoreSet{}, fmt.Errorf("open configured metadata backend: %w", err)
 	}
-	vm := vmstore.NewWithEngine(cfg.Runtime.RootDir, engine)
+	vm := vm.NewWithEngine(cfg.Runtime.RootDir, engine)
 	return StoreSet{
 		VM:         vm,
 		Images:     imagestore.NewWithEngine(cfg.Runtime.RootDir, engine),
@@ -102,7 +102,7 @@ func sqliteDefinitions() []metasqlite.Namespace {
 
 // NewStoreSet creates the default JSON-backed resource stores.
 func NewStoreSet(rootDir string) StoreSet {
-	vm := vmstore.New(rootDir)
+	vm := vm.New(rootDir)
 	return StoreSet{
 		VM:         vm,
 		Images:     imagestore.New(rootDir),

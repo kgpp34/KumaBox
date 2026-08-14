@@ -8,12 +8,12 @@ import (
 	"strings"
 
 	"github.com/kumabox/kumabox/internal/backend"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const filesystemIDPrefix = "kumabox-fs-"
 
-func (b Backend) AttachFilesystem(ctx context.Context, rec *vmstore.VMRecord, spec backend.FilesystemSpec) (backend.AttachedFilesystem, error) {
+func (b Backend) AttachFilesystem(ctx context.Context, rec *vm.VMRecord, spec backend.FilesystemSpec) (backend.AttachedFilesystem, error) {
 	if rec == nil {
 		return backend.AttachedFilesystem{}, fmt.Errorf("VM record is nil")
 	}
@@ -43,7 +43,7 @@ func (b Backend) AttachFilesystem(ctx context.Context, rec *vmstore.VMRecord, sp
 	return backend.AttachedFilesystem{ID: id, Tag: spec.Tag, Socket: spec.Socket}, nil
 }
 
-func (b Backend) DetachFilesystem(ctx context.Context, rec *vmstore.VMRecord, tag string) error {
+func (b Backend) DetachFilesystem(ctx context.Context, rec *vm.VMRecord, tag string) error {
 	if rec == nil {
 		return fmt.Errorf("VM record is nil")
 	}
@@ -61,7 +61,7 @@ func (b Backend) DetachFilesystem(ctx context.Context, rec *vmstore.VMRecord, ta
 	return fmt.Errorf("filesystem tag %q is not attached", tag)
 }
 
-func (b Backend) ListFilesystems(ctx context.Context, rec *vmstore.VMRecord) ([]backend.AttachedFilesystem, error) {
+func (b Backend) ListFilesystems(ctx context.Context, rec *vm.VMRecord) ([]backend.AttachedFilesystem, error) {
 	if rec == nil {
 		return nil, fmt.Errorf("VM record is nil")
 	}

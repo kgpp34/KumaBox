@@ -15,7 +15,7 @@ import (
 
 	agentclient "github.com/kumabox/kumabox/internal/agent/client"
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func newExecCommand(opts *rootOptions) *cobra.Command {
@@ -44,7 +44,7 @@ func newExecCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if rec.State != vmstore.StateRunning {
+			if rec.State != vm.StateRunning {
 				return fmt.Errorf("AGENT_NOT_READY: VM %s is not running", rec.Name)
 			}
 			if rec.VsockSocket == "" {

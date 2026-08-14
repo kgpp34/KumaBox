@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestInspectAgentStatusReportsStoppedVM(t *testing.T) {
@@ -22,10 +22,10 @@ func TestInspectAgentStatusReportsStoppedVM(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	view := inspectAgentStatus(context.Background(), &vmstore.VMRecord{
+	view := inspectAgentStatus(context.Background(), &vm.VMRecord{
 		ID:     "kb_test",
 		Name:   "stopped",
-		State:  vmstore.StateStopped,
+		State:  vm.StateStopped,
 		LogDir: logDir,
 	}, 0)
 	if view.Ready || view.Readiness != "vm-not-running" {

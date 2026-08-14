@@ -10,7 +10,7 @@ import (
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/config"
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const (
@@ -192,7 +192,7 @@ func newInspectCommand(opts *rootOptions) *cobra.Command {
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), rec)
 			}
-			return writeVMTable(cmd.OutOrStdout(), []*vmstore.VMRecord{rec})
+			return writeVMTable(cmd.OutOrStdout(), []*vm.VMRecord{rec})
 		},
 	}
 
@@ -350,11 +350,11 @@ func newPSCommand(opts *rootOptions) *cobra.Command {
 	return cmd
 }
 
-func filterVMRecords(records []*vmstore.VMRecord, refs []string) []*vmstore.VMRecord {
+func filterVMRecords(records []*vm.VMRecord, refs []string) []*vm.VMRecord {
 	if len(refs) == 0 {
 		return records
 	}
-	selected := make([]*vmstore.VMRecord, 0, len(refs))
+	selected := make([]*vm.VMRecord, 0, len(refs))
 	seen := make(map[string]struct{}, len(refs))
 	for _, ref := range refs {
 		for _, record := range records {

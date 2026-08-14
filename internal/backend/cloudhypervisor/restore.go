@@ -14,19 +14,19 @@ import (
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 // RestoreVM launches an API-only Cloud Hypervisor process, restores native
 // state, and resumes vCPU execution. The source directory is private staging
 // prepared by runtime and may therefore be patched in place.
-func (b Backend) RestoreVM(ctx context.Context, rec *vmstore.VMRecord, sourceDir, mode string) (_ *backend.StartResult, err error) {
+func (b Backend) RestoreVM(ctx context.Context, rec *vm.VMRecord, sourceDir, mode string) (_ *backend.StartResult, err error) {
 	return b.restoreNativeVM(ctx, rec, sourceDir, mode, nativeRestorePlan{})
 }
 
 // CloneVM restores a snapshot paused, replaces its source NIC devices with
 // the clone's provider allocations, and only then resumes guest execution.
-func (b Backend) CloneVM(ctx context.Context, rec *vmstore.VMRecord, sourceDir, mode string) (*backend.StartResult, error) {
+func (b Backend) CloneVM(ctx context.Context, rec *vm.VMRecord, sourceDir, mode string) (*backend.StartResult, error) {
 	return b.restoreNativeVM(ctx, rec, sourceDir, mode, nativeRestorePlan{
 		useCloneRestoreTaps: true,
 		beforeResume: func(client *http.Client, config map[string]json.RawMessage) error {
@@ -40,7 +40,7 @@ type nativeRestorePlan struct {
 	beforeResume        func(*http.Client, map[string]json.RawMessage) error
 }
 
-func (b Backend) restoreNativeVM(ctx context.Context, rec *vmstore.VMRecord, sourceDir, mode string, plan nativeRestorePlan) (_ *backend.StartResult, err error) {
+func (b Backend) restoreNativeVM(ctx context.Context, rec *vm.VMRecord, sourceDir, mode string, plan nativeRestorePlan) (_ *backend.StartResult, err error) {
 	if rec == nil {
 		return nil, errors.New("VM record is nil")
 	}
@@ -84,7 +84,7 @@ func (b Backend) restoreNativeVM(ctx context.Context, rec *vmstore.VMRecord, sou
 			return nil, err
 		}
 	}
-	if err = stateTransition(ctx, &vmstore.VMRecord{Config: rec.Config, APISocket: rendered.APISocket}, apiVMResume, backendStateRunning); err != nil {
+	if err = stateTransition(ctx, &vm.VMRecord{Config: rec.Config, APISocket: rendered.APISocket}, apiVMResume, backendStateRunning); err != nil {
 		return nil, fmt.Errorf("vm.resume: %w", err)
 	}
 	return result, nil
@@ -128,7 +128,7 @@ func reapInterruptedRestore(cfg Config) error {
 
 // patchRestoreConfig preserves backend-owned and future fields while replacing
 // only host-local paths. Device order and identities were checked by preflight.
-func patchRestoreConfig(path string, rec *vmstore.VMRecord, useCloneRestoreTaps bool) (map[string]json.RawMessage, error) {
+func patchRestoreConfig(path string, rec *vm.VMRecord, useCloneRestoreTaps bool) (map[string]json.RawMessage, error) {
 	raw, err := os.ReadFile(path) //nolint:gosec
 	if err != nil {
 		return nil, err
@@ -196,7 +196,7 @@ func patchRestoreConfig(path string, rec *vmstore.VMRecord, useCloneRestoreTaps 
 // ACKs device eject; only then can hotSwapCloneNetworks attach the clone's
 // provider-owned CNI TAPs. Reusing provider TAPs here races with hot-add and
 // can leave the restored guest's virtio and vsock devices unstable.
-func patchCloneRestoreTaps(config map[string]json.RawMessage, rec *vmstore.VMRecord) error {
+func patchCloneRestoreTaps(config map[string]json.RawMessage, rec *vm.VMRecord) error {
 	raw, found := config["net"]
 	if !found || string(raw) == "null" {
 		if len(rec.NetworkConfigs) == 0 {
@@ -232,7 +232,7 @@ func cloneRestoreTAPName(vmID string, index int) string {
 	return fmt.Sprintf("%s%s-%d", prefix, vmID, index)
 }
 
-func hotSwapCloneNetworks(ctx context.Context, client *http.Client, config map[string]json.RawMessage, rec *vmstore.VMRecord) error {
+func hotSwapCloneNetworks(ctx context.Context, client *http.Client, config map[string]json.RawMessage, rec *vm.VMRecord) error {
 	var oldNets []struct {
 		ID string `json:"id"`
 	}
@@ -282,7 +282,7 @@ func cloneNetworkDeviceID(mac string) string {
 	return "kumabox-net-" + strings.ReplaceAll(strings.ToLower(mac), ":", "")
 }
 
-func restoreDiskPaths(rec *vmstore.VMRecord, nativeCount int) ([]string, error) {
+func restoreDiskPaths(rec *vm.VMRecord, nativeCount int) ([]string, error) {
 	paths := make([]string, 0, len(rec.StorageConfigs)+1)
 	for _, disk := range rec.StorageConfigs {
 		paths = append(paths, disk.Path)

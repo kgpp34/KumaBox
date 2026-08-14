@@ -16,7 +16,7 @@ import (
 	"github.com/kumabox/kumabox/internal/metering"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -45,7 +45,7 @@ type restoreStageMetrics struct {
 // RestoreNativeVM restores native memory, device state, and writable disks
 // into the original VM identity. Snapshot and VM operation locks are held for
 // the complete transaction.
-func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string, opts NativeRestoreOptions) (result *vmstore.VMRecord, resultErr error) {
+func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string, opts NativeRestoreOptions) (result *vm.VMRecord, resultErr error) {
 	mutation, err := r.resourceGuard.BeginMutation(ctx)
 	if err != nil {
 		return nil, err
@@ -77,7 +77,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	if err != nil {
 		return nil, err
 	}
-	if rec.State != vmstore.StateRunning && rec.State != vmstore.StateStopped && rec.State != vmstore.StateError {
+	if rec.State != vm.StateRunning && rec.State != vm.StateStopped && rec.State != vm.StateError {
 		return nil, fmt.Errorf("VM_RESTORE_INVALID_STATE: VM %s is %s", rec.Name, rec.State)
 	}
 	restorer, ok := r.backend.(backend.NativeRestorer)
@@ -119,7 +119,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	defer staged.cleanup() //nolint:errcheck
 
 	observed := r.applyObservation(rec)
-	if observed.ObservedState == vmstore.ObservedStateRunning || observed.ObservedState == vmstore.ObservedStatePaused {
+	if observed.ObservedState == vm.ObservedStateRunning || observed.ObservedState == vm.ObservedStatePaused {
 		if _, err := r.stopVMLocked(ctx, rec.ID, backend.StopOptions{Force: true, Timeout: forcedStopTimeout}, metering.ReasonRestore); err != nil {
 			return nil, fmt.Errorf("stop VM for restore: %w", err)
 		}
@@ -128,7 +128,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	if err != nil {
 		return nil, fmt.Errorf("mark restore dirty: %w", err)
 	}
-	fail := func(cause error) (*vmstore.VMRecord, error) {
+	fail := func(cause error) (*vm.VMRecord, error) {
 		_, markErr := r.vmRestore.FailRestore(rec.ID, cause.Error())
 		return nil, errors.Join(cause, markErr)
 	}
@@ -143,7 +143,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 		return fail(fmt.Errorf("restore backend state: %w", err))
 	}
 	backendRestoreDuration := time.Since(backendRestoreStarted)
-	stopRestoredBackend := func(cause error) (*vmstore.VMRecord, error) {
+	stopRestoredBackend := func(cause error) (*vm.VMRecord, error) {
 		cleanupRec := *dirty
 		cleanupRec.PID = backendResult.PID
 		cleanupRec.APISocket = backendResult.APISocket
@@ -161,7 +161,7 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	}
 	// Backend restore is the lifecycle boundary. Agent-dependent commands
 	// report their own availability without quarantining this running VM.
-	restored, err := r.vmRestore.CompleteRestore(rec.ID, backendResult.PID, backendResult.APISocket, time.Since(restoreStarted), &vmstore.RestoreResult{
+	restored, err := r.vmRestore.CompleteRestore(rec.ID, backendResult.PID, backendResult.APISocket, time.Since(restoreStarted), &vm.RestoreResult{
 		NativeStageDurationMs:    stageMetrics.nativeStageDuration.Milliseconds(),
 		DiskStageDurationMs:      stageMetrics.diskStageDuration.Milliseconds(),
 		DiskCommitDurationMs:     diskCommitDuration.Milliseconds(),
@@ -177,13 +177,13 @@ func (r *Runtime) RestoreNativeVM(ctx context.Context, vmRef, snapshotRef string
 	if restoreModePinsSnapshot(opts.Mode) {
 		staged.retainNativePayload()
 	}
-	_ = writeVMEvent(restored, "snapshot.restore.completed", vmstore.Observation{
-		State: vmstore.ObservedStateRunning, Reason: "native snapshot " + snapshotRec.ID + " restored", CheckedAt: time.Now().UTC(),
+	_ = writeVMEvent(restored, "snapshot.restore.completed", vm.Observation{
+		State: vm.ObservedStateRunning, Reason: "native snapshot " + snapshotRec.ID + " restored", CheckedAt: time.Now().UTC(),
 	})
 	return r.applyObservation(restored), nil
 }
 
-func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manifest *snapshot.Manifest, rec *vmstore.VMRecord) (*stagedRestore, restoreStageMetrics, error) {
+func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manifest *snapshot.Manifest, rec *vm.VMRecord) (*stagedRestore, restoreStageMetrics, error) {
 	var metrics restoreStageMetrics
 	nativeStageStarted := time.Now()
 	root := filepath.Join(rec.RunDir, ".restore-staging")
@@ -225,9 +225,9 @@ func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manif
 	}
 	metrics.nativeStageDuration = time.Since(nativeStageStarted)
 	diskStageStarted := time.Now()
-	targets := make(map[string]vmstore.StorageConfig, len(rec.StorageConfigs))
+	targets := make(map[string]vm.StorageConfig, len(rec.StorageConfigs))
 	for _, disk := range rec.StorageConfigs {
-		if disk.EffectiveRole() == vmstore.StorageRoleCOW || disk.EffectiveRole() == vmstore.StorageRoleData {
+		if disk.EffectiveRole() == vm.StorageRoleCOW || disk.EffectiveRole() == vm.StorageRoleData {
 			targets[disk.ID] = disk
 		}
 	}

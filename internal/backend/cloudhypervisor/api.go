@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/fileutil"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const (
@@ -142,7 +142,7 @@ func queryVMInfoWithClient(ctx context.Context, client *http.Client) (*vmInfo, e
 	return &info, nil
 }
 
-func stateTransition(ctx context.Context, rec *vmstore.VMRecord, endpoint, target string) error {
+func stateTransition(ctx context.Context, rec *vm.VMRecord, endpoint, target string) error {
 	if rec == nil {
 		return errors.New("VM record is nil")
 	}
@@ -179,7 +179,7 @@ func alreadyInState(err error, state string) bool {
 	return strings.Contains(apiErr.Message, want)
 }
 
-func backendAPIConfig(rec *vmstore.VMRecord) (string, time.Duration, error) {
+func backendAPIConfig(rec *vm.VMRecord) (string, time.Duration, error) {
 	cfg, err := readRenderedConfig(rec.Config)
 	if err != nil {
 		return "", 0, fmt.Errorf("read backend config: %w", err)

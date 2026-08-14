@@ -17,7 +17,7 @@ import (
 	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/meta"
 	metajson "github.com/kumabox/kumabox/internal/meta/json"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 // Store owns the snapshot index, payload directories, staging, and leases.
@@ -27,7 +27,7 @@ type Store struct {
 	engine   meta.MetaEngine
 	leaser   *leaser
 	vmReader interface {
-		List() ([]*vmstore.VMRecord, error)
+		List() ([]*vm.VMRecord, error)
 	}
 }
 
@@ -53,7 +53,7 @@ func JSONNamespace(rootDir string) metajson.Namespace {
 // NewStoreWithVMReader creates the default JSON snapshot store with an
 // injected read-only VM dependency.
 func NewStoreWithVMReader(rootDir string, vmReader interface {
-	List() ([]*vmstore.VMRecord, error)
+	List() ([]*vm.VMRecord, error)
 }) *Store {
 	store := NewStore(rootDir)
 	store.vmReader = vmReader
@@ -62,13 +62,13 @@ func NewStoreWithVMReader(rootDir string, vmReader interface {
 
 // NewStoreWithEngine creates a snapshot store with an injected metadata engine.
 func NewStoreWithEngine(rootDir string, engine meta.MetaEngine) *Store {
-	return NewStoreWithEngineAndVMReader(rootDir, engine, vmstore.New(rootDir))
+	return NewStoreWithEngineAndVMReader(rootDir, engine, vm.New(rootDir))
 }
 
 // NewStoreWithEngineAndVMReader creates a snapshot store with an injected
 // read-only VM dependency used for dependency checks during deletion.
 func NewStoreWithEngineAndVMReader(rootDir string, engine meta.MetaEngine, vmReader interface {
-	List() ([]*vmstore.VMRecord, error)
+	List() ([]*vm.VMRecord, error)
 }) *Store {
 	dir := filepath.Join(rootDir, "snapshot")
 	return &Store{dataRoot: rootDir, rootDir: dir, engine: engine, leaser: newLeaser(filepath.Join(dir, "leases")), vmReader: vmReader}

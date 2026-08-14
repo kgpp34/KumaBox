@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestCaptureStoppedCopiesWritableDisksAndWritesManifest(t *testing.T) {
@@ -26,11 +26,11 @@ func TestCaptureStoppedCopiesWritableDisksAndWritesManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = build.Abort() })
-	rec := &vmstore.VMRecord{
-		ID: "kb_capture", Name: "source", Image: &vmstore.ImageRef{ID: "img_oci", Digest: "sha256:manifest"},
-		StorageConfigs: []vmstore.StorageConfig{{
-			ID: "cow", Role: vmstore.StorageRoleCOW, Path: source, Format: "raw", Filesystem: "ext4",
-			Base: &vmstore.StorageBase{Family: "oci", ImageID: "img_oci", Digest: "sha256:manifest", LayerDigests: []string{"sha256:layer"}},
+	rec := &vm.VMRecord{
+		ID: "kb_capture", Name: "source", Image: &vm.ImageRef{ID: "img_oci", Digest: "sha256:manifest"},
+		StorageConfigs: []vm.StorageConfig{{
+			ID: "cow", Role: vm.StorageRoleCOW, Path: source, Format: "raw", Filesystem: "ext4",
+			Base: &vm.StorageBase{Family: "oci", ImageID: "img_oci", Digest: "sha256:manifest", LayerDigests: []string{"sha256:layer"}},
 		}},
 	}
 	manifest, size, err := CaptureStopped(context.Background(), build, rec)

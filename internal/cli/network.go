@@ -9,7 +9,7 @@ import (
 
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func newNetworkCommand(opts *rootOptions) *cobra.Command {
@@ -152,7 +152,7 @@ func newNetworkInspectCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 			rec, err := stores.VM.Inspect(args[0])
-			if err != nil && !errors.Is(err, vmstore.ErrNotFound) {
+			if err != nil && !errors.Is(err, vm.ErrNotFound) {
 				return err
 			}
 			if rec != nil {

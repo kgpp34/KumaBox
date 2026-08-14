@@ -8,12 +8,12 @@ import (
 
 	"github.com/kumabox/kumabox/internal/backend"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 var _ backend.NetworkController = Backend{}
 
-func (b Backend) AttachNetwork(ctx context.Context, rec *vmstore.VMRecord, network kbnetwork.Config) error {
+func (b Backend) AttachNetwork(ctx context.Context, rec *vm.VMRecord, network kbnetwork.Config) error {
 	if rec == nil {
 		return fmt.Errorf("VM record is nil")
 	}
@@ -25,7 +25,7 @@ func (b Backend) AttachNetwork(ctx context.Context, rec *vmstore.VMRecord, netwo
 	return err
 }
 
-func (b Backend) DetachNetwork(ctx context.Context, rec *vmstore.VMRecord, network kbnetwork.Config) error {
+func (b Backend) DetachNetwork(ctx context.Context, rec *vm.VMRecord, network kbnetwork.Config) error {
 	if rec == nil {
 		return fmt.Errorf("VM record is nil")
 	}

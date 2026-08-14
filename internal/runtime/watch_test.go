@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestDiffVMStatusesIgnoresObservationTimestamp(t *testing.T) {
@@ -14,20 +14,20 @@ func TestDiffVMStatusesIgnoresObservationTimestamp(t *testing.T) {
 
 	first := time.Unix(10, 0).UTC()
 	second := first.Add(time.Second)
-	before := &vmstore.VMRecord{
-		ID: "vm-1", Name: "example", State: vmstore.StateRunning,
-		ObservedState: vmstore.ObservedStateRunning, ObservedAt: &first,
+	before := &vm.VMRecord{
+		ID: "vm-1", Name: "example", State: vm.StateRunning,
+		ObservedState: vm.ObservedStateRunning, ObservedAt: &first,
 	}
 	after := *before
 	after.ObservedAt = &second
 
-	events := diffVMStatuses(snapshotVMStatuses([]*vmstore.VMRecord{before}), snapshotVMStatuses([]*vmstore.VMRecord{&after}))
+	events := diffVMStatuses(snapshotVMStatuses([]*vm.VMRecord{before}), snapshotVMStatuses([]*vm.VMRecord{&after}))
 	if len(events) != 0 {
 		t.Fatalf("timestamp-only change emitted events: %+v", events)
 	}
 
-	after.State = vmstore.StatePaused
-	events = diffVMStatuses(snapshotVMStatuses([]*vmstore.VMRecord{before}), snapshotVMStatuses([]*vmstore.VMRecord{&after}))
+	after.State = vm.StatePaused
+	events = diffVMStatuses(snapshotVMStatuses([]*vm.VMRecord{before}), snapshotVMStatuses([]*vm.VMRecord{&after}))
 	if len(events) != 1 || events[0].Event != VMEventModified {
 		t.Fatalf("state change events = %+v", events)
 	}
@@ -37,7 +37,7 @@ func TestWatchVMsUsesMetadataEventsBeforePollingFallback(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	store := vmstore.New(filepath.Join(dir, "data"))
+	store := vm.New(filepath.Join(dir, "data"))
 	rt := NewWithBackend(store, backendFake{})
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
@@ -55,7 +55,7 @@ func TestWatchVMsUsesMetadataEventsBeforePollingFallback(t *testing.T) {
 	if len(initial.Records) != 0 || len(initial.Events) != 0 {
 		t.Fatalf("initial update = %+v", initial)
 	}
-	created, err := store.Create(vmstore.CreateRequest{
+	created, err := store.Create(vm.CreateRequest{
 		Name: "watched", RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd",
 		RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
 	})
@@ -81,10 +81,10 @@ func TestListSelectedVMsPreservesRequestedOrder(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	store := vmstore.New(filepath.Join(dir, "data"))
+	store := vm.New(filepath.Join(dir, "data"))
 	rt := NewWithBackend(store, backendFake{})
 	for _, name := range []string{"first", "second"} {
-		if _, err := store.Create(vmstore.CreateRequest{
+		if _, err := store.Create(vm.CreateRequest{
 			Name: name, RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd",
 			RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
 		}); err != nil {
@@ -104,7 +104,7 @@ func TestWatchVMsStopsWhenContextIsCancelled(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	rt := NewWithBackend(vmstore.New(filepath.Join(dir, "data")), backendFake{})
+	rt := NewWithBackend(vm.New(filepath.Join(dir, "data")), backendFake{})
 	ctx, cancel := context.WithCancel(t.Context())
 	emitted := make(chan struct{}, 1)
 	done := make(chan error, 1)
@@ -131,7 +131,7 @@ func TestWatchVMsRecoversFinalStateAfterCoalescedEvents(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	store := vmstore.New(filepath.Join(dir, "data"))
+	store := vm.New(filepath.Join(dir, "data"))
 	rt := NewWithBackend(store, backendFake{})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -155,14 +155,14 @@ func TestWatchVMsRecoversFinalStateAfterCoalescedEvents(t *testing.T) {
 	}()
 	<-initial
 
-	first, err := store.Create(vmstore.CreateRequest{
+	first, err := store.Create(vm.CreateRequest{
 		Name: "first", RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd",
 		RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Create(vmstore.CreateRequest{
+	if _, err := store.Create(vm.CreateRequest{
 		Name: "second", RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd",
 		RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
 	}); err != nil {

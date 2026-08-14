@@ -16,7 +16,7 @@ import (
 	"github.com/kumabox/kumabox/internal/fileutil"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/nocloud"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const defaultKernelCmdline = "console=ttyS0 reboot=k panic=1 root=/dev/vda rw"
@@ -133,7 +133,7 @@ func NewRenderer(cfg config.Config) Renderer {
 // For cloud-image boots it also regenerates the NoCloud CIDATA disk from the
 // VM's current network configs, so the guest sees the same IP/MAC assignment
 // that Cloud Hypervisor receives.
-func (r Renderer) RenderConfig(rec *vmstore.VMRecord) error {
+func (r Renderer) RenderConfig(rec *vm.VMRecord) error {
 	if rec == nil {
 		return fmt.Errorf("VM record is nil")
 	}
@@ -165,13 +165,13 @@ func (r Renderer) RenderConfig(rec *vmstore.VMRecord) error {
 	return nil
 }
 
-func metadataMounts(rec *vmstore.VMRecord) []nocloud.Mount {
+func metadataMounts(rec *vm.VMRecord) []nocloud.Mount {
 	if rec == nil {
 		return nil
 	}
 	mounts := make([]nocloud.Mount, 0)
 	for _, storage := range rec.StorageConfigs {
-		if storage.EffectiveRole() != vmstore.StorageRoleData || storage.MountPoint == "" || storage.Filesystem == "" || storage.Filesystem == vmstore.FilesystemNone {
+		if storage.EffectiveRole() != vm.StorageRoleData || storage.MountPoint == "" || storage.Filesystem == "" || storage.Filesystem == vm.FilesystemNone {
 			continue
 		}
 		mounts = append(mounts, nocloud.Mount{
@@ -184,7 +184,7 @@ func metadataMounts(rec *vmstore.VMRecord) []nocloud.Mount {
 	return mounts
 }
 
-func validateNetworkQueues(rec *vmstore.VMRecord) error {
+func validateNetworkQueues(rec *vm.VMRecord) error {
 	for _, nc := range rec.NetworkConfigs {
 		if nc.NumQueues > 0 && nc.NumQueues < 2 {
 			return fmt.Errorf("network %s numQueues must be at least 2", nc.ID)
@@ -193,7 +193,7 @@ func validateNetworkQueues(rec *vmstore.VMRecord) error {
 	return nil
 }
 
-func metadataNetworks(rec *vmstore.VMRecord) []nocloud.Network {
+func metadataNetworks(rec *vm.VMRecord) []nocloud.Network {
 	networks := make([]nocloud.Network, 0, len(rec.NetworkConfigs))
 	for _, nc := range rec.NetworkConfigs {
 		if nc.MAC == "" || nc.Network == nil || nc.Network.IP == "" {
@@ -214,7 +214,7 @@ func metadataNetworks(rec *vmstore.VMRecord) []nocloud.Network {
 //
 // The function is pure with respect to the filesystem; Renderer.RenderConfig is
 // responsible for writing the returned config and any metadata sidecars.
-func NewConfig(cfg config.Config, rec *vmstore.VMRecord) Config {
+func NewConfig(cfg config.Config, rec *vm.VMRecord) Config {
 	apiSocket := filepath.Join(rec.RunDir, "ch.sock")
 	stdoutLog := filepath.Join(rec.LogDir, "cloud-hypervisor.stdout.log")
 	stderrLog := filepath.Join(rec.LogDir, "cloud-hypervisor.stderr.log")
@@ -337,7 +337,7 @@ func ValidateConfig(launch Config) error {
 	return nil
 }
 
-func newVsock(rec *vmstore.VMRecord) *Vsock {
+func newVsock(rec *vm.VMRecord) *Vsock {
 	if rec == nil || rec.VsockSocket == "" {
 		return nil
 	}
@@ -347,18 +347,18 @@ func newVsock(rec *vmstore.VMRecord) *Vsock {
 	}
 }
 
-func vmCPUs(rec *vmstore.VMRecord) int {
+func vmCPUs(rec *vm.VMRecord) int {
 	if rec == nil || rec.CPUs <= 0 {
 		return 1
 	}
 	return rec.CPUs
 }
 
-func vmMemoryBytes(rec *vmstore.VMRecord) int64 {
+func vmMemoryBytes(rec *vm.VMRecord) int64 {
 	return rec.EffectiveMemoryBytes()
 }
 
-func memoryArg(rec *vmstore.VMRecord) string {
+func memoryArg(rec *vm.VMRecord) string {
 	value := fmt.Sprintf("size=%d", vmMemoryBytes(rec))
 	if rec.SharedMemory {
 		value += ",shared=on"
@@ -366,7 +366,7 @@ func memoryArg(rec *vmstore.VMRecord) string {
 	return value
 }
 
-func netnsPath(rec *vmstore.VMRecord) string {
+func netnsPath(rec *vm.VMRecord) string {
 	for _, nc := range rec.NetworkConfigs {
 		if nc.NetnsPath != "" {
 			return nc.NetnsPath
@@ -375,7 +375,7 @@ func netnsPath(rec *vmstore.VMRecord) string {
 	return ""
 }
 
-func newNets(rec *vmstore.VMRecord) []Net {
+func newNets(rec *vm.VMRecord) []Net {
 	nets := make([]Net, 0, len(rec.NetworkConfigs))
 	for _, nc := range rec.NetworkConfigs {
 		if nc.TAP == "" {
@@ -394,19 +394,19 @@ func newNets(rec *vmstore.VMRecord) []Net {
 	return nets
 }
 
-func newDisks(cfg config.Config, rec *vmstore.VMRecord) []Disk {
+func newDisks(cfg config.Config, rec *vm.VMRecord) []Disk {
 	disks := launchDisks(cfg, rec)
 	if meta := activeMetadata(rec); meta != nil && meta.CidataDisk != "" {
 		disks = append(disks, configureDisk(cfg, rec, Disk{
 			Path:      meta.CidataDisk,
 			Readonly:  true,
-			ImageType: vmstore.FormatRaw,
+			ImageType: vm.FormatRaw,
 		}, nil))
 	}
 	return disks
 }
 
-func launchDisks(cfg config.Config, rec *vmstore.VMRecord) []Disk {
+func launchDisks(cfg config.Config, rec *vm.VMRecord) []Disk {
 	if len(rec.StorageConfigs) > 0 {
 		disks := make([]Disk, 0, len(rec.StorageConfigs))
 		for _, storageCfg := range rec.StorageConfigs {
@@ -415,7 +415,7 @@ func launchDisks(cfg config.Config, rec *vmstore.VMRecord) []Disk {
 				Path:         storageCfg.Path,
 				Readonly:     storageCfg.Readonly,
 				ImageType:    imageType,
-				BackingFiles: imageType == vmstore.FormatQCOW2 && !storageCfg.Readonly,
+				BackingFiles: imageType == vm.FormatQCOW2 && !storageCfg.Readonly,
 				Serial:       storageCfg.Serial,
 			}, &storageCfg))
 		}
@@ -424,7 +424,7 @@ func launchDisks(cfg config.Config, rec *vmstore.VMRecord) []Disk {
 	return []Disk{configureDisk(cfg, rec, newRootDisk(rec), nil)}
 }
 
-func configureDisk(cfg config.Config, rec *vmstore.VMRecord, disk Disk, storage *vmstore.StorageConfig) Disk {
+func configureDisk(cfg config.Config, rec *vm.VMRecord, disk Disk, storage *vm.StorageConfig) Disk {
 	disk.NumQueues = vmCPUs(rec)
 	disk.QueueSize = cfg.Backend.CloudHypervisor.DiskQueueSize
 	if disk.Readonly {
@@ -434,7 +434,7 @@ func configureDisk(cfg config.Config, rec *vmstore.VMRecord, disk Disk, storage 
 	if storage != nil && storage.DirectIO != nil {
 		disk.DirectIO = *storage.DirectIO
 	}
-	disk.Sparse = disk.ImageType != vmstore.FormatQCOW2
+	disk.Sparse = disk.ImageType != vm.FormatQCOW2
 	if disk.NumQueues > 1 {
 		disk.QueueAffinity = make([]QueueAffinity, disk.NumQueues)
 		for queue := range disk.QueueAffinity {
@@ -488,7 +488,7 @@ func queueAffinityArg(affinities []QueueAffinity) string {
 	return "[" + strings.Join(parts, ",") + "]"
 }
 
-func kernelCmdline(rec *vmstore.VMRecord) string {
+func kernelCmdline(rec *vm.VMRecord) string {
 	cmdline := rec.KernelCmdline
 	if cmdline == "" {
 		cmdline = defaultKernelCmdline
@@ -500,11 +500,11 @@ func kernelCmdline(rec *vmstore.VMRecord) string {
 	cow := ""
 	for _, cfg := range rec.StorageConfigs {
 		switch cfg.EffectiveRole() {
-		case vmstore.StorageRoleLayer:
+		case vm.StorageRoleLayer:
 			if cfg.Serial != "" {
 				layers = append(layers, cfg.Serial)
 			}
-		case vmstore.StorageRoleCOW:
+		case vm.StorageRoleCOW:
 			cow = cfg.Serial
 		}
 	}
@@ -530,14 +530,14 @@ func directBootConsoleCmdline(cmdline string) string {
 	return strings.Join(append([]string{"console=hvc0"}, fields...), " ")
 }
 
-func consoleMode(rec *vmstore.VMRecord) string {
+func consoleMode(rec *vm.VMRecord) string {
 	if rec != nil && rec.Firmware == "" {
 		return "pty"
 	}
 	return "off"
 }
 
-func directBootNetworkCmdline(rec *vmstore.VMRecord) string {
+func directBootNetworkCmdline(rec *vm.VMRecord) string {
 	var b strings.Builder
 	if rec.Name != "" {
 		b.WriteString(" kumabox.hostname=")
@@ -599,28 +599,28 @@ func firstDNS(values []string, max int) []string {
 	return out
 }
 
-func activeMetadata(rec *vmstore.VMRecord) *vmstore.Metadata {
+func activeMetadata(rec *vm.VMRecord) *vm.Metadata {
 	if rec == nil || rec.FirstBooted {
 		return nil
 	}
 	return rec.Metadata
 }
 
-func newRootDisk(rec *vmstore.VMRecord) Disk {
+func newRootDisk(rec *vm.VMRecord) Disk {
 	disk := Disk{Path: rec.RootDisk, Readonly: false}
 	if imageType := rootDiskImageType(rec); imageType != "" {
 		disk.ImageType = imageType
-		disk.BackingFiles = imageType == vmstore.FormatQCOW2
+		disk.BackingFiles = imageType == vm.FormatQCOW2
 	}
 	return disk
 }
 
-func rootDiskImageType(rec *vmstore.VMRecord) string {
+func rootDiskImageType(rec *vm.VMRecord) string {
 	if rec.Firmware != "" {
-		return vmstore.FormatQCOW2
+		return vm.FormatQCOW2
 	}
 	if filepath.Ext(rec.RootDisk) == ".qcow2" {
-		return vmstore.FormatQCOW2
+		return vm.FormatQCOW2
 	}
 	return ""
 }

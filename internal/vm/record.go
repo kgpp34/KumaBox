@@ -1,10 +1,10 @@
-// Package vmstore persists KumaBox VM intent.
+// Package vm defines and persists KumaBox VM intent and observed state.
 //
 // A VM record stores what KumaBox wants to run: disks, boot mode, network
 // attachments, and managed directories. Runtime reconciliation augments that
 // intent with observed state from the backend, but the store itself does not
 // talk to Cloud Hypervisor or the host network.
-package vmstore
+package vm
 
 import (
 	"errors"

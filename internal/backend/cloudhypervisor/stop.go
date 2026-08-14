@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/backend"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const (
@@ -22,7 +22,7 @@ const (
 	processPollInterval      = 100 * time.Millisecond
 )
 
-func (b Backend) StopVM(rec *vmstore.VMRecord, opts backend.StopOptions) (*backend.StopResult, error) {
+func (b Backend) StopVM(rec *vm.VMRecord, opts backend.StopOptions) (*backend.StopResult, error) {
 	return b.stopper.StopVM(rec, opts)
 }
 
@@ -32,7 +32,7 @@ func NewStopper() Stopper {
 	return Stopper{}
 }
 
-func (Stopper) StopVM(rec *vmstore.VMRecord, opts backend.StopOptions) (*backend.StopResult, error) {
+func (Stopper) StopVM(rec *vm.VMRecord, opts backend.StopOptions) (*backend.StopResult, error) {
 	if rec == nil {
 		return nil, fmt.Errorf("VM record is nil")
 	}

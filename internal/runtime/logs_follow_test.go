@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestFollowedLogReadsTailAppendTruncateAndReplacement(t *testing.T) {
@@ -61,8 +61,8 @@ func TestFollowLogsVMWaitsForFileAndStopsWithContext(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	store := vmstore.New(filepath.Join(dir, "data"))
-	rec, err := store.Create(vmstore.CreateRequest{
+	store := vm.New(filepath.Join(dir, "data"))
+	rec, err := store.Create(vm.CreateRequest{
 		Name: "follow", RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd",
 		RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
 	})

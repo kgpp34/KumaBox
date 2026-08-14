@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestCompletionGeneratesSupportedShells(t *testing.T) {
@@ -38,9 +38,9 @@ func TestResourceCompletionReadsVMNames(t *testing.T) {
 
 	dir := t.TempDir()
 	rootDir := filepath.Join(dir, "data")
-	store := vmstore.New(rootDir)
+	store := vm.New(rootDir)
 	for _, name := range []string{"alpha", "beta"} {
-		if _, err := store.Create(vmstore.CreateRequest{
+		if _, err := store.Create(vm.CreateRequest{
 			Name: name, RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd",
 			RunDir: filepath.Join(dir, "run"), LogDir: filepath.Join(dir, "log"),
 		}); err != nil {

@@ -4,15 +4,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func TestLifecycleMetricsUseVMMAPIAsLifecycleReadiness(t *testing.T) {
 	started := time.Now()
-	metrics := newLifecycleMetrics("run", started, &vmstore.VMRecord{
+	metrics := newLifecycleMetrics("run", started, &vm.VMRecord{
 		Backend: "cloud-hypervisor",
 		CPUs:    1,
-		Image:   &vmstore.ImageRef{Digest: "sha256:image"},
+		Image:   &vm.ImageRef{Digest: "sha256:image"},
 	})
 	imageAt := started.Add(10 * time.Millisecond)
 	storageAt := imageAt.Add(10 * time.Millisecond)

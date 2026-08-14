@@ -25,7 +25,7 @@ import (
 	"github.com/kumabox/kumabox/internal/reference"
 	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 func newTestRootCommand(rootDir string, paths ...string) *cobra.Command {
@@ -150,8 +150,8 @@ func TestNetworkInspectResolvesVMName(t *testing.T) {
 	rootDir := filepath.Join(dir, "data")
 	runDir := filepath.Join(dir, "run")
 	logDir := filepath.Join(dir, "log")
-	store := vmstore.New(rootDir)
-	rec, err := store.Create(vmstore.CreateRequest{
+	store := vm.New(rootDir)
+	rec, err := store.Create(vm.CreateRequest{
 		Name:     "p2-inspect",
 		RootDisk: "fixtures/base.qcow2",
 		Kernel:   "fixtures/vmlinuz",
@@ -592,10 +592,10 @@ func TestNewCreateRequestSupportsOCIImageStorage(t *testing.T) {
 	if len(req.StorageConfigs) != 2 {
 		t.Fatalf("storage configs = %+v", req.StorageConfigs)
 	}
-	if req.StorageConfigs[0].Role != vmstore.StorageRoleLayer || !req.StorageConfigs[0].Readonly || req.StorageConfigs[0].Serial != "kumabox-layer0" {
+	if req.StorageConfigs[0].Role != vm.StorageRoleLayer || !req.StorageConfigs[0].Readonly || req.StorageConfigs[0].Serial != "kumabox-layer0" {
 		t.Fatalf("layer storage = %+v", req.StorageConfigs[0])
 	}
-	if req.StorageConfigs[1].Role != vmstore.StorageRoleCOW || req.StorageConfigs[1].VirtualSizeBytes != 8*1024*1024 || req.StorageConfigs[1].Serial != "kumabox-cow" || req.StorageConfigs[1].Base == nil {
+	if req.StorageConfigs[1].Role != vm.StorageRoleCOW || req.StorageConfigs[1].VirtualSizeBytes != 8*1024*1024 || req.StorageConfigs[1].Serial != "kumabox-cow" || req.StorageConfigs[1].Base == nil {
 		t.Fatalf("cow storage = %+v", req.StorageConfigs[1])
 	}
 	if req.StorageConfigs[1].Base.Digest != "sha256:"+strings.Repeat("b", 64) {
@@ -750,11 +750,11 @@ func TestDeleteCommandBestEffortBatchResult(t *testing.T) {
 	rootDir := filepath.Join(dir, "data")
 	runDir := filepath.Join(dir, "run")
 	logDir := filepath.Join(dir, "log")
-	store := vmstore.New(rootDir)
+	store := vm.New(rootDir)
 	wantIDs := make([]string, 0, 2)
 
 	for _, name := range []string{"batch-a", "batch-b"} {
-		record, err := store.Create(vmstore.CreateRequest{
+		record, err := store.Create(vm.CreateRequest{
 			Name:     name,
 			RootDisk: filepath.Join(dir, name+".qcow2"),
 			Kernel:   "vmlinuz",
@@ -1226,9 +1226,9 @@ func testImageRemoveRechecksReferencesAfterEntityLock(t *testing.T, backend stri
 	result := make(chan error, 1)
 	go func() { result <- rm.Execute() }()
 
-	vm, err := stores.VM.Create(vmstore.CreateRequest{
+	vm, err := stores.VM.Create(vm.CreateRequest{
 		Name: "late-reference", RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd",
-		Image:  &vmstore.ImageRef{ID: image.ID, Name: image.Name},
+		Image:  &vm.ImageRef{ID: image.ID, Name: image.Name},
 		RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir,
 	})
 	if err != nil {

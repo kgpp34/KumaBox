@@ -11,30 +11,30 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 const backendObserveTimeout = 500 * time.Millisecond
 
-func ObserveVM(rec *vmstore.VMRecord) vmstore.Observation {
+func ObserveVM(rec *vm.VMRecord) vm.Observation {
 	now := time.Now().UTC()
 	if rec == nil {
-		return observation(vmstore.ObservedStateUnknown, "VM record is nil", now)
+		return observation(vm.ObservedStateUnknown, "VM record is nil", now)
 	}
 
 	switch rec.State {
-	case vmstore.StateCreated:
-		return observation(vmstore.ObservedStateCreated, "VM has not been started", now)
-	case vmstore.StateStopped:
-		return observation(vmstore.ObservedStateStopped, "VM is stopped", now)
-	case vmstore.StateError:
+	case vm.StateCreated:
+		return observation(vm.ObservedStateCreated, "VM has not been started", now)
+	case vm.StateStopped:
+		return observation(vm.ObservedStateStopped, "VM is stopped", now)
+	case vm.StateError:
 		if rec.Error != "" {
-			return observation(vmstore.ObservedStateFailed, rec.Error, now)
+			return observation(vm.ObservedStateFailed, rec.Error, now)
 		}
-		return observation(vmstore.ObservedStateFailed, "VM is recorded in error state", now)
-	case vmstore.StateRunning, vmstore.StatePaused:
+		return observation(vm.ObservedStateFailed, "VM is recorded in error state", now)
+	case vm.StateRunning, vm.StatePaused:
 	default:
-		return observation(vmstore.ObservedStateUnknown, "unrecognized persisted state "+string(rec.State), now)
+		return observation(vm.ObservedStateUnknown, "unrecognized persisted state "+string(rec.State), now)
 	}
 
 	pid := rec.PID
@@ -46,42 +46,42 @@ func ObserveVM(rec *vmstore.VMRecord) vmstore.Observation {
 			apiSocket = cfg.APISocket
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return observation(vmstore.ObservedStateUnknown, fmt.Sprintf("read backend config: %v", err), now)
+		return observation(vm.ObservedStateUnknown, fmt.Sprintf("read backend config: %v", err), now)
 	}
 
 	if pid <= 0 {
-		return observation(vmstore.ObservedStateUnknown, "running record has no pid", now)
+		return observation(vm.ObservedStateUnknown, "running record has no pid", now)
 	}
 	if !processAlive(pid) {
-		return observation(vmstore.ObservedStateStopped, fmt.Sprintf("process %d is not alive", pid), now)
+		return observation(vm.ObservedStateStopped, fmt.Sprintf("process %d is not alive", pid), now)
 	}
 	if binary != "" && apiSocket != "" {
 		matched, reason := verifyProcessIdentity(pid, binary, apiSocket)
 		if !matched {
-			return observation(vmstore.ObservedStateUnknown, reason, now)
+			return observation(vm.ObservedStateUnknown, reason, now)
 		}
 	}
 	if apiSocket == "" {
-		return observation(vmstore.ObservedStateUnknown, "running record has no API socket", now)
+		return observation(vm.ObservedStateUnknown, "running record has no API socket", now)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), backendObserveTimeout)
 	defer cancel()
 	info, err := queryVMInfo(ctx, apiSocket, backendObserveTimeout)
 	if err != nil {
-		return observation(vmstore.ObservedStateUnknown, fmt.Sprintf("API state check failed: %v", err), now)
+		return observation(vm.ObservedStateUnknown, fmt.Sprintf("API state check failed: %v", err), now)
 	}
 	switch strings.ToLower(info.State) {
 	case "running":
-		return observation(vmstore.ObservedStateRunning, "process identity and backend state are healthy", now)
+		return observation(vm.ObservedStateRunning, "process identity and backend state are healthy", now)
 	case "paused":
-		return observation(vmstore.ObservedStatePaused, "process identity is healthy and backend is paused", now)
+		return observation(vm.ObservedStatePaused, "process identity is healthy and backend is paused", now)
 	default:
-		return observation(vmstore.ObservedStateUnknown, "backend reported state "+info.State, now)
+		return observation(vm.ObservedStateUnknown, "backend reported state "+info.State, now)
 	}
 }
 
-func observation(state vmstore.ObservedState, reason string, checkedAt time.Time) vmstore.Observation {
-	return vmstore.Observation{
+func observation(state vm.ObservedState, reason string, checkedAt time.Time) vm.Observation {
+	return vm.Observation{
 		State:     state,
 		Reason:    reason,
 		CheckedAt: checkedAt,

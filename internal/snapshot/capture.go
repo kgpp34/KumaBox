@@ -13,11 +13,11 @@ import (
 
 	"github.com/kumabox/kumabox/internal/disk"
 	"github.com/kumabox/kumabox/internal/fileutil"
-	"github.com/kumabox/kumabox/internal/vmstore"
+	"github.com/kumabox/kumabox/internal/vm"
 )
 
 // CaptureStopped copies every writable VM disk into a pending snapshot build.
-func CaptureStopped(ctx context.Context, build *Build, rec *vmstore.VMRecord) (*Manifest, int64, error) {
+func CaptureStopped(ctx context.Context, build *Build, rec *vm.VMRecord) (*Manifest, int64, error) {
 	if build == nil || rec == nil {
 		return nil, 0, errors.New("snapshot build and VM record are required")
 	}
@@ -37,7 +37,7 @@ func CaptureStopped(ctx context.Context, build *Build, rec *vmstore.VMRecord) (*
 
 // CaptureWritableDisks copies every managed writable disk into staging. Calls
 // may run while a VM is paused, so copies are bounded and concurrent.
-func CaptureWritableDisks(ctx context.Context, stagingDir string, rec *vmstore.VMRecord) ([]DiskManifest, int64, error) {
+func CaptureWritableDisks(ctx context.Context, stagingDir string, rec *vm.VMRecord) ([]DiskManifest, int64, error) {
 	disks, _, err := copyWritableDisks(ctx, stagingDir, rec, disk.CopyFile)
 	if err != nil {
 		return nil, 0, err
@@ -48,7 +48,7 @@ func CaptureWritableDisks(ctx context.Context, stagingDir string, rec *vmstore.V
 // StageWritableDisks performs only the copy portion needed inside a running
 // snapshot pause window. The returned manifests are incomplete until passed
 // to FinalizeWritableDisks after the VM resumes.
-func StageWritableDisks(ctx context.Context, stagingDir string, rec *vmstore.VMRecord) ([]DiskManifest, error) {
+func StageWritableDisks(ctx context.Context, stagingDir string, rec *vm.VMRecord) ([]DiskManifest, error) {
 	disks, _, err := copyWritableDisks(ctx, stagingDir, rec, disk.StageFile)
 	return disks, err
 }
@@ -81,7 +81,7 @@ func FinalizeWritableDisks(ctx context.Context, stagingDir string, disks []DiskM
 
 type diskCopier func(context.Context, string, string) (disk.CopyResult, error)
 
-func copyWritableDisks(ctx context.Context, stagingDir string, rec *vmstore.VMRecord, copyDisk diskCopier) ([]DiskManifest, int64, error) {
+func copyWritableDisks(ctx context.Context, stagingDir string, rec *vm.VMRecord, copyDisk diskCopier) ([]DiskManifest, int64, error) {
 	if rec == nil {
 		return nil, 0, errors.New("VM record is required")
 	}
@@ -142,18 +142,18 @@ func allocatedSize(disks []DiskManifest) int64 {
 	return allocated
 }
 
-func writableDisks(rec *vmstore.VMRecord) []vmstore.StorageConfig {
-	writable := make([]vmstore.StorageConfig, 0)
+func writableDisks(rec *vm.VMRecord) []vm.StorageConfig {
+	writable := make([]vm.StorageConfig, 0)
 	for _, disk := range rec.StorageConfigs {
 		role := disk.EffectiveRole()
-		if role == vmstore.StorageRoleCOW || role == vmstore.StorageRoleData {
+		if role == vm.StorageRoleCOW || role == vm.StorageRoleData {
 			writable = append(writable, disk)
 		}
 	}
 	return writable
 }
 
-func newDiskManifest(pending *Record, rec *vmstore.VMRecord, manifestDisks []DiskManifest, writable []vmstore.StorageConfig) *Manifest {
+func newDiskManifest(pending *Record, rec *vm.VMRecord, manifestDisks []DiskManifest, writable []vm.StorageConfig) *Manifest {
 	manifest := &Manifest{
 		SchemaVersion: "kumabox.snapshot.v1", ID: pending.ID, Name: pending.Name,
 		Type: "disk", Consistency: "stopped-disk",
@@ -165,7 +165,7 @@ func newDiskManifest(pending *Record, rec *vmstore.VMRecord, manifestDisks []Dis
 		manifest.Source.ImageDigest = rec.Image.Digest
 	}
 	for _, disk := range writable {
-		if disk.EffectiveRole() == vmstore.StorageRoleCOW && disk.Base != nil {
+		if disk.EffectiveRole() == vm.StorageRoleCOW && disk.Base != nil {
 			manifest.Base = &Base{
 				Family: disk.Base.Family, ImageID: disk.Base.ImageID, Digest: disk.Base.Digest,
 				Format: disk.Base.Format, LayerDigests: append([]string(nil), disk.Base.LayerDigests...),
