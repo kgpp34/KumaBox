@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/kumabox/kumabox/internal/config"
-	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/image"
 	"github.com/kumabox/kumabox/internal/lock"
 	"github.com/kumabox/kumabox/internal/meta"
 	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
@@ -55,7 +55,7 @@ func NewStoreSetForConfig(cfg config.Config) (StoreSet, error) {
 	vm := vm.NewWithEngine(cfg.Runtime.RootDir, engine)
 	return StoreSet{
 		VM:         vm,
-		Images:     imagestore.NewWithEngine(cfg.Runtime.RootDir, engine),
+		Images:     image.NewWithEngine(cfg.Runtime.RootDir, engine),
 		Snapshots:  snapshot.NewStoreWithEngineAndVMReader(cfg.Runtime.RootDir, engine, vm),
 		Networks:   kbnetwork.NewStoreWithEngines(cfg.Runtime.RootDir, engine, engine, engine),
 		OCI:        ocistore.NewWithEngine(cfg.Runtime.RootDir, engine),
@@ -105,7 +105,7 @@ func NewStoreSet(rootDir string) StoreSet {
 	vm := vm.New(rootDir)
 	return StoreSet{
 		VM:         vm,
-		Images:     imagestore.New(rootDir),
+		Images:     image.New(rootDir),
 		Snapshots:  snapshot.NewStoreWithVMReader(rootDir, vm),
 		Networks:   kbnetwork.NewStore(rootDir),
 		OCI:        ocistore.New(rootDir),

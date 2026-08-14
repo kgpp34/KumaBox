@@ -7,7 +7,7 @@ package oci
 import (
 	"context"
 
-	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/image"
 	"github.com/kumabox/kumabox/internal/ocibuild"
 	"github.com/kumabox/kumabox/internal/ociresolver"
 	"github.com/kumabox/kumabox/internal/ocistore"
@@ -30,11 +30,11 @@ type Content interface {
 
 // ImageCatalog publishes durable managed-image records.
 type ImageCatalog interface {
-	Create(imagestore.CreateRequest) (*imagestore.ImageRecord, error)
+	Create(image.CreateRequest) (*image.ImageRecord, error)
 }
 
 type imageBuilder interface {
-	Build(context.Context, ocibuild.BuildRequest) (*imagestore.ImageRecord, error)
+	Build(context.Context, ocibuild.BuildRequest) (*image.ImageRecord, error)
 }
 
 // ImagePipeline presents one entry point for all OCI-backed image workflows.
@@ -69,6 +69,6 @@ func (p *ImagePipeline) Pull(ctx context.Context, req PullRequest) (*PullResult,
 }
 
 // Build converts OCI content into a bootable managed image.
-func (p *ImagePipeline) Build(ctx context.Context, req BuildRequest) (*imagestore.ImageRecord, error) {
+func (p *ImagePipeline) Build(ctx context.Context, req BuildRequest) (*image.ImageRecord, error) {
 	return p.builder.Build(ctx, req)
 }

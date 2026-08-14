@@ -8,7 +8,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/kumabox/kumabox/internal/doctor"
-	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/image"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	kbruntime "github.com/kumabox/kumabox/internal/runtime"
 	"github.com/kumabox/kumabox/internal/vm"
@@ -76,7 +76,7 @@ func writeJSONLine(w io.Writer, value any) error {
 	return json.NewEncoder(w).Encode(value)
 }
 
-func writeImageTable(w io.Writer, records []*imagestore.ImageRecord) error {
+func writeImageTable(w io.Writer, records []*image.ImageRecord) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintln(tw, "ID\tNAME\tSOURCE\tFORMAT\tPROFILE"); err != nil {
 		return err

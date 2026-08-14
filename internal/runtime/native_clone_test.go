@@ -13,7 +13,7 @@ import (
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/fault"
-	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/image"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vm"
 )
@@ -344,10 +344,10 @@ func newNativeCloneRuntime(t *testing.T) (*Runtime, *vm.Store, *vm.VMRecord, *sn
 	}
 	const manifestDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	const layerDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	image, err := imagestore.New(rootDir).Create(imagestore.CreateRequest{
-		Name: "clone-image", Boot: imagestore.Boot{Mode: "direct", Kernel: kernel, Initrd: initrd, Cmdline: "console=ttyS0"},
-		OCI: &imagestore.OCI{DigestRef: "example.invalid/image@" + manifestDigest, Layers: []imagestore.OCILayer{{
-			Index: 0, Digest: layerDigest, EROFS: &imagestore.EROFSLayer{Path: layer, Filesystem: "erofs", SizeBytes: 5, SourceLayer: layerDigest},
+	image, err := image.New(rootDir).Create(image.CreateRequest{
+		Name: "clone-image", Boot: image.Boot{Mode: "direct", Kernel: kernel, Initrd: initrd, Cmdline: "console=ttyS0"},
+		OCI: &image.OCI{DigestRef: "example.invalid/image@" + manifestDigest, Layers: []image.OCILayer{{
+			Index: 0, Digest: layerDigest, EROFS: &image.EROFSLayer{Path: layer, Filesystem: "erofs", SizeBytes: 5, SourceLayer: layerDigest},
 		}}, BuiltAt: time.Now().UTC()},
 	})
 	if err != nil {

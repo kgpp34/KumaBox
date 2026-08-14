@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package imageimport acquires and inspects local or remote cloud images.
-//
-// It deliberately does not know about KumaBox image records or indexes. The
-// caller owns the staging directory and decides how the resulting artifact is
-// persisted.
-package imageimport
+package image
 
 import (
 	"context"
@@ -27,20 +22,14 @@ import (
 
 const qemuImgInfoTimeout = 30 * time.Second
 
-// ErrChecksumMismatch reports a downloaded image that does not match the
-// caller's expected SHA-256 digest.
-var ErrChecksumMismatch = errors.New("image checksum mismatch")
-
-// Request contains the paths and tooling needed to acquire a disk image.
-type Request struct {
+type fileImportRequest struct {
 	Source         string
 	Destination    string
 	QemuImgPath    string
 	ExpectedSHA256 string
 }
 
-// Artifact describes an acquired and inspected disk image.
-type Artifact struct {
+type importedArtifact struct {
 	Path             string
 	SourceHint       string
 	SHA256           string
@@ -50,8 +39,7 @@ type Artifact struct {
 	ActualSizeBytes  int64
 }
 
-// Local copies and inspects a local image into req.Destination.
-func Local(req Request) (*Artifact, error) {
+func importLocal(req fileImportRequest) (*importedArtifact, error) {
 	if req.Source == "" {
 		return nil, errors.New("source image path must not be empty")
 	}
@@ -74,8 +62,7 @@ func Local(req Request) (*Artifact, error) {
 	return artifact(req.Destination, sourcePath, sum, size, info), nil
 }
 
-// Remote downloads and inspects an HTTP(S) or file URL into req.Destination.
-func Remote(req Request) (*Artifact, error) {
+func importRemote(req fileImportRequest) (*importedArtifact, error) {
 	if req.Source == "" {
 		return nil, errors.New("image URL must not be empty")
 	}
@@ -103,12 +90,12 @@ type imageInfo struct {
 	ActualSizeBytes  int64  `json:"actual-size"`
 }
 
-func artifact(path, sourceHint, sum string, size int64, info *imageInfo) *Artifact {
+func artifact(path, sourceHint, sum string, size int64, info *imageInfo) *importedArtifact {
 	actualSize := info.ActualSizeBytes
 	if actualSize <= 0 {
 		actualSize = size
 	}
-	return &Artifact{
+	return &importedArtifact{
 		Path:             path,
 		SourceHint:       sourceHint,
 		SHA256:           sum,
@@ -248,7 +235,7 @@ func copyAndHash(dst io.Writer, src io.Reader, hasher hash.Hash) (int64, error) 
 }
 
 // DiskExtension returns the managed filename extension for an image format.
-func DiskExtension(format string) string {
+func diskExtension(format string) string {
 	switch strings.ToLower(format) {
 	case "raw":
 		return "raw"
@@ -260,7 +247,7 @@ func DiskExtension(format string) string {
 }
 
 // OSFamily infers a guest family from a source filename.
-func OSFamily(path string) string {
+func osFamily(path string) string {
 	lower := strings.ToLower(filepath.Base(path))
 	if strings.Contains(lower, "ubuntu") || strings.Contains(lower, "jammy") || strings.Contains(lower, "noble") {
 		return "ubuntu"

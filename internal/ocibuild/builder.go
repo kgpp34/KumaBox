@@ -30,7 +30,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/agent/protocol"
 	"github.com/kumabox/kumabox/internal/fileutil"
-	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/image"
 	"github.com/kumabox/kumabox/internal/ocistore"
 	"github.com/kumabox/kumabox/internal/vm"
 )
@@ -58,20 +58,20 @@ type Builder struct {
 		Pull(context.Context, ocistore.PullRequest) (*ocistore.PullResult, error)
 	}
 	images interface {
-		Create(imagestore.CreateRequest) (*imagestore.ImageRecord, error)
+		Create(image.CreateRequest) (*image.ImageRecord, error)
 	}
 }
 
 // New returns a Builder rooted under rootDir.
 func New(rootDir string) *Builder {
-	return NewWithStores(rootDir, ocistore.New(rootDir), imagestore.New(rootDir))
+	return NewWithStores(rootDir, ocistore.New(rootDir), image.New(rootDir))
 }
 
 // NewWithStores creates a builder using caller-owned metadata stores.
 func NewWithStores(rootDir string, content interface {
 	Pull(context.Context, ocistore.PullRequest) (*ocistore.PullResult, error)
 }, images interface {
-	Create(imagestore.CreateRequest) (*imagestore.ImageRecord, error)
+	Create(image.CreateRequest) (*image.ImageRecord, error)
 }) *Builder {
 	base := filepath.Join(rootDir, "oci", "erofs")
 	return &Builder{
@@ -84,7 +84,7 @@ func NewWithStores(rootDir string, content interface {
 }
 
 // Build pulls an OCI image, converts its layers to EROFS, and records image metadata.
-func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.ImageRecord, error) {
+func (b *Builder) Build(ctx context.Context, req BuildRequest) (*image.ImageRecord, error) {
 	if req.Name == "" {
 		return nil, errors.New("image name must not be empty")
 	}
@@ -135,7 +135,7 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 				return fmt.Errorf("build layer %d %s: %w", i, layer.Digest, err)
 			}
 			results[i] = layerBuildResult{
-				layer: imagestore.OCILayer{
+				layer: image.OCILayer{
 					Index: i, Digest: layer.Digest, Serial: vm.LayerSerial(i),
 					MediaType: layer.MediaType, SizeBytes: layer.SizeBytes, EROFS: erofs,
 				},
@@ -156,7 +156,7 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 	if err := group.Wait(); err != nil {
 		return nil, err
 	}
-	layers := make([]imagestore.OCILayer, 0, len(results))
+	layers := make([]image.OCILayer, 0, len(results))
 	var kernel, initrd *bootAsset
 	for _, result := range results {
 		layers = append(layers, result.layer)
@@ -170,7 +170,7 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 	if kernel == nil || initrd == nil {
 		return nil, fmt.Errorf("BOOT_PROFILE_UNSUPPORTED: OCI image must contain /boot/vmlinuz-* and /boot/initrd.img-*")
 	}
-	boot := imagestore.Boot{Mode: "direct", Kernel: kernel.Path, Initrd: initrd.Path, Cmdline: ociCmdlineTemplate}
+	boot := image.Boot{Mode: "direct", Kernel: kernel.Path, Initrd: initrd.Path, Cmdline: ociCmdlineTemplate}
 	imageConfig, err := decodeOCIImageConfig(pull.Config.Path)
 	if err != nil {
 		return nil, err
@@ -180,28 +180,28 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 		return nil, err
 	}
 
-	return b.images.Create(imagestore.CreateRequest{
+	return b.images.Create(image.CreateRequest{
 		Name: req.Name,
-		Source: imagestore.Source{
+		Source: image.Source{
 			Type: "oci",
 			URI:  pull.DigestRef,
 		},
-		OS: imagestore.OS{
+		OS: image.OS{
 			Family:  "linux",
 			Profile: "oci-erofs",
 		},
 		Agent: agent,
 		Boot:  boot,
-		OCI: &imagestore.OCI{
+		OCI: &image.OCI{
 			Ref:       pull.Ref,
 			Source:    pull.Source,
 			DigestRef: pull.DigestRef,
-			Platform: imagestore.OCIPlatform{
+			Platform: image.OCIPlatform{
 				OS:           pull.Platform.OS,
 				Architecture: pull.Platform.Architecture,
 				Variant:      pull.Platform.Variant,
 			},
-			Config: imagestore.OCIDescriptor{
+			Config: image.OCIDescriptor{
 				Digest:    pull.Config.Digest,
 				MediaType: pull.Config.MediaType,
 				SizeBytes: pull.Config.SizeBytes,
@@ -215,71 +215,71 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest) (*imagestore.Imag
 }
 
 type layerBuildResult struct {
-	layer  imagestore.OCILayer
+	layer  image.OCILayer
 	kernel *bootAsset
 	initrd *bootAsset
 }
 
-func decodeOCIImageConfig(configPath string) (imagestore.OCIImageConfig, error) {
+func decodeOCIImageConfig(configPath string) (image.OCIImageConfig, error) {
 	raw, err := os.ReadFile(configPath) //nolint:gosec
 	if err != nil {
-		return imagestore.OCIImageConfig{}, fmt.Errorf("read OCI config: %w", err)
+		return image.OCIImageConfig{}, fmt.Errorf("read OCI config: %w", err)
 	}
 	var doc struct {
 		Config map[string]json.RawMessage `json:"config"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
-		return imagestore.OCIImageConfig{}, fmt.Errorf("decode OCI config: %w", err)
+		return image.OCIImageConfig{}, fmt.Errorf("decode OCI config: %w", err)
 	}
 	if len(doc.Config) == 0 {
-		return imagestore.OCIImageConfig{}, nil
+		return image.OCIImageConfig{}, nil
 	}
 
-	cfg := imagestore.OCIImageConfig{}
+	cfg := image.OCIImageConfig{}
 	if value, ok, err := decodeConfigStringSlice(doc.Config, "Env"); err != nil {
-		return imagestore.OCIImageConfig{}, err
+		return image.OCIImageConfig{}, err
 	} else if ok {
 		cfg.Env = value
 	}
 	if value, ok, err := decodeConfigStringSlice(doc.Config, "Cmd"); err != nil {
-		return imagestore.OCIImageConfig{}, err
+		return image.OCIImageConfig{}, err
 	} else if ok {
 		cfg.Cmd = value
 	}
 	if value, ok, err := decodeConfigStringSlice(doc.Config, "Entrypoint"); err != nil {
-		return imagestore.OCIImageConfig{}, err
+		return image.OCIImageConfig{}, err
 	} else if ok {
 		cfg.Entrypoint = value
 	}
 	if value, ok, err := decodeConfigString(doc.Config, "WorkingDir"); err != nil {
-		return imagestore.OCIImageConfig{}, err
+		return image.OCIImageConfig{}, err
 	} else if ok {
 		cfg.Workdir = value
 	}
 	if value, ok, err := decodeConfigString(doc.Config, "User"); err != nil {
-		return imagestore.OCIImageConfig{}, err
+		return image.OCIImageConfig{}, err
 	} else if ok {
 		cfg.User = value
 	}
 	if value, ok, err := decodeConfigLabels(doc.Config, "Labels"); err != nil {
-		return imagestore.OCIImageConfig{}, err
+		return image.OCIImageConfig{}, err
 	} else if ok {
 		cfg.Labels = value
 	}
 	return cfg, nil
 }
 
-func (b *Builder) inspectAgentProfile(layers []ocistore.BlobRecord, mode string) (*imagestore.AgentProfile, error) {
+func (b *Builder) inspectAgentProfile(layers []ocistore.BlobRecord, mode string) (*image.AgentProfile, error) {
 	if mode == "" {
-		mode = imagestore.AgentProfileAuto
+		mode = image.AgentProfileAuto
 	}
-	if mode != imagestore.AgentProfileAuto && mode != imagestore.AgentProfileRequired && mode != imagestore.AgentInjectionEmbedded && mode != imagestore.AgentInjectionUnsupported {
+	if mode != image.AgentProfileAuto && mode != image.AgentProfileRequired && mode != image.AgentInjectionEmbedded && mode != image.AgentInjectionUnsupported {
 		return nil, fmt.Errorf("AGENT_PROFILE_INVALID: %q", mode)
 	}
-	if mode == imagestore.AgentInjectionUnsupported {
-		return &imagestore.AgentProfile{
-			Name:      imagestore.AgentName,
-			Injection: imagestore.AgentInjectionUnsupported,
+	if mode == image.AgentInjectionUnsupported {
+		return &image.AgentProfile{
+			Name:      image.AgentName,
+			Injection: image.AgentInjectionUnsupported,
 		}, nil
 	}
 
@@ -309,9 +309,9 @@ func (b *Builder) inspectAgentProfile(layers []ocistore.BlobRecord, mode string)
 				continue
 			}
 			switch normalizeLayerPath(hdr.Name) {
-			case strings.TrimPrefix(imagestore.AgentBinaryPath, "/"):
+			case strings.TrimPrefix(image.AgentBinaryPath, "/"):
 				binaryFound = true
-			case strings.TrimPrefix(imagestore.AgentServicePath, "/"):
+			case strings.TrimPrefix(image.AgentServicePath, "/"):
 				serviceFound = true
 			}
 		}
@@ -322,19 +322,19 @@ func (b *Builder) inspectAgentProfile(layers []ocistore.BlobRecord, mode string)
 	}
 
 	if !binaryFound || !serviceFound {
-		if mode == imagestore.AgentProfileRequired || mode == imagestore.AgentInjectionEmbedded {
-			return nil, fmt.Errorf("AGENT_INJECTION_FAILED: image must contain %s and %s", imagestore.AgentBinaryPath, imagestore.AgentServicePath)
+		if mode == image.AgentProfileRequired || mode == image.AgentInjectionEmbedded {
+			return nil, fmt.Errorf("AGENT_INJECTION_FAILED: image must contain %s and %s", image.AgentBinaryPath, image.AgentServicePath)
 		}
-		return &imagestore.AgentProfile{
-			Name:      imagestore.AgentName,
-			Injection: imagestore.AgentInjectionUnsupported,
+		return &image.AgentProfile{
+			Name:      image.AgentName,
+			Injection: image.AgentInjectionUnsupported,
 		}, nil
 	}
-	return &imagestore.AgentProfile{
-		Name:        imagestore.AgentName,
-		Injection:   imagestore.AgentInjectionEmbedded,
-		BinaryPath:  imagestore.AgentBinaryPath,
-		ServicePath: imagestore.AgentServicePath,
+	return &image.AgentProfile{
+		Name:        image.AgentName,
+		Injection:   image.AgentInjectionEmbedded,
+		BinaryPath:  image.AgentBinaryPath,
+		ServicePath: image.AgentServicePath,
 		Capabilities: []string{
 			string(protocol.CapabilityPingPong),
 			string(protocol.CapabilityExec),
@@ -389,14 +389,14 @@ func decodeConfigLabels(config map[string]json.RawMessage, key string) (*map[str
 	return &labels, true, nil
 }
 
-func (b *Builder) resolveBootProfile(layers []ocistore.BlobRecord) (imagestore.Boot, error) {
+func (b *Builder) resolveBootProfile(layers []ocistore.BlobRecord) (image.Boot, error) {
 	var kernel *bootAsset
 	var initrd *bootAsset
 
 	for _, layer := range layers {
 		layerKernel, layerInitrd, err := b.scanBootAssets(layer)
 		if err != nil {
-			return imagestore.Boot{}, err
+			return image.Boot{}, err
 		}
 		if layerKernel != nil {
 			kernel = layerKernel
@@ -406,9 +406,9 @@ func (b *Builder) resolveBootProfile(layers []ocistore.BlobRecord) (imagestore.B
 		}
 	}
 	if kernel == nil || initrd == nil {
-		return imagestore.Boot{}, fmt.Errorf("BOOT_PROFILE_UNSUPPORTED: OCI image must contain /boot/vmlinuz-* and /boot/initrd.img-*")
+		return image.Boot{}, fmt.Errorf("BOOT_PROFILE_UNSUPPORTED: OCI image must contain /boot/vmlinuz-* and /boot/initrd.img-*")
 	}
-	return imagestore.Boot{
+	return image.Boot{
 		Mode:    "direct",
 		Kernel:  kernel.Path,
 		Initrd:  initrd.Path,
@@ -547,12 +547,12 @@ func (b *Builder) commitBootAsset(kind, sourcePath, sourceLayer string, src io.R
 	}, nil
 }
 
-func (b *Builder) ensureEROFS(ctx context.Context, mkfs string, layer ocistore.BlobRecord) (*imagestore.EROFSLayer, error) {
+func (b *Builder) ensureEROFS(ctx context.Context, mkfs string, layer ocistore.BlobRecord) (*image.EROFSLayer, error) {
 	erofs, _, _, err := b.ensureEROFSWithAssets(ctx, mkfs, layer)
 	return erofs, err
 }
 
-func (b *Builder) ensureEROFSWithAssets(ctx context.Context, mkfs string, layer ocistore.BlobRecord) (*imagestore.EROFSLayer, *bootAsset, *bootAsset, error) {
+func (b *Builder) ensureEROFSWithAssets(ctx context.Context, mkfs string, layer ocistore.BlobRecord) (*image.EROFSLayer, *bootAsset, *bootAsset, error) {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		erofs, kernel, initrd, err := b.ensureEROFSOnce(ctx, mkfs, layer)
@@ -572,7 +572,7 @@ func (b *Builder) ensureEROFSWithAssets(ctx context.Context, mkfs string, layer 
 	return nil, nil, nil, fmt.Errorf("EROFS_CONVERSION_FAILED after retries: %w", lastErr)
 }
 
-func (b *Builder) ensureEROFSOnce(ctx context.Context, mkfs string, layer ocistore.BlobRecord) (*imagestore.EROFSLayer, *bootAsset, *bootAsset, error) {
+func (b *Builder) ensureEROFSOnce(ctx context.Context, mkfs string, layer ocistore.BlobRecord) (*image.EROFSLayer, *bootAsset, *bootAsset, error) {
 	algo, value, err := splitDigest(layer.Digest)
 	if err != nil {
 		return nil, nil, nil, err
@@ -587,7 +587,7 @@ func (b *Builder) ensureEROFSOnce(ctx context.Context, mkfs string, layer ocisto
 		if scanErr != nil {
 			return nil, nil, nil, scanErr
 		}
-		return &imagestore.EROFSLayer{
+		return &image.EROFSLayer{
 			Path:        target,
 			Filesystem:  "erofs",
 			Digest:      "sha256:" + sum,
@@ -659,7 +659,7 @@ func (b *Builder) ensureEROFSOnce(ctx context.Context, mkfs string, layer ocisto
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return &imagestore.EROFSLayer{
+	return &image.EROFSLayer{
 		Path:        target,
 		Filesystem:  "erofs",
 		Digest:      "sha256:" + sum,

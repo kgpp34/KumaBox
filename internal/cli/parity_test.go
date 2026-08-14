@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/image"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vm"
 )
@@ -65,7 +65,7 @@ func TestImageAddImportsLocalCloudImage(t *testing.T) {
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	var record imagestore.ImageRecord
+	var record image.ImageRecord
 	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
 		t.Fatal(err)
 	}
@@ -79,13 +79,13 @@ func TestDebugLaunchIsSideEffectFree(t *testing.T) {
 	root := filepath.Join(directory, "data")
 	run := filepath.Join(directory, "run")
 	logDirectory := filepath.Join(directory, "log")
-	image, err := imagestore.New(root).Create(imagestore.CreateRequest{
-		Name: "debug-image", Source: imagestore.Source{Type: "test", URI: "source.qcow2"},
-		RootDisk: imagestore.RootDisk{
+	image, err := image.New(root).Create(image.CreateRequest{
+		Name: "debug-image", Source: image.Source{Type: "test", URI: "source.qcow2"},
+		RootDisk: image.RootDisk{
 			Path: "/images/source.qcow2", Format: vm.FormatQCOW2,
 			VirtualSizeBytes: 1 << 20, SHA256: strings.Repeat("a", 64),
 		},
-		Boot: imagestore.Boot{Mode: "uefi", Firmware: "/firmware.fd"},
+		Boot: image.Boot{Mode: "uefi", Firmware: "/firmware.fd"},
 	})
 	if err != nil {
 		t.Fatal(err)

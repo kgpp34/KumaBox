@@ -8,7 +8,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/fault"
-	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/image"
 	"github.com/kumabox/kumabox/internal/meta"
 	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
@@ -245,7 +245,7 @@ func closeJSONStoreSet(t *testing.T, stores StoreSet) {
 	t.Helper()
 	engines := []interface{ Close() error }{
 		stores.VM.(*vm.Store).MetadataEngine(),
-		stores.Images.(*imagestore.Store).MetadataEngine(),
+		stores.Images.(*image.Store).MetadataEngine(),
 		stores.Snapshots.(*snapshot.Store).MetadataEngine(),
 		stores.OCI.(*ocistore.Store).MetadataEngine(),
 		stores.Operations.(*operation.Journal).MetadataEngine(),

@@ -15,7 +15,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/batch"
 	"github.com/kumabox/kumabox/internal/config"
-	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/image"
 	"github.com/kumabox/kumabox/internal/lock"
 	"github.com/kumabox/kumabox/internal/oci"
 	"github.com/kumabox/kumabox/internal/resources"
@@ -84,14 +84,14 @@ func newImageAddCommand(opts *rootOptions) *cobra.Command {
 			}
 			defer mutation.Release() //nolint:errcheck
 
-			var record *imagestore.ImageRecord
+			var record *image.ImageRecord
 			switch kind {
 			case imageSourceLocal:
-				record, err = stores.Images.ImportLocal(imagestore.ImportRequest{
+				record, err = stores.Images.ImportLocal(image.ImportRequest{
 					Name: name, File: args[0], Firmware: firmware, QemuImgPath: qemuImg,
 				})
 			case imageSourceHTTP:
-				record, err = stores.Images.Pull(imagestore.PullRequest{
+				record, err = stores.Images.Pull(image.PullRequest{
 					Name: name, URL: args[0], Firmware: firmware,
 					QemuImgPath: qemuImg, SHA256: expectedSHA256,
 				})
@@ -118,7 +118,7 @@ func newImageAddCommand(opts *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&source, "source", "auto", "OCI source: auto, registry, or daemon")
 	cmd.Flags().StringVar(&mkfsEROFS, "mkfs-erofs", "mkfs.erofs", "mkfs.erofs binary path")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "maximum concurrent OCI layer conversions")
-	cmd.Flags().StringVar(&agentProfile, "agent-profile", imagestore.AgentProfileAuto, "guest agent profile")
+	cmd.Flags().StringVar(&agentProfile, "agent-profile", image.AgentProfileAuto, "guest agent profile")
 	cmd.Flags().BoolVar(&progress, "progress", false, "print OCI import progress to stderr")
 	_ = cmd.MarkFlagRequired("name")
 	return cmd
@@ -265,7 +265,7 @@ func newImageBuildCommand(opts *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&source, "source", "auto", "OCI source: auto, registry, or daemon")
 	cmd.Flags().StringVar(&mkfsEROFS, "mkfs-erofs", "mkfs.erofs", "mkfs.erofs binary path")
 	cmd.Flags().IntVar(&concurrency, "concurrency", 0, "maximum concurrent OCI layer conversions; 0 uses host CPU count")
-	cmd.Flags().StringVar(&agentProfile, "agent-profile", imagestore.AgentProfileAuto, "guest agent profile: auto, required, embedded, or unsupported")
+	cmd.Flags().StringVar(&agentProfile, "agent-profile", image.AgentProfileAuto, "guest agent profile: auto, required, embedded, or unsupported")
 	cmd.Flags().BoolVar(&progress, "progress", false, "print OCI import progress to stderr")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "resolve OCI metadata without publishing an image")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
@@ -310,7 +310,7 @@ func newImageImportCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 			defer mutation.Release() //nolint:errcheck
-			rec, err := stores.Images.ImportLocal(imagestore.ImportRequest{
+			rec, err := stores.Images.ImportLocal(image.ImportRequest{
 				Name:        name,
 				File:        args[0],
 				Firmware:    firmware,
@@ -362,8 +362,8 @@ func newImagePullCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 			defer mutation.Release() //nolint:errcheck
-			result := batch.Run(cmd.Context(), args, batch.Options{Concurrency: concurrency}, "pull image", func(_ context.Context, index int, ref string) (*imagestore.ImageRecord, error) {
-				return stores.Images.Pull(imagestore.PullRequest{
+			result := batch.Run(cmd.Context(), args, batch.Options{Concurrency: concurrency}, "pull image", func(_ context.Context, index int, ref string) (*image.ImageRecord, error) {
+				return stores.Images.Pull(image.PullRequest{
 					Name: names[index], URL: ref, Firmware: firmware,
 					QemuImgPath: qemuImg, SHA256: sha256Digest,
 				})
@@ -443,7 +443,7 @@ func newImageInspectCommand(opts *rootOptions) *cobra.Command {
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), rec)
 			}
-			return writeImageTable(cmd.OutOrStdout(), []*imagestore.ImageRecord{rec})
+			return writeImageTable(cmd.OutOrStdout(), []*image.ImageRecord{rec})
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
@@ -477,7 +477,7 @@ func newImageRMCommand(opts *rootOptions) *cobra.Command {
 				return err
 			}
 			defer mutation.Release() //nolint:errcheck
-			result := batch.Run(cmd.Context(), args, batch.Options{Concurrency: concurrency}, "remove image", func(ctx context.Context, _ int, ref string) (*imagestore.ImageRecord, error) {
+			result := batch.Run(cmd.Context(), args, batch.Options{Concurrency: concurrency}, "remove image", func(ctx context.Context, _ int, ref string) (*image.ImageRecord, error) {
 				return removeImage(ctx, stores, ref, force)
 			})
 			return writeResourceBatchResult(func(value any) error {
@@ -490,12 +490,12 @@ func newImageRMCommand(opts *rootOptions) *cobra.Command {
 	return cmd
 }
 
-func removeImage(ctx context.Context, stores resources.StoreSet, ref string, force bool) (record *imagestore.ImageRecord, err error) {
-	image, err := stores.Images.Inspect(ref)
+func removeImage(ctx context.Context, stores resources.StoreSet, ref string, force bool) (record *image.ImageRecord, err error) {
+	imageRecord, err := stores.Images.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
-	imageLock, err := stores.Guard.LockEntity(ctx, lock.EntityImage, image.ID)
+	imageLock, err := stores.Guard.LockEntity(ctx, lock.EntityImage, imageRecord.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -513,12 +513,12 @@ func removeImage(ctx context.Context, stores resources.StoreSet, ref string, for
 	} else if len(explicit) > 0 {
 		references = mergeImageReferences(references, explicit)
 	}
-	return stores.Images.Remove(imagestore.RemoveRequest{Ref: ref, Force: force, References: references})
+	return stores.Images.Remove(image.RemoveRequest{Ref: ref, Force: force, References: references})
 }
 
-func mergeImageReferences(groups ...[]imagestore.Reference) []imagestore.Reference {
+func mergeImageReferences(groups ...[]image.Reference) []image.Reference {
 	seen := make(map[string]struct{})
-	var merged []imagestore.Reference
+	var merged []image.Reference
 	for _, group := range groups {
 		for _, reference := range group {
 			key := reference.Kind + "\x00" + reference.VMID + "\x00" + reference.ImageID
@@ -532,15 +532,15 @@ func mergeImageReferences(groups ...[]imagestore.Reference) []imagestore.Referen
 	return merged
 }
 
-func explicitImageReferences(ctx context.Context, stores resources.StoreSet, ref string) ([]imagestore.Reference, error) {
+func explicitImageReferences(ctx context.Context, stores resources.StoreSet, ref string) ([]image.Reference, error) {
 	if stores.References == nil {
 		return nil, nil
 	}
-	image, err := stores.Images.Inspect(ref)
+	imageRecord, err := stores.Images.Inspect(ref)
 	if err != nil {
 		return nil, err
 	}
-	records, err := stores.References.ListTarget(ctx, "image", image.ID)
+	records, err := stores.References.ListTarget(ctx, "image", imageRecord.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -548,7 +548,7 @@ func explicitImageReferences(ctx context.Context, stores resources.StoreSet, ref
 	if err != nil {
 		return nil, err
 	}
-	refs := make([]imagestore.Reference, 0, len(records))
+	refs := make([]image.Reference, 0, len(records))
 	for _, record := range records {
 		live := true
 		switch record.SourceKind {
@@ -563,7 +563,7 @@ func explicitImageReferences(ctx context.Context, stores resources.StoreSet, ref
 			}
 			continue
 		}
-		refs = append(refs, imagestore.Reference{Kind: record.SourceKind, VMID: record.SourceID, VMName: record.SourceID, ImageID: image.ID})
+		refs = append(refs, image.Reference{Kind: record.SourceKind, VMID: record.SourceID, VMName: record.SourceID, ImageID: imageRecord.ID})
 	}
 	return refs, nil
 }
@@ -592,17 +592,17 @@ func liveImageReferenceSources(stores resources.StoreSet) (map[string]struct{}, 
 	return liveVMs, liveSnapshots, nil
 }
 
-func imageReferencesFromVMs(stores resources.StoreSet) ([]imagestore.Reference, error) {
+func imageReferencesFromVMs(stores resources.StoreSet) ([]image.Reference, error) {
 	records, err := stores.VM.List()
 	if err != nil {
 		return nil, err
 	}
-	refs := make([]imagestore.Reference, 0)
+	refs := make([]image.Reference, 0)
 	for _, rec := range records {
 		if rec == nil || rec.Image == nil {
 			continue
 		}
-		refs = append(refs, imagestore.Reference{
+		refs = append(refs, image.Reference{
 			Kind:    "vm",
 			VMID:    rec.ID,
 			VMName:  rec.Name,
@@ -622,7 +622,7 @@ func imageReferencesFromVMs(stores resources.StoreSet) ([]imagestore.Reference, 
 		if manifest.Base == nil || manifest.Base.ImageID == "" {
 			continue
 		}
-		refs = append(refs, imagestore.Reference{
+		refs = append(refs, image.Reference{
 			Kind: "snapshot", VMID: rec.ID, VMName: rec.Name, VMState: string(rec.State), ImageID: manifest.Base.ImageID,
 		})
 	}

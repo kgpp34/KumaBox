@@ -10,7 +10,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/disk"
-	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/image"
 	"github.com/kumabox/kumabox/internal/lock"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
@@ -125,7 +125,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	return r.applyObservation(rec), nil
 }
 
-func restoreCreateRequest(opts RestoreOptions, image *imagestore.ImageRecord, manifest *snapshot.Manifest, cfg config.Config) (vm.CreateRequest, error) {
+func restoreCreateRequest(opts RestoreOptions, image *image.ImageRecord, manifest *snapshot.Manifest, cfg config.Config) (vm.CreateRequest, error) {
 	if manifest.Base == nil || image.ID != manifest.Base.ImageID {
 		return vm.CreateRequest{}, errors.New("BASE_IMAGE_MISMATCH: snapshot base does not match local image")
 	}

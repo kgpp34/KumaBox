@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 
-// Package imagestore manages imported and pulled cloud images.
+// Package image manages imported, pulled, and OCI-backed images.
 //
 // Image records are metadata only: they point at managed root disks and boot
 // requirements. VM records copy the resolved image reference at create/run time
 // so later image renames do not change existing VM intent.
-package imagestore
+package image
 
 import "time"
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package imagestore
+package image
 
 import (
 	"context"
@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/fileutil"
-	"github.com/kumabox/kumabox/internal/imageimport"
 	"github.com/kumabox/kumabox/internal/meta"
 	metajson "github.com/kumabox/kumabox/internal/meta/json"
 )
@@ -208,7 +207,7 @@ func (s *Store) ImportLocal(req ImportRequest) (*ImageRecord, error) {
 	}
 	defer cleanup()
 
-	artifact, err := imageimport.Local(imageimport.Request{
+	artifact, err := importLocal(fileImportRequest{
 		Source:      sourcePath,
 		Destination: filepath.Join(stagingDir, "base.img"),
 		QemuImgPath: req.QemuImgPath,
@@ -216,7 +215,7 @@ func (s *Store) ImportLocal(req ImportRequest) (*ImageRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	diskName := "base." + imageimport.DiskExtension(artifact.Format)
+	diskName := "base." + diskExtension(artifact.Format)
 	if artifact.Path != filepath.Join(stagingDir, diskName) {
 		if err := os.Rename(artifact.Path, filepath.Join(stagingDir, diskName)); err != nil {
 			return nil, fmt.Errorf("prepare imported image: %w", err)
@@ -242,7 +241,7 @@ func (s *Store) ImportLocal(req ImportRequest) (*ImageRecord, error) {
 			Firmware: firmwarePath,
 		},
 		OS: OS{
-			Family:  imageimport.OSFamily(sourcePath),
+			Family:  osFamily(sourcePath),
 			Profile: "ubuntu-cloudimg",
 		},
 	}, artifact.Path)
@@ -268,20 +267,20 @@ func (s *Store) Pull(req PullRequest) (*ImageRecord, error) {
 	defer cleanup()
 
 	downloadedDisk := filepath.Join(stagingDir, "download.img")
-	artifact, err := imageimport.Remote(imageimport.Request{
+	artifact, err := importRemote(fileImportRequest{
 		Source:         req.URL,
 		Destination:    downloadedDisk,
 		QemuImgPath:    req.QemuImgPath,
 		ExpectedSHA256: req.SHA256,
 	})
 	if err != nil {
-		if errors.Is(err, imageimport.ErrChecksumMismatch) {
+		if errors.Is(err, ErrChecksumMismatch) {
 			return nil, fmt.Errorf("%w: %v", ErrChecksumMismatch, err)
 		}
 		return nil, err
 	}
 
-	diskName := "base." + imageimport.DiskExtension(artifact.Format)
+	diskName := "base." + diskExtension(artifact.Format)
 	stagedDisk := filepath.Join(stagingDir, diskName)
 	if err := os.Rename(downloadedDisk, stagedDisk); err != nil {
 		return nil, fmt.Errorf("prepare pulled image: %w", err)
@@ -305,7 +304,7 @@ func (s *Store) Pull(req PullRequest) (*ImageRecord, error) {
 			Firmware: firmwarePath,
 		},
 		OS: OS{
-			Family:  imageimport.OSFamily(artifact.SourceHint),
+			Family:  osFamily(artifact.SourceHint),
 			Profile: "ubuntu-cloudimg",
 		},
 	}, stagedDisk)

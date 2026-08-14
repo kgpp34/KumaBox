@@ -1,4 +1,4 @@
-package imagestore
+package image
 
 import (
 	stdjson "encoding/json"

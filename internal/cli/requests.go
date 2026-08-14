@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kumabox/kumabox/internal/config"
-	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/image"
 	"github.com/kumabox/kumabox/internal/vm"
 )
 
@@ -102,7 +102,7 @@ func newCreateRequest(flags createVMFlags, args []string, cfg config.Config) (vm
 	return req, nil
 }
 
-func newOCIImageCreateRequest(flags createVMFlags, image *imagestore.ImageRecord, cfg config.Config) (vm.CreateRequest, error) {
+func newOCIImageCreateRequest(flags createVMFlags, image *image.ImageRecord, cfg config.Config) (vm.CreateRequest, error) {
 	if image.Boot.Mode != "direct" || image.Boot.Kernel == "" || image.Boot.Initrd == "" {
 		return vm.CreateRequest{}, fmt.Errorf("image %q has no OCI direct boot profile", image.Name)
 	}

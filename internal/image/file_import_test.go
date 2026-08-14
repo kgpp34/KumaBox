@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package imageimport
+package image
 
 import (
 	"crypto/sha256"
@@ -21,13 +21,13 @@ func TestLocalCopiesAndInspectsImage(t *testing.T) {
 	if err := os.WriteFile(source, content, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	qemuImg := fakeQemuImg(t, dir, "qcow2", 4096, int64(len(content)))
+	qemuImg := fakeInspectQEMUImg(t, dir, "qcow2", 4096, int64(len(content)))
 	destination := filepath.Join(dir, "staging", "base.img")
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	artifact, err := Local(Request{Source: source, Destination: destination, QemuImgPath: qemuImg})
+	artifact, err := importLocal(fileImportRequest{Source: source, Destination: destination, QemuImgPath: qemuImg})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestLocalCopiesAndInspectsImage(t *testing.T) {
 	if artifact.SHA256 != hex.EncodeToString(expected[:]) || artifact.ActualSizeBytes != int64(len(content)) {
 		t.Fatalf("artifact digest and size = %+v", artifact)
 	}
-	if OSFamily(source) != "ubuntu" || DiskExtension(artifact.Format) != "qcow2" {
+	if osFamily(source) != "ubuntu" || diskExtension(artifact.Format) != "qcow2" {
 		t.Fatalf("source helpers returned unexpected values")
 	}
 }
@@ -53,10 +53,10 @@ func TestRemoteCopiesFileURLAndChecksDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := sha256.Sum256(content)
-	qemuImg := fakeQemuImg(t, dir, "raw", 8192, int64(len(content)))
+	qemuImg := fakeInspectQEMUImg(t, dir, "raw", 8192, int64(len(content)))
 	destination := filepath.Join(dir, "base.img")
 
-	artifact, err := Remote(Request{
+	artifact, err := importRemote(fileImportRequest{
 		Source:         "file://" + source,
 		Destination:    destination,
 		QemuImgPath:    qemuImg,
@@ -78,10 +78,10 @@ func TestRemoteRejectsDigestMismatch(t *testing.T) {
 	if err := os.WriteFile(source, []byte("image"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Remote(Request{
+	_, err := importRemote(fileImportRequest{
 		Source:         "file://" + source,
 		Destination:    filepath.Join(dir, "base.img"),
-		QemuImgPath:    fakeQemuImg(t, dir, "raw", 1024, 5),
+		QemuImgPath:    fakeInspectQEMUImg(t, dir, "raw", 1024, 5),
 		ExpectedSHA256: "0000000000000000000000000000000000000000000000000000000000000000",
 	})
 	if !errors.Is(err, ErrChecksumMismatch) {
@@ -89,7 +89,7 @@ func TestRemoteRejectsDigestMismatch(t *testing.T) {
 	}
 }
 
-func fakeQemuImg(t *testing.T, dir, format string, virtualSize, actualSize int64) string {
+func fakeInspectQEMUImg(t *testing.T, dir, format string, virtualSize, actualSize int64) string {
 	t.Helper()
 	path := filepath.Join(dir, "qemu-img")
 	script := "#!/bin/sh\n" +

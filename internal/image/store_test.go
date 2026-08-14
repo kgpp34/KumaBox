@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package imagestore
+package image
 
 import (
 	"crypto/sha256"

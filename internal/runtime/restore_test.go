@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/config"
-	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/image"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vm"
 )
@@ -26,14 +26,14 @@ func TestRestoreSnapshotCreatesIndependentOCIVM(t *testing.T) {
 
 	const manifestDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	const layerDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	image, err := imagestore.New(rootDir).Create(imagestore.CreateRequest{
+	image, err := image.New(rootDir).Create(image.CreateRequest{
 		Name: "restore-image",
-		Boot: imagestore.Boot{Mode: "direct", Kernel: filepath.Join(dir, "vmlinuz"), Initrd: filepath.Join(dir, "initrd"), Cmdline: "console=ttyS0"},
-		OCI: &imagestore.OCI{
+		Boot: image.Boot{Mode: "direct", Kernel: filepath.Join(dir, "vmlinuz"), Initrd: filepath.Join(dir, "initrd"), Cmdline: "console=ttyS0"},
+		OCI: &image.OCI{
 			DigestRef: "example.invalid/image@" + manifestDigest,
-			Layers: []imagestore.OCILayer{{
+			Layers: []image.OCILayer{{
 				Index: 0, Digest: layerDigest,
-				EROFS: &imagestore.EROFSLayer{Path: layerPath, Filesystem: "erofs", SizeBytes: 5, SourceLayer: layerDigest},
+				EROFS: &image.EROFSLayer{Path: layerPath, Filesystem: "erofs", SizeBytes: 5, SourceLayer: layerDigest},
 			}},
 			BuiltAt: time.Now().UTC(),
 		},

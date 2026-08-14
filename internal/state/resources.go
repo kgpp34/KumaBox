@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/kumabox/kumabox/internal/backend"
-	kbimage "github.com/kumabox/kumabox/internal/imagestore"
+	kbimage "github.com/kumabox/kumabox/internal/image"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/ocistore"
 	"github.com/kumabox/kumabox/internal/operation"

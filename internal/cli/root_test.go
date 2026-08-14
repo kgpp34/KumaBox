@@ -19,7 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kumabox/kumabox/internal/config"
-	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/image"
 	"github.com/kumabox/kumabox/internal/lock"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/reference"
@@ -481,17 +481,17 @@ func TestCreateImageRefCommand(t *testing.T) {
 	if err := os.WriteFile(firmware, []byte("firmware"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	image, err := imagestore.New(rootDir).Create(imagestore.CreateRequest{
+	imageRecord, err := image.New(rootDir).Create(image.CreateRequest{
 		Name:   "ubuntu",
-		Source: imagestore.Source{Type: "test", URI: rootDisk},
-		RootDisk: imagestore.RootDisk{
+		Source: image.Source{Type: "test", URI: rootDisk},
+		RootDisk: image.RootDisk{
 			Path:             rootDisk,
 			Format:           "qcow2",
 			VirtualSizeBytes: 1024 * 1024,
 			SHA256:           hex.EncodeToString(sha256.New().Sum(nil)),
 		},
-		Boot: imagestore.Boot{Mode: "uefi", Firmware: firmware},
-		OS:   imagestore.OS{Family: "ubuntu", Profile: "ubuntu-cloudimg"},
+		Boot: image.Boot{Mode: "uefi", Firmware: firmware},
+		OS:   image.OS{Family: "ubuntu", Profile: "ubuntu-cloudimg"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -526,7 +526,7 @@ func TestCreateImageRefCommand(t *testing.T) {
 	if created.RootDisk == rootDisk || !strings.HasSuffix(created.RootDisk, "root.overlay.qcow2") || created.Firmware != firmware {
 		t.Fatalf("boot fields = root %s firmware %s", created.RootDisk, created.Firmware)
 	}
-	if created.Image.ID != image.ID || created.Image.Name != "ubuntu" || created.Image.RootDisk != rootDisk {
+	if created.Image.ID != imageRecord.ID || created.Image.Name != "ubuntu" || created.Image.RootDisk != rootDisk {
 		t.Fatalf("image ref = %+v", created.Image)
 	}
 	if created.Image.BootMode != "uefi" {
@@ -560,22 +560,22 @@ func TestNewCreateRequestSupportsOCIImageStorage(t *testing.T) {
 		name:    "oci-vm",
 		storage: "8M",
 		cpus:    2,
-	}, &imagestore.ImageRecord{
+	}, &image.ImageRecord{
 		ID:   "img_oci",
 		Name: "oci-image",
-		Boot: imagestore.Boot{
+		Boot: image.Boot{
 			Mode:    "direct",
 			Kernel:  filepath.Join(dir, "vmlinuz"),
 			Initrd:  filepath.Join(dir, "initrd.img"),
 			Cmdline: "kumabox.layers={{layers}} kumabox.cow={{cow}}",
 		},
-		OCI: &imagestore.OCI{
+		OCI: &image.OCI{
 			DigestRef: "index.docker.io/kumabox/ubuntu@sha256:" + strings.Repeat("b", 64),
-			Layers: []imagestore.OCILayer{
+			Layers: []image.OCILayer{
 				{
 					Index:  0,
 					Digest: "sha256:" + strings.Repeat("a", 64),
-					EROFS: &imagestore.EROFSLayer{
+					EROFS: &image.EROFSLayer{
 						Path:      filepath.Join(dir, "layer0.erofs"),
 						SizeBytes: 4096,
 					},
@@ -946,15 +946,15 @@ func TestImageListAndInspectCommands(t *testing.T) {
 		t.Fatalf("expected empty image list, got %+v", empty)
 	}
 
-	created, err := imagestore.New(rootDir).Create(imagestore.CreateRequest{
+	created, err := image.New(rootDir).Create(image.CreateRequest{
 		Name:   "ubuntu",
-		Source: imagestore.Source{Type: "test", URI: "fixtures/ubuntu.img"},
-		RootDisk: imagestore.RootDisk{
+		Source: image.Source{Type: "test", URI: "fixtures/ubuntu.img"},
+		RootDisk: image.RootDisk{
 			Path:   "base.qcow2",
 			Format: "qcow2",
 		},
-		Boot: imagestore.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
-		OS:   imagestore.OS{Family: "ubuntu", Profile: "ubuntu-cloudimg"},
+		Boot: image.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
+		OS:   image.OS{Family: "ubuntu", Profile: "ubuntu-cloudimg"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -994,17 +994,17 @@ func TestImageRemoveRejectsReferencedImage(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte("base"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	image, err := imagestore.New(rootDir).Create(imagestore.CreateRequest{
+	imageRecord, err := image.New(rootDir).Create(image.CreateRequest{
 		Name:   "ubuntu",
-		Source: imagestore.Source{Type: "test", URI: "fixtures/ubuntu.img"},
-		RootDisk: imagestore.RootDisk{
+		Source: image.Source{Type: "test", URI: "fixtures/ubuntu.img"},
+		RootDisk: image.RootDisk{
 			Path:             basePath,
 			Format:           "qcow2",
 			VirtualSizeBytes: 1024 * 1024,
 			SHA256:           strings.Repeat("a", 64),
 		},
-		Boot: imagestore.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
-		OS:   imagestore.OS{Family: "ubuntu", Profile: "ubuntu-cloudimg"},
+		Boot: image.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
+		OS:   image.OS{Family: "ubuntu", Profile: "ubuntu-cloudimg"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1012,7 +1012,7 @@ func TestImageRemoveRejectsReferencedImage(t *testing.T) {
 
 	create := newTestRootCommand(rootDir, runDir, logDir)
 	create.SetArgs([]string{
-		"--qemu-img-bin", fakeQEMUImgForOverlay(t, dir, image.RootDisk.Path),
+		"--qemu-img-bin", fakeQEMUImgForOverlay(t, dir, imageRecord.RootDisk.Path),
 		"create", "ubuntu",
 		"--name", "ref",
 	})
@@ -1022,10 +1022,10 @@ func TestImageRemoveRejectsReferencedImage(t *testing.T) {
 
 	rm := newTestRootCommand(rootDir, runDir, logDir)
 	rm.SetArgs([]string{"image", "rm", "ubuntu"})
-	if err := rm.Execute(); !errors.Is(err, imagestore.ErrImageInUse) {
+	if err := rm.Execute(); !errors.Is(err, image.ErrImageInUse) {
 		t.Fatalf("expected ErrImageInUse, got %v", err)
 	}
-	if _, err := imagestore.New(rootDir).Inspect(image.ID); err != nil {
+	if _, err := image.New(rootDir).Inspect(imageRecord.ID); err != nil {
 		t.Fatalf("referenced image should remain: %v", err)
 	}
 
@@ -1048,20 +1048,20 @@ func TestImageRemoveRejectsReferencedImage(t *testing.T) {
 	if err := json.Unmarshal(rmOut.Bytes(), &removed); err != nil {
 		t.Fatal(err)
 	}
-	if removed.ID != image.ID {
-		t.Fatalf("removed id = %s, want %s", removed.ID, image.ID)
+	if removed.ID != imageRecord.ID {
+		t.Fatalf("removed id = %s, want %s", removed.ID, imageRecord.ID)
 	}
 }
 
 func TestImageRemoveBestEffortBatch(t *testing.T) {
 	rootDir := t.TempDir()
-	store := imagestore.New(rootDir)
-	created := make([]*imagestore.ImageRecord, 0, 2)
+	store := image.New(rootDir)
+	created := make([]*image.ImageRecord, 0, 2)
 	for _, name := range []string{"batch-image-a", "batch-image-b"} {
-		record, err := store.Create(imagestore.CreateRequest{
-			Name: name, Source: imagestore.Source{Type: "test", URI: name},
-			RootDisk: imagestore.RootDisk{Path: name + ".qcow2", Format: "qcow2"},
-			Boot:     imagestore.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
+		record, err := store.Create(image.CreateRequest{
+			Name: name, Source: image.Source{Type: "test", URI: name},
+			RootDisk: image.RootDisk{Path: name + ".qcow2", Format: "qcow2"},
+			Boot:     image.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -1077,8 +1077,8 @@ func TestImageRemoveBestEffortBatch(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 	var result struct {
-		Succeeded []*imagestore.ImageRecord `json:"succeeded"`
-		Failed    []resourceBatchFailure    `json:"failed"`
+		Succeeded []*image.ImageRecord   `json:"succeeded"`
+		Failed    []resourceBatchFailure `json:"failed"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatal(err)
@@ -1197,13 +1197,13 @@ func testImageRemoveRechecksReferencesAfterEntityLock(t *testing.T, backend stri
 	if stores.Metadata != nil {
 		t.Cleanup(func() { _ = stores.Metadata.Close() })
 	}
-	image, err := stores.Images.Create(imagestore.CreateRequest{
+	imageRecord, err := stores.Images.Create(image.CreateRequest{
 		Name:   "ubuntu",
-		Source: imagestore.Source{Type: "test", URI: "fixtures/ubuntu.img"},
-		RootDisk: imagestore.RootDisk{
+		Source: image.Source{Type: "test", URI: "fixtures/ubuntu.img"},
+		RootDisk: image.RootDisk{
 			Path: filepath.Join(rootDir, "cloudimg", "base.qcow2"), Format: "qcow2",
 		},
-		Boot: imagestore.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
+		Boot: image.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1215,20 +1215,20 @@ func testImageRemoveRechecksReferencesAfterEntityLock(t *testing.T, backend stri
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = mutation.Release() })
-	imageLock, err := guard.LockEntity(t.Context(), lock.EntityImage, image.ID)
+	imageLock, err := guard.LockEntity(t.Context(), lock.EntityImage, imageRecord.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = imageLock.Release() })
 
 	rm := NewRootCommandWithConfig(cfg)
-	rm.SetArgs([]string{"image", "rm", image.ID})
+	rm.SetArgs([]string{"image", "rm", imageRecord.ID})
 	result := make(chan error, 1)
 	go func() { result <- rm.Execute() }()
 
 	vm, err := stores.VM.Create(vm.CreateRequest{
 		Name: "late-reference", RootDisk: "root.raw", Kernel: "vmlinuz", Initrd: "initrd",
-		Image:  &vm.ImageRef{ID: image.ID, Name: image.Name},
+		Image:  &vm.ImageRef{ID: imageRecord.ID, Name: imageRecord.Name},
 		RunDir: cfg.Runtime.RunDir, LogDir: cfg.Runtime.LogDir,
 	})
 	if err != nil {
@@ -1243,13 +1243,13 @@ func testImageRemoveRechecksReferencesAfterEntityLock(t *testing.T, backend stri
 
 	select {
 	case err := <-result:
-		if !errors.Is(err, imagestore.ErrImageInUse) {
+		if !errors.Is(err, image.ErrImageInUse) {
 			t.Fatalf("image remove error = %v, want ErrImageInUse", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("image remove did not resume after entity lock released")
 	}
-	if _, err := stores.Images.Inspect(image.ID); err != nil {
+	if _, err := stores.Images.Inspect(imageRecord.ID); err != nil {
 		t.Fatalf("newly referenced image was removed: %v", err)
 	}
 	if _, err := stores.VM.Inspect(vm.ID); err != nil {
@@ -1266,14 +1266,14 @@ func TestImageRemovePrunesDanglingExplicitReferences(t *testing.T) {
 	if err := os.WriteFile(basePath, []byte("base"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	image, err := imagestore.New(rootDir).Create(imagestore.CreateRequest{
+	image, err := image.New(rootDir).Create(image.CreateRequest{
 		Name:   "ubuntu",
-		Source: imagestore.Source{Type: "test", URI: "fixtures/ubuntu.img"},
-		RootDisk: imagestore.RootDisk{
+		Source: image.Source{Type: "test", URI: "fixtures/ubuntu.img"},
+		RootDisk: image.RootDisk{
 			Path: basePath, Format: "qcow2", VirtualSizeBytes: 1024 * 1024, SHA256: strings.Repeat("a", 64),
 		},
-		Boot: imagestore.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
-		OS:   imagestore.OS{Family: "ubuntu", Profile: "ubuntu-cloudimg"},
+		Boot: image.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
+		OS:   image.OS{Family: "ubuntu", Profile: "ubuntu-cloudimg"},
 	})
 	if err != nil {
 		t.Fatal(err)

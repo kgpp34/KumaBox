@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/config"
-	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/image"
 	"github.com/kumabox/kumabox/internal/lock"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/snapshot"
@@ -373,15 +373,15 @@ func TestDryRunReportsImageCandidates(t *testing.T) {
 	cfg.Runtime.RunDir = filepath.Join(dir, "run")
 	cfg.Runtime.LogDir = filepath.Join(dir, "log")
 
-	imageStore := imagestore.New(cfg.Runtime.RootDir)
-	indexed, err := imageStore.Create(imagestore.CreateRequest{
+	imageStore := image.New(cfg.Runtime.RootDir)
+	indexed, err := imageStore.Create(image.CreateRequest{
 		Name:   "indexed",
-		Source: imagestore.Source{Type: "test", URI: "fixtures/indexed.img"},
-		RootDisk: imagestore.RootDisk{
+		Source: image.Source{Type: "test", URI: "fixtures/indexed.img"},
+		RootDisk: image.RootDisk{
 			Path:   filepath.Join(cfg.Runtime.RootDir, "cloudimg", "img_indexed", "base.qcow2"),
 			Format: "qcow2",
 		},
-		Boot: imagestore.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
+		Boot: image.Boot{Mode: "uefi", Firmware: "CLOUDHV.fd"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -457,23 +457,23 @@ func TestDryRunReportsOCICandidates(t *testing.T) {
 		}
 	}
 
-	_, err := imagestore.New(cfg.Runtime.RootDir).Create(imagestore.CreateRequest{
+	_, err := image.New(cfg.Runtime.RootDir).Create(image.CreateRequest{
 		Name:   "oci-live",
-		Source: imagestore.Source{Type: "oci", URI: "example.com/live@sha256:test"},
-		Boot: imagestore.Boot{
+		Source: image.Source{Type: "oci", URI: "example.com/live@sha256:test"},
+		Boot: image.Boot{
 			Mode:   "direct",
 			Kernel: liveKernel,
 			Initrd: liveInitrd,
 		},
-		OCI: &imagestore.OCI{
+		OCI: &image.OCI{
 			Ref: "example.com/live:latest",
-			Config: imagestore.OCIDescriptor{
+			Config: image.OCIDescriptor{
 				Digest: "sha256:" + strings.Repeat("6", 64),
 			},
-			Layers: []imagestore.OCILayer{
+			Layers: []image.OCILayer{
 				{
 					Digest: "sha256:" + strings.Repeat("6", 64),
-					EROFS: &imagestore.EROFSLayer{
+					EROFS: &image.EROFSLayer{
 						Path:       liveEROFS,
 						Filesystem: "erofs",
 						Digest:     "sha256:" + strings.Repeat("8", 64),
@@ -716,7 +716,7 @@ func TestImageCandidatesProtectIndexedAndLiveImages(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	images := []*imagestore.ImageRecord{{ID: "img-indexed"}}
+	images := []*image.ImageRecord{{ID: "img-indexed"}}
 	candidates := imageCandidates(root, images, map[string]struct{}{"img-live": {}})
 	assertCandidateList(t, candidates, filepath.Join(cloudimg, "staging/import-1"), "image_staging_dir")
 	assertCandidateList(t, candidates, filepath.Join(cloudimg, "img-orphan"), "orphan_image_dir")

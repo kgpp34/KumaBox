@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/config"
-	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/image"
 	"github.com/kumabox/kumabox/internal/lock"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/resources"
@@ -478,7 +478,7 @@ func addLivePath(live map[string]struct{}, path string) {
 	live[path] = struct{}{}
 }
 
-func addLiveImageOCI(paths map[string]struct{}, digests map[string]struct{}, image *imagestore.ImageRecord) {
+func addLiveImageOCI(paths map[string]struct{}, digests map[string]struct{}, image *image.ImageRecord) {
 	if image == nil {
 		return
 	}
@@ -677,7 +677,7 @@ func orphanDirs(parent string, live map[string]struct{}, component string, typ s
 	return candidates
 }
 
-func imageCandidates(rootDir string, images []*imagestore.ImageRecord, liveImageIDs map[string]struct{}) []Candidate {
+func imageCandidates(rootDir string, images []*image.ImageRecord, liveImageIDs map[string]struct{}) []Candidate {
 	cloudimgDir := filepath.Join(rootDir, "cloudimg")
 	indexedIDs := make(map[string]struct{}, len(images))
 	for _, image := range images {

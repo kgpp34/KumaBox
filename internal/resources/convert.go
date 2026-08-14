@@ -15,7 +15,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/fault"
-	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/image"
 	"github.com/kumabox/kumabox/internal/lock"
 	"github.com/kumabox/kumabox/internal/meta"
 	metajson "github.com/kumabox/kumabox/internal/meta/json"
@@ -412,7 +412,7 @@ func duplicateJSONGeneration(definitions []metajson.Namespace, namespace meta.Na
 func metadataJSONDefinitions(rootDir string) []metajson.Namespace {
 	definitions := []metajson.Namespace{
 		vm.JSONNamespace(rootDir),
-		imagestore.JSONNamespace(rootDir),
+		image.JSONNamespace(rootDir),
 		snapshot.JSONNamespace(rootDir),
 	}
 	definitions = append(definitions, kbnetwork.JSONNamespaces(rootDir)...)
