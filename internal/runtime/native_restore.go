@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/backend"
+	"github.com/kumabox/kumabox/internal/disk"
 	"github.com/kumabox/kumabox/internal/fileutil"
 	"github.com/kumabox/kumabox/internal/metering"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/storage"
 	"github.com/kumabox/kumabox/internal/vmstore"
 	"golang.org/x/sync/errgroup"
 )
@@ -215,7 +215,7 @@ func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manif
 			}
 			continue
 		}
-		result, err := storage.CopyFile(ctx, source, destination)
+		result, err := disk.CopyFile(ctx, source, destination)
 		if err != nil {
 			return nil, metrics, fmt.Errorf("stage native payload %s: %w", file.Path, err)
 		}
@@ -233,30 +233,30 @@ func stageNativeRestore(ctx context.Context, snapshotRec *snapshot.Record, manif
 	}
 	staged.disks = make([]stagedRestoreDisk, len(manifest.Disks))
 	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(storage.MaxConcurrentFileCopies)
-	for index, disk := range manifest.Disks {
-		index, disk := index, disk
+	group.SetLimit(disk.MaxConcurrentFileCopies)
+	for index, manifestDisk := range manifest.Disks {
+		index, manifestDisk := index, manifestDisk
 		group.Go(func() error {
-			target, found := targets[disk.ID]
+			target, found := targets[manifestDisk.ID]
 			if !found {
-				return fmt.Errorf("SNAPSHOT_INCOMPATIBLE: no writable target for disk %s", disk.ID)
+				return fmt.Errorf("SNAPSHOT_INCOMPATIBLE: no writable target for disk %s", manifestDisk.ID)
 			}
 			if err := os.MkdirAll(filepath.Dir(target.Path), 0o700); err != nil {
-				return fmt.Errorf("create target directory for disk %s: %w", disk.ID, err)
+				return fmt.Errorf("create target directory for disk %s: %w", manifestDisk.ID, err)
 			}
 			stagedPath := filepath.Join(filepath.Dir(target.Path), ".kumabox-restore-"+snapshotRec.ID+"-"+filepath.Base(target.Path))
 			if err := os.Remove(stagedPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("clear staged disk %s: %w", disk.ID, err)
+				return fmt.Errorf("clear staged disk %s: %w", manifestDisk.ID, err)
 			}
-			source := filepath.Join(snapshotRec.DataDir, filepath.FromSlash(disk.Path))
-			result, err := storage.CopyFile(groupCtx, source, stagedPath)
+			source := filepath.Join(snapshotRec.DataDir, filepath.FromSlash(manifestDisk.Path))
+			result, err := disk.CopyFile(groupCtx, source, stagedPath)
 			if err != nil {
-				return fmt.Errorf("stage writable disk %s: %w", disk.ID, err)
+				return fmt.Errorf("stage writable disk %s: %w", manifestDisk.ID, err)
 			}
-			if disk.SHA256 != "" && result.SHA256 != disk.SHA256 {
-				return fmt.Errorf("CHECKSUM_MISMATCH: staged disk %s", disk.ID)
+			if manifestDisk.SHA256 != "" && result.SHA256 != manifestDisk.SHA256 {
+				return fmt.Errorf("CHECKSUM_MISMATCH: staged disk %s", manifestDisk.ID)
 			}
-			staged.disks[index] = stagedRestoreDisk{id: disk.ID, target: target.Path, staged: stagedPath}
+			staged.disks[index] = stagedRestoreDisk{id: manifestDisk.ID, target: target.Path, staged: stagedPath}
 			return nil
 		})
 	}

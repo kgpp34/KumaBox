@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kumabox/kumabox/internal/disk"
 	"github.com/kumabox/kumabox/internal/fileutil"
-	"github.com/kumabox/kumabox/internal/storage"
 )
 
 const maxSnapshotDirectoryEntries = 4096
@@ -163,7 +163,7 @@ func copySnapshotTree(ctx context.Context, source, destination string, enforceIm
 			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 				return err
 			}
-			if _, err := storage.CopyFile(ctx, path, target); err != nil {
+			if _, err := disk.CopyFile(ctx, path, target); err != nil {
 				return fmt.Errorf("copy snapshot directory payload %s: %w", relative, err)
 			}
 			return nil

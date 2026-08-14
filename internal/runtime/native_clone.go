@@ -154,7 +154,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 			return
 		}
 		r.network.rollbackNetwork(rec)
-		_ = r.storage.removeManagedDirs(rec)
+		_ = r.disk.removeManagedDirs(rec)
 		_ = r.vmRecords.Delete(rec.ID)
 	}()
 

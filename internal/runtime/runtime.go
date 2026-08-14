@@ -11,6 +11,7 @@ import (
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/backend/cloudhypervisor"
 	"github.com/kumabox/kumabox/internal/config"
+	"github.com/kumabox/kumabox/internal/disk"
 	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/lock"
 	"github.com/kumabox/kumabox/internal/metering"
@@ -19,7 +20,6 @@ import (
 	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/state"
-	"github.com/kumabox/kumabox/internal/storage"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -43,9 +43,9 @@ type Runtime struct {
 	cfg           config.Config
 	vmLocks       *lock.Locker
 	resourceGuard *lock.Guard
-	qemuImg       *storage.QEMUImg
+	qemuImg       *disk.QEMUImg
 	network       *networkCoordinator
-	storage       *storageCoordinator
+	disk          *storageCoordinator
 }
 
 // CreateStoppedSnapshot captures managed writable disks while holding the VM
@@ -119,7 +119,7 @@ func New(cfg config.Config) (*Runtime, error) {
 		return nil, err
 	}
 	rt.cfg = cfg
-	rt.qemuImg = storage.NewQEMUImg(cfg.Storage.QEMUImgBinary)
+	rt.qemuImg = disk.NewQEMUImg(cfg.Storage.QEMUImgBinary)
 	return rt, nil
 }
 
@@ -136,7 +136,7 @@ func NewWithBackend(store state.VMState, vmBackend backend.Lifecycle) *Runtime {
 		backend:       vmBackend,
 		vmLocks:       lock.NewLocker(filepath.Join(store.RootDir(), "locks", "vms")),
 		resourceGuard: stores.Guard,
-		qemuImg:       storage.NewQEMUImg(defaultQEMUImgBinary),
+		qemuImg:       disk.NewQEMUImg(defaultQEMUImgBinary),
 	}
 	rt.initNetworkCoordinator()
 	return rt
@@ -161,7 +161,7 @@ func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) (*Run
 		backend:       vmBackend,
 		vmLocks:       lock.NewLocker(filepath.Join(stores.VM.RootDir(), "locks", "vms")),
 		resourceGuard: stores.Guard,
-		qemuImg:       storage.NewQEMUImg(defaultQEMUImgBinary),
+		qemuImg:       disk.NewQEMUImg(defaultQEMUImgBinary),
 	}
 	rt.initNetworkCoordinator()
 	return rt, nil
@@ -208,9 +208,9 @@ func (r *Runtime) createVMContext(ctx context.Context, req vmstore.CreateRequest
 		metrics.bindRecord(rec)
 		metrics.markNetworkReady(time.Now())
 	}
-	if err := r.storage.prepare(ctx, rec); err != nil {
+	if err := r.disk.prepare(ctx, rec); err != nil {
 		r.network.rollbackNetwork(rec)
-		_ = r.storage.removeManagedDirs(rec)
+		_ = r.disk.removeManagedDirs(rec)
 		_ = r.vmRecords.Delete(rec.ID)
 		return nil, err
 	}
@@ -219,13 +219,13 @@ func (r *Runtime) createVMContext(ctx context.Context, req vmstore.CreateRequest
 	}
 	if err := r.backend.RenderConfig(rec); err != nil {
 		r.network.rollbackNetwork(rec)
-		_ = r.storage.removeManagedDirs(rec)
+		_ = r.disk.removeManagedDirs(rec)
 		_ = r.vmRecords.Delete(rec.ID)
 		return nil, err
 	}
 	if err := r.recordVMImageReference(ctx, rec); err != nil {
 		r.network.rollbackNetwork(rec)
-		_ = r.storage.removeManagedDirs(rec)
+		_ = r.disk.removeManagedDirs(rec)
 		_ = r.vmRecords.Delete(rec.ID)
 		return nil, fmt.Errorf("record VM image reference: %w", err)
 	}
@@ -299,7 +299,7 @@ func (r *Runtime) startVMLocked(ctx context.Context, ref string, metrics *lifecy
 		return nil, err
 	}
 	metrics.markNetworkReady(time.Now())
-	if err := r.storage.prepare(ctx, rec); err != nil {
+	if err := r.disk.prepare(ctx, rec); err != nil {
 		if _, markErr := r.vmUpdater.SetError(rec.ID, err.Error()); markErr != nil {
 			return nil, markErr
 		}
@@ -551,7 +551,7 @@ func (r *Runtime) DeleteVMContext(ctx context.Context, ref string, force bool) (
 		Reason:    "VM deleted",
 		CheckedAt: time.Now().UTC(),
 	})
-	if err := r.storage.removeManagedDirs(observed); err != nil {
+	if err := r.disk.removeManagedDirs(observed); err != nil {
 		return nil, err
 	}
 	if err := fault.Check(ctx, fault.DeleteBeforeRecordDelete); err != nil {

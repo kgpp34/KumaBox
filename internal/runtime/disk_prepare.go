@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/kumabox/kumabox/internal/storage"
+	"github.com/kumabox/kumabox/internal/disk"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -37,10 +37,10 @@ func removeManagedDirs(rec *vmstore.VMRecord, rootDir string) error {
 }
 
 func prepareStorage(rec *vmstore.VMRecord, rootDir string) error {
-	return prepareStorageWithQEMUImg(context.Background(), rec, rootDir, storage.NewQEMUImg("qemu-img"))
+	return prepareStorageWithQEMUImg(context.Background(), rec, rootDir, disk.NewQEMUImg("qemu-img"))
 }
 
-func prepareStorageWithQEMUImg(ctx context.Context, rec *vmstore.VMRecord, rootDir string, qemuImg *storage.QEMUImg) error {
+func prepareStorageWithQEMUImg(ctx context.Context, rec *vmstore.VMRecord, rootDir string, qemuImg *disk.QEMUImg) error {
 	if err := vmstore.ValidateStorageContract(rec, rootDir); err != nil {
 		return err
 	}
@@ -59,7 +59,7 @@ func prepareStorageWithQEMUImg(ctx context.Context, rec *vmstore.VMRecord, rootD
 			}
 		case vmstore.StorageRoleCOW:
 			if cfg.Base != nil && cfg.Base.Family == "cloudimg" {
-				if err := qemuImg.EnsureOverlay(ctx, storage.OverlaySpec{
+				if err := qemuImg.EnsureOverlay(ctx, disk.OverlaySpec{
 					Path:       cfg.Path,
 					BasePath:   cfg.Base.Path,
 					BaseFormat: cfg.Base.Format,

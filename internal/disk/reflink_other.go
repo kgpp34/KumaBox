@@ -1,6 +1,6 @@
 //go:build !linux
 
-package storage
+package disk
 
 func probeReflink(string) (bool, error) {
 	return false, nil

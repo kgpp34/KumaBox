@@ -1,4 +1,4 @@
-package storage
+package disk
 
 import (
 	"context"
@@ -35,7 +35,7 @@ func CopyFile(ctx context.Context, source, destination string) (CopyResult, erro
 }
 
 // StageFile creates a copy without reading it back or forcing it to stable
-// storage. Callers with a latency-sensitive pause window must finalize it
+// disk. Callers with a latency-sensitive pause window must finalize it
 // after the source workload has resumed.
 func StageFile(ctx context.Context, source, destination string) (CopyResult, error) {
 	strategy, err := copyPlatform(ctx, source, destination)

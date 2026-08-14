@@ -1,5 +1,5 @@
-// Package storage prepares and validates durable VM-owned block devices.
-package storage
+// Package disk prepares and validates durable VM-owned block devices.
+package disk
 
 import (
 	"context"

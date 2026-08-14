@@ -9,11 +9,11 @@ import (
 	"strings"
 
 	"github.com/kumabox/kumabox/internal/config"
+	"github.com/kumabox/kumabox/internal/disk"
 	"github.com/kumabox/kumabox/internal/imagestore"
 	"github.com/kumabox/kumabox/internal/lock"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/snapshot"
-	"github.com/kumabox/kumabox/internal/storage"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -102,7 +102,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	defer func() {
 		if !ok {
 			r.network.rollbackNetwork(rec)
-			_ = r.storage.removeManagedDirs(rec)
+			_ = r.disk.removeManagedDirs(rec)
 			_ = r.vmRecords.Delete(rec.ID)
 		}
 	}()
@@ -115,7 +115,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	if updated, inspectErr := r.vmReader.Inspect(rec.ID); inspectErr == nil {
 		rec = updated
 	}
-	if err := r.storage.prepare(ctx, rec); err != nil {
+	if err := r.disk.prepare(ctx, rec); err != nil {
 		return nil, err
 	}
 	if err := r.backend.RenderConfig(rec); err != nil {
@@ -206,7 +206,7 @@ func restoreCreateRequest(opts RestoreOptions, image *imagestore.ImageRecord, ma
 	return req, nil
 }
 
-func restoreWritableDisks(ctx context.Context, rec *vmstore.VMRecord, snapshotDir string, manifest *snapshot.Manifest, qemuImg *storage.QEMUImg) error {
+func restoreWritableDisks(ctx context.Context, rec *vmstore.VMRecord, snapshotDir string, manifest *snapshot.Manifest, qemuImg *disk.QEMUImg) error {
 	byID := make(map[string]snapshot.DiskManifest, len(manifest.Disks))
 	for _, disk := range manifest.Disks {
 		byID[disk.ID] = disk
@@ -216,27 +216,27 @@ func restoreWritableDisks(ctx context.Context, rec *vmstore.VMRecord, snapshotDi
 		if role != vmstore.StorageRoleCOW && role != vmstore.StorageRoleData {
 			continue
 		}
-		disk, found := byID[target.ID]
+		manifestDisk, found := byID[target.ID]
 		if !found {
 			return fmt.Errorf("DISK_CONFIG_MISSING: snapshot disk %s", target.ID)
 		}
-		source, err := snapshotDiskPath(snapshotDir, disk.Path)
+		source, err := snapshotDiskPath(snapshotDir, manifestDisk.Path)
 		if err != nil {
-			return fmt.Errorf("resolve snapshot disk %s: %w", disk.ID, err)
+			return fmt.Errorf("resolve snapshot disk %s: %w", manifestDisk.ID, err)
 		}
 		if err := os.MkdirAll(filepath.Dir(target.Path), 0o700); err != nil {
 			return fmt.Errorf("create restored disk directory: %w", err)
 		}
-		result, err := storage.CopyFile(ctx, source, target.Path)
+		result, err := disk.CopyFile(ctx, source, target.Path)
 		if err != nil {
-			return fmt.Errorf("restore disk %s: %w", disk.ID, err)
+			return fmt.Errorf("restore disk %s: %w", manifestDisk.ID, err)
 		}
-		if result.SHA256 != disk.SHA256 {
-			return fmt.Errorf("CHECKSUM_MISMATCH: restored disk %s", disk.ID)
+		if result.SHA256 != manifestDisk.SHA256 {
+			return fmt.Errorf("CHECKSUM_MISMATCH: restored disk %s", manifestDisk.ID)
 		}
 		if target.Base != nil && target.Base.Family == "cloudimg" {
 			if err := qemuImg.RebaseOverlay(ctx, target.Path, target.Base.Path, target.Base.Format); err != nil {
-				return fmt.Errorf("rebase restored disk %s: %w", disk.ID, err)
+				return fmt.Errorf("rebase restored disk %s: %w", manifestDisk.ID, err)
 			}
 		}
 	}

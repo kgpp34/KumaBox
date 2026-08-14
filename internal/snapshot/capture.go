@@ -11,8 +11,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/kumabox/kumabox/internal/disk"
 	"github.com/kumabox/kumabox/internal/fileutil"
-	"github.com/kumabox/kumabox/internal/storage"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -38,7 +38,7 @@ func CaptureStopped(ctx context.Context, build *Build, rec *vmstore.VMRecord) (*
 // CaptureWritableDisks copies every managed writable disk into staging. Calls
 // may run while a VM is paused, so copies are bounded and concurrent.
 func CaptureWritableDisks(ctx context.Context, stagingDir string, rec *vmstore.VMRecord) ([]DiskManifest, int64, error) {
-	disks, _, err := copyWritableDisks(ctx, stagingDir, rec, storage.CopyFile)
+	disks, _, err := copyWritableDisks(ctx, stagingDir, rec, disk.CopyFile)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -49,7 +49,7 @@ func CaptureWritableDisks(ctx context.Context, stagingDir string, rec *vmstore.V
 // snapshot pause window. The returned manifests are incomplete until passed
 // to FinalizeWritableDisks after the VM resumes.
 func StageWritableDisks(ctx context.Context, stagingDir string, rec *vmstore.VMRecord) ([]DiskManifest, error) {
-	disks, _, err := copyWritableDisks(ctx, stagingDir, rec, storage.StageFile)
+	disks, _, err := copyWritableDisks(ctx, stagingDir, rec, disk.StageFile)
 	return disks, err
 }
 
@@ -58,18 +58,18 @@ func StageWritableDisks(ctx context.Context, stagingDir string, rec *vmstore.VMR
 func FinalizeWritableDisks(ctx context.Context, stagingDir string, disks []DiskManifest) ([]DiskManifest, int64, error) {
 	finalized := append([]DiskManifest(nil), disks...)
 	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(storage.MaxConcurrentFileCopies)
+	group.SetLimit(disk.MaxConcurrentFileCopies)
 	for i := range finalized {
 		i := i
 		group.Go(func() error {
-			disk := &finalized[i]
-			result, err := storage.FinalizeStagedFile(groupCtx, filepath.Join(stagingDir, filepath.FromSlash(disk.Path)), storage.CopyResult{Strategy: disk.CopyStrategy})
+			manifestDisk := &finalized[i]
+			result, err := disk.FinalizeStagedFile(groupCtx, filepath.Join(stagingDir, filepath.FromSlash(manifestDisk.Path)), disk.CopyResult{Strategy: manifestDisk.CopyStrategy})
 			if err != nil {
-				return fmt.Errorf("finalize writable disk %s: %w", disk.ID, err)
+				return fmt.Errorf("finalize writable disk %s: %w", manifestDisk.ID, err)
 			}
-			disk.VirtualSizeBytes = result.LogicalSizeBytes
-			disk.AllocatedSizeBytes = result.AllocatedSizeBytes
-			disk.SHA256 = result.SHA256
+			manifestDisk.VirtualSizeBytes = result.LogicalSizeBytes
+			manifestDisk.AllocatedSizeBytes = result.AllocatedSizeBytes
+			manifestDisk.SHA256 = result.SHA256
 			return nil
 		})
 	}
@@ -79,7 +79,7 @@ func FinalizeWritableDisks(ctx context.Context, stagingDir string, disks []DiskM
 	return finalized, allocatedSize(finalized), nil
 }
 
-type diskCopier func(context.Context, string, string) (storage.CopyResult, error)
+type diskCopier func(context.Context, string, string) (disk.CopyResult, error)
 
 func copyWritableDisks(ctx context.Context, stagingDir string, rec *vmstore.VMRecord, copyDisk diskCopier) ([]DiskManifest, int64, error) {
 	if rec == nil {
@@ -95,7 +95,7 @@ func copyWritableDisks(ctx context.Context, stagingDir string, rec *vmstore.VMRe
 	}
 	manifestDisks := make([]DiskManifest, len(writable))
 	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(storage.MaxConcurrentFileCopies)
+	group.SetLimit(disk.MaxConcurrentFileCopies)
 	for i := range writable {
 		i := i
 		group.Go(func() error {

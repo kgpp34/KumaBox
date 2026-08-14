@@ -21,7 +21,7 @@ type networkCoordinator struct {
 
 func (r *Runtime) initNetworkCoordinator() {
 	r.network = &networkCoordinator{Runtime: r}
-	r.storage = &storageCoordinator{Runtime: r}
+	r.disk = &storageCoordinator{Runtime: r}
 }
 
 func (r *networkCoordinator) providerStore() (*kbnetwork.Store, error) {

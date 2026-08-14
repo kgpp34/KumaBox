@@ -18,8 +18,8 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 
+	"github.com/kumabox/kumabox/internal/disk"
 	"github.com/kumabox/kumabox/internal/fileutil"
-	"github.com/kumabox/kumabox/internal/storage"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
 
@@ -239,30 +239,30 @@ func validateImportedPayload(qemuBinary, staging string, manifest *Manifest, che
 	if len(checksums) != len(manifest.Disks) {
 		return errors.New("SNAPSHOT_CORRUPT: checksum set does not match declared payloads")
 	}
-	for _, disk := range manifest.Disks {
-		path := filepath.Join(staging, filepath.FromSlash(disk.Path))
+	for _, manifestDisk := range manifest.Disks {
+		path := filepath.Join(staging, filepath.FromSlash(manifestDisk.Path))
 		digest, err := hashFile(path)
 		if err != nil {
 			return err
 		}
-		expected, ok := checksums[disk.Path]
-		if !ok || expected != disk.SHA256 || digest != expected {
-			return fmt.Errorf("CHECKSUM_MISMATCH: disk %s", disk.ID)
+		expected, ok := checksums[manifestDisk.Path]
+		if !ok || expected != manifestDisk.SHA256 || digest != expected {
+			return fmt.Errorf("CHECKSUM_MISMATCH: disk %s", manifestDisk.ID)
 		}
-		switch disk.Format {
+		switch manifestDisk.Format {
 		case vmstore.FormatQCOW2:
-			info, err := storage.NewQEMUImg(qemuBinary).Info(context.Background(), path)
+			info, err := disk.NewQEMUImg(qemuBinary).Info(context.Background(), path)
 			if err != nil || info.Format != "qcow2" {
-				return fmt.Errorf("SNAPSHOT_CORRUPT: disk %s is not qcow2", disk.ID)
+				return fmt.Errorf("SNAPSHOT_CORRUPT: disk %s is not qcow2", manifestDisk.ID)
 			}
 		case vmstore.FormatRaw:
-			if disk.Filesystem == vmstore.FilesystemEXT4 {
+			if manifestDisk.Filesystem == vmstore.FilesystemEXT4 {
 				if err := validateExt4(path); err != nil {
 					return err
 				}
 			}
 		default:
-			return fmt.Errorf("SNAPSHOT_CORRUPT: unsupported disk format %q", disk.Format)
+			return fmt.Errorf("SNAPSHOT_CORRUPT: unsupported disk format %q", manifestDisk.Format)
 		}
 	}
 	return nil
