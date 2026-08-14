@@ -16,8 +16,8 @@ import (
 	"github.com/kumabox/kumabox/internal/batch"
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/lock"
 	"github.com/kumabox/kumabox/internal/oci"
-	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/resources"
 )
 
@@ -499,7 +499,7 @@ func removeImage(ctx context.Context, stores resources.StoreSet, ref string, for
 	if err != nil {
 		return nil, err
 	}
-	imageLock, err := stores.Guard.LockEntity(ctx, resourceguard.EntityImage, image.ID)
+	imageLock, err := stores.Guard.LockEntity(ctx, lock.EntityImage, image.ID)
 	if err != nil {
 		return nil, err
 	}

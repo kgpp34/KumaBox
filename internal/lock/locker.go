@@ -1,6 +1,5 @@
-// Package lockfile provides context-aware advisory locks for daemonless
-// cross-process operations.
-package lockfile
+// Package lock provides cross-process coordination for daemonless operations.
+package lock
 
 import (
 	"context"
@@ -27,8 +26,8 @@ type Lock struct {
 	once sync.Once
 }
 
-// New returns a Locker rooted at dir.
-func New(dir string) *Locker {
+// NewLocker returns a Locker rooted at dir.
+func NewLocker(dir string) *Locker {
 	return &Locker{dir: dir}
 }
 

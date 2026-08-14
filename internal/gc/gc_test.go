@@ -12,8 +12,8 @@ import (
 
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/lock"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -297,7 +297,7 @@ func TestRepairWaitsForMutationAndScansAfterLockAcquisition(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mutation, err := resourceguard.New(cfg.Runtime.RootDir).BeginMutation(t.Context())
+	mutation, err := lock.NewGuard(cfg.Runtime.RootDir).BeginMutation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func TestRepairCancellationLeavesCandidatesUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mutation, err := resourceguard.New(cfg.Runtime.RootDir).BeginMutation(t.Context())
+	mutation, err := lock.NewGuard(cfg.Runtime.RootDir).BeginMutation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

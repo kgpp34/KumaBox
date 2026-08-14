@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kumabox/kumabox/internal/lock"
 	metasqlite "github.com/kumabox/kumabox/internal/metastore/sqlite"
-	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/resources"
 )
 
@@ -77,7 +77,7 @@ func newMetadataConvertCommand(opts *rootOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			maintenance, err := resourceguard.New(cfg.Runtime.RootDir).BeginMaintenance(cmd.Context())
+			maintenance, err := lock.NewGuard(cfg.Runtime.RootDir).BeginMaintenance(cmd.Context())
 			if err != nil {
 				return err
 			}

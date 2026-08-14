@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/kumabox/kumabox/internal/fault"
-	"github.com/kumabox/kumabox/internal/lockfile"
+	"github.com/kumabox/kumabox/internal/lock"
 	"github.com/kumabox/kumabox/internal/metastore"
 )
 
@@ -41,11 +41,11 @@ func Backup(ctx context.Context, sourcePath, destinationPath string) (err error)
 		return fmt.Errorf("create sqlite backup directory: %w", err)
 	}
 	lockKey := filepath.Base(destinationPath) + ".backup"
-	lock, err := lockfile.New(filepath.Dir(destinationPath)).Acquire(ctx, lockKey)
+	fileLock, err := lock.NewLocker(filepath.Dir(destinationPath)).Acquire(ctx, lockKey)
 	if err != nil {
 		return fmt.Errorf("lock sqlite backup destination: %w", err)
 	}
-	defer func() { err = errors.Join(err, lock.Release()) }()
+	defer func() { err = errors.Join(err, fileLock.Release()) }()
 
 	temporary, err := os.CreateTemp(filepath.Dir(destinationPath), ".kumabox-backup-*.db")
 	if err != nil {

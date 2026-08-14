@@ -8,6 +8,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/lock"
 	"github.com/kumabox/kumabox/internal/metastore"
 	metasqlite "github.com/kumabox/kumabox/internal/metastore/sqlite"
 	"github.com/kumabox/kumabox/internal/metering"
@@ -15,7 +16,6 @@ import (
 	"github.com/kumabox/kumabox/internal/ocistore"
 	"github.com/kumabox/kumabox/internal/operation"
 	"github.com/kumabox/kumabox/internal/reference"
-	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/state"
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -34,7 +34,7 @@ type StoreSet struct {
 	References state.ReferenceState
 	Metering   *metering.Store
 	Metadata   metastore.MetaEngine
-	Guard      *resourceguard.Guard
+	Guard      *lock.Guard
 }
 
 // NewStoreSetForConfig composes every persisted resource over the configured
@@ -63,7 +63,7 @@ func NewStoreSetForConfig(cfg config.Config) (StoreSet, error) {
 		References: reference.NewWithEngine(engine),
 		Metering:   metering.NewWithEngine(engine),
 		Metadata:   engine,
-		Guard:      resourceguard.New(cfg.Runtime.RootDir),
+		Guard:      lock.NewGuard(cfg.Runtime.RootDir),
 	}, nil
 }
 
@@ -112,6 +112,6 @@ func NewStoreSet(rootDir string) StoreSet {
 		Operations: operation.New(rootDir),
 		References: reference.New(rootDir),
 		Metering:   metering.New(rootDir),
-		Guard:      resourceguard.New(rootDir),
+		Guard:      lock.NewGuard(rootDir),
 	}
 }

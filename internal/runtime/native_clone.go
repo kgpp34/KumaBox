@@ -9,10 +9,10 @@ import (
 	agentclient "github.com/kumabox/kumabox/internal/agent/client"
 	"github.com/kumabox/kumabox/internal/backend"
 	"github.com/kumabox/kumabox/internal/fault"
+	"github.com/kumabox/kumabox/internal/lock"
 	"github.com/kumabox/kumabox/internal/metering"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/operation"
-	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
 )
@@ -97,7 +97,7 @@ func (r *Runtime) CloneNativeSnapshot(ctx context.Context, snapshotRef string, o
 	if err != nil {
 		return nil, fmt.Errorf("BASE_IMAGE_MISSING: resolve image %s: %w", manifest.Source.ImageID, err)
 	}
-	imageLock, err := r.resourceGuard.LockEntity(ctx, resourceguard.EntityImage, image.ID)
+	imageLock, err := r.resourceGuard.LockEntity(ctx, lock.EntityImage, image.ID)
 	if err != nil {
 		return nil, err
 	}

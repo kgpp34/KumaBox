@@ -16,7 +16,7 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/imagestore"
-	"github.com/kumabox/kumabox/internal/lockfile"
+	"github.com/kumabox/kumabox/internal/lock"
 	"github.com/kumabox/kumabox/internal/metastore"
 	metajson "github.com/kumabox/kumabox/internal/metastore/json"
 	metasqlite "github.com/kumabox/kumabox/internal/metastore/sqlite"
@@ -130,11 +130,11 @@ func checkConversionQuiesced(ctx context.Context, target string, source metastor
 	for _, definition := range jsonDefinitions {
 		key := filepath.Base(definition.LockPath)
 		key = strings.TrimSuffix(key, filepath.Ext(key))
-		lock, err := lockfile.New(filepath.Dir(definition.LockPath)).Acquire(probeContext, key)
+		fileLock, err := lock.NewLocker(filepath.Dir(definition.LockPath)).Acquire(probeContext, key)
 		if err != nil {
 			return fmt.Errorf("json metadata namespace %s is busy; stop KumaBox commands before converting: %w", definition.Name, err)
 		}
-		if err := lock.Release(); err != nil {
+		if err := fileLock.Release(); err != nil {
 			return err
 		}
 	}

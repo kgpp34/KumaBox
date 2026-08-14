@@ -14,8 +14,8 @@ import (
 
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/lock"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
-	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/state"
@@ -180,7 +180,7 @@ func RepairContext(ctx context.Context, cfg config.Config) (*Report, error) {
 // RepairWithOptions performs orphan repair and optional snapshot policy
 // eviction under one maintenance lock and one consistent resource setup.
 func RepairWithOptions(ctx context.Context, cfg config.Config, options Options) (report *Report, err error) {
-	maintenance, err := resourceguard.New(cfg.Runtime.RootDir).BeginMaintenance(ctx)
+	maintenance, err := lock.NewGuard(cfg.Runtime.RootDir).BeginMaintenance(ctx)
 	if err != nil {
 		return nil, err
 	}

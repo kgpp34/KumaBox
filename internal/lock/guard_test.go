@@ -1,4 +1,4 @@
-package resourceguard
+package lock
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 )
 
 func TestMaintenanceWaitsForEveryMutation(t *testing.T) {
-	guard := New(t.TempDir())
+	guard := NewGuard(t.TempDir())
 	first, err := guard.BeginMutation(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ func TestMaintenanceWaitsForEveryMutation(t *testing.T) {
 }
 
 func TestEntityLocksAreScopedByKindAndID(t *testing.T) {
-	guard := New(t.TempDir())
+	guard := NewGuard(t.TempDir())
 	image, err := guard.LockEntity(t.Context(), EntityImage, "img_one")
 	if err != nil {
 		t.Fatal(err)

@@ -10,8 +10,8 @@ import (
 
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/lock"
 	"github.com/kumabox/kumabox/internal/operation"
-	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/storage"
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -66,7 +66,7 @@ func (r *Runtime) RestoreSnapshot(ctx context.Context, ref string, opts RestoreO
 	if err != nil {
 		return nil, fmt.Errorf("BASE_IMAGE_MISSING: resolve image %s: %w", manifest.Source.ImageID, err)
 	}
-	imageLock, err := r.resourceGuard.LockEntity(ctx, resourceguard.EntityImage, image.ID)
+	imageLock, err := r.resourceGuard.LockEntity(ctx, lock.EntityImage, image.ID)
 	if err != nil {
 		return nil, err
 	}

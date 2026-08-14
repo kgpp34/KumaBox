@@ -1,13 +1,9 @@
-// Package resourceguard coordinates ordinary resource mutations with
-// destructive maintenance in daemonless KumaBox processes.
-package resourceguard
+package lock
 
 import (
 	"context"
 	"fmt"
 	"path/filepath"
-
-	"github.com/kumabox/kumabox/internal/lockfile"
 )
 
 const maintenanceKey = "maintenance"
@@ -22,16 +18,16 @@ const (
 
 // Guard owns the stable cross-process locks for one KumaBox root.
 type Guard struct {
-	locks *lockfile.Locker
+	locks *Locker
 }
 
-// New creates a guard rooted in KumaBox's durable lock directory.
-func New(rootDir string) *Guard {
-	return &Guard{locks: lockfile.New(filepath.Join(rootDir, "locks", "resources"))}
+// NewGuard creates a guard rooted in KumaBox's durable lock directory.
+func NewGuard(rootDir string) *Guard {
+	return &Guard{locks: NewLocker(filepath.Join(rootDir, "locks", "resources"))}
 }
 
 // BeginMutation permits concurrent ordinary mutations while excluding GC.
-func (g *Guard) BeginMutation(ctx context.Context) (*lockfile.Lock, error) {
+func (g *Guard) BeginMutation(ctx context.Context) (*Lock, error) {
 	lock, err := g.locks.AcquireShared(ctx, maintenanceKey)
 	if err != nil {
 		return nil, fmt.Errorf("lock resource mutation: %w", err)
@@ -40,7 +36,7 @@ func (g *Guard) BeginMutation(ctx context.Context) (*lockfile.Lock, error) {
 }
 
 // BeginMaintenance excludes all guarded mutations for a complete GC cycle.
-func (g *Guard) BeginMaintenance(ctx context.Context) (*lockfile.Lock, error) {
+func (g *Guard) BeginMaintenance(ctx context.Context) (*Lock, error) {
 	lock, err := g.locks.Acquire(ctx, maintenanceKey)
 	if err != nil {
 		return nil, fmt.Errorf("lock resource maintenance: %w", err)
@@ -50,7 +46,7 @@ func (g *Guard) BeginMaintenance(ctx context.Context) (*lockfile.Lock, error) {
 
 // LockEntity serializes publication, reference changes, and deletion for one
 // durable entity. Callers must acquire the maintenance lock first.
-func (g *Guard) LockEntity(ctx context.Context, kind EntityKind, id string) (*lockfile.Lock, error) {
+func (g *Guard) LockEntity(ctx context.Context, kind EntityKind, id string) (*Lock, error) {
 	if kind == "" || id == "" {
 		return nil, fmt.Errorf("resource lock kind and id must not be empty")
 	}

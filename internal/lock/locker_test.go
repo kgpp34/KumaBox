@@ -1,4 +1,4 @@
-package lockfile
+package lock
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 )
 
 func TestAcquireSerializesSameKey(t *testing.T) {
-	locker := New(t.TempDir())
+	locker := NewLocker(t.TempDir())
 	first, err := locker.Acquire(context.Background(), "kb_same")
 	if err != nil {
 		t.Fatal(err)
@@ -24,7 +24,7 @@ func TestAcquireSerializesSameKey(t *testing.T) {
 }
 
 func TestAcquireDoesNotSerializeDifferentKeys(t *testing.T) {
-	locker := New(t.TempDir())
+	locker := NewLocker(t.TempDir())
 	first, err := locker.Acquire(context.Background(), "kb_first")
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ func TestAcquireDoesNotSerializeDifferentKeys(t *testing.T) {
 }
 
 func TestSharedLocksRunConcurrentlyAndExcludeWriter(t *testing.T) {
-	locker := New(t.TempDir())
+	locker := NewLocker(t.TempDir())
 	first, err := locker.AcquireShared(context.Background(), "resources")
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestSharedLocksRunConcurrentlyAndExcludeWriter(t *testing.T) {
 }
 
 func TestExclusiveLockExcludesSharedReader(t *testing.T) {
-	locker := New(t.TempDir())
+	locker := NewLocker(t.TempDir())
 	writer, err := locker.Acquire(context.Background(), "resources")
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestExclusiveLockExcludesSharedReader(t *testing.T) {
 }
 
 func TestReleaseAllowsReacquire(t *testing.T) {
-	locker := New(t.TempDir())
+	locker := NewLocker(t.TempDir())
 	lock, err := locker.Acquire(context.Background(), "kb_release")
 	if err != nil {
 		t.Fatal(err)

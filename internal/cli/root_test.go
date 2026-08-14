@@ -20,9 +20,9 @@ import (
 
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/imagestore"
+	"github.com/kumabox/kumabox/internal/lock"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/reference"
-	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/vmstore"
@@ -1209,13 +1209,13 @@ func testImageRemoveRechecksReferencesAfterEntityLock(t *testing.T, backend stri
 		t.Fatal(err)
 	}
 
-	guard := resourceguard.New(rootDir)
+	guard := lock.NewGuard(rootDir)
 	mutation, err := guard.BeginMutation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = mutation.Release() })
-	imageLock, err := guard.LockEntity(t.Context(), resourceguard.EntityImage, image.ID)
+	imageLock, err := guard.LockEntity(t.Context(), lock.EntityImage, image.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

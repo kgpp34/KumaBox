@@ -12,11 +12,10 @@ import (
 	"github.com/kumabox/kumabox/internal/backend/cloudhypervisor"
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/fault"
-	"github.com/kumabox/kumabox/internal/lockfile"
+	"github.com/kumabox/kumabox/internal/lock"
 	"github.com/kumabox/kumabox/internal/metering"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/operation"
-	"github.com/kumabox/kumabox/internal/resourceguard"
 	"github.com/kumabox/kumabox/internal/resources"
 	"github.com/kumabox/kumabox/internal/snapshot"
 	"github.com/kumabox/kumabox/internal/state"
@@ -42,8 +41,8 @@ type Runtime struct {
 	storeSet      StoreSet
 	backend       backend.Lifecycle
 	cfg           config.Config
-	vmLocks       *lockfile.Locker
-	resourceGuard *resourceguard.Guard
+	vmLocks       *lock.Locker
+	resourceGuard *lock.Guard
 	qemuImg       *storage.QEMUImg
 	network       *networkCoordinator
 	storage       *storageCoordinator
@@ -135,7 +134,7 @@ func NewWithBackend(store state.VMState, vmBackend backend.Lifecycle) *Runtime {
 		operations:    stores.Operations,
 		storeSet:      stores,
 		backend:       vmBackend,
-		vmLocks:       lockfile.New(filepath.Join(store.RootDir(), "locks", "vms")),
+		vmLocks:       lock.NewLocker(filepath.Join(store.RootDir(), "locks", "vms")),
 		resourceGuard: stores.Guard,
 		qemuImg:       storage.NewQEMUImg(defaultQEMUImgBinary),
 	}
@@ -150,7 +149,7 @@ func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) (*Run
 		return nil, errors.New("runtime store set must include a VM store")
 	}
 	if stores.Guard == nil {
-		stores.Guard = resourceguard.New(stores.VM.RootDir())
+		stores.Guard = lock.NewGuard(stores.VM.RootDir())
 	}
 	rt := &Runtime{
 		vmReader:      stores.VM,
@@ -160,7 +159,7 @@ func NewWithBackendAndStores(stores StoreSet, vmBackend backend.Lifecycle) (*Run
 		operations:    stores.Operations,
 		storeSet:      stores,
 		backend:       vmBackend,
-		vmLocks:       lockfile.New(filepath.Join(stores.VM.RootDir(), "locks", "vms")),
+		vmLocks:       lock.NewLocker(filepath.Join(stores.VM.RootDir(), "locks", "vms")),
 		resourceGuard: stores.Guard,
 		qemuImg:       storage.NewQEMUImg(defaultQEMUImgBinary),
 	}
@@ -184,7 +183,7 @@ func (r *Runtime) CreateVM(req vmstore.CreateRequest) (*vmstore.VMRecord, error)
 
 func (r *Runtime) createVMContext(ctx context.Context, req vmstore.CreateRequest, metrics *lifecycleMetrics) (*vmstore.VMRecord, error) {
 	if req.Image != nil && req.Image.ID != "" {
-		imageLock, err := r.resourceGuard.LockEntity(ctx, resourceguard.EntityImage, req.Image.ID)
+		imageLock, err := r.resourceGuard.LockEntity(ctx, lock.EntityImage, req.Image.ID)
 		if err != nil {
 			return nil, err
 		}

@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/fault"
-	"github.com/kumabox/kumabox/internal/lockfile"
+	"github.com/kumabox/kumabox/internal/lock"
 	"github.com/kumabox/kumabox/internal/metastore"
 )
 
@@ -272,7 +272,7 @@ func (s *Store) resolve(requested []metastore.Namespace, write metastore.Namespa
 	return definitions, nil
 }
 
-func (s *Store) acquire(ctx context.Context, definitions []Namespace) ([]*lockfile.Lock, error) {
+func (s *Store) acquire(ctx context.Context, definitions []Namespace) ([]*lock.Lock, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -282,14 +282,14 @@ func (s *Store) acquire(ctx context.Context, definitions []Namespace) ([]*lockfi
 	if closed {
 		return nil, metastore.ErrClosed
 	}
-	locks := make([]*lockfile.Lock, 0, len(definitions))
+	locks := make([]*lock.Lock, 0, len(definitions))
 	for _, definition := range definitions {
-		lock, err := lockfile.New(filepath.Dir(definition.LockPath)).Acquire(ctx, lockKey(definition.LockPath))
+		fileLock, err := lock.NewLocker(filepath.Dir(definition.LockPath)).Acquire(ctx, lockKey(definition.LockPath))
 		if err != nil {
 			releaseLocks(locks)
 			return nil, fmt.Errorf("lock metadata namespace %s: %w", definition.Name, err)
 		}
-		locks = append(locks, lock)
+		locks = append(locks, fileLock)
 	}
 	return locks, nil
 }
@@ -526,7 +526,7 @@ func syncDirectory(path string) (err error) {
 	return nil
 }
 
-func releaseLocks(locks []*lockfile.Lock) {
+func releaseLocks(locks []*lock.Lock) {
 	for i := len(locks) - 1; i >= 0; i-- {
 		_ = locks[i].Release()
 	}
