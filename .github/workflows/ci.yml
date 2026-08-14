@@ -44,7 +44,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: stable
+          # Keep the scanner on a standard library version containing the
+          # security fixes reported by govulncheck. This does not change the
+          # project's minimum Go version in go.mod.
+          go-version: '1.26.6'
           cache: true
 
       - name: Run govulncheck
