@@ -7,12 +7,12 @@ import (
 	"testing"
 
 	"github.com/kumabox/kumabox/internal/fault"
-	"github.com/kumabox/kumabox/internal/metastore"
+	"github.com/kumabox/kumabox/internal/meta"
 )
 
 func TestBackupPublishesVerifiedCurrentState(t *testing.T) {
-	definition := Namespace{Name: "vms", Tables: []metastore.Table{"records"}}
-	sourcePath := filepath.Join(t.TempDir(), "metastore.db")
+	definition := Namespace{Name: "vms", Tables: []meta.Table{"records"}}
+	sourcePath := filepath.Join(t.TempDir(), "metadata.db")
 	destinationPath := filepath.Join(t.TempDir(), "backup.db")
 	if err := Init(t.Context(), sourcePath, definition); err != nil {
 		t.Fatal(err)
@@ -51,8 +51,8 @@ func TestBackupPublishesVerifiedCurrentState(t *testing.T) {
 }
 
 func TestBackupFailurePreservesPublishedBackup(t *testing.T) {
-	definition := Namespace{Name: "vms", Tables: []metastore.Table{"records"}}
-	sourcePath := filepath.Join(t.TempDir(), "metastore.db")
+	definition := Namespace{Name: "vms", Tables: []meta.Table{"records"}}
+	sourcePath := filepath.Join(t.TempDir(), "metadata.db")
 	destinationPath := filepath.Join(t.TempDir(), "backup.db")
 	if err := Init(t.Context(), sourcePath, definition); err != nil {
 		t.Fatal(err)
@@ -89,25 +89,25 @@ func TestBackupFailurePreservesPublishedBackup(t *testing.T) {
 }
 
 func TestBackupRejectsSourceAsDestination(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "metastore.db")
-	definition := Namespace{Name: "vms", Tables: []metastore.Table{"records"}}
+	path := filepath.Join(t.TempDir(), "metadata.db")
+	definition := Namespace{Name: "vms", Tables: []meta.Table{"records"}}
 	if err := Init(t.Context(), path, definition); err != nil {
 		t.Fatal(err)
 	}
-	if err := Backup(t.Context(), path, path); !errors.Is(err, metastore.ErrScope) {
+	if err := Backup(t.Context(), path, path); !errors.Is(err, meta.ErrScope) {
 		t.Fatalf("same-path backup error = %v", err)
 	}
 }
 
 func writeBackupRecord(t *testing.T, store *Store, name string) {
 	t.Helper()
-	collection := metastore.NewCollection[struct {
+	collection := meta.NewCollection[struct {
 		Name string `json:"name"`
 	}]("vms", "records")
 	record := struct {
 		Name string `json:"name"`
 	}{Name: name}
-	if err := store.Update(t.Context(), metastore.Scope{Write: "vms"}, metastore.CommitDurable, func(writer metastore.Writer) error {
+	if err := store.Update(t.Context(), meta.Scope{Write: "vms"}, meta.CommitDurable, func(writer meta.Writer) error {
 		return collection.Upsert(t.Context(), writer, "vm-1", &record)
 	}); err != nil {
 		t.Fatal(err)
@@ -125,11 +125,11 @@ func readBackupRecord(t *testing.T, path string, definition Namespace) string {
 			t.Errorf("close backup store: %v", err)
 		}
 	}()
-	collection := metastore.NewCollection[struct {
+	collection := meta.NewCollection[struct {
 		Name string `json:"name"`
 	}]("vms", "records")
 	var name string
-	if err := store.View(t.Context(), []metastore.Namespace{"vms"}, func(reader metastore.Reader) error {
+	if err := store.View(t.Context(), []meta.Namespace{"vms"}, func(reader meta.Reader) error {
 		record, err := collection.Get(t.Context(), reader, "vm-1")
 		if err == nil {
 			name = record.Name

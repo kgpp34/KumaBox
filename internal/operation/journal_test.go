@@ -5,11 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/kumabox/kumabox/internal/metastore"
+	"github.com/kumabox/kumabox/internal/meta"
 )
 
 func TestJournalRecordsAndRecoversRunningOperation(t *testing.T) {
-	engine, err := metastore.NewMemoryEngine(string(namespace))
+	engine, err := meta.NewMemoryEngine(string(namespace))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestJournalRecordsAndRecoversRunningOperation(t *testing.T) {
 }
 
 func TestJournalReconcilePublishesRepairResult(t *testing.T) {
-	engine, err := metastore.NewMemoryEngine(string(namespace))
+	engine, err := meta.NewMemoryEngine(string(namespace))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestJournalReconcilePublishesRepairResult(t *testing.T) {
 }
 
 func TestJournalPreservesRelatedResourceDuringRecovery(t *testing.T) {
-	engine, err := metastore.NewMemoryEngine(string(namespace))
+	engine, err := meta.NewMemoryEngine(string(namespace))
 	if err != nil {
 		t.Fatal(err)
 	}

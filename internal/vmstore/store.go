@@ -10,8 +10,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/metastore"
-	metajson "github.com/kumabox/kumabox/internal/metastore/json"
+	"github.com/kumabox/kumabox/internal/meta"
+	metajson "github.com/kumabox/kumabox/internal/meta/json"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 )
 
@@ -22,10 +22,10 @@ import (
 // records without requiring a resident coordinator process.
 type Store struct {
 	rootDir string
-	engine  metastore.MetaEngine
+	engine  meta.MetaEngine
 }
 
-var vmIndexCollection = metastore.NewCollection[vmIndex]("vms", vmIndexTable)
+var vmIndexCollection = meta.NewCollection[vmIndex]("vms", vmIndexTable)
 
 // New returns a VM store rooted under rootDir.
 //
@@ -48,13 +48,13 @@ func JSONNamespace(rootDir string) metajson.Namespace {
 }
 
 // NewWithEngine creates a VM store with an injected metadata engine.
-func NewWithEngine(rootDir string, engine metastore.MetaEngine) *Store {
+func NewWithEngine(rootDir string, engine meta.MetaEngine) *Store {
 	return &Store{rootDir: rootDir, engine: engine}
 }
 
 // MetadataEngine exposes the store's persistence boundary to migration tools.
 // Runtime code should use the VM state capability instead.
-func (s *Store) MetadataEngine() metastore.MetaEngine { return s.engine }
+func (s *Store) MetadataEngine() meta.MetaEngine { return s.engine }
 
 // Events subscribes to coalesced VM metadata change notifications. Callers
 // must reread the store after every notification and retain a polling fallback.
@@ -62,7 +62,7 @@ func (s *Store) Events(ctx context.Context) (<-chan struct{}, func(), error) {
 	return s.engine.Events(ctx)
 }
 
-func mustOpenEngine(namespace metajson.Namespace) metastore.MetaEngine {
+func mustOpenEngine(namespace metajson.Namespace) meta.MetaEngine {
 	engine, err := metajson.Open(namespace)
 	if err != nil {
 		panic(fmt.Sprintf("open VM metadata engine: %v", err))
@@ -578,7 +578,7 @@ func (s *Store) RootDir() string {
 
 func (s *Store) withIndex(fn func(*vmIndex) error) error {
 	ctx := context.Background()
-	return s.engine.View(ctx, []metastore.Namespace{"vms"}, func(reader metastore.Reader) error {
+	return s.engine.View(ctx, []meta.Namespace{"vms"}, func(reader meta.Reader) error {
 		idx, err := s.readIndex(ctx, reader)
 		if err != nil {
 			return err
@@ -589,7 +589,7 @@ func (s *Store) withIndex(fn func(*vmIndex) error) error {
 
 func (s *Store) update(fn func(*vmIndex) error) error {
 	ctx := context.Background()
-	return s.engine.Update(ctx, metastore.Scope{Write: "vms"}, metastore.CommitDurable, func(writer metastore.Writer) error {
+	return s.engine.Update(ctx, meta.Scope{Write: "vms"}, meta.CommitDurable, func(writer meta.Writer) error {
 		idx, err := s.readIndex(ctx, writer)
 		if err != nil {
 			return err
@@ -601,9 +601,9 @@ func (s *Store) update(fn func(*vmIndex) error) error {
 	})
 }
 
-func (s *Store) readIndex(ctx context.Context, reader metastore.Reader) (*vmIndex, error) {
+func (s *Store) readIndex(ctx context.Context, reader meta.Reader) (*vmIndex, error) {
 	idx, err := vmIndexCollection.Get(ctx, reader, vmIndexRecord)
-	if errors.Is(err, metastore.ErrNotFound) {
+	if errors.Is(err, meta.ErrNotFound) {
 		idx = &vmIndex{}
 	} else if err != nil {
 		return nil, fmt.Errorf("read VM index: %w", err)

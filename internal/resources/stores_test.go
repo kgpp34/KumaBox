@@ -9,8 +9,8 @@ import (
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/imagestore"
-	"github.com/kumabox/kumabox/internal/metastore"
-	metasqlite "github.com/kumabox/kumabox/internal/metastore/sqlite"
+	"github.com/kumabox/kumabox/internal/meta"
+	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
 	kbnetwork "github.com/kumabox/kumabox/internal/network"
 	"github.com/kumabox/kumabox/internal/ocistore"
 	"github.com/kumabox/kumabox/internal/operation"
@@ -59,7 +59,7 @@ func TestInitSQLiteMetadataUpgradesPreMeteringDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := legacy.Update(t.Context(), metastore.Scope{Write: "vms"}, metastore.CommitDurable, func(writer metastore.Writer) error {
+	if err := legacy.Update(t.Context(), meta.Scope{Write: "vms"}, meta.CommitDurable, func(writer meta.Writer) error {
 		return writer.PutRaw(t.Context(), "vms", "vm-index", "vm-before-upgrade", []byte(`{"name":"preserved"}`))
 	}); err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestInitSQLiteMetadataUpgradesPreMeteringDatabase(t *testing.T) {
 			t.Errorf("close upgraded metadata: %v", err)
 		}
 	})
-	if err := stores.Metadata.View(t.Context(), []metastore.Namespace{"vms"}, func(reader metastore.Reader) error {
+	if err := stores.Metadata.View(t.Context(), []meta.Namespace{"vms"}, func(reader meta.Reader) error {
 		raw, found, err := reader.GetRaw(t.Context(), "vms", "vm-index", "vm-before-upgrade")
 		if err != nil {
 			return err

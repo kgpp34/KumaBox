@@ -12,21 +12,21 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/internal/fault"
-	"github.com/kumabox/kumabox/internal/metastore"
+	"github.com/kumabox/kumabox/internal/meta"
 )
 
 func TestStoreCommitsAndRollsBack(t *testing.T) {
 	store, dir := newTestStore(t)
 	ctx := context.Background()
 
-	if err := store.Update(ctx, metastore.Scope{Write: "vm"}, metastore.CommitDurable, func(w metastore.Writer) error {
+	if err := store.Update(ctx, meta.Scope{Write: "vm"}, meta.CommitDurable, func(w meta.Writer) error {
 		return w.PutRaw(ctx, "vm", "records", "vm-1", stdjson.RawMessage(`{"name":"one"}`))
 	}); err != nil {
 		t.Fatalf("initial update: %v", err)
 	}
 
 	wantErr := errors.New("abort")
-	if err := store.Update(ctx, metastore.Scope{Write: "vm"}, metastore.CommitDurable, func(w metastore.Writer) error {
+	if err := store.Update(ctx, meta.Scope{Write: "vm"}, meta.CommitDurable, func(w meta.Writer) error {
 		if err := w.PutRaw(ctx, "vm", "records", "vm-2", stdjson.RawMessage(`{"name":"two"}`)); err != nil {
 			return err
 		}
@@ -35,7 +35,7 @@ func TestStoreCommitsAndRollsBack(t *testing.T) {
 		t.Fatalf("rollback error = %v, want %v", err, wantErr)
 	}
 
-	if err := store.View(ctx, []metastore.Namespace{"vm"}, func(r metastore.Reader) error {
+	if err := store.View(ctx, []meta.Namespace{"vm"}, func(r meta.Reader) error {
 		if _, ok, err := r.GetRaw(ctx, "vm", "records", "vm-2"); err != nil {
 			return err
 		} else if ok {
@@ -54,7 +54,7 @@ func TestStorePreservesPreviousGenerationAndRecovers(t *testing.T) {
 	store, dir := newTestStore(t)
 	ctx := context.Background()
 	put := func(name string) error {
-		return store.Update(ctx, metastore.Scope{Write: "vm"}, metastore.CommitDurable, func(w metastore.Writer) error {
+		return store.Update(ctx, meta.Scope{Write: "vm"}, meta.CommitDurable, func(w meta.Writer) error {
 			return w.PutRaw(ctx, "vm", "records", "vm-1", stdjson.RawMessage(`{"name":"`+name+`"}`))
 		})
 	}
@@ -69,7 +69,7 @@ func TestStorePreservesPreviousGenerationAndRecovers(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
 		t.Fatalf("corrupt main generation: %v", err)
 	}
-	if err := store.View(ctx, []metastore.Namespace{"vm"}, func(r metastore.Reader) error {
+	if err := store.View(ctx, []meta.Namespace{"vm"}, func(r meta.Reader) error {
 		raw, ok, err := r.GetRaw(ctx, "vm", "records", "vm-1")
 		if err != nil {
 			return err
@@ -84,7 +84,7 @@ func TestStorePreservesPreviousGenerationAndRecovers(t *testing.T) {
 	if err := put("three"); err != nil {
 		t.Fatalf("repair update: %v", err)
 	}
-	if err := store.View(ctx, []metastore.Namespace{"vm"}, func(r metastore.Reader) error {
+	if err := store.View(ctx, []meta.Namespace{"vm"}, func(r meta.Reader) error {
 		raw, _, err := r.GetRaw(ctx, "vm", "records", "vm-1")
 		if err != nil {
 			return err
@@ -111,7 +111,7 @@ func TestStoreAtomicCommitFailureLeavesCompleteGeneration(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			store, _ := newTestStore(t)
 			put := func(ctx context.Context, name string) error {
-				return store.Update(ctx, metastore.Scope{Write: "vm"}, metastore.CommitDurable, func(w metastore.Writer) error {
+				return store.Update(ctx, meta.Scope{Write: "vm"}, meta.CommitDurable, func(w meta.Writer) error {
 					return w.PutRaw(ctx, "vm", "records", "vm-1", stdjson.RawMessage(`{"name":"`+name+`"}`))
 				})
 			}
@@ -128,7 +128,7 @@ func TestStoreAtomicCommitFailureLeavesCompleteGeneration(t *testing.T) {
 			if err := put(ctx, "after"); !errors.Is(err, injected) {
 				t.Fatalf("Update() error = %v, want %v", err, injected)
 			}
-			if err := store.View(t.Context(), []metastore.Namespace{"vm"}, func(r metastore.Reader) error {
+			if err := store.View(t.Context(), []meta.Namespace{"vm"}, func(r meta.Reader) error {
 				raw, _, err := r.GetRaw(t.Context(), "vm", "records", "vm-1")
 				if err == nil && !sameJSON(raw, []byte(`{"name":"`+tt.want+`"}`)) {
 					t.Fatalf("record after interruption = %s, want %s", raw, tt.want)
@@ -144,24 +144,24 @@ func TestStoreAtomicCommitFailureLeavesCompleteGeneration(t *testing.T) {
 func TestStoreEnforcesScopeAndDetachedValues(t *testing.T) {
 	store, _ := newTestStore(t)
 	ctx := context.Background()
-	if err := store.Update(ctx, metastore.Scope{Write: "vm", Read: []metastore.Namespace{"network"}}, metastore.CommitDurable, func(w metastore.Writer) error {
+	if err := store.Update(ctx, meta.Scope{Write: "vm", Read: []meta.Namespace{"network"}}, meta.CommitDurable, func(w meta.Writer) error {
 		return w.PutRaw(ctx, "network", "leases", "ip-1", stdjson.RawMessage(`{}`))
-	}); !errors.Is(err, metastore.ErrScope) {
+	}); !errors.Is(err, meta.ErrScope) {
 		t.Fatalf("write scope error = %v, want ErrScope", err)
 	}
-	if err := store.View(ctx, []metastore.Namespace{"vm"}, func(r metastore.Reader) error {
+	if err := store.View(ctx, []meta.Namespace{"vm"}, func(r meta.Reader) error {
 		_, _, err := r.GetRaw(ctx, "network", "leases", "ip-1")
 		return err
-	}); !errors.Is(err, metastore.ErrScope) {
+	}); !errors.Is(err, meta.ErrScope) {
 		t.Fatalf("read scope error = %v, want ErrScope", err)
 	}
 
-	if err := store.Update(ctx, metastore.Scope{Write: "vm"}, metastore.CommitDurable, func(w metastore.Writer) error {
+	if err := store.Update(ctx, meta.Scope{Write: "vm"}, meta.CommitDurable, func(w meta.Writer) error {
 		return w.PutRaw(ctx, "vm", "records", "vm-1", stdjson.RawMessage(`{"n":1}`))
 	}); err != nil {
 		t.Fatalf("seed update: %v", err)
 	}
-	if err := store.View(ctx, []metastore.Namespace{"vm"}, func(r metastore.Reader) error {
+	if err := store.View(ctx, []meta.Namespace{"vm"}, func(r meta.Reader) error {
 		raw, _, err := r.GetRaw(ctx, "vm", "records", "vm-1")
 		if err != nil {
 			return err
@@ -171,7 +171,7 @@ func TestStoreEnforcesScopeAndDetachedValues(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("detached read: %v", err)
 	}
-	if err := store.View(ctx, []metastore.Namespace{"vm"}, func(r metastore.Reader) error {
+	if err := store.View(ctx, []meta.Namespace{"vm"}, func(r meta.Reader) error {
 		raw, _, err := r.GetRaw(ctx, "vm", "records", "vm-1")
 		if err != nil {
 			return err
@@ -194,8 +194,8 @@ func TestStoreEventsCoalesce(t *testing.T) {
 	}
 	defer release()
 	for i := 0; i < 3; i++ {
-		if err := store.Update(ctx, metastore.Scope{Write: "vm"}, metastore.CommitRelaxed, func(w metastore.Writer) error {
-			return w.PutRaw(ctx, "vm", "records", metastore.RecordID(string(rune('a'+i))), stdjson.RawMessage(`{}`))
+		if err := store.Update(ctx, meta.Scope{Write: "vm"}, meta.CommitRelaxed, func(w meta.Writer) error {
+			return w.PutRaw(ctx, "vm", "records", meta.RecordID(string(rune('a'+i))), stdjson.RawMessage(`{}`))
 		}); err != nil {
 			t.Fatalf("update %d: %v", i, err)
 		}
@@ -231,7 +231,7 @@ func TestStoreEventsObserveAnotherStoreProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	if err := writer.Update(t.Context(), metastore.Scope{Write: "vm"}, metastore.CommitDurable, func(w metastore.Writer) error {
+	if err := writer.Update(t.Context(), meta.Scope{Write: "vm"}, meta.CommitDurable, func(w meta.Writer) error {
 		return w.PutRaw(t.Context(), "vm", "records", "external", []byte(`{}`))
 	}); err != nil {
 		t.Fatal(err)
@@ -262,7 +262,7 @@ func TestStoreRejectsCorruptMetadataWithoutPreviousGeneration(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.View(context.Background(), []metastore.Namespace{"vm"}, func(metastore.Reader) error { return nil }); !errors.Is(err, metastore.ErrCorrupt) {
+	if err := store.View(context.Background(), []meta.Namespace{"vm"}, func(meta.Reader) error { return nil }); !errors.Is(err, meta.ErrCorrupt) {
 		t.Fatalf("corrupt error = %v, want ErrCorrupt", err)
 	}
 }

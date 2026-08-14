@@ -15,7 +15,7 @@ import (
 
 	"github.com/kumabox/kumabox/internal/fault"
 	"github.com/kumabox/kumabox/internal/lock"
-	"github.com/kumabox/kumabox/internal/metastore"
+	"github.com/kumabox/kumabox/internal/meta"
 )
 
 const previousSuffix = ".prev"
@@ -53,7 +53,7 @@ func (s *subscription) close() {
 	})
 }
 
-var _ metastore.MetaEngine = (*Store)(nil)
+var _ meta.MetaEngine = (*Store)(nil)
 
 // Open validates namespace definitions without creating files.
 func Open(definitions ...Namespace) (*Store, error) {
@@ -63,19 +63,19 @@ func Open(definitions ...Namespace) (*Store, error) {
 	namespaces := make(map[string]Namespace, len(definitions))
 	for _, definition := range definitions {
 		if definition.Name == "" || definition.FilePath == "" || definition.LockPath == "" || definition.Codec == nil {
-			return nil, fmt.Errorf("metadata namespace %q has incomplete definition: %w", definition.Name, metastore.ErrScope)
+			return nil, fmt.Errorf("metadata namespace %q has incomplete definition: %w", definition.Name, meta.ErrScope)
 		}
 		if _, exists := namespaces[definition.Name]; exists {
-			return nil, fmt.Errorf("metadata namespace %q declared twice: %w", definition.Name, metastore.ErrScope)
+			return nil, fmt.Errorf("metadata namespace %q declared twice: %w", definition.Name, meta.ErrScope)
 		}
 		namespaces[definition.Name] = definition
 	}
 	return &Store{namespaces: namespaces, subs: make(map[*subscription]struct{})}, nil
 }
 
-func (s *Store) View(ctx context.Context, requested []metastore.Namespace, fn func(metastore.Reader) error) error {
+func (s *Store) View(ctx context.Context, requested []meta.Namespace, fn func(meta.Reader) error) error {
 	if fn == nil {
-		return fmt.Errorf("metadata view callback must not be nil: %w", metastore.ErrScope)
+		return fmt.Errorf("metadata view callback must not be nil: %w", meta.ErrScope)
 	}
 	definitions, err := s.resolve(requested, "")
 	if err != nil {
@@ -94,11 +94,11 @@ func (s *Store) View(ctx context.Context, requested []metastore.Namespace, fn fu
 	return fn(&reader{models: models, allowed: names(definitions)})
 }
 
-func (s *Store) Update(ctx context.Context, scope metastore.Scope, mode metastore.CommitMode, fn func(metastore.Writer) error) error {
+func (s *Store) Update(ctx context.Context, scope meta.Scope, mode meta.CommitMode, fn func(meta.Writer) error) error {
 	if fn == nil {
-		return fmt.Errorf("metadata update callback must not be nil: %w", metastore.ErrScope)
+		return fmt.Errorf("metadata update callback must not be nil: %w", meta.ErrScope)
 	}
-	definitions, err := s.resolve(append([]metastore.Namespace{scope.Write}, scope.Read...), scope.Write)
+	definitions, err := s.resolve(append([]meta.Namespace{scope.Write}, scope.Read...), scope.Write)
 	if err != nil {
 		return err
 	}
@@ -146,7 +146,7 @@ func (s *Store) Events(ctx context.Context) (<-chan struct{}, func(), error) {
 	if s.closed {
 		s.mu.Unlock()
 		cancel()
-		return nil, nil, metastore.ErrClosed
+		return nil, nil, meta.ErrClosed
 	}
 	s.subs[sub] = struct{}{}
 	s.mu.Unlock()
@@ -248,20 +248,20 @@ func (s *Store) fingerprint() ([32]byte, error) {
 	return fingerprint, nil
 }
 
-func (s *Store) resolve(requested []metastore.Namespace, write metastore.Namespace) ([]Namespace, error) {
+func (s *Store) resolve(requested []meta.Namespace, write meta.Namespace) ([]Namespace, error) {
 	seen := make(map[string]struct{}, len(requested))
 	for _, name := range requested {
 		if name == "" {
-			return nil, fmt.Errorf("metadata namespace must not be empty: %w", metastore.ErrScope)
+			return nil, fmt.Errorf("metadata namespace must not be empty: %w", meta.ErrScope)
 		}
 		if _, ok := s.namespaces[string(name)]; !ok {
-			return nil, fmt.Errorf("metadata namespace %q is not declared: %w", name, metastore.ErrScope)
+			return nil, fmt.Errorf("metadata namespace %q is not declared: %w", name, meta.ErrScope)
 		}
 		seen[string(name)] = struct{}{}
 	}
 	if write != "" {
 		if _, ok := seen[string(write)]; !ok {
-			return nil, fmt.Errorf("write namespace %q is outside scope: %w", write, metastore.ErrScope)
+			return nil, fmt.Errorf("write namespace %q is outside scope: %w", write, meta.ErrScope)
 		}
 	}
 	definitions := make([]Namespace, 0, len(seen))
@@ -280,7 +280,7 @@ func (s *Store) acquire(ctx context.Context, definitions []Namespace) ([]*lock.L
 	closed := s.closed
 	s.mu.Unlock()
 	if closed {
-		return nil, metastore.ErrClosed
+		return nil, meta.ErrClosed
 	}
 	locks := make([]*lock.Lock, 0, len(definitions))
 	for _, definition := range definitions {
@@ -309,7 +309,7 @@ func (s *Store) load(ctx context.Context, definitions []Namespace) (map[string]*
 	return models, nil
 }
 
-func (s *Store) commit(ctx context.Context, definitions []Namespace, models map[string]*loaded, write metastore.Namespace, _ metastore.CommitMode) error {
+func (s *Store) commit(ctx context.Context, definitions []Namespace, models map[string]*loaded, write meta.Namespace, _ meta.CommitMode) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -327,7 +327,7 @@ func (s *Store) commit(ctx context.Context, definitions []Namespace, models map[
 		}
 		return nil
 	}
-	return fmt.Errorf("write namespace %q was not resolved: %w", write, metastore.ErrScope)
+	return fmt.Errorf("write namespace %q was not resolved: %w", write, meta.ErrScope)
 }
 
 type loaded struct {
@@ -359,7 +359,7 @@ func loadNamespace(definition Namespace) (*loaded, error) {
 			return &loaded{model: previousModel, raw: append([]byte(nil), previous...), recovered: true}, nil
 		}
 	}
-	return nil, fmt.Errorf("decode metadata file: %w: %v", metastore.ErrCorrupt, decodeErr)
+	return nil, fmt.Errorf("decode metadata file: %w: %v", meta.ErrCorrupt, decodeErr)
 }
 
 type reader struct {
@@ -367,7 +367,7 @@ type reader struct {
 	allowed map[string]struct{}
 }
 
-func (r reader) GetRaw(ctx context.Context, namespace metastore.Namespace, table metastore.Table, id metastore.RecordID) (stdjson.RawMessage, bool, error) {
+func (r reader) GetRaw(ctx context.Context, namespace meta.Namespace, table meta.Table, id meta.RecordID) (stdjson.RawMessage, bool, error) {
 	if err := contextErr(ctx); err != nil {
 		return nil, false, err
 	}
@@ -383,9 +383,9 @@ func (r reader) GetRaw(ctx context.Context, namespace metastore.Namespace, table
 	return cloneRaw(raw), ok, nil
 }
 
-func (r reader) ScanRaw(ctx context.Context, namespace metastore.Namespace, table metastore.Table, fn func(metastore.RecordID, stdjson.RawMessage) error) error {
+func (r reader) ScanRaw(ctx context.Context, namespace meta.Namespace, table meta.Table, fn func(meta.RecordID, stdjson.RawMessage) error) error {
 	if fn == nil {
-		return fmt.Errorf("metadata scan callback must not be nil: %w", metastore.ErrScope)
+		return fmt.Errorf("metadata scan callback must not be nil: %w", meta.ErrScope)
 	}
 	if err := r.checkRead(namespace); err != nil {
 		return err
@@ -400,32 +400,32 @@ func (r reader) ScanRaw(ctx context.Context, namespace metastore.Namespace, tabl
 		if err := contextErr(ctx); err != nil {
 			return err
 		}
-		if err := fn(metastore.RecordID(id), cloneRaw(records[id])); err != nil {
+		if err := fn(meta.RecordID(id), cloneRaw(records[id])); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (r reader) checkRead(namespace metastore.Namespace) error {
+func (r reader) checkRead(namespace meta.Namespace) error {
 	if _, ok := r.allowed[string(namespace)]; !ok {
-		return fmt.Errorf("cannot read metadata namespace %q outside transaction scope: %w", namespace, metastore.ErrScope)
+		return fmt.Errorf("cannot read metadata namespace %q outside transaction scope: %w", namespace, meta.ErrScope)
 	}
 	return nil
 }
 
 type writer struct {
 	reader
-	writeNamespace metastore.Namespace
+	writeNamespace meta.Namespace
 	dirty          bool
 }
 
-func (w *writer) PutRaw(ctx context.Context, namespace metastore.Namespace, table metastore.Table, id metastore.RecordID, raw stdjson.RawMessage) error {
+func (w *writer) PutRaw(ctx context.Context, namespace meta.Namespace, table meta.Table, id meta.RecordID, raw stdjson.RawMessage) error {
 	if err := w.checkWrite(ctx, namespace, table, id); err != nil {
 		return err
 	}
 	if raw == nil || !stdjson.Valid(raw) {
-		return fmt.Errorf("metadata record %s/%s is invalid JSON: %w", table, id, metastore.ErrIO)
+		return fmt.Errorf("metadata record %s/%s is invalid JSON: %w", table, id, meta.ErrIO)
 	}
 	model := w.models[string(namespace)].model
 	if model.Tables == nil {
@@ -439,7 +439,7 @@ func (w *writer) PutRaw(ctx context.Context, namespace metastore.Namespace, tabl
 	return nil
 }
 
-func (w *writer) DeleteRaw(ctx context.Context, namespace metastore.Namespace, table metastore.Table, id metastore.RecordID) error {
+func (w *writer) DeleteRaw(ctx context.Context, namespace meta.Namespace, table meta.Table, id meta.RecordID) error {
 	if err := w.checkWrite(ctx, namespace, table, id); err != nil {
 		return err
 	}
@@ -448,15 +448,15 @@ func (w *writer) DeleteRaw(ctx context.Context, namespace metastore.Namespace, t
 	return nil
 }
 
-func (w *writer) checkWrite(ctx context.Context, namespace metastore.Namespace, table metastore.Table, id metastore.RecordID) error {
+func (w *writer) checkWrite(ctx context.Context, namespace meta.Namespace, table meta.Table, id meta.RecordID) error {
 	if err := contextErr(ctx); err != nil {
 		return err
 	}
 	if namespace != w.writeNamespace {
-		return fmt.Errorf("cannot write metadata namespace %q from %q transaction: %w", namespace, w.writeNamespace, metastore.ErrScope)
+		return fmt.Errorf("cannot write metadata namespace %q from %q transaction: %w", namespace, w.writeNamespace, meta.ErrScope)
 	}
 	if table == "" || id == "" {
-		return fmt.Errorf("metadata table and id must not be empty: %w", metastore.ErrScope)
+		return fmt.Errorf("metadata table and id must not be empty: %w", meta.ErrScope)
 	}
 	return nil
 }

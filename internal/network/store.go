@@ -9,8 +9,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/metastore"
-	metajson "github.com/kumabox/kumabox/internal/metastore/json"
+	"github.com/kumabox/kumabox/internal/meta"
+	metajson "github.com/kumabox/kumabox/internal/meta/json"
 )
 
 const indexSchemaVersion = "kumabox.network.index.v1"
@@ -23,9 +23,9 @@ const hostTapSchemaVersion = "kumabox.network.hostTap.v1"
 // host-tap bridge ownership. Each file has its own flock because lifecycle and
 // network commands may touch them independently.
 type Store struct {
-	engine        metastore.MetaEngine
-	leaseEngine   metastore.MetaEngine
-	hostTapEngine metastore.MetaEngine
+	engine        meta.MetaEngine
+	leaseEngine   meta.MetaEngine
+	hostTapEngine meta.MetaEngine
 	indexPath     string
 	indexLock     string
 	leasePath     string
@@ -35,9 +35,9 @@ type Store struct {
 }
 
 var (
-	networkIndexCollection = metastore.NewCollection[networkIndex]("networks", networkIndexTable)
-	leaseIndexCollection   = metastore.NewCollection[leaseIndex]("leases", networkLeaseTable)
-	hostTapCollection      = metastore.NewCollection[HostTapState]("host-tap", hostTapTable)
+	networkIndexCollection = meta.NewCollection[networkIndex]("networks", networkIndexTable)
+	leaseIndexCollection   = meta.NewCollection[leaseIndex]("leases", networkLeaseTable)
+	hostTapCollection      = meta.NewCollection[HostTapState]("host-tap", hostTapTable)
 )
 
 type index struct {
@@ -82,7 +82,7 @@ func JSONNamespaces(rootDir string) []metajson.Namespace {
 
 // NewStoreWithEngines creates a network store with separately injectable
 // engines for provider records, leases, and host-tap ownership.
-func NewStoreWithEngines(rootDir string, engine, leaseEngine, hostTapEngine metastore.MetaEngine) *Store {
+func NewStoreWithEngines(rootDir string, engine, leaseEngine, hostTapEngine meta.MetaEngine) *Store {
 	networkDir := filepath.Join(rootDir, "network")
 	return &Store{
 		engine:        engine,
@@ -98,11 +98,11 @@ func NewStoreWithEngines(rootDir string, engine, leaseEngine, hostTapEngine meta
 }
 
 // MetadataEngines exposes network persistence boundaries to migration tools.
-func (s *Store) MetadataEngines() (metastore.MetaEngine, metastore.MetaEngine, metastore.MetaEngine) {
+func (s *Store) MetadataEngines() (meta.MetaEngine, meta.MetaEngine, meta.MetaEngine) {
 	return s.engine, s.leaseEngine, s.hostTapEngine
 }
 
-func mustOpenNetworkEngine(namespace metajson.Namespace) metastore.MetaEngine {
+func mustOpenNetworkEngine(namespace metajson.Namespace) meta.MetaEngine {
 	engine, err := metajson.Open(namespace)
 	if err != nil {
 		panic(fmt.Sprintf("open network metadata engine: %v", err))
@@ -347,7 +347,7 @@ func (s *Store) DecrementHostTapRef(count int) error {
 func (s *Store) withIndex(write bool, fn func(*networkIndex) error) error {
 	ctx := context.Background()
 	if write {
-		return s.engine.Update(ctx, metastore.Scope{Write: "networks"}, metastore.CommitDurable, func(writer metastore.Writer) error {
+		return s.engine.Update(ctx, meta.Scope{Write: "networks"}, meta.CommitDurable, func(writer meta.Writer) error {
 			idx, err := s.readNetworkIndex(ctx, writer)
 			if err != nil {
 				return err
@@ -358,7 +358,7 @@ func (s *Store) withIndex(write bool, fn func(*networkIndex) error) error {
 			return networkIndexCollection.Upsert(ctx, writer, networkIndexRecord, idx)
 		})
 	}
-	return s.engine.View(ctx, []metastore.Namespace{"networks"}, func(reader metastore.Reader) error {
+	return s.engine.View(ctx, []meta.Namespace{"networks"}, func(reader meta.Reader) error {
 		idx, err := s.readNetworkIndex(ctx, reader)
 		if err != nil {
 			return err
@@ -367,9 +367,9 @@ func (s *Store) withIndex(write bool, fn func(*networkIndex) error) error {
 	})
 }
 
-func (s *Store) readNetworkIndex(ctx context.Context, reader metastore.Reader) (*networkIndex, error) {
+func (s *Store) readNetworkIndex(ctx context.Context, reader meta.Reader) (*networkIndex, error) {
 	idx, err := networkIndexCollection.Get(ctx, reader, networkIndexRecord)
-	if errors.Is(err, metastore.ErrNotFound) {
+	if errors.Is(err, meta.ErrNotFound) {
 		idx = &networkIndex{SchemaVersion: indexSchemaVersion, Networks: map[string]*Record{}}
 	} else if err != nil {
 		return nil, fmt.Errorf("read network index: %w", err)
@@ -386,7 +386,7 @@ func (s *Store) readNetworkIndex(ctx context.Context, reader metastore.Reader) (
 func (s *Store) withLeases(write bool, fn func(*leaseIndex) error) error {
 	ctx := context.Background()
 	if write {
-		return s.leaseEngine.Update(ctx, metastore.Scope{Write: "leases"}, metastore.CommitDurable, func(writer metastore.Writer) error {
+		return s.leaseEngine.Update(ctx, meta.Scope{Write: "leases"}, meta.CommitDurable, func(writer meta.Writer) error {
 			leases, err := s.readLeaseIndex(ctx, writer)
 			if err != nil {
 				return err
@@ -397,7 +397,7 @@ func (s *Store) withLeases(write bool, fn func(*leaseIndex) error) error {
 			return leaseIndexCollection.Upsert(ctx, writer, networkLeaseRecord, leases)
 		})
 	}
-	return s.leaseEngine.View(ctx, []metastore.Namespace{"leases"}, func(reader metastore.Reader) error {
+	return s.leaseEngine.View(ctx, []meta.Namespace{"leases"}, func(reader meta.Reader) error {
 		leases, err := s.readLeaseIndex(ctx, reader)
 		if err != nil {
 			return err
@@ -406,9 +406,9 @@ func (s *Store) withLeases(write bool, fn func(*leaseIndex) error) error {
 	})
 }
 
-func (s *Store) readLeaseIndex(ctx context.Context, reader metastore.Reader) (*leaseIndex, error) {
+func (s *Store) readLeaseIndex(ctx context.Context, reader meta.Reader) (*leaseIndex, error) {
 	leases, err := leaseIndexCollection.Get(ctx, reader, networkLeaseRecord)
-	if errors.Is(err, metastore.ErrNotFound) {
+	if errors.Is(err, meta.ErrNotFound) {
 		leases = &leaseIndex{SchemaVersion: leaseSchemaVersion, Leases: map[string]*Lease{}}
 	} else if err != nil {
 		return nil, fmt.Errorf("read network leases: %w", err)
@@ -456,9 +456,9 @@ func (s *Store) adjustHostTapRef(delta int, requireState bool) error {
 
 func (s *Store) withHostTap(write bool, fn func(**HostTapState) error) error {
 	ctx := context.Background()
-	read := func(reader metastore.Reader) error {
+	read := func(reader meta.Reader) error {
 		state, err := hostTapCollection.Get(ctx, reader, hostTapRecord)
-		if errors.Is(err, metastore.ErrNotFound) {
+		if errors.Is(err, meta.ErrNotFound) {
 			state = nil
 		} else if err != nil {
 			return fmt.Errorf("read host-tap state: %w", err)
@@ -468,9 +468,9 @@ func (s *Store) withHostTap(write bool, fn func(**HostTapState) error) error {
 		return fn(&state)
 	}
 	if !write {
-		return s.hostTapEngine.View(ctx, []metastore.Namespace{"host-tap"}, read)
+		return s.hostTapEngine.View(ctx, []meta.Namespace{"host-tap"}, read)
 	}
-	return s.hostTapEngine.Update(ctx, metastore.Scope{Write: "host-tap"}, metastore.CommitDurable, func(writer metastore.Writer) error {
+	return s.hostTapEngine.Update(ctx, meta.Scope{Write: "host-tap"}, meta.CommitDurable, func(writer meta.Writer) error {
 		stateFn := func(current *HostTapState, hadState bool) error {
 			if current == nil {
 				if !hadState {
@@ -482,7 +482,7 @@ func (s *Store) withHostTap(write bool, fn func(**HostTapState) error) error {
 		}
 		var state *HostTapState
 		hadState := false
-		if decoded, err := hostTapCollection.Get(ctx, writer, hostTapRecord); err != nil && !errors.Is(err, metastore.ErrNotFound) {
+		if decoded, err := hostTapCollection.Get(ctx, writer, hostTapRecord); err != nil && !errors.Is(err, meta.ErrNotFound) {
 			return err
 		} else if err == nil {
 			hadState = true

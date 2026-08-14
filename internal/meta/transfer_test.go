@@ -1,13 +1,13 @@
-package metastore_test
+package meta_test
 
 import (
 	"context"
 	"path/filepath"
 	"testing"
 
-	"github.com/kumabox/kumabox/internal/metastore"
-	metajson "github.com/kumabox/kumabox/internal/metastore/json"
-	metasqlite "github.com/kumabox/kumabox/internal/metastore/sqlite"
+	"github.com/kumabox/kumabox/internal/meta"
+	metajson "github.com/kumabox/kumabox/internal/meta/json"
+	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
 )
 
 func TestTransferCopiesJSONMetadataIntoSQLite(t *testing.T) {
@@ -31,8 +31,8 @@ func TestTransferCopiesJSONMetadataIntoSQLite(t *testing.T) {
 	type record struct {
 		Name string `json:"name"`
 	}
-	collection := metastore.NewCollection[record]("vms", "records")
-	if err := jsonEngine.Update(ctx, metastore.Scope{Write: "vms"}, metastore.CommitDurable, func(writer metastore.Writer) error {
+	collection := meta.NewCollection[record]("vms", "records")
+	if err := jsonEngine.Update(ctx, meta.Scope{Write: "vms"}, meta.CommitDurable, func(writer meta.Writer) error {
 		return collection.Upsert(ctx, writer, "vm-1", &record{Name: "source"})
 	}); err != nil {
 		t.Fatal(err)
@@ -40,7 +40,7 @@ func TestTransferCopiesJSONMetadataIntoSQLite(t *testing.T) {
 
 	databasePath := filepath.Join(dir, "metadata.db")
 	databaseDefinition := metasqlite.Namespace{
-		Name: "vms", Tables: []metastore.Table{"records"},
+		Name: "vms", Tables: []meta.Table{"records"},
 	}
 	if err := metasqlite.Init(ctx, databasePath, databaseDefinition); err != nil {
 		t.Fatal(err)
@@ -55,9 +55,9 @@ func TestTransferCopiesJSONMetadataIntoSQLite(t *testing.T) {
 		}
 	}()
 
-	report, err := metastore.TransferWithReport(ctx, jsonEngine, sqliteEngine, []metastore.TableSet{{
+	report, err := meta.TransferWithReport(ctx, jsonEngine, sqliteEngine, []meta.TableSet{{
 		Namespace: "vms",
-		Tables:    []metastore.Table{"records"},
+		Tables:    []meta.Table{"records"},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestTransferCopiesJSONMetadataIntoSQLite(t *testing.T) {
 	if report.Records["vms"] != 1 || report.Digest == "" {
 		t.Fatalf("transfer report = %+v", report)
 	}
-	if err := sqliteEngine.View(ctx, []metastore.Namespace{"vms"}, func(reader metastore.Reader) error {
+	if err := sqliteEngine.View(ctx, []meta.Namespace{"vms"}, func(reader meta.Reader) error {
 		got, err := collection.Get(ctx, reader, "vm-1")
 		if err != nil {
 			return err
@@ -94,15 +94,15 @@ func TestSQLiteConversionMarksNamespacesAfterTransfer(t *testing.T) {
 			t.Errorf("close source engine: %v", err)
 		}
 	}()
-	collection := metastore.NewCollection[map[string]string]("vms", "records")
+	collection := meta.NewCollection[map[string]string]("vms", "records")
 	record := map[string]string{"name": "source"}
-	if err := source.Update(ctx, metastore.Scope{Write: "vms"}, metastore.CommitDurable, func(writer metastore.Writer) error {
+	if err := source.Update(ctx, meta.Scope{Write: "vms"}, meta.CommitDurable, func(writer meta.Writer) error {
 		return collection.Upsert(ctx, writer, "vm-1", &record)
 	}); err != nil {
 		t.Fatal(err)
 	}
 	databasePath := filepath.Join(dir, "metadata.db")
-	databaseDefinition := metasqlite.Namespace{Name: "vms", Tables: []metastore.Table{"records"}}
+	databaseDefinition := metasqlite.Namespace{Name: "vms", Tables: []meta.Table{"records"}}
 	if err := metasqlite.Init(ctx, databasePath, databaseDefinition); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestSQLiteConversionMarksNamespacesAfterTransfer(t *testing.T) {
 			t.Errorf("close destination engine: %v", err)
 		}
 	}()
-	if _, err := metasqlite.Convert(ctx, source, destination, "json", []metastore.TableSet{{Namespace: "vms", Tables: []metastore.Table{"records"}}}); err != nil {
+	if _, err := metasqlite.Convert(ctx, source, destination, "json", []meta.TableSet{{Namespace: "vms", Tables: []meta.Table{"records"}}}); err != nil {
 		t.Fatal(err)
 	}
 	status, err := destination.Status(ctx)

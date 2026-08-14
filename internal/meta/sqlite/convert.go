@@ -5,30 +5,30 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/kumabox/kumabox/internal/metastore"
+	"github.com/kumabox/kumabox/internal/meta"
 )
 
 // Convert copies declared metadata from another engine into SQLite and marks
 // each namespace converted only after all records have been committed.
 // Keeping the source untouched makes retry and rollback operationally safe.
-func Convert(ctx context.Context, source metastore.MetaEngine, destination *Store, sourceName string, tables []metastore.TableSet) (metastore.TransferReport, error) {
+func Convert(ctx context.Context, source meta.MetaEngine, destination *Store, sourceName string, tables []meta.TableSet) (meta.TransferReport, error) {
 	if sourceName == "" {
-		return metastore.TransferReport{}, fmt.Errorf("metadata conversion source must not be empty: %w", metastore.ErrScope)
+		return meta.TransferReport{}, fmt.Errorf("metadata conversion source must not be empty: %w", meta.ErrScope)
 	}
 	if destination == nil {
-		return metastore.TransferReport{}, fmt.Errorf("metadata conversion destination must not be nil: %w", metastore.ErrScope)
+		return meta.TransferReport{}, fmt.Errorf("metadata conversion destination must not be nil: %w", meta.ErrScope)
 	}
-	report, err := metastore.TransferWithReport(ctx, source, destination, tables)
+	report, err := meta.TransferWithReport(ctx, source, destination, tables)
 	if err != nil {
-		return metastore.TransferReport{}, err
+		return meta.TransferReport{}, err
 	}
 	if err := destination.markConverted(ctx, sourceName, report); err != nil {
-		return metastore.TransferReport{}, err
+		return meta.TransferReport{}, err
 	}
 	return report, nil
 }
 
-func (s *Store) markConverted(ctx context.Context, sourceName string, report metastore.TransferReport) error {
+func (s *Store) markConverted(ctx context.Context, sourceName string, report meta.TransferReport) error {
 	tx, err := s.durable.BeginTx(ctx, nil)
 	if err != nil {
 		return mapError(err)
@@ -45,7 +45,7 @@ func (s *Store) markConverted(ctx context.Context, sourceName string, report met
 			if execErr != nil {
 				return mapError(execErr)
 			}
-			return fmt.Errorf("metadata conversion namespace %q is not declared: %w", namespace, metastore.ErrScope)
+			return fmt.Errorf("metadata conversion namespace %q is not declared: %w", namespace, meta.ErrScope)
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -56,9 +56,9 @@ func (s *Store) markConverted(ctx context.Context, sourceName string, report met
 }
 
 // MarkConverted records the verified source identity for one namespace.
-func (s *Store) MarkConverted(ctx context.Context, namespace metastore.Namespace, sourceName, digest string, records int) error {
-	report := metastore.TransferReport{
-		Records: map[metastore.Namespace]int{namespace: records},
+func (s *Store) MarkConverted(ctx context.Context, namespace meta.Namespace, sourceName, digest string, records int) error {
+	report := meta.TransferReport{
+		Records: map[meta.Namespace]int{namespace: records},
 		Digest:  digest,
 	}
 	return s.markConverted(ctx, sourceName, report)

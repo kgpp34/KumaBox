@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kumabox/kumabox/internal/lock"
-	metasqlite "github.com/kumabox/kumabox/internal/metastore/sqlite"
+	metasqlite "github.com/kumabox/kumabox/internal/meta/sqlite"
 	"github.com/kumabox/kumabox/internal/resources"
 )
 

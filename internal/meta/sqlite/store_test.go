@@ -11,15 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/metastore"
+	"github.com/kumabox/kumabox/internal/meta"
 )
 
 func TestStorePersistsTypedCollectionAndRollsBack(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "metastore.db")
-	if err := Init(t.Context(), path, Namespace{Name: "vms", Tables: []metastore.Table{"records"}}); err != nil {
+	path := filepath.Join(t.TempDir(), "metadata.db")
+	if err := Init(t.Context(), path, Namespace{Name: "vms", Tables: []meta.Table{"records"}}); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(path, Namespace{Name: "vms", Tables: []metastore.Table{"records"}})
+	store, err := Open(path, Namespace{Name: "vms", Tables: []meta.Table{"records"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,15 +27,15 @@ func TestStorePersistsTypedCollectionAndRollsBack(t *testing.T) {
 	type record struct {
 		Name string `json:"name"`
 	}
-	collection := metastore.NewCollection[record]("vms", "records")
+	collection := meta.NewCollection[record]("vms", "records")
 
-	if err := store.Update(ctx, metastore.Scope{Write: "vms"}, metastore.CommitDurable, func(writer metastore.Writer) error {
+	if err := store.Update(ctx, meta.Scope{Write: "vms"}, meta.CommitDurable, func(writer meta.Writer) error {
 		return collection.Upsert(ctx, writer, "vm-1", &record{Name: "one"})
 	}); err != nil {
 		t.Fatal(err)
 	}
 	wantErr := errors.New("abort")
-	if err := store.Update(ctx, metastore.Scope{Write: "vms"}, metastore.CommitDurable, func(writer metastore.Writer) error {
+	if err := store.Update(ctx, meta.Scope{Write: "vms"}, meta.CommitDurable, func(writer meta.Writer) error {
 		if err := collection.Upsert(ctx, writer, "vm-2", &record{Name: "two"}); err != nil {
 			return err
 		}
@@ -44,7 +44,7 @@ func TestStorePersistsTypedCollectionAndRollsBack(t *testing.T) {
 		t.Fatalf("rollback error = %v", err)
 	}
 
-	if err := store.View(ctx, []metastore.Namespace{"vms"}, func(reader metastore.Reader) error {
+	if err := store.View(ctx, []meta.Namespace{"vms"}, func(reader meta.Reader) error {
 		got, err := collection.Get(ctx, reader, "vm-1")
 		if err != nil {
 			return err
@@ -52,7 +52,7 @@ func TestStorePersistsTypedCollectionAndRollsBack(t *testing.T) {
 		if got.Name != "one" {
 			t.Fatalf("record name = %q", got.Name)
 		}
-		if _, err := collection.Get(ctx, reader, "vm-2"); !errors.Is(err, metastore.ErrNotFound) {
+		if _, err := collection.Get(ctx, reader, "vm-2"); !errors.Is(err, meta.ErrNotFound) {
 			t.Fatalf("rolled-back record error = %v", err)
 		}
 		return nil
@@ -63,7 +63,7 @@ func TestStorePersistsTypedCollectionAndRollsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err = Open(path, Namespace{Name: "vms", Tables: []metastore.Table{"records"}})
+	store, err = Open(path, Namespace{Name: "vms", Tables: []meta.Table{"records"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestStorePersistsTypedCollectionAndRollsBack(t *testing.T) {
 			t.Errorf("close store: %v", err)
 		}
 	}()
-	if err := store.View(ctx, []metastore.Namespace{"vms"}, func(reader metastore.Reader) error {
+	if err := store.View(ctx, []meta.Namespace{"vms"}, func(reader meta.Reader) error {
 		got, err := collection.Get(ctx, reader, "vm-1")
 		if err != nil {
 			return err
@@ -87,8 +87,8 @@ func TestStorePersistsTypedCollectionAndRollsBack(t *testing.T) {
 }
 
 func TestStoreEventsObserveAnotherConnection(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "metastore.db")
-	definition := Namespace{Name: "vms", Tables: []metastore.Table{"records"}}
+	path := filepath.Join(t.TempDir(), "metadata.db")
+	definition := Namespace{Name: "vms", Tables: []meta.Table{"records"}}
 	if err := Init(t.Context(), path, definition); err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestStoreEventsObserveAnotherConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	if err := writer.Update(t.Context(), metastore.Scope{Write: "vms"}, metastore.CommitDurable, func(w metastore.Writer) error {
+	if err := writer.Update(t.Context(), meta.Scope{Write: "vms"}, meta.CommitDurable, func(w meta.Writer) error {
 		return w.PutRaw(t.Context(), "vms", "records", "external", []byte(`{}`))
 	}); err != nil {
 		t.Fatal(err)
@@ -121,8 +121,8 @@ func TestStoreEventsObserveAnotherConnection(t *testing.T) {
 }
 
 func TestStoreEventsReleaseMayRaceClose(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "metastore.db")
-	definition := Namespace{Name: "vms", Tables: []metastore.Table{"records"}}
+	path := filepath.Join(t.TempDir(), "metadata.db")
+	definition := Namespace{Name: "vms", Tables: []meta.Table{"records"}}
 	if err := Init(t.Context(), path, definition); err != nil {
 		t.Fatal(err)
 	}
@@ -142,10 +142,10 @@ func TestStoreEventsReleaseMayRaceClose(t *testing.T) {
 }
 
 func TestStoreEnforcesDeclaredScopeAndCoalescesEvents(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "metastore.db")
+	path := filepath.Join(t.TempDir(), "metadata.db")
 	definitions := []Namespace{
-		Namespace{Name: "vms", Tables: []metastore.Table{"records"}},
-		Namespace{Name: "network", Tables: []metastore.Table{"leases"}},
+		Namespace{Name: "vms", Tables: []meta.Table{"records"}},
+		Namespace{Name: "network", Tables: []meta.Table{"leases"}},
 	}
 	if err := Init(t.Context(), path, definitions...); err != nil {
 		t.Fatal(err)
@@ -160,15 +160,15 @@ func TestStoreEnforcesDeclaredScopeAndCoalescesEvents(t *testing.T) {
 		}
 	}()
 	ctx := context.Background()
-	if err := store.Update(ctx, metastore.Scope{Write: "vms"}, metastore.CommitDurable, func(writer metastore.Writer) error {
+	if err := store.Update(ctx, meta.Scope{Write: "vms"}, meta.CommitDurable, func(writer meta.Writer) error {
 		return writer.PutRaw(ctx, "network", "leases", "ip-1", []byte(`{}`))
-	}); !errors.Is(err, metastore.ErrScope) {
+	}); !errors.Is(err, meta.ErrScope) {
 		t.Fatalf("write scope error = %v", err)
 	}
-	if err := store.View(ctx, []metastore.Namespace{"vms"}, func(reader metastore.Reader) error {
+	if err := store.View(ctx, []meta.Namespace{"vms"}, func(reader meta.Reader) error {
 		_, _, err := reader.GetRaw(ctx, "network", "leases", "ip-1")
 		return err
-	}); !errors.Is(err, metastore.ErrScope) {
+	}); !errors.Is(err, meta.ErrScope) {
 		t.Fatalf("read scope error = %v", err)
 	}
 
@@ -178,8 +178,8 @@ func TestStoreEnforcesDeclaredScopeAndCoalescesEvents(t *testing.T) {
 	}
 	defer release()
 	for _, id := range []string{"a", "b"} {
-		if err := store.Update(ctx, metastore.Scope{Write: "vms"}, metastore.CommitRelaxed, func(writer metastore.Writer) error {
-			return writer.PutRaw(ctx, "vms", "records", metastore.RecordID(id), []byte(`{}`))
+		if err := store.Update(ctx, meta.Scope{Write: "vms"}, meta.CommitRelaxed, func(writer meta.Writer) error {
+			return writer.PutRaw(ctx, "vms", "records", meta.RecordID(id), []byte(`{}`))
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -197,11 +197,11 @@ func TestStoreEnforcesDeclaredScopeAndCoalescesEvents(t *testing.T) {
 }
 
 func TestStoreRecordsIdentityAndNamespaceStatus(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "metastore.db")
-	if err := Init(t.Context(), path, Namespace{Name: "vms", Tables: []metastore.Table{"records"}}); err != nil {
+	path := filepath.Join(t.TempDir(), "metadata.db")
+	if err := Init(t.Context(), path, Namespace{Name: "vms", Tables: []meta.Table{"records"}}); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(path, Namespace{Name: "vms", Tables: []metastore.Table{"records"}})
+	store, err := Open(path, Namespace{Name: "vms", Tables: []meta.Table{"records"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,17 +226,17 @@ func TestStoreRecordsIdentityAndNamespaceStatus(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Open(path, Namespace{Name: "vms", Tables: []metastore.Table{"records"}}); !errors.Is(err, metastore.ErrCorrupt) {
+	if _, err := Open(path, Namespace{Name: "vms", Tables: []meta.Table{"records"}}); !errors.Is(err, meta.ErrCorrupt) {
 		t.Fatalf("wrong application id error = %v", err)
 	}
 }
 
 func TestStoreRejectsUnsupportedSchemaVersion(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "metastore.db")
-	if err := Init(t.Context(), path, Namespace{Name: "vms", Tables: []metastore.Table{"records"}}); err != nil {
+	path := filepath.Join(t.TempDir(), "metadata.db")
+	if err := Init(t.Context(), path, Namespace{Name: "vms", Tables: []meta.Table{"records"}}); err != nil {
 		t.Fatal(err)
 	}
-	store, err := Open(path, Namespace{Name: "vms", Tables: []metastore.Table{"records"}})
+	store, err := Open(path, Namespace{Name: "vms", Tables: []meta.Table{"records"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,29 +253,29 @@ func TestStoreRejectsUnsupportedSchemaVersion(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Open(path, Namespace{Name: "vms", Tables: []metastore.Table{"records"}}); !errors.Is(err, metastore.ErrCorrupt) {
+	if _, err := Open(path, Namespace{Name: "vms", Tables: []meta.Table{"records"}}); !errors.Is(err, meta.ErrCorrupt) {
 		t.Fatalf("wrong schema version error = %v", err)
 	}
 }
 
 func TestOpenRequiresInitialization(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "metastore.db")
-	definition := Namespace{Name: "vms", Tables: []metastore.Table{"records"}}
+	path := filepath.Join(t.TempDir(), "metadata.db")
+	definition := Namespace{Name: "vms", Tables: []meta.Table{"records"}}
 	if _, err := Open(path, definition); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("open uninitialized database error = %v", err)
 	}
 	if err := Init(t.Context(), path, definition); err != nil {
 		t.Fatal(err)
 	}
-	if err := Init(t.Context(), path, definition); !errors.Is(err, metastore.ErrConflict) {
+	if err := Init(t.Context(), path, definition); !errors.Is(err, meta.ErrConflict) {
 		t.Fatalf("reinitialize database error = %v", err)
 	}
 }
 
 func TestInitAddsNewNamespaceWithoutLosingExistingRecords(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "metastore.db")
-	vms := Namespace{Name: "vms", Tables: []metastore.Table{"records"}}
-	usage := Namespace{Name: "metering", Tables: []metastore.Table{"usage-events"}}
+	path := filepath.Join(t.TempDir(), "metadata.db")
+	vms := Namespace{Name: "vms", Tables: []meta.Table{"records"}}
+	usage := Namespace{Name: "metering", Tables: []meta.Table{"usage-events"}}
 	if err := Init(t.Context(), path, vms); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestInitAddsNewNamespaceWithoutLosingExistingRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Update(t.Context(), metastore.Scope{Write: "vms"}, metastore.CommitDurable, func(writer metastore.Writer) error {
+	if err := store.Update(t.Context(), meta.Scope{Write: "vms"}, meta.CommitDurable, func(writer meta.Writer) error {
 		return writer.PutRaw(t.Context(), "vms", "records", "vm-1", []byte(`{"name":"preserved"}`))
 	}); err != nil {
 		t.Fatal(err)
@@ -304,7 +304,7 @@ func TestInitAddsNewNamespaceWithoutLosingExistingRecords(t *testing.T) {
 			t.Errorf("close upgraded store: %v", err)
 		}
 	})
-	if err := store.View(t.Context(), []metastore.Namespace{"vms"}, func(reader metastore.Reader) error {
+	if err := store.View(t.Context(), []meta.Namespace{"vms"}, func(reader meta.Reader) error {
 		raw, found, err := reader.GetRaw(t.Context(), "vms", "records", "vm-1")
 		if err != nil {
 			return err
@@ -326,8 +326,8 @@ func TestInitAddsNewNamespaceWithoutLosingExistingRecords(t *testing.T) {
 }
 
 func TestInitRefusesToUpgradeIncompleteExistingNamespace(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "metastore.db")
-	vms := Namespace{Name: "vms", Tables: []metastore.Table{"records"}}
+	path := filepath.Join(t.TempDir(), "metadata.db")
+	vms := Namespace{Name: "vms", Tables: []meta.Table{"records"}}
 	if err := Init(t.Context(), path, vms); err != nil {
 		t.Fatal(err)
 	}
@@ -341,18 +341,18 @@ func TestInitRefusesToUpgradeIncompleteExistingNamespace(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	usage := Namespace{Name: "metering", Tables: []metastore.Table{"usage-events"}}
-	if err := Init(t.Context(), path, vms, usage); !errors.Is(err, metastore.ErrCorrupt) {
+	usage := Namespace{Name: "metering", Tables: []meta.Table{"usage-events"}}
+	if err := Init(t.Context(), path, vms, usage); !errors.Is(err, meta.ErrCorrupt) {
 		t.Fatalf("upgrade incomplete namespace error = %v", err)
 	}
-	if _, err := Open(path, vms, usage); !errors.Is(err, metastore.ErrCorrupt) {
+	if _, err := Open(path, vms, usage); !errors.Is(err, meta.ErrCorrupt) {
 		t.Fatalf("partially upgraded store error = %v", err)
 	}
 }
 
 func TestStoreSupportsConcurrentReadersAndSerializedWriters(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "metastore.db")
-	definition := Namespace{Name: "vms", Tables: []metastore.Table{"records"}}
+	path := filepath.Join(t.TempDir(), "metadata.db")
+	definition := Namespace{Name: "vms", Tables: []meta.Table{"records"}}
 	if err := Init(t.Context(), path, definition); err != nil {
 		t.Fatal(err)
 	}
@@ -376,14 +376,14 @@ func TestStoreSupportsConcurrentReadersAndSerializedWriters(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			id := metastore.RecordID(strconv.Itoa(worker))
-			if err := store.Update(t.Context(), metastore.Scope{Write: "vms"}, metastore.CommitRelaxed, func(writer metastore.Writer) error {
+			id := meta.RecordID(strconv.Itoa(worker))
+			if err := store.Update(t.Context(), meta.Scope{Write: "vms"}, meta.CommitRelaxed, func(writer meta.Writer) error {
 				return writer.PutRaw(t.Context(), "vms", "records", id, []byte(`{"ok":true}`))
 			}); err != nil {
 				errorsCh <- err
 				return
 			}
-			if err := store.View(t.Context(), []metastore.Namespace{"vms"}, func(reader metastore.Reader) error {
+			if err := store.View(t.Context(), []meta.Namespace{"vms"}, func(reader meta.Reader) error {
 				_, found, err := reader.GetRaw(t.Context(), "vms", "records", id)
 				if err == nil && !found {
 					return errors.New("written record was not found")

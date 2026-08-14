@@ -1,6 +1,6 @@
 // Package sqlite implements the metadata transaction boundary with SQLite.
 // Tables contain only an id and an encoded record; typed object handling stays
-// in metastore.Collection, just as it does for the JSON engine.
+// in meta.Collection, just as it does for the JSON engine.
 package sqlite
 
 import (
@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/metastore"
+	"github.com/kumabox/kumabox/internal/meta"
 	_ "modernc.org/sqlite"
 )
 
@@ -30,15 +30,15 @@ const (
 
 // Namespace declares the tables an SQLite metadata file may contain.
 type Namespace struct {
-	Name   metastore.Namespace
-	Tables []metastore.Table
+	Name   meta.Namespace
+	Tables []meta.Table
 }
 
 // NamespaceStatus describes the durable initialization state of one metadata
 // namespace. It is intentionally separate from resource records so startup
 // can validate the database before opening resource collections.
 type NamespaceStatus struct {
-	Namespace     metastore.Namespace
+	Namespace     meta.Namespace
 	State         string
 	SchemaVersion int
 	Records       int
@@ -53,7 +53,7 @@ type Store struct {
 	durable     *sql.DB
 	relaxed     *sql.DB
 	readers     *sql.DB
-	namespaces  map[metastore.Namespace]map[metastore.Table]struct{}
+	namespaces  map[meta.Namespace]map[meta.Table]struct{}
 	mu          sync.Mutex
 	subscribers map[*subscription]struct{}
 	closed      bool
@@ -74,7 +74,7 @@ func (s *subscription) close() {
 	})
 }
 
-var _ metastore.MetaEngine = (*Store)(nil)
+var _ meta.MetaEngine = (*Store)(nil)
 
 // Open opens an initialized metadata database. Database creation and schema
 // changes belong to Init so a normal command can never mistake a partial or
@@ -93,7 +93,7 @@ func OpenForRecovery(path string, definitions ...Namespace) (*Store, error) {
 
 func open(path string, definitions ...Namespace) (*Store, error) {
 	if path == "" || len(definitions) == 0 {
-		return nil, fmt.Errorf("SQLite metadata path and namespace definitions are required: %w", metastore.ErrScope)
+		return nil, fmt.Errorf("SQLite metadata path and namespace definitions are required: %w", meta.ErrScope)
 	}
 	namespaces, err := validateDefinitions(definitions)
 	if err != nil {
@@ -135,9 +135,9 @@ func RefuseConversion(path string) error {
 	return nil
 }
 
-func (s *Store) View(ctx context.Context, namespaces []metastore.Namespace, fn func(metastore.Reader) error) error {
+func (s *Store) View(ctx context.Context, namespaces []meta.Namespace, fn func(meta.Reader) error) error {
 	if fn == nil {
-		return fmt.Errorf("metadata view callback must not be nil: %w", metastore.ErrScope)
+		return fmt.Errorf("metadata view callback must not be nil: %w", meta.ErrScope)
 	}
 	if err := s.checkOpenAndScope(namespaces, ""); err != nil {
 		return err
@@ -150,19 +150,19 @@ func (s *Store) View(ctx context.Context, namespaces []metastore.Namespace, fn f
 	return fn(&txReader{tx: tx, allowed: namespaceSet(namespaces), tables: s.tablesFor(namespaces)})
 }
 
-func (s *Store) Update(ctx context.Context, scope metastore.Scope, mode metastore.CommitMode, fn func(metastore.Writer) error) error {
+func (s *Store) Update(ctx context.Context, scope meta.Scope, mode meta.CommitMode, fn func(meta.Writer) error) error {
 	if fn == nil {
-		return fmt.Errorf("metadata update callback must not be nil: %w", metastore.ErrScope)
+		return fmt.Errorf("metadata update callback must not be nil: %w", meta.ErrScope)
 	}
-	if mode != metastore.CommitDurable && mode != metastore.CommitRelaxed {
-		return fmt.Errorf("unsupported metadata commit mode %d: %w", mode, metastore.ErrDurabilityContract)
+	if mode != meta.CommitDurable && mode != meta.CommitRelaxed {
+		return fmt.Errorf("unsupported metadata commit mode %d: %w", mode, meta.ErrDurabilityContract)
 	}
-	namespaces := append([]metastore.Namespace{scope.Write}, scope.Read...)
+	namespaces := append([]meta.Namespace{scope.Write}, scope.Read...)
 	if err := s.checkOpenAndScope(namespaces, scope.Write); err != nil {
 		return err
 	}
 	db := s.durable
-	if mode == metastore.CommitRelaxed {
+	if mode == meta.CommitRelaxed {
 		db = s.relaxed
 	}
 	tx, err := db.BeginTx(ctx, nil)
@@ -207,7 +207,7 @@ func (s *Store) Events(ctx context.Context) (<-chan struct{}, func(), error) {
 		s.mu.Unlock()
 		_ = conn.Close()
 		cancel()
-		return nil, nil, metastore.ErrClosed
+		return nil, nil, meta.ErrClosed
 	}
 	s.subscribers[sub] = struct{}{}
 	s.mu.Unlock()
@@ -262,7 +262,7 @@ func (s *Store) Status(ctx context.Context) (result []NamespaceStatus, err error
 	closed := s.closed
 	s.mu.Unlock()
 	if closed {
-		return nil, metastore.ErrClosed
+		return nil, meta.ErrClosed
 	}
 	rows, err := s.readers.QueryContext(ctx, "SELECT namespace, state, schema_version, records, source, digest, updated_at FROM "+metadataStateTable+" ORDER BY namespace")
 	if err != nil {
@@ -286,7 +286,7 @@ func (s *Store) Status(ctx context.Context) (result []NamespaceStatus, err error
 		return nil, mapError(err)
 	}
 	if len(result) != len(s.namespaces) {
-		return nil, fmt.Errorf("SQLite metadata namespace state is incomplete: %w", metastore.ErrCorrupt)
+		return nil, fmt.Errorf("SQLite metadata namespace state is incomplete: %w", meta.ErrCorrupt)
 	}
 	return result, nil
 }
@@ -302,7 +302,7 @@ func (s *Store) Verify(ctx context.Context) error {
 		return mapError(err)
 	}
 	if result != "ok" {
-		return fmt.Errorf("sqlite metadata integrity check returned %q: %w", result, metastore.ErrCorrupt)
+		return fmt.Errorf("sqlite metadata integrity check returned %q: %w", result, meta.ErrCorrupt)
 	}
 	return nil
 }
@@ -313,7 +313,7 @@ func (s *Store) initializeIdentity() error {
 		return mapError(err)
 	}
 	if applicationID != databaseApplicationID {
-		return fmt.Errorf("sqlite metadata application id %d is not KumaBox: %w", applicationID, metastore.ErrCorrupt)
+		return fmt.Errorf("sqlite metadata application id %d is not KumaBox: %w", applicationID, meta.ErrCorrupt)
 	}
 
 	var schemaVersion int
@@ -321,32 +321,32 @@ func (s *Store) initializeIdentity() error {
 		return mapError(err)
 	}
 	if schemaVersion != databaseSchemaVersion {
-		return fmt.Errorf("unsupported sqlite metadata schema version %d: %w", schemaVersion, metastore.ErrCorrupt)
+		return fmt.Errorf("unsupported sqlite metadata schema version %d: %w", schemaVersion, meta.ErrCorrupt)
 	}
 	_, err := s.Status(context.Background())
 	return err
 }
 
-func (s *Store) checkOpenAndScope(namespaces []metastore.Namespace, write metastore.Namespace) error {
+func (s *Store) checkOpenAndScope(namespaces []meta.Namespace, write meta.Namespace) error {
 	s.mu.Lock()
 	closed := s.closed
 	s.mu.Unlock()
 	if closed {
-		return metastore.ErrClosed
+		return meta.ErrClosed
 	}
-	seen := make(map[metastore.Namespace]struct{}, len(namespaces))
+	seen := make(map[meta.Namespace]struct{}, len(namespaces))
 	for _, namespace := range namespaces {
 		if namespace == "" {
-			return fmt.Errorf("metadata namespace must not be empty: %w", metastore.ErrScope)
+			return fmt.Errorf("metadata namespace must not be empty: %w", meta.ErrScope)
 		}
 		if _, ok := s.namespaces[namespace]; !ok {
-			return fmt.Errorf("metadata namespace %q is not declared: %w", namespace, metastore.ErrScope)
+			return fmt.Errorf("metadata namespace %q is not declared: %w", namespace, meta.ErrScope)
 		}
 		seen[namespace] = struct{}{}
 	}
 	if write != "" {
 		if _, ok := seen[write]; !ok {
-			return fmt.Errorf("write namespace %q is outside scope: %w", write, metastore.ErrScope)
+			return fmt.Errorf("write namespace %q is outside scope: %w", write, meta.ErrScope)
 		}
 	}
 	return nil
@@ -403,11 +403,11 @@ func sqliteDataVersion(ctx context.Context, conn *sql.Conn) (int64, error) {
 
 type txReader struct {
 	tx      *sql.Tx
-	allowed map[metastore.Namespace]struct{}
-	tables  map[metastore.Namespace]map[metastore.Table]struct{}
+	allowed map[meta.Namespace]struct{}
+	tables  map[meta.Namespace]map[meta.Table]struct{}
 }
 
-func (r *txReader) GetRaw(ctx context.Context, namespace metastore.Namespace, table metastore.Table, id metastore.RecordID) (json.RawMessage, bool, error) {
+func (r *txReader) GetRaw(ctx context.Context, namespace meta.Namespace, table meta.Table, id meta.RecordID) (json.RawMessage, bool, error) {
 	if err := r.checkRead(namespace, table); err != nil {
 		return nil, false, err
 	}
@@ -422,9 +422,9 @@ func (r *txReader) GetRaw(ctx context.Context, namespace metastore.Namespace, ta
 	return append(json.RawMessage(nil), raw...), true, nil
 }
 
-func (r *txReader) ScanRaw(ctx context.Context, namespace metastore.Namespace, table metastore.Table, fn func(metastore.RecordID, json.RawMessage) error) (err error) {
+func (r *txReader) ScanRaw(ctx context.Context, namespace meta.Namespace, table meta.Table, fn func(meta.RecordID, json.RawMessage) error) (err error) {
 	if fn == nil {
-		return fmt.Errorf("metadata scan callback must not be nil: %w", metastore.ErrScope)
+		return fmt.Errorf("metadata scan callback must not be nil: %w", meta.ErrScope)
 	}
 	if err := r.checkRead(namespace, table); err != nil {
 		return err
@@ -444,33 +444,33 @@ func (r *txReader) ScanRaw(ctx context.Context, namespace metastore.Namespace, t
 		if err := rows.Scan(&id, &raw); err != nil {
 			return mapError(err)
 		}
-		if err := fn(metastore.RecordID(id), append(json.RawMessage(nil), raw...)); err != nil {
+		if err := fn(meta.RecordID(id), append(json.RawMessage(nil), raw...)); err != nil {
 			return err
 		}
 	}
 	return mapError(rows.Err())
 }
 
-func (r *txReader) checkRead(namespace metastore.Namespace, table metastore.Table) error {
+func (r *txReader) checkRead(namespace meta.Namespace, table meta.Table) error {
 	if _, ok := r.allowed[namespace]; !ok {
-		return fmt.Errorf("metadata namespace %q is outside transaction scope: %w", namespace, metastore.ErrScope)
+		return fmt.Errorf("metadata namespace %q is outside transaction scope: %w", namespace, meta.ErrScope)
 	}
 	if _, ok := r.tables[namespace][table]; !ok {
-		return fmt.Errorf("metadata table %q/%q is not declared: %w", namespace, table, metastore.ErrScope)
+		return fmt.Errorf("metadata table %q/%q is not declared: %w", namespace, table, meta.ErrScope)
 	}
 	if table == "" {
-		return fmt.Errorf("metadata table must not be empty: %w", metastore.ErrScope)
+		return fmt.Errorf("metadata table must not be empty: %w", meta.ErrScope)
 	}
 	return nil
 }
 
 type txWriter struct {
 	txReader
-	writeNamespace metastore.Namespace
-	mode           metastore.CommitMode
+	writeNamespace meta.Namespace
+	mode           meta.CommitMode
 }
 
-func (w *txWriter) PutRaw(ctx context.Context, namespace metastore.Namespace, table metastore.Table, id metastore.RecordID, raw json.RawMessage) error {
+func (w *txWriter) PutRaw(ctx context.Context, namespace meta.Namespace, table meta.Table, id meta.RecordID, raw json.RawMessage) error {
 	if err := w.checkWrite(ctx, namespace, table, id); err != nil {
 		return err
 	}
@@ -478,7 +478,7 @@ func (w *txWriter) PutRaw(ctx context.Context, namespace metastore.Namespace, ta
 	return mapError(err)
 }
 
-func (w *txWriter) DeleteRaw(ctx context.Context, namespace metastore.Namespace, table metastore.Table, id metastore.RecordID) error {
+func (w *txWriter) DeleteRaw(ctx context.Context, namespace meta.Namespace, table meta.Table, id meta.RecordID) error {
 	if err := w.checkWrite(ctx, namespace, table, id); err != nil {
 		return err
 	}
@@ -486,35 +486,35 @@ func (w *txWriter) DeleteRaw(ctx context.Context, namespace metastore.Namespace,
 	return mapError(err)
 }
 
-func (w *txWriter) checkWrite(ctx context.Context, namespace metastore.Namespace, table metastore.Table, id metastore.RecordID) error {
+func (w *txWriter) checkWrite(ctx context.Context, namespace meta.Namespace, table meta.Table, id meta.RecordID) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if namespace != w.writeNamespace {
-		return fmt.Errorf("cannot write metadata namespace %q from %q transaction: %w", namespace, w.writeNamespace, metastore.ErrScope)
+		return fmt.Errorf("cannot write metadata namespace %q from %q transaction: %w", namespace, w.writeNamespace, meta.ErrScope)
 	}
 	if table == "" || id == "" {
-		return fmt.Errorf("metadata table and id must not be empty: %w", metastore.ErrScope)
+		return fmt.Errorf("metadata table and id must not be empty: %w", meta.ErrScope)
 	}
-	if w.mode != metastore.CommitDurable && w.mode != metastore.CommitRelaxed {
+	if w.mode != meta.CommitDurable && w.mode != meta.CommitRelaxed {
 		return fmt.Errorf("unsupported metadata commit mode: %d", w.mode)
 	}
 	return nil
 }
 
-func validateDefinitions(definitions []Namespace) (map[metastore.Namespace]map[metastore.Table]struct{}, error) {
-	result := make(map[metastore.Namespace]map[metastore.Table]struct{}, len(definitions))
+func validateDefinitions(definitions []Namespace) (map[meta.Namespace]map[meta.Table]struct{}, error) {
+	result := make(map[meta.Namespace]map[meta.Table]struct{}, len(definitions))
 	for _, definition := range definitions {
 		if definition.Name == "" || len(definition.Tables) == 0 {
-			return nil, fmt.Errorf("metadata namespace %q has incomplete definition: %w", definition.Name, metastore.ErrScope)
+			return nil, fmt.Errorf("metadata namespace %q has incomplete definition: %w", definition.Name, meta.ErrScope)
 		}
 		if _, exists := result[definition.Name]; exists {
-			return nil, fmt.Errorf("metadata namespace %q declared twice: %w", definition.Name, metastore.ErrScope)
+			return nil, fmt.Errorf("metadata namespace %q declared twice: %w", definition.Name, meta.ErrScope)
 		}
-		result[definition.Name] = make(map[metastore.Table]struct{}, len(definition.Tables))
+		result[definition.Name] = make(map[meta.Table]struct{}, len(definition.Tables))
 		for _, table := range definition.Tables {
 			if table == "" {
-				return nil, fmt.Errorf("metadata table must not be empty: %w", metastore.ErrScope)
+				return nil, fmt.Errorf("metadata table must not be empty: %w", meta.ErrScope)
 			}
 			result[definition.Name][table] = struct{}{}
 		}
@@ -522,28 +522,28 @@ func validateDefinitions(definitions []Namespace) (map[metastore.Namespace]map[m
 	return result, nil
 }
 
-func namespaceSet(namespaces []metastore.Namespace) map[metastore.Namespace]struct{} {
-	result := make(map[metastore.Namespace]struct{}, len(namespaces))
+func namespaceSet(namespaces []meta.Namespace) map[meta.Namespace]struct{} {
+	result := make(map[meta.Namespace]struct{}, len(namespaces))
 	for _, namespace := range namespaces {
 		result[namespace] = struct{}{}
 	}
 	return result
 }
 
-func (s *Store) tablesFor(namespaces []metastore.Namespace) map[metastore.Namespace]map[metastore.Table]struct{} {
-	result := make(map[metastore.Namespace]map[metastore.Table]struct{}, len(namespaces))
+func (s *Store) tablesFor(namespaces []meta.Namespace) map[meta.Namespace]map[meta.Table]struct{} {
+	result := make(map[meta.Namespace]map[meta.Table]struct{}, len(namespaces))
 	for _, namespace := range namespaces {
 		result[namespace] = s.namespaces[namespace]
 	}
 	return result
 }
 
-func tableName(namespace metastore.Namespace, table metastore.Table) string {
+func tableName(namespace meta.Namespace, table meta.Table) string {
 	name := rawTableName(namespace, table)
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
-func rawTableName(namespace metastore.Namespace, table metastore.Table) string {
+func rawTableName(namespace meta.Namespace, table meta.Table) string {
 	return string(namespace) + "__" + string(table)
 }
 
@@ -554,9 +554,9 @@ func mapError(err error) error {
 	message := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(message, "busy"), strings.Contains(message, "locked"):
-		return fmt.Errorf("%v: %w", err, metastore.ErrBusy)
+		return fmt.Errorf("%v: %w", err, meta.ErrBusy)
 	case strings.Contains(message, "full"), strings.Contains(message, "no space"):
-		return fmt.Errorf("%v: %w", err, metastore.ErrNoSpace)
+		return fmt.Errorf("%v: %w", err, meta.ErrNoSpace)
 	default:
 		return err
 	}

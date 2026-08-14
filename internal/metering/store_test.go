@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kumabox/kumabox/internal/metastore"
+	"github.com/kumabox/kumabox/internal/meta"
 )
 
 func TestAppendIsIdempotentAndRejectsConflict(t *testing.T) {
@@ -19,7 +19,7 @@ func TestAppendIsIdempotentAndRejectsConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	event.Reason = ReasonRestart
-	if err := store.Append(t.Context(), event); !errors.Is(err, metastore.ErrConflict) {
+	if err := store.Append(t.Context(), event); !errors.Is(err, meta.ErrConflict) {
 		t.Fatalf("error = %v, want conflict", err)
 	}
 }
