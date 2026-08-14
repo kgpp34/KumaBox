@@ -3,7 +3,13 @@ FROM ubuntu:24.04
 ARG TARGETARCH=amd64
 ARG APT_MIRROR=""
 ARG APT_SECURITY_MIRROR=""
+ARG KUMABOX_VERSION=dev
 ENV DEBIAN_FRONTEND=noninteractive
+
+LABEL org.opencontainers.image.title="KumaBox Ubuntu guest"
+LABEL org.opencontainers.image.description="Ubuntu guest prepared for KumaBox direct boot and guest exec"
+LABEL org.opencontainers.image.source="https://github.com/kgpp34/KumaBox"
+LABEL org.opencontainers.image.version="${KUMABOX_VERSION}"
 
 COPY overlay.sh /usr/local/share/kumabox/initramfs/kumabox-overlay
 COPY network.sh /usr/local/share/kumabox/initramfs/kumabox-network
@@ -54,7 +60,7 @@ RUN if [ -n "$APT_MIRROR" ]; then \
     && printf "[Match]\nName=e* v*\n\n[Network]\nDHCP=yes\n\n[DHCPv4]\nClientIdentifier=mac\n" > /etc/systemd/network/20-wired.network \
     && sed -i 's/^#*PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config \
     && systemctl enable ssh kumabox-agent \
-    && echo 'root:cocoon' | chpasswd \
+    && passwd -l root \
     && rm -rf /var/lib/apt/lists/*
 
 CMD ["/sbin/init"]
