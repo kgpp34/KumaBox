@@ -24,7 +24,7 @@ const (
 	defaultStopTimeoutMS         = 10000
 	defaultDiskQueueSize         = 512
 	defaultNetworkMode           = "cni"
-	defaultNetworkName           = "default"
+	defaultNetworkName           = "kumabox"
 	defaultBridge                = "kumabox0"
 	defaultCIDR                  = "10.88.0.0/16"
 	defaultGateway               = "10.88.0.1"

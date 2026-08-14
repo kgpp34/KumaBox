@@ -20,7 +20,7 @@ readiness functionality.
 
    ```bash
    GO_BIN="$(go env GOROOT)/bin/go"
-   sudo test/e2e/e2e.sh --go-bin "$GO_BIN" --network cni:default
+   sudo test/e2e/e2e.sh --go-bin "$GO_BIN" --network cni:kumabox
    ```
 
 4. Confirm the release notes call out CLI, metadata, snapshot, and guest-agent

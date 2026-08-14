@@ -91,7 +91,7 @@ Review the verified installer before running it as root. It downloads the
 latest GitHub Release, verifies that archive's SHA256 file, and installs
 `kumabox` and `kumabox-check` under `/usr/local/bin`. `kumabox-check --upgrade`
 installs pinned Cloud Hypervisor, firmware, CNI plugins, EROFS tools and host
-packages, then creates the default `cni:default` network.
+packages, then creates the default `cni:kumabox` network.
 
 ### 2. Pull and prepare the guest image
 
@@ -217,7 +217,7 @@ qemu_img_binary = "qemu-img"
 
 [network]
 mode = "cni"
-default = "default"
+default = "kumabox"
 bridge = "kumabox0"
 cidr = "10.88.0.0/16"
 gateway = "10.88.0.1"
@@ -263,7 +263,7 @@ hotplug flow:
 
 ```bash
 GO_BIN="$(go env GOROOT)/bin/go"
-sudo test/e2e/e2e.sh --go-bin "$GO_BIN" --network cni:default
+sudo test/e2e/e2e.sh --go-bin "$GO_BIN" --network cni:kumabox
 ```
 
 This developer E2E builds the host binary and guest image. It requires Linux,

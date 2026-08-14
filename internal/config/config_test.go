@@ -77,6 +77,9 @@ func TestDefaultNetworkConfig(t *testing.T) {
 	if cfg.Network.Mode != "cni" {
 		t.Fatalf("network mode = %q", cfg.Network.Mode)
 	}
+	if cfg.Network.Default != "kumabox" {
+		t.Fatalf("default network = %q", cfg.Network.Default)
+	}
 	if cfg.Network.Bridge != "kumabox0" {
 		t.Fatalf("network bridge = %q", cfg.Network.Bridge)
 	}
