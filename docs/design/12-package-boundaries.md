@@ -6,10 +6,9 @@ package tree must therefore describe product concepts directly. It must not
 look like an application-layer stack or expose persistence implementation
 names as top-level concepts.
 
-## Problems in the current tree
+## Why the structure changed
 
-The current `internal` tree places different kinds of packages at the same
-level:
+The old `internal` tree placed different kinds of packages at the same level:
 
 - `imagestore`, `imageimport`, `oci`, `ocibuild`, `ociresolver`, `ocisource`,
   and `ocistore` all participate in one image workflow;
@@ -21,10 +20,10 @@ level:
 - `store`, `storage`, `resources`, and `state` do not tell a reader which data
   or behavior they own.
 
-This makes a reader follow imports before they can answer basic questions such
+This made a reader follow imports before they could answer basic questions such
 as "where is an image imported?" or "which package owns a VM record?".
 
-## Target tree
+## Current tree
 
 ```text
 internal/
@@ -43,6 +42,7 @@ internal/
   snapshot/              snapshot model and artifact lifecycle
   state/                 process-level capability assembly only
   vm/                    VM model and durable state transitions
+    nocloud/             VM NoCloud metadata generation
     runtime/             VM lifecycle orchestration
 ```
 
@@ -105,13 +105,13 @@ that coordination is implemented with lock files.
 metadata engine and exposes the VM, image, snapshot, network, operation,
 reference, and metering capabilities required by one CLI invocation.
 
-It does not define a second business model and must not be named `resources`
-or `StoreSet`. The target call site is `state.Open(cfg)`, returning a
+It does not define a second business model and is not named `resources`
+or `StoreSet`. The call site is `state.Open(cfg)`, returning a
 `state.Set` whose fields use product terms rather than persistence suffixes.
 
-## Migration map
+## Completed migration
 
-| Current path | Target path | Reason |
+| Former path | Current path | Reason |
 | --- | --- | --- |
 | `internal/metastore` | `internal/meta` | Metadata is the concept; store is an implementation detail. |
 | `internal/lockfile` + `internal/resourceguard` | `internal/lock` | One coordination capability with two levels. |
@@ -145,13 +145,13 @@ construct concrete packages, but it must not contain lifecycle behavior. This
 keeps the daemonless construction path explicit without introducing DDD-style
 application or repository layers.
 
-## Completion criteria
+## Enforced rules
 
-- No top-level `*store` package remains under `internal`.
-- No top-level `oci*` package remains; OCI code is discoverable under image.
+- No top-level `*store` package exists under `internal`.
+- No top-level `oci*` package exists; OCI code is discoverable under image.
 - `storage` is not used to mean both metadata persistence and VM disks.
-- `resources` and `state` are not parallel assembly abstractions.
+- `state` is the single process-level assembly abstraction.
 - Package names match directory names and are singular.
-- Existing JSON and SQLite behavior remains equivalent.
-- Unit tests, race tests, vet, formatting, and lint pass after each migration
-  section.
+- JSON and SQLite expose the same domain behavior through `meta`.
+- Structural changes must preserve unit tests, race tests, vet, formatting,
+  and lint.

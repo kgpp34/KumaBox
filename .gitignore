@@ -1,6 +1,8 @@
 .idea/
+.DS_Store
 bin/
 dist/
 coverage.out
 docs/
 oci-images/ubuntu/kumabox-agent-linux-amd64
+oci-images/ubuntu/kumabox-agent-linux-arm64
