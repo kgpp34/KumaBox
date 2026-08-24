@@ -85,6 +85,15 @@ jobs:
             exit 1
           fi
 
+      - name: Reject tracked local documentation
+        shell: bash
+        run: |
+          files="$(git ls-files docs)"
+          if [[ -n "$files" ]]; then
+            printf 'Files under docs/ are local-only and must not be tracked:\n%s\n' "$files"
+            exit 1
+          fi
+
       - name: Check module files
         run: |
           go mod tidy
