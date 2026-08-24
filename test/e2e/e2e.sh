@@ -10,9 +10,9 @@ cd "$repo_dir"
 kumabox="$repo_dir/bin/kumabox"
 cloud_hypervisor=cloud-hypervisor
 qemu_img=qemu-img
-image=p6-agent-image
-image_ref=kumabox/ubuntu:24.04-p6
-network=cni:cocoon
+image=kumabox-e2e
+image_ref=kumabox/ubuntu:24.04-e2e
+network=cni:kumabox
 storage=64M
 metadata_backend=sqlite
 go_bin=${GO_BIN:-}
@@ -38,9 +38,9 @@ Options:
   --kumabox PATH
   --cloud-hypervisor PATH
   --qemu-img PATH
-  --image NAME
-  --image-ref REF
-  --network NETWORK
+  --image NAME                 managed image name, defaults to kumabox-e2e
+  --image-ref REF              local OCI tag, defaults to kumabox/ubuntu:24.04-e2e
+  --network NETWORK            VM network, defaults to cni:kumabox
   --storage SIZE
   --metadata-backend json|sqlite
   --go-bin PATH
