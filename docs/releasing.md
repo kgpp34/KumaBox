@@ -16,11 +16,18 @@ readiness functionality.
 
 1. Ensure CI passes on `develop`.
 2. Run `test/release/install.sh`.
-3. Run the full Linux/KVM suite:
+3. Run the full Linux/KVM suite against both metadata backends:
 
    ```bash
    GO_BIN="$(go env GOROOT)/bin/go"
-   sudo test/e2e/e2e.sh --go-bin "$GO_BIN" --network cni:kumabox
+   sudo test/e2e/e2e.sh \
+     --go-bin "$GO_BIN" \
+     --network cni:kumabox \
+     --metadata-backend sqlite
+   sudo test/e2e/e2e.sh \
+     --go-bin "$GO_BIN" \
+     --network cni:kumabox \
+     --metadata-backend json
    ```
 
 4. Confirm the release notes call out CLI, metadata, snapshot, and guest-agent
@@ -60,6 +67,7 @@ the README Quick Start exactly. Acceptance requires:
   configuration;
 - the release archive checksum is verified by `scripts/install.sh`;
 - the public guest image imports without registry credentials;
+- the complete E2E workflow passes with both JSON and SQLite metadata;
 - `run`, `exec`, `console`, running snapshot, clone, and cleanup all work;
 - `kumabox ps` is empty after cleanup and `kumabox gc` reports no leaked E2E
   resources.
