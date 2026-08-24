@@ -43,7 +43,7 @@ Agents and automation routinely execute generated code, install packages, access
               +---------------------+---------------------+
               |                     |                     |
        +------v------+       +------v------+       +------v------+
-       | State stores |       | Image/OCI   |       | Networking  |
+       | Durable state |      | Image/OCI   |       | Networking  |
        | VM/snapshot  |       | pipelines   |       | TAP or CNI  |
        +------+-------+       +------+------+       +------+------+
               |                      |                     |
@@ -238,7 +238,8 @@ Example:
 sudo ./bin/kumabox --config /etc/kumabox/config.toml doctor
 ```
 
-The runtime directories can also be overridden with `--root-dir`, `--run-dir`, and `--log-dir`. Backend tool paths can be overridden with `--cloud-hypervisor-bin` and `--qemu-img-bin`.
+Backend tool paths can be overridden with `--cloud-hypervisor-bin` and
+`--qemu-img-bin`.
 
 ## State and Data
 
@@ -250,7 +251,10 @@ The default filesystem layout is:
 | `/var/lib/kumabox/run` | PID files, API sockets, native restore staging, and rendered runtime configuration |
 | `/var/log/kumabox` | VM and runtime logs |
 
-Use separate root directories when isolating development environments or test runs. Do not modify state files while KumaBox commands or managed VMs are active.
+The CLI does not expose flags for changing these roots. The E2E suite uses
+reserved resource names and cleans them through KumaBox instead of maintaining
+a second filesystem layout. Do not modify state files while KumaBox commands
+or managed VMs are active.
 
 ## Development and Verification
 
