@@ -18,6 +18,11 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
+const (
+	nftTable = "kumabox"
+	nftChain = "postrouting"
+)
+
 type commandRunner interface {
 	Run(ctx context.Context, name string, args ...string) ([]byte, error)
 }

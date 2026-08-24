@@ -2,11 +2,6 @@ package network
 
 import "strings"
 
-const (
-	nftTable = "kumabox"
-	nftChain = "postrouting"
-)
-
 func nftNATRuleHandles(output []byte, cidr string) []string {
 	var handles []string
 	for line := range strings.Lines(string(output)) {

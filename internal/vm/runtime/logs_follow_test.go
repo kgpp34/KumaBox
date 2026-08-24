@@ -71,6 +71,7 @@ func TestFollowLogsVMWaitsForFileAndStopsWithContext(t *testing.T) {
 	}
 	rt := NewWithBackend(store, backendFake{})
 	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	done := make(chan error, 1)
 	chunks := make(chan VMLogChunk, 1)
 	go func() {
