@@ -116,15 +116,34 @@ tag such as `24.04-v0.1.0`, or an OCI digest, when reproducibility matters.
 
 ## How It Works
 
-```text
-kumabox command
-      |
-      +-- open JSON or SQLite metadata
-      +-- acquire process/resource locks
-      +-- prepare OCI layers, writable disks, and CNI networking
-      +-- start or control one Cloud Hypervisor process
-      +-- communicate with the guest agent over vsock
-      +-- persist the result and exit
+```mermaid
+flowchart LR
+    User[User or automation] --> CLI
+
+    subgraph Command[One KumaBox command]
+        CLI[kumabox CLI]
+        Locks[Process and resource locks]
+        Runtime[VM lifecycle orchestration]
+        State[Durable state<br/>JSON or SQLite]
+
+        CLI --> Locks
+        CLI --> Runtime
+        CLI <--> State
+        Runtime --> State
+    end
+
+    Runtime --> Image[OCI and EROFS layers]
+    Runtime --> Disk[Writable disks]
+    Runtime --> Network[CNI, netns, and TAP]
+    Image --> VMM[Cloud Hypervisor]
+    Disk --> VMM
+    Network --> VMM
+    VMM --> Guest[MicroVM guest]
+    Guest --> Agent[kumabox-agent]
+    CLI <-->|vsock| Agent
+
+    CLI -. exits after the operation .-> NoDaemon[No resident KumaBox daemon]
+    VMM -. remains while the VM runs .-> VMProcess[One VMM process per running VM]
 ```
 
 Durable data lives under `/var/lib/kumabox`, runtime sockets and native restore
