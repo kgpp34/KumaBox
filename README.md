@@ -38,6 +38,33 @@ snapshots, cloning, and device management.
 - **Switchable metadata**: JSON is the default; SQLite is available for stronger
   concurrent access, backup, and integrity checks.
 
+## Positioning
+
+KumaBox is a sandbox manager, not a Kubernetes container runtime and not a VMM
+library. The projects below operate at different layers:
+
+| Project | Interface presented to users | Isolation model | Primary use case |
+| --- | --- | --- | --- |
+| **KumaBox** | Daemonless VM-oriented CLI | KVM microVM through Cloud Hypervisor | Local agent sandboxes, automation, and explicit VM lifecycle management |
+| [Kata Containers](https://katacontainers.io/) | OCI/CRI container runtime | Lightweight VM containing the container workload | Adding VM isolation to containerd, CRI, and Kubernetes workflows |
+| [gVisor](https://gvisor.dev/) | OCI runtime (`runsc`) | Userspace application kernel; not a traditional guest VM | Sandboxing containers while retaining Docker/Kubernetes integration |
+| [Firecracker](https://firecracker-microvm.github.io/) | VMM process and API | KVM microVM with a deliberately minimal device model | Building serverless or container platforms that provide their own control plane |
+| [Cloud Hypervisor](https://www.cloudhypervisor.org/) | VMM process and API | KVM/MSHV VM optimized for modern cloud workloads | Building VM products; KumaBox uses it as its current backend |
+| [Cocoon](https://github.com/cocoonstack/cocoon) | Daemonless VM-oriented CLI | MicroVM through Cloud Hypervisor or Firecracker | A broader, more mature direct alternative in the same product category |
+
+Kata Containers is therefore not simply "a container running a nested VM."
+Container tooling calls the Kata runtime, and Kata places the workload inside a
+lightweight VM while preserving the expected container interface. Choose Kata
+when CRI/containerd/Kubernetes compatibility is the primary requirement. Choose
+gVisor when a userspace-kernel sandbox fits that container workflow. Choose a
+raw VMM when you are building the surrounding image, network, metadata, and
+lifecycle control plane yourself.
+
+KumaBox is intended for users who want to manage the sandbox directly as a VM
+without first deploying Kubernetes or a resident KumaBox daemon. It is not a
+drop-in OCI runtime replacement for Kata or gVisor, and its current backend and
+platform coverage are narrower than established projects.
+
 ## Quick Start
 
 KumaBox currently supports Linux amd64 and arm64 hosts. The setup command
