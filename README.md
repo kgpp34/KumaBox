@@ -65,6 +65,29 @@ without first deploying Kubernetes or a resident KumaBox daemon. It is not a
 drop-in OCI runtime replacement for Kata or gVisor, and its current backend and
 platform coverage are narrower than established projects.
 
+### KumaBox and Cocoon
+
+KumaBox and Cocoon are the closest comparison because both expose a daemonless,
+VM-oriented CLI and manage OCI images, CNI networking, snapshots, cloning,
+guest exec, hotplug, GC, and JSON/SQLite metadata. Their main difference is
+focus rather than basic command coverage:
+
+| Design area | KumaBox | Cocoon | Practical effect |
+| --- | --- | --- | --- |
+| VMM scope | Cloud Hypervisor only | Cloud Hypervisor and Firecracker | KumaBox has a smaller compatibility matrix; Cocoon offers more backend choice |
+| Guest scope | Linux direct boot and UEFI | Linux plus Windows support | Cocoon is the better fit when Windows or Firecracker is required |
+| Interrupted operations | One durable operation journal covers VM lifecycle, network, devices, snapshots, clone, restore, and hibernate | Targeted reconciliation and self-healing in individual lifecycle and device paths | KumaBox exposes one consistency model for auditing and extending crash recovery |
+| Integrity diagnostics | `metadata status`, `metadata verify`, verified SQLite backup, and `snapshot verify` | Metadata init/convert/backup and validation during normal operations | KumaBox provides explicit read-only preflight commands before maintenance or restore |
+| Dry-run output | Versioned JSON launch plan that must not create records or files | Human-readable generated launch commands | KumaBox is easier to consume from automated validation tooling |
+| Failure testing | Named fault points across metadata, network, snapshot, clone, delete, and GC boundaries | Extensive subsystem tests and targeted recovery tests | KumaBox tests one shared interruption model across subsystems |
+
+KumaBox's advantage is not broader feature coverage. It is a deliberately
+narrower Cloud Hypervisor product with centralized durability rules,
+machine-readable diagnostics, and fewer backend-specific branches to audit.
+Those advantages matter when building or operating Linux agent sandboxes around
+Cloud Hypervisor. Cocoon remains the stronger choice when backend flexibility,
+Windows guests, or its broader established feature set matters more.
+
 ## Quick Start
 
 KumaBox currently supports Linux amd64 and arm64 hosts. The setup command
