@@ -5,78 +5,37 @@ import (
 	"fmt"
 )
 
-// State is the durable lifecycle state of a sandbox.
-type State uint8
+// State is the durable lifecycle state of a sandbox. Its zero value is
+// StateUnknown.
+type State string
 
 const (
-	StateUnknown State = iota
-	StateCreating
-	StateStopped
-	StateStarting
-	StateRunning
-	StatePaused
-	StateStopping
-	StateError
-	StateDeleting
+	StateUnknown  State = ""
+	StateCreating State = "creating"
+	StateStopped  State = "stopped"
+	StateStarting State = "starting"
+	StateRunning  State = "running"
+	StatePaused   State = "paused"
+	StateStopping State = "stopping"
+	StateError    State = "error"
+	StateDeleting State = "deleting"
 )
 
-// ErrInvalidState identifies an unknown numeric or textual sandbox state.
-var ErrInvalidState = errors.New("invalid sandbox state")
+var (
+	// ErrInvalidState identifies an unknown textual sandbox state.
+	ErrInvalidState = errors.New("invalid sandbox state")
+	// ErrInvalidTransition identifies a transition not present in the sandbox
+	// lifecycle state machine.
+	ErrInvalidTransition = errors.New("invalid sandbox state transition")
+)
 
-// ErrInvalidTransition identifies a transition not present in the sandbox
-// lifecycle state machine.
-var ErrInvalidTransition = errors.New("invalid sandbox state transition")
-
-// ParseState parses a canonical sandbox state.
+// ParseState parses and validates a state received at a module boundary.
 func ParseState(value string) (State, error) {
-	switch value {
-	case "unknown":
-		return StateUnknown, nil
-	case "creating":
-		return StateCreating, nil
-	case "stopped":
-		return StateStopped, nil
-	case "starting":
-		return StateStarting, nil
-	case "running":
-		return StateRunning, nil
-	case "paused":
-		return StatePaused, nil
-	case "stopping":
-		return StateStopping, nil
-	case "error":
-		return StateError, nil
-	case "deleting":
-		return StateDeleting, nil
-	default:
-		return StateUnknown, fmt.Errorf("%w: %q", ErrInvalidState, value)
+	state := State(value)
+	if err := state.Validate(); err != nil {
+		return StateUnknown, err
 	}
-}
-
-// String returns the canonical state name.
-func (state State) String() string {
-	switch state {
-	case StateUnknown:
-		return "unknown"
-	case StateCreating:
-		return "creating"
-	case StateStopped:
-		return "stopped"
-	case StateStarting:
-		return "starting"
-	case StateRunning:
-		return "running"
-	case StatePaused:
-		return "paused"
-	case StateStopping:
-		return "stopping"
-	case StateError:
-		return "error"
-	case StateDeleting:
-		return "deleting"
-	default:
-		return fmt.Sprintf("State(%d)", uint8(state))
-	}
+	return state, nil
 }
 
 // IsUnknown reports whether state is the zero-value state.
@@ -87,10 +46,20 @@ func (state State) IsUnknown() bool {
 // Validate checks that state is a defined lifecycle state. StateUnknown is a
 // defined value; operation-specific validation decides where it is permitted.
 func (state State) Validate() error {
-	if state <= StateDeleting {
+	switch state {
+	case StateUnknown,
+		StateCreating,
+		StateStopped,
+		StateStarting,
+		StateRunning,
+		StatePaused,
+		StateStopping,
+		StateError,
+		StateDeleting:
 		return nil
+	default:
+		return fmt.Errorf("%w: %q", ErrInvalidState, state)
 	}
-	return fmt.Errorf("%w: %d", ErrInvalidState, state)
 }
 
 // CanTransition reports whether the lifecycle state machine permits a direct
@@ -147,7 +116,7 @@ type TransitionError struct {
 }
 
 func (err *TransitionError) Error() string {
-	return fmt.Sprintf("%s: %s -> %s", ErrInvalidTransition, err.From, err.To)
+	return fmt.Sprintf("%s: %q -> %q", ErrInvalidTransition, err.From, err.To)
 }
 
 // Unwrap supports errors.Is with ErrInvalidTransition.

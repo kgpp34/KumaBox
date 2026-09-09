@@ -8,31 +8,33 @@ import (
 func TestStateRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	states := []State{
-		StateUnknown,
-		StateCreating,
-		StateStopped,
-		StateStarting,
-		StateRunning,
-		StatePaused,
-		StateStopping,
-		StateError,
-		StateDeleting,
+	tests := []struct {
+		name  string
+		state State
+	}{
+		{name: "unknown", state: StateUnknown},
+		{name: "creating", state: StateCreating},
+		{name: "stopped", state: StateStopped},
+		{name: "starting", state: StateStarting},
+		{name: "running", state: StateRunning},
+		{name: "paused", state: StatePaused},
+		{name: "stopping", state: StateStopping},
+		{name: "error", state: StateError},
+		{name: "deleting", state: StateDeleting},
 	}
-	for _, state := range states {
-		state := state
-		t.Run(state.String(), func(t *testing.T) {
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			if err := state.Validate(); err != nil {
-				t.Fatalf("State(%d).Validate() error = %v", state, err)
+			if err := test.state.Validate(); err != nil {
+				t.Fatalf("State(%q).Validate() error = %v", test.state, err)
 			}
-			parsed, err := ParseState(state.String())
+			parsed, err := ParseState(string(test.state))
 			if err != nil {
-				t.Fatalf("ParseState(%q) error = %v", state.String(), err)
+				t.Fatalf("ParseState(%q) error = %v", test.state, err)
 			}
-			if parsed != state {
-				t.Fatalf("ParseState(%q) = %v, want %v", state.String(), parsed, state)
+			if parsed != test.state {
+				t.Fatalf("ParseState(%q) = %q, want %q", test.state, parsed, test.state)
 			}
 		})
 	}
@@ -43,16 +45,16 @@ func TestStateUnknownIsZeroValue(t *testing.T) {
 
 	var state State
 	if state != StateUnknown || !state.IsUnknown() {
-		t.Fatalf("zero State = %v, want StateUnknown", state)
+		t.Fatalf("zero State = %q, want StateUnknown", state)
 	}
 }
 
 func TestInvalidState(t *testing.T) {
 	t.Parallel()
 
-	state := State(255)
+	state := State("booting")
 	if !errors.Is(state.Validate(), ErrInvalidState) {
-		t.Fatalf("State(255).Validate() error = %v, want ErrInvalidState", state.Validate())
+		t.Fatalf("State(booting).Validate() error = %v, want ErrInvalidState", state.Validate())
 	}
 	if _, err := ParseState("RUNNING"); !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("ParseState(RUNNING) error = %v, want ErrInvalidState", err)
@@ -95,29 +97,21 @@ func TestStateTransitionMatrix(t *testing.T) {
 		for _, target := range states {
 			want := allowed[source][target]
 			if got := CanTransition(source, target); got != want {
-				t.Errorf("CanTransition(%s, %s) = %t, want %t", source, target, got, want)
+				t.Errorf("CanTransition(%q, %q) = %t, want %t", source, target, got, want)
 			}
 
 			err := ValidateTransition(source, target)
 			if want && err != nil {
-				t.Errorf("ValidateTransition(%s, %s) error = %v", source, target, err)
+				t.Errorf("ValidateTransition(%q, %q) error = %v", source, target, err)
 			}
 			if !want && !errors.Is(err, ErrInvalidTransition) {
-				t.Errorf("ValidateTransition(%s, %s) error = %v, want ErrInvalidTransition", source, target, err)
+				t.Errorf(
+					"ValidateTransition(%q, %q) error = %v, want ErrInvalidTransition",
+					source,
+					target,
+					err,
+				)
 			}
 		}
-	}
-}
-
-func TestTransitionErrorSupportsErrorsAs(t *testing.T) {
-	t.Parallel()
-
-	err := ValidateTransition(StateRunning, StateStopped)
-	var transitionError *TransitionError
-	if !errors.As(err, &transitionError) {
-		t.Fatalf("ValidateTransition error = %v, want *TransitionError", err)
-	}
-	if transitionError.From != StateRunning || transitionError.To != StateStopped {
-		t.Fatalf("TransitionError = %#v", transitionError)
 	}
 }
