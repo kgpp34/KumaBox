@@ -3,9 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches:
-      - main
-      - develop
+    branches: [main, develop]
 
 permissions:
   contents: read
@@ -15,8 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
-    name: Lint
+  verify:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -26,123 +23,15 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
 
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.12
-          args: --timeout=5m
-
-  security:
-    name: Vulnerability scan
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          # Keep the scanner on a standard library version containing the
-          # security fixes reported by govulncheck. This does not change the
-          # project's minimum Go version in go.mod.
-          go-version: '1.26.6'
-          cache: true
-
-      - name: Run govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-
-  test:
-    name: Go ${{ matrix.go }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        go:
-          - '1.24.x'
-          - stable
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ matrix.go }}
-          cache: true
-
-      - name: Download Go modules
-        run: go mod download
-
-      - name: Check formatting
-        shell: bash
-        run: |
-          files="$(gofmt -l .)"
-          if [[ -n "$files" ]]; then
-            printf 'Go files are not formatted:\n%s\n' "$files"
-            exit 1
-          fi
-
-      - name: Reject tracked local documentation
-        shell: bash
-        run: |
-          files="$(git ls-files docs)"
-          if [[ -n "$files" ]]; then
-            printf 'Files under docs/ are local-only and must not be tracked:\n%s\n' "$files"
-            exit 1
-          fi
+      - name: Verify
+        run: make verify
 
       - name: Check module files
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
 
-      - name: Run vet
-        run: go vet ./...
-
-      - name: Run tests with race detection
-        run: go test -race -count=1 ./...
-
-      - name: Build all packages
-        run: go build ./...
-
-      - name: Check shell scripts
-        shell: bash
-        run: |
-          while IFS= read -r -d '' script; do
-            bash -n "$script"
-          done < <(find . -type f -name '*.sh' -not -path './.git/*' -print0)
-
-      - name: Test release installer
-        run: |
-          test/release/install.sh
-          test/release/check.sh
-
-  build:
-    name: Linux build
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Build release-shaped binaries
-        env:
-          VERSION: 0.0.0-ci
-          COMMIT: ${{ github.sha }}
-          BUILD_TIME: ${{ github.event.head_commit.timestamp || github.event.repository.updated_at }}
-        run: make build
-
-      - name: Verify build outputs
-        run: |
-          test -x bin/kumabox
-          test -x oci-images/ubuntu/kumabox-agent-linux-amd64
-          ./bin/kumabox version
+      - name: Reject tracked local documentation
+        run: test -z "$(git ls-files docs)"

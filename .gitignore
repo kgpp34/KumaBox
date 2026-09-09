@@ -2,6 +2,8 @@
 .DS_Store
 bin/
 dist/
+.rewrite-backup/
+.claude/
 coverage.out
 # Local design and implementation notes must never be committed.
 docs/

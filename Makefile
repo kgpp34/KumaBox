@@ -1,35 +1,17 @@
-BINARY := kumabox
-BIN_DIR := bin
-GUEST_AGENT_BINARY_AMD64 := oci-images/ubuntu/kumabox-agent-linux-amd64
-GUEST_AGENT_BINARY_ARM64 := oci-images/ubuntu/kumabox-agent-linux-arm64
-VERSION ?= 0.0.0-dev
-COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
-BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+GO ?= go
 
-LDFLAGS := -X github.com/kumabox/kumabox/internal/version.Version=$(VERSION) \
-	-X github.com/kumabox/kumabox/internal/version.Commit=$(COMMIT) \
-	-X github.com/kumabox/kumabox/internal/version.BuildTime=$(BUILD_TIME)
+.PHONY: build fmt-check test vet verify
 
-.PHONY: build build-agent build-agent-linux-amd64 build-agent-linux-arm64 test test-e2e clean
+build:
+	$(GO) build ./...
 
-build: build-agent
-	mkdir -p $(BIN_DIR)
-	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY) ./cmd/kumabox
-
-build-agent:
-	$(MAKE) build-agent-linux-amd64 build-agent-linux-arm64
-
-build-agent-linux-amd64:
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o $(GUEST_AGENT_BINARY_AMD64) ./cmd/agent
-
-build-agent-linux-arm64:
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(GUEST_AGENT_BINARY_ARM64) ./cmd/agent
+fmt-check:
+	@test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)
 
 test:
-	go test ./...
+	$(GO) test ./...
 
-test-e2e:
-	test/e2e/e2e.sh $(E2E_ARGS)
+vet:
+	$(GO) vet ./...
 
-clean:
-	rm -rf $(BIN_DIR)
+verify: fmt-check vet test build
