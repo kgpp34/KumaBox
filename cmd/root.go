@@ -1,8 +1,7 @@
 // Package cmd builds the kumabox command tree.
 //
 // It owns flags, help and exit codes only. Each command lives in its own
-// package and exposes a single NewCommand constructor; no command implements
-// its logic here (docs/ARCHITECTURE.md §1).
+// package and exposes a single NewCommand constructor
 package cmd
 
 import (
@@ -76,7 +75,7 @@ func newRootCommand() *cobra.Command {
 			"Every command opens the node root, does one job and exits; there is no\n" +
 			"daemon in this version. Use --root to point at another root, for example\n" +
 			"while developing.\n\n" +
-			"Run doctor/check.sh first to see whether this machine is ready.",
+			"Run kumabox-check first to see whether this machine is ready.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
