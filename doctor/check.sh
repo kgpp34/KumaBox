@@ -252,7 +252,6 @@ esac
 check_dir "$KUMABOX_RUN_DIR"
 check_dir "$KUMABOX_LOG_DIR"
 check_dir "${KUMABOX_ROOT_DIR}/meta"
-check_dir "${KUMABOX_ROOT_DIR}/images/blobs"
 check_dir "${KUMABOX_ROOT_DIR}/images/layers"
 check_dir "${KUMABOX_ROOT_DIR}/images/boot"
 check_dir "${KUMABOX_ROOT_DIR}/sandboxes"
