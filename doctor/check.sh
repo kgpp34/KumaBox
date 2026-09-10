@@ -8,6 +8,11 @@
 
 set -uo pipefail
 
+# sudo commonly supplies a restricted PATH without the sbin directories that
+# contain sysctl, modprobe, iptables and mkfs.ext4 on Ubuntu.
+PATH="${PATH:-}:/usr/local/sbin:/usr/sbin:/sbin"
+export PATH
+
 # ---------------------------------------------------------------------------
 # Configuration (override via environment)
 # ---------------------------------------------------------------------------
@@ -105,7 +110,7 @@ generate_cni_conflist() {
   "plugins": [
     {
       "type": "bridge",
-      "bridge": "cni0",
+      "bridge": "kumabox0",
       "mtu": ${host_mtu},
       "isGateway": true,
       "ipMasq": true,
@@ -150,6 +155,10 @@ erofs_version_ok() {
     [ "$major" -gt 1 ] || { [ "$major" -eq 1 ] && [ "$minor" -ge 8 ]; }
 }
 
+binary_version() {
+    echo "$1" | grep -oE 'v?[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 | tr -d 'v'
+}
+
 check_binary() {
     local name="$1"
     if command -v "$name" &>/dev/null; then
@@ -160,6 +169,11 @@ check_binary() {
             mkfs.ext4)        ver=$("$name" -V 2>&1 | head -1) || true ;;
             mkfs.erofs)       ver=$("$name" --version 2>&1 | head -1) || true ;;
         esac
+        if { [ "$name" = "cloud-hypervisor" ] || [ "$name" = "ch-remote" ]; } \
+            && [ "$(binary_version "$ver")" != "${CH_VERSION#v}" ]; then
+            fail "$name (${ver:-unknown}) does not match required ${CH_VERSION}"
+            return
+        fi
         if [ "$name" = "mkfs.erofs" ] && ! erofs_version_ok "$ver"; then
             fail "$name (${ver:-unknown}) is older than 1.8 — tar mode silently corrupts layers; apt ships 1.7.x, install erofs-utils >= 1.8 from source"
             return
@@ -283,9 +297,9 @@ fi
 check_sysctl net.bridge.bridge-nf-call-iptables 1
 
 # ---------------------------------------------------------------------------
-# 5. iptables FORWARD rules for CNI bridge
+# 5. iptables FORWARD rules for KumaBox bridge
 # ---------------------------------------------------------------------------
-header "iptables FORWARD (cni0)"
+header "iptables FORWARD (kumabox0)"
 
 check_iptables_rule() {
     local desc="$1"
@@ -300,10 +314,10 @@ check_iptables_rule() {
     fi
 }
 
-check_iptables_rule "FORWARD -i cni0 -j ACCEPT" \
-    FORWARD -i cni0 -j ACCEPT
-check_iptables_rule "FORWARD -o cni0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT" \
-    FORWARD -o cni0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+check_iptables_rule "FORWARD -i kumabox0 -j ACCEPT" \
+    FORWARD -i kumabox0 -j ACCEPT
+check_iptables_rule "FORWARD -o kumabox0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT" \
+    FORWARD -o kumabox0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 
 # Clamp TCP MSS to the path MTU: on a host whose egress MTU is below the bridge's
 # (e.g. GCP's 1460), guests otherwise blackhole large TLS/data packets that carry DF.
@@ -325,21 +339,11 @@ header "CNI configuration"
 
 CNI_CONFLIST="${KUMABOX_CNI_CONF_DIR}/10-kumabox.conflist"
 
-if [ -d "$KUMABOX_CNI_CONF_DIR" ]; then
-    conflist_count=$(find "$KUMABOX_CNI_CONF_DIR" -maxdepth 1 -name '*.conflist' 2>/dev/null | wc -l)
-    if [ "$conflist_count" -gt 0 ]; then
-        first=$(find "$KUMABOX_CNI_CONF_DIR" -maxdepth 1 -name '*.conflist' 2>/dev/null | sort | head -1)
-        pass "conflist: $(basename "$first")"
-    else
-        fail "no .conflist files in $KUMABOX_CNI_CONF_DIR"
-        if $FIX; then
-            generate_cni_conflist
-        fi
-    fi
+if [ -f "$CNI_CONFLIST" ]; then
+    pass "conflist: $(basename "$CNI_CONFLIST")"
 else
-    fail "$KUMABOX_CNI_CONF_DIR does not exist"
+    fail "$CNI_CONFLIST does not exist"
     if $FIX; then
-        mkdir -p "$KUMABOX_CNI_CONF_DIR" && fixed "created $KUMABOX_CNI_CONF_DIR" || warn "failed"
         generate_cni_conflist
     fi
 fi
