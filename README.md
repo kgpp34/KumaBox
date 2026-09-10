@@ -4,36 +4,54 @@
 
 # KumaBox
 
-KumaBox is being rebuilt as a modular infrastructure project for high-density
-agent sandboxes.
+A microVM sandbox runtime for AI agents. One node runs one daemon
+(`kumaboxd`) that owns all state, plus a thin client (`kumabox`) with a
+Docker-like command line; sandboxes are Cloud Hypervisor microVMs booted from
+OCI images, with CNI networking, cgroups, snapshots and clone.
 
-The rewrite follows Cocoon's core lifecycle semantics—such as create, snapshot,
-clone, and restore—while keeping KumaBox's architecture and implementation
-independent. The current branch is not a usable release until those capabilities
-are reintroduced through the approved P12 milestones.
+The core logic is being rewritten from scratch. **The current branch has no
+product code yet** — it contains the specifications and the architecture gate
+only. That is deliberate: each phase of `docs/ROADMAP.md` starts with a
+four-part proposal, and no implementation code is written before it is
+approved.
 
-## Rewrite rules
+## Where the design lives
 
-- Infrastructure capability modules are the primary architectural boundary.
-- Lifecycle behavior is specified and compared with Cocoon before implementation.
-- Each major capability requires an approved logic, design, abstraction, and
-  directory proposal before code is written.
-- Tests and architecture checks are delivered with each capability.
+Read these in order. They are the only specifications; anything else under
+`docs/` is history.
 
-Local design and progress records live under `docs/` and are intentionally not
-tracked by Git.
+| Document | Answers |
+|---|---|
+| [docs/PRODUCT.md](docs/PRODUCT.md) | What this is, who uses it, what v1 must do, what it will not do, how it relates to Cocoon, shared vocabulary |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layering and the import matrix, fact ownership, the execution model, transactions and locks, cross-cutting contracts, testing tiers, naming and code style |
+| [docs/BEHAVIOR.md](docs/BEHAVIOR.md) | What happens on the machine when a command runs, and what is left behind when it fails |
+| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | How performance is measured, how it is compared against Cocoon, and which scenarios must match or beat it |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | What each phase does, why, how, and the evidence that closes it |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | Decisions taken, why the previous design was discarded, what is still open |
 
-## Development
+Documentation is intentionally not tracked by Git (see `.gitignore`), so these
+files live only in the working tree — keep local backups.
+
+## Working on it
 
 ```bash
-make verify
+make verify   # formatting, vet, tests, build
+make race     # race detector, required for concurrency changes
 ```
 
-## Recovery
+`make verify` must stay green on macOS with no root and no KVM. Real microVM
+behaviour (Cloud Hypervisor, CNI, KVM) is verified manually on a Linux host
+using the runbook attached to each phase.
 
-The pre-rewrite source is recoverable from the protected Git tag
-`pre-p12-rewrite-20260909`. A verified local source archive is also stored under
-`.rewrite-backup/` in the rewrite workspace.
+## Reference material
+
+- Cocoon at `../cocoon@27ae1e0b2a65c9082c7a1b33c5245bfe43a4854d` is the
+  capability floor: match its lifecycle ordering and failure recovery, never
+  copy its package structure or its dual metadata backends.
+- The pre-rewrite KumaBox source is available read-only from the protected tag
+  `pre-p12-rewrite-20260909` (and as an archive under `.rewrite-backup/`). It is
+  reference material for behaviour only; no code, types, schema or tests are
+  reused from it.
 
 ## License
 

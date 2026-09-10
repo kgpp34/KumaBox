@@ -13,6 +13,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # verify covers T1/T2 only: pure models, coordinator ordering with fake ports,
+  # and real SQLite/filesystem integration. It needs no root and no KVM, so it
+  # runs on a plain runner. T3/T4 (real Cloud Hypervisor on Linux/KVM) are
+  # executed manually per docs/ROADMAP.md; see that file for the runbooks.
   verify:
     runs-on: ubuntu-latest
     steps:
@@ -27,6 +31,9 @@ jobs:
 
       - name: Verify
         run: make verify
+
+      - name: Race detector
+        run: make race
 
       - name: Check module files
         run: |
