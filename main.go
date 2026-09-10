@@ -15,7 +15,7 @@ import (
 
 func main() {
 	err := cmd.Execute(context.Background(), os.Args[1:], os.Stdout, os.Stderr)
-	if err != nil {
+	if err != nil && !cmd.Silent(err) {
 		fmt.Fprintf(os.Stderr, "kumabox: %v\n", err)
 	}
 	os.Exit(cmd.ExitCode(err))

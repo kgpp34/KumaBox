@@ -1,7 +1,4 @@
 // Package cmd builds the kumabox command tree.
-//
-// It owns flags, help and exit codes only. Each command lives in its own
-// package and exposes a single NewCommand constructor
 package cmd
 
 import (
@@ -12,15 +9,18 @@ import (
 
 	"github.com/spf13/cobra"
 
+	doctorcmd "github.com/kumabox/kumabox/cmd/doctor"
 	"github.com/kumabox/kumabox/version"
 )
 
-// exitCoder is implemented by errors that know which exit code they deserve.
-// Commands classify their own failures this way, so no shared error package is
-// needed and a library never has to know about exit codes.
-type exitCoder interface{ ExitCode() int }
+type exitCoder interface {
+	ExitCode() int
+}
 
-// codedError attaches an exit code to an error.
+type silentError interface {
+	Silent() bool
+}
+
 type codedError struct {
 	err  error
 	code int
@@ -30,13 +30,9 @@ func (e *codedError) Error() string { return e.err.Error() }
 func (e *codedError) Unwrap() error { return e.err }
 func (e *codedError) ExitCode() int { return e.code }
 
-// exitUsage is the exit code for a failure of the command line itself.
-const exitUsage = 5
+const exitUsage = 2
 
-// Execute runs one invocation and returns the error it failed with, or nil.
-//
-// Errors raised while resolving or parsing the command line are reported as
-// usage failures; everything else is expected to carry its own exit code.
+// Execute runs one CLI invocation.
 func Execute(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	root := newRootCommand()
 	root.SetArgs(args)
@@ -54,8 +50,7 @@ func Execute(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	return &codedError{err: err, code: exitUsage}
 }
 
-// ExitCode maps the result of Execute to the process exit code documented in
-// docs/BEHAVIOR.md §17.
+// ExitCode returns the process exit status represented by err.
 func ExitCode(err error) int {
 	if err == nil {
 		return 0
@@ -67,31 +62,30 @@ func ExitCode(err error) int {
 	return 1
 }
 
+// Silent reports whether the command already wrote its diagnostic output.
+func Silent(err error) bool {
+	var silent silentError
+	return errors.As(err, &silent) && silent.Silent()
+}
+
 func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "kumabox",
-		Short: "microVM sandboxes for AI agents",
-		Long: "kumabox runs microVM sandboxes on this machine.\n\n" +
-			"Every command opens the node root, does one job and exits; there is no\n" +
-			"daemon in this version. Use --root to point at another root, for example\n" +
-			"while developing.\n\n" +
-			"Run kumabox-check first to see whether this machine is ready.",
+		Use:           "kumabox",
+		Short:         "microVM sandboxes for AI agents",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.PersistentFlags().String("root", "",
-		"node root directory (default $KUMABOX_ROOT, then /var/lib/kumabox)")
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return &codedError{err: err, code: exitUsage}
 	})
 
+	root.AddCommand(doctorcmd.NewCommand())
 	root.AddCommand(newVersionCommand())
 	return root
 }
 
 func newVersionCommand() *cobra.Command {
 	var asJSON bool
-
 	command := &cobra.Command{
 		Use:   "version",
 		Short: "print the version",

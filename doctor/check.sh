@@ -12,33 +12,22 @@ set -uo pipefail
 # Configuration (override via environment)
 # ---------------------------------------------------------------------------
 KUMABOX_ROOT_DIR="${KUMABOX_ROOT_DIR:-/var/lib/kumabox}"
-KUMABOX_META_DIR="${KUMABOX_META_DIR:-${KUMABOX_ROOT_DIR}/metadata}"
-KUMABOX_BLOBS_DIR="${KUMABOX_BLOBS_DIR:-${KUMABOX_ROOT_DIR}/blobs}"
-KUMABOX_TMP_DIR="${KUMABOX_TMP_DIR:-${KUMABOX_ROOT_DIR}/tmp}"
 KUMABOX_RUN_DIR="${KUMABOX_RUN_DIR:-/run/kumabox}"
 KUMABOX_LOG_DIR="${KUMABOX_LOG_DIR:-/var/log/kumabox}"
 KUMABOX_CNI_CONF_DIR="${KUMABOX_CNI_CONF_DIR:-/etc/cni/net.d}"
 KUMABOX_CNI_BIN_DIR="${KUMABOX_CNI_BIN_DIR:-/opt/cni/bin}"
-# Overridable so the checks can be exercised without touching the real host.
-KUMABOX_KVM_DEVICE="${KUMABOX_KVM_DEVICE:-/dev/kvm}"
-KUMABOX_NETNS_DIR="${KUMABOX_NETNS_DIR:-/var/run/netns}"
 
 # Dependency versions
 CH_VERSION="${CH_VERSION:-v53.0}"
-CH_MIN_MAJOR="${CH_MIN_MAJOR:-43}"
-FW_VERSION="${FW_VERSION:-0.5.0}"
 CNI_VERSION="${CNI_VERSION:-v1.9.1}"
 
 # Architecture detection
 ARCH=$(uname -m)
 case "$ARCH" in
-    x86_64|amd64)   GO_ARCH="amd64"; CH_SUFFIX=""; FW_SUFFIX="" ;;
-    aarch64|arm64)  GO_ARCH="arm64"; CH_SUFFIX="-aarch64"; FW_SUFFIX="-aarch64" ;;
+    x86_64)  GO_ARCH="amd64"; CH_SUFFIX="" ;;
+    aarch64) GO_ARCH="arm64"; CH_SUFFIX="-aarch64" ;;
     *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
 esac
-
-FIRMWARE_DIR="${KUMABOX_ROOT_DIR}/firmware"
-FIRMWARE_PATH="${FIRMWARE_DIR}/CLOUDHV.fd"
 
 # ---------------------------------------------------------------------------
 # Flags
@@ -59,19 +48,14 @@ Options:
   --fix            Attempt to fix detected issues (dirs, sysctl, iptables, CNI config)
   --upgrade        Fix issues and install/upgrade dependencies:
                      cloud-hypervisor ${CH_VERSION}
-                     hypervisor-fw    ${FW_VERSION}
                      CNI plugins      ${CNI_VERSION}
   --subnet=CIDR    Subnet for generated CNI bridge config (default: 10.88.0.0/16)
 
 Environment variables:
-  CH_VERSION      Cloud Hypervisor version   (default: ${CH_VERSION})
-  CH_MIN_MAJOR    oldest accepted major      (default: ${CH_MIN_MAJOR})
-  FW_VERSION      Firmware version           (default: ${FW_VERSION})
-  CNI_VERSION     CNI plugins version        (default: ${CNI_VERSION})
+  CH_VERSION    Cloud Hypervisor version    (default: ${CH_VERSION})
+  CNI_VERSION   CNI plugins version         (default: ${CNI_VERSION})
   KUMABOX_ROOT_DIR / KUMABOX_RUN_DIR / KUMABOX_LOG_DIR
   KUMABOX_CNI_CONF_DIR / KUMABOX_CNI_BIN_DIR
-  KUMABOX_KVM_DEVICE          KVM device to check   (default: /dev/kvm)
-  KUMABOX_NETNS_DIR           network namespace dir (default: /var/run/netns)
 EOF
             exit 0
             ;;
@@ -83,12 +67,12 @@ done
 # ---------------------------------------------------------------------------
 PASS=0; WARN=0; FAIL=0
 
-pass()   { PASS=$((PASS + 1)); printf "  \033[32m[PASS]\033[0m %s\n" "$1"; }
-warn()   { WARN=$((WARN + 1)); printf "  \033[33m[WARN]\033[0m %s\n" "$1"; }
-fail()   { FAIL=$((FAIL + 1)); printf "  \033[31m[FAIL]\033[0m %s\n" "$1"; }
-info()   { printf "  \033[36m[INFO]\033[0m %s\n" "$1"; }
-fixed()  { printf "  \033[32m[FIXED]\033[0m %s\n" "$1"; }
-header() { printf "\n\033[1m==> %s\033[0m\n" "$1"; }
+pass()   { PASS=$((PASS + 1)); printf "  \033[38;5;42m[PASS]\033[0m %s\n" "$1"; }
+warn()   { WARN=$((WARN + 1)); printf "  \033[38;5;214m[WARN]\033[0m %s\n" "$1"; }
+fail()   { FAIL=$((FAIL + 1)); printf "  \033[38;5;203m[FAIL]\033[0m %s\n" "$1"; }
+info()   { printf "  \033[38;5;75m[INFO]\033[0m %s\n" "$1"; }
+fixed()  { printf "  \033[38;5;81m[FIXED]\033[0m %s\n" "$1"; }
+header() { printf "\n\033[1;38;5;111m%s\033[0m\n" "$1"; }
 
 # ---------------------------------------------------------------------------
 # CNI conflist generator
@@ -121,7 +105,7 @@ generate_cni_conflist() {
   "plugins": [
     {
       "type": "bridge",
-      "bridge": "kumabox0",
+      "bridge": "cni0",
       "mtu": ${host_mtu},
       "isGateway": true,
       "ipMasq": true,
@@ -152,20 +136,11 @@ bin_to_pkg() {
     case "$1" in
         mkfs.erofs) echo "erofs-utils" ;;
         mkfs.ext4)  echo "e2fsprogs" ;;
-        qemu-img)   echo "qemu-utils" ;;
         *)          echo "" ;;
     esac
 }
 
-# KumaBox refuses to boot below this major version.
-ch_version_ok() {
-    local major
-    major=$(echo "$1" | grep -oE 'v?[0-9]+' | head -1 | tr -d 'v')
-    [ -n "$major" ] || return 1
-    [ "$major" -ge "$CH_MIN_MAJOR" ]
-}
-
-# Layers are converted to EROFS at import time. erofs-utils < 1.8 tar mode
+# Mirror the runtime floor in images/oci/erofs.go: erofs-utils < 1.8 tar mode
 # silently corrupts layers, so doctor must not PASS a host kumabox will refuse.
 erofs_version_ok() {
     local xy major minor
@@ -181,14 +156,10 @@ check_binary() {
         local ver=""
         case "$name" in
             cloud-hypervisor) ver=$("$name" --version 2>/dev/null | head -1) || true ;;
-            qemu-img)         ver=$("$name" --version 2>/dev/null | head -1) || true ;;
+            ch-remote)        ver=$("$name" --version 2>/dev/null | head -1) || true ;;
             mkfs.ext4)        ver=$("$name" -V 2>&1 | head -1) || true ;;
             mkfs.erofs)       ver=$("$name" --version 2>&1 | head -1) || true ;;
         esac
-        if [ "$name" = "cloud-hypervisor" ] && ! ch_version_ok "$ver"; then
-            fail "$name (${ver:-unknown}) is older than v${CH_MIN_MAJOR} — kumabox refuses to launch on it"
-            return
-        fi
         if [ "$name" = "mkfs.erofs" ] && ! erofs_version_ok "$ver"; then
             fail "$name (${ver:-unknown}) is older than 1.8 — tar mode silently corrupts layers; apt ships 1.7.x, install erofs-utils >= 1.8 from source"
             return
@@ -211,48 +182,30 @@ check_binary() {
 }
 
 check_binary cloud-hypervisor
-check_binary mkfs.erofs
+check_binary ch-remote
 check_binary mkfs.ext4
-# qemu-img is optional: only the qcow2 write path needs it.
-if command -v qemu-img &>/dev/null; then
-    check_binary qemu-img
-else
-    warn "qemu-img not found (optional, needed by the qcow2 write path)"
-fi
+check_binary mkfs.erofs
 
 # ---------------------------------------------------------------------------
-# 2. Firmware
-# ---------------------------------------------------------------------------
-header "Firmware"
-
-# Only the UEFI boot shape needs firmware; direct kernel boot does not.
-if [ -f "$FIRMWARE_PATH" ]; then
-    local_size=$(stat -c%s "$FIRMWARE_PATH" 2>/dev/null || stat -f%z "$FIRMWARE_PATH" 2>/dev/null || echo 0)
-    pass "CLOUDHV.fd (${local_size} bytes) at $FIRMWARE_PATH"
-else
-    warn "CLOUDHV.fd not found at $FIRMWARE_PATH (optional, needed by the uefi boot shape)"
-fi
-
-# ---------------------------------------------------------------------------
-# 3. KVM access
+# 2. KVM access
 # ---------------------------------------------------------------------------
 header "KVM"
 
-if [ -e "$KUMABOX_KVM_DEVICE" ]; then
-    if [ -r "$KUMABOX_KVM_DEVICE" ] && [ -w "$KUMABOX_KVM_DEVICE" ]; then
-        pass "$KUMABOX_KVM_DEVICE accessible"
+if [ -e /dev/kvm ]; then
+    if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+        pass "/dev/kvm accessible"
     else
-        fail "$KUMABOX_KVM_DEVICE exists but not readable/writable by $(whoami)"
+        fail "/dev/kvm exists but not readable/writable by $(whoami)"
         if $FIX; then
-            chmod 666 "$KUMABOX_KVM_DEVICE" 2>/dev/null && fixed "chmod 666 $KUMABOX_KVM_DEVICE" || warn "failed to fix (need root?)"
+            chmod 666 /dev/kvm 2>/dev/null && fixed "chmod 666 /dev/kvm" || warn "failed to fix (need root?)"
         fi
     fi
 else
-    fail "$KUMABOX_KVM_DEVICE not found (nested virtualization or bare-metal required)"
+    fail "/dev/kvm not found (nested virtualization or bare-metal required)"
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Runtime directories
+# 3. Managed directories
 # ---------------------------------------------------------------------------
 header "Directories"
 
@@ -269,29 +222,38 @@ check_dir() {
 }
 
 check_dir "$KUMABOX_ROOT_DIR"
-check_dir "$KUMABOX_META_DIR"
-check_dir "$KUMABOX_BLOBS_DIR"
-check_dir "$KUMABOX_TMP_DIR"
-check_dir "$KUMABOX_RUN_DIR"
-check_dir "$KUMABOX_LOG_DIR"
-check_dir "$FIRMWARE_DIR"
-check_dir "$KUMABOX_NETNS_DIR"
 
-# SQLite WAL needs coherent shared memory; report the same filesystem refusal
-# enforced on open (docs/ARCHITECTURE.md §7).
-meta_fstype=$(stat -f -c %T "$KUMABOX_ROOT_DIR" 2>/dev/null | head -1 | tr -d '[:space:]')
-meta_fstype=${meta_fstype:-unknown}
+# SQLite WAL needs coherent shared memory. KumaBox has one metadata engine and
+# does not probe or preserve Cocoon's per-backend JSON stores.
+meta_fstype=$(stat -f -c %T "$KUMABOX_ROOT_DIR" 2>/dev/null || echo unknown)
 case "$meta_fstype" in
     nfs*|cifs|smb*|fuse*)
-        fail "root on $meta_fstype: sqlite WAL needs coherent shared memory; kumabox refuses this filesystem"
+        fail "meta root on $meta_fstype: sqlite WAL needs coherent shared memory; kumabox refuses this filesystem"
         ;;
     *)
-        pass "root filesystem ($meta_fstype) supports WAL"
+        pass "meta root filesystem ($meta_fstype) supports WAL"
         ;;
 esac
 
+check_dir "$KUMABOX_RUN_DIR"
+check_dir "$KUMABOX_LOG_DIR"
+check_dir "${KUMABOX_ROOT_DIR}/meta"
+check_dir "${KUMABOX_ROOT_DIR}/images/blobs"
+check_dir "${KUMABOX_ROOT_DIR}/images/layers"
+check_dir "${KUMABOX_ROOT_DIR}/images/boot"
+check_dir "${KUMABOX_ROOT_DIR}/sandboxes"
+check_dir "${KUMABOX_ROOT_DIR}/snapshots"
+check_dir "${KUMABOX_ROOT_DIR}/network/cni-cache"
+check_dir "${KUMABOX_ROOT_DIR}/staging/imports"
+check_dir "${KUMABOX_ROOT_DIR}/staging/snapshots"
+check_dir "${KUMABOX_ROOT_DIR}/staging/restores"
+check_dir "${KUMABOX_RUN_DIR}/locks/sandboxes"
+check_dir "${KUMABOX_RUN_DIR}/sandboxes"
+check_dir "${KUMABOX_LOG_DIR}/sandboxes"
+check_dir /run/netns
+
 # ---------------------------------------------------------------------------
-# 5. Sysctl
+# 4. Sysctl
 # ---------------------------------------------------------------------------
 header "Sysctl"
 
@@ -321,9 +283,9 @@ fi
 check_sysctl net.bridge.bridge-nf-call-iptables 1
 
 # ---------------------------------------------------------------------------
-# 6. iptables FORWARD rules for the CNI bridge
+# 5. iptables FORWARD rules for CNI bridge
 # ---------------------------------------------------------------------------
-header "iptables FORWARD (kumabox0)"
+header "iptables FORWARD (cni0)"
 
 check_iptables_rule() {
     local desc="$1"
@@ -338,10 +300,10 @@ check_iptables_rule() {
     fi
 }
 
-check_iptables_rule "FORWARD -i kumabox0 -j ACCEPT" \
-    FORWARD -i kumabox0 -j ACCEPT
-check_iptables_rule "FORWARD -o kumabox0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT" \
-    FORWARD -o kumabox0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+check_iptables_rule "FORWARD -i cni0 -j ACCEPT" \
+    FORWARD -i cni0 -j ACCEPT
+check_iptables_rule "FORWARD -o cni0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT" \
+    FORWARD -o cni0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 
 # Clamp TCP MSS to the path MTU: on a host whose egress MTU is below the bridge's
 # (e.g. GCP's 1460), guests otherwise blackhole large TLS/data packets that carry DF.
@@ -357,7 +319,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 7. CNI configuration
+# 6. CNI configuration
 # ---------------------------------------------------------------------------
 header "CNI configuration"
 
@@ -383,7 +345,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 8. CNI plugins
+# 7. CNI plugins
 # ---------------------------------------------------------------------------
 header "CNI plugins (${KUMABOX_CNI_BIN_DIR})"
 
@@ -402,44 +364,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 9. Store health
-# ---------------------------------------------------------------------------
-header "Store health"
-
-DB_PATH="${KUMABOX_META_DIR}/kumabox.db"
-
-if [ -f "$DB_PATH" ]; then
-    pass "fact database present ($(stat -c%s "$DB_PATH" 2>/dev/null || echo '?') bytes)"
-    if command -v sqlite3 &>/dev/null; then
-        # Anything stuck mid-flight is what doctor is meant to surface; the
-        # sweeper in 'kumabox gc' finishes or fails it (docs/BEHAVIOR.md §15).
-        STUCK=$(sqlite3 "$DB_PATH" "select count(*) from images where state='importing'" 2>/dev/null || echo "?")
-        if [ "$STUCK" = "?" ]; then
-            warn "cannot read the images table (schema older than this build?)"
-        elif [ "$STUCK" != "0" ]; then
-            warn "$STUCK image import(s) left mid-flight; run 'kumabox gc' to finish or fail them"
-        else
-            pass "no image import left mid-flight"
-        fi
-    else
-        warn "sqlite3 not found — skipping store inspection"
-    fi
-else
-    info "no fact database yet (first command creates it)"
-fi
-
-# Staging leftovers are always worth reporting: they are disk usage nobody owns.
-if [ -d "$KUMABOX_TMP_DIR" ]; then
-    staging=$(find "$KUMABOX_TMP_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
-    if [ "$staging" -gt 0 ]; then
-        warn "$staging staging entr(ies) in $KUMABOX_TMP_DIR; run 'kumabox gc' to reclaim them"
-    else
-        pass "no staging leftovers"
-    fi
-fi
-
-# ---------------------------------------------------------------------------
-# 10. Upgrade / Install
+# 8. Upgrade / Install
 # ---------------------------------------------------------------------------
 if $UPGRADE; then
     tmpdir=$(mktemp -d)
@@ -460,32 +385,18 @@ if $UPGRADE; then
         fail "failed to download cloud-hypervisor from ${ch_url}"
     fi
 
-    # -- firmware -----------------------------------------------------------
-    header "Install hypervisor-fw ${FW_VERSION}"
+    # -- ch-remote ----------------------------------------------------------
+    header "Install ch-remote ${CH_VERSION}"
 
-    fw_url="https://github.com/cloud-hypervisor/rust-hypervisor-firmware/releases/download/${FW_VERSION}/hypervisor-fw${FW_SUFFIX}"
-    mkdir -p "$FIRMWARE_DIR"
-    info "downloading ${fw_url}"
-    if curl -fsSL -o "${FIRMWARE_PATH}" "$fw_url"; then
-        fixed "hypervisor-fw ${FW_VERSION} -> ${FIRMWARE_PATH}"
+    chr_url="https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/${CH_VERSION}/ch-remote-static${CH_SUFFIX}"
+    chr_dest="/usr/local/bin/ch-remote"
+    info "downloading ${chr_url}"
+    if curl -fsSL -o "${tmpdir}/ch-remote" "$chr_url"; then
+        install -m 0755 "${tmpdir}/ch-remote" "$chr_dest"
+        fixed "ch-remote ${CH_VERSION} -> ${chr_dest}"
     else
-        fail "failed to download firmware from ${fw_url}"
+        fail "failed to download ch-remote from ${chr_url}"
     fi
-
-    # -- mkfs helpers -------------------------------------------------------
-    for pkg_bin in "erofs-utils:mkfs.erofs" "e2fsprogs:mkfs.ext4"; do
-        pkg="${pkg_bin%%:*}"; bin="${pkg_bin##*:}"
-        if ! command -v "$bin" &>/dev/null; then
-            header "Install ${pkg}"
-            if command -v apt-get &>/dev/null; then
-                apt-get install -y -qq "$pkg" &>/dev/null && fixed "${pkg} installed via apt-get" || warn "failed to install ${pkg}"
-            elif command -v yum &>/dev/null; then
-                yum install -y -q "$pkg" &>/dev/null && fixed "${pkg} installed via yum" || warn "failed to install ${pkg}"
-            else
-                warn "${pkg} not installed (install ${bin} manually)"
-            fi
-        fi
-    done
 
     # -- CNI plugins --------------------------------------------------------
     header "Install CNI plugins ${CNI_VERSION}"
@@ -509,12 +420,13 @@ fi
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
-printf "\n\033[1m--- Summary ---\033[0m\n"
-printf "  Pass: %d  Warn: %d  Fail: %d\n\n" "$PASS" "$WARN" "$FAIL"
+header "Summary"
+printf "  \033[38;5;42m%d passed\033[0m · \033[38;5;214m%d warnings\033[0m · \033[38;5;203m%d failed\033[0m\n\n" \
+    "$PASS" "$WARN" "$FAIL"
 
 if [ "$FAIL" -gt 0 ] && ! $FIX; then
     info "Run '$0 --fix' to attempt automatic fixes"
-    info "Run '$0 --upgrade' to install/upgrade cloud-hypervisor, firmware, and CNI plugins"
+    info "Run '$0 --upgrade' to install/upgrade cloud-hypervisor and CNI plugins"
 fi
 
 [ "$FAIL" -eq 0 ] || exit 1
