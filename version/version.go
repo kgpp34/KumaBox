@@ -1,7 +1,11 @@
 // Package version reports what build is running.
 package version
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+)
 
 // Build information. Release builds override these through -ldflags.
 var (
@@ -15,11 +19,13 @@ func String() string {
 	return fmt.Sprintf("kumabox %s (commit %s, built %s)", Version, Commit, BuildTime)
 }
 
-// Info returns the version as structured data for --json.
-func Info() map[string]string {
-	return map[string]string{
+// WriteJSON writes the version fields as JSON.
+func WriteJSON(out io.Writer) error {
+	encoder := json.NewEncoder(out)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(map[string]string{
 		"version":    Version,
 		"commit":     Commit,
 		"build_time": BuildTime,
-	}
+	})
 }

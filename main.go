@@ -1,17 +1,22 @@
 // Command kumabox is the KumaBox command line.
 //
-// v1 has no daemon: every invocation opens the node root, takes the locks it
-// needs, does one job, and exits (docs/DECISIONS.md DEC-018). This file does
-// nothing but hand control to the command layer.
+// v1 has no daemon: every invocation opens the node root, does one job and
+// exits. This file only hands control to the command layer and turns the result
+// into a process exit code.
 package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"github.com/kumabox/kumabox/cmd"
 )
 
 func main() {
-	os.Exit(cmd.Execute(context.Background(), os.Args[1:], os.Stdout, os.Stderr))
+	err := cmd.Execute(context.Background(), os.Args[1:], os.Stdout, os.Stderr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "kumabox: %v\n", err)
+	}
+	os.Exit(cmd.ExitCode(err))
 }
