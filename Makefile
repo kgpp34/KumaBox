@@ -61,8 +61,8 @@ deps: ## Tidy Go modules
 # --- Build ---
 
 build: | $(LOCALBIN) ## Build kumabox and kumabox-check
-	CGO_ENABLED=0 go build -ldflags "$(GO_LDFLAGS)" -o $(LOCALBIN)/kumabox .
-	cp doctor/check.sh $(LOCALBIN)/kumabox-check
+	CGO_ENABLED=0 go build -ldflags "$(GO_LDFLAGS)" -o $(LOCALBIN)/kumabox ./cmd/kumabox
+	cp scripts/kumabox-check.sh $(LOCALBIN)/kumabox-check
 	chmod 0755 $(LOCALBIN)/kumabox-check
 
 install: build ## Install kumabox and kumabox-check
@@ -76,7 +76,7 @@ test: vet ## Run tests with race detection and coverage
 	go test -race -timeout 120s -count=1 -cover -coverprofile=coverage.out ./...
 
 doctor-check: ## Check the doctor script syntax
-	bash -n doctor/check.sh
+	bash -n scripts/kumabox-check.sh
 
 race: ## Run all Go tests with race detection
 	go test -race ./...

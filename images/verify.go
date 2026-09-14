@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/kumabox/kumabox/errdefs"
 	filelock "github.com/kumabox/kumabox/lock/flock"
 )
 
-func Verify(ctx context.Context, paths Paths, catalog CatalogReader, reference string) (result Image, returnErr error) {
+type ImageResolver interface {
+	Resolve(context.Context, string) (Image, error)
+}
+
+func Verify(ctx context.Context, paths Paths, catalog ImageResolver, reference string) (result Image, returnErr error) {
 	image, err := catalog.Resolve(ctx, reference)
 	if err != nil {
 		return Image{}, err
@@ -35,7 +38,7 @@ func Verify(ctx context.Context, paths Paths, catalog CatalogReader, reference s
 		}
 		total += layer.Size
 	}
-	boot, err := selectBoot(image.Layers)
+	boot, err := SelectBoot(image.Layers)
 	if err != nil || boot != image.Boot || total != image.Size {
 		return Image{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("image layer mapping or boot selection is inconsistent"))
 	}
@@ -75,8 +78,4 @@ func verifyFile(ctx context.Context, path string, expected Digest, expectedSize 
 		return errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, fmt.Errorf("artifact %s does not match metadata", path))
 	}
 	return nil
-}
-
-func sameLayer(a, b Layer) bool {
-	return a.SourceDigest == b.SourceDigest && a.EROFSDigest == b.EROFSDigest && a.Size == b.Size && a.BootOpaque == b.BootOpaque && slices.Equal(a.BootFiles, b.BootFiles) && slices.Equal(a.Whiteouts, b.Whiteouts)
 }

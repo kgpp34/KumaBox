@@ -12,7 +12,12 @@ import (
 	filelock "github.com/kumabox/kumabox/lock/flock"
 )
 
-func Remove(ctx context.Context, paths Paths, catalog Catalog, reference string) (result Removal, returnErr error) {
+type RemovalCatalog interface {
+	ImageResolver
+	Remove(context.Context, string, Digest) (Removal, error)
+}
+
+func Remove(ctx context.Context, paths Paths, catalog RemovalCatalog, reference string) (result Removal, returnErr error) {
 	image, err := catalog.Resolve(ctx, reference)
 	if err != nil {
 		return Removal{}, err

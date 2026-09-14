@@ -19,6 +19,63 @@ import (
 	"github.com/kumabox/kumabox/storage"
 )
 
+type Source interface {
+	Resolve(context.Context, Platform) (Manifest, error)
+	OpenLayer(context.Context, Descriptor) (io.ReadCloser, error)
+}
+
+// ImportCatalog provides the metadata operations needed by an import.
+type ImportCatalog interface {
+	Resolve(context.Context, string) (Image, error)
+	FindLayers(context.Context, []Digest) (map[Digest]Layer, error)
+	CommitImport(context.Context, ImportCommit) error
+}
+
+type Converter interface {
+	Convert(context.Context, Descriptor, io.Reader, string) (ConvertedLayer, error)
+}
+
+type ConvertedLayer struct {
+	SourceDigest Digest
+	EROFSPath    string
+	EROFSDigest  Digest
+	Size         int64
+	BootFiles    []StagedBootFile
+	Whiteouts    []string
+	BootOpaque   bool
+}
+
+type StagedBootFile struct {
+	Name string
+	Path string
+}
+
+type Reporter interface {
+	Layer(int, int, Digest) error
+	Committed(Image) error
+}
+
+type DiscardReporter struct{}
+
+func (DiscardReporter) Layer(int, int, Digest) error { return nil }
+func (DiscardReporter) Committed(Image) error        { return nil }
+
+// Limits bound compressed input and decompressed source and boot artifacts.
+type Limits struct {
+	LayerSize    int64
+	UnpackedSize int64
+	BootSize     int64
+	ArchiveSize  int64
+}
+
+func DefaultLimits() Limits {
+	return Limits{LayerSize: 8 << 30, UnpackedSize: 16 << 30, BootSize: 512 << 20, ArchiveSize: 32 << 30}
+}
+
+func (l Limits) Valid() bool {
+	return l.LayerSize > 0 && l.UnpackedSize > 0 && l.BootSize > 0 && l.ArchiveSize > 0 && l.LayerSize < 1<<63-1 && l.UnpackedSize < 1<<63-1 && l.BootSize < 1<<63-1 && l.ArchiveSize < 1<<63-1
+}
+
 type Options struct {
 	Limits      Limits
 	Parallelism int
@@ -31,14 +88,14 @@ func DefaultOptions() Options {
 
 type Importer struct {
 	paths     Paths
-	catalog   Catalog
+	catalog   ImportCatalog
 	converter Converter
 	reporter  Reporter
 	reportMu  sync.Mutex
 	options   Options
 }
 
-func NewImporter(paths Paths, catalog Catalog, converter Converter, reporter Reporter, options Options) (*Importer, error) {
+func NewImporter(paths Paths, catalog ImportCatalog, converter Converter, reporter Reporter, options Options) (*Importer, error) {
 	if options.Limits == (Limits{}) {
 		options.Limits = DefaultLimits()
 	}
@@ -55,7 +112,7 @@ func NewImporter(paths Paths, catalog Catalog, converter Converter, reporter Rep
 }
 
 func (i *Importer) Import(ctx context.Context, name string, platform Platform, source Source) (result Image, returnErr error) {
-	if strings.TrimSpace(name) == "" || strings.ContainsAny(name, "\r\n\t") || source == nil || !validPlatform(platform) {
+	if strings.TrimSpace(name) == "" || strings.ContainsAny(name, "\r\n\t") || source == nil || !platform.Valid() {
 		return Image{}, invalidImage("image name, supported platform and source are required")
 	}
 	if err := ctx.Err(); err != nil {
@@ -66,15 +123,15 @@ func (i *Importer) Import(ctx context.Context, name string, platform Platform, s
 	}
 	manifest, err := source.Resolve(ctx, platform)
 	if err != nil {
-		return Image{}, errdefs.Context(err, "import image", name, "resolve", "check the OCI source and platform", false)
+		return Image{}, errdefs.Context(err, "import image", name, "resolve", "check the image source and platform", false)
 	}
 	if manifest.Digest.IsZero() || manifest.Platform != platform || len(manifest.Layers) == 0 {
-		return Image{}, invalidImage("invalid OCI manifest or platform")
+		return Image{}, invalidImage("invalid image manifest or platform")
 	}
 	digests := make([]Digest, len(manifest.Layers))
 	for position, descriptor := range manifest.Layers {
 		if descriptor.Digest.IsZero() || descriptor.Size < 0 || descriptor.Size > i.options.Limits.LayerSize {
-			return Image{}, invalidImage("invalid OCI layer descriptor")
+			return Image{}, invalidImage("invalid layer descriptor")
 		}
 		digests[position] = descriptor.Digest
 	}
@@ -151,13 +208,13 @@ func (i *Importer) Import(ctx context.Context, name string, platform Platform, s
 		if err != nil {
 			return Image{}, errdefs.Context(err, "import image", name, "publish", "retry the import", false)
 		}
-		if old, exists := current[layer.SourceDigest]; exists && !sameLayer(old, layer) {
+		if old, exists := current[layer.SourceDigest]; exists && !old.Equal(layer) {
 			return Image{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("rebuilt layer differs from committed metadata"))
 		}
 		current[layer.SourceDigest] = layer
 		layers[pos] = layer
 	}
-	boot, err := selectBoot(layers)
+	boot, err := SelectBoot(layers)
 	if err != nil {
 		return Image{}, err
 	}
@@ -240,7 +297,7 @@ func (i *Importer) publishLayer(ctx context.Context, artifact ConvertedLayer, st
 	if err != nil {
 		return Layer{}, err
 	}
-	if old, exists := known[layer.SourceDigest]; exists && !sameLayer(old, layer) {
+	if old, exists := known[layer.SourceDigest]; exists && !old.Equal(layer) {
 		return Layer{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("rebuilt layer differs from committed metadata"))
 	}
 	if err := storage.Publish(artifact.EROFSPath, i.paths.EROFS(artifact.SourceDigest)); err != nil {
@@ -266,65 +323,8 @@ func stagedDigest(ctx context.Context, staging, path string) (Digest, int64, err
 	return digestFileContext(ctx, path)
 }
 
-func selectBoot(layers []Layer) (Boot, error) {
-	type candidate struct {
-		layer Digest
-		file  BootFile
-	}
-	var candidates []candidate
-	for _, layer := range layers {
-		if layer.BootOpaque {
-			candidates = nil
-		}
-		for _, name := range layer.Whiteouts {
-			var kept []candidate
-			for _, c := range candidates {
-				if c.file.Name != name {
-					kept = append(kept, c)
-				}
-			}
-			candidates = kept
-		}
-		for _, file := range layer.BootFiles {
-			var kept []candidate
-			for _, c := range candidates {
-				if c.file.Name != file.Name {
-					kept = append(kept, c)
-				}
-			}
-			kept = append(kept, candidate{layer: layer.SourceDigest, file: file})
-			candidates = kept
-		}
-	}
-	var boot Boot
-	for _, c := range candidates {
-		if strings.HasPrefix(c.file.Name, "vmlinuz") {
-			boot.KernelLayer, boot.KernelFile = c.layer, c.file.Name
-		}
-		if strings.HasPrefix(c.file.Name, "initrd.img") {
-			boot.InitrdLayer, boot.InitrdFile = c.layer, c.file.Name
-		}
-	}
-	if boot.KernelLayer.IsZero() {
-		return Boot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, errors.New("image is missing a regular /boot/vmlinuz* kernel"))
-	}
-	if boot.InitrdLayer.IsZero() {
-		return Boot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, errors.New("image is missing a regular /boot/initrd.img* initrd"))
-	}
-	return boot, nil
-}
-
-func validPlatform(p Platform) bool {
-	return p.OS == "linux" && (p.Architecture == "amd64" || p.Architecture == "arm64")
-}
-
 func invalidImage(format string, args ...any) error {
 	return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf(format, args...))
-}
-func validFile(path string) bool { return storage.CheckPath(path) == nil && regularNonempty(path) }
-func regularNonempty(path string) bool {
-	info, err := os.Lstat(path)
-	return err == nil && info.Mode().IsRegular() && info.Size() > 0
 }
 
 func removeStaging(path string) error {

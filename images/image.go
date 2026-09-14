@@ -3,6 +3,7 @@ package images
 import (
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -90,16 +91,12 @@ type Descriptor struct {
 	Size   int64
 }
 
-type ImportCommit struct {
-	Name     string
-	Manifest Manifest
-	Layers   []Layer
-	Boot     Boot
-	Size     int64
-	Created  time.Time
+// Valid reports whether the platform is supported by KumaBox.
+func (p Platform) Valid() bool {
+	return p.OS == "linux" && (p.Architecture == "amd64" || p.Architecture == "arm64")
 }
 
-type Removal struct {
-	Names  []string
-	Layers []Digest
+// Equal compares the content and boot metadata of two layer artifacts.
+func (a Layer) Equal(b Layer) bool {
+	return a.SourceDigest == b.SourceDigest && a.EROFSDigest == b.EROFSDigest && a.Size == b.Size && a.BootOpaque == b.BootOpaque && slices.Equal(a.BootFiles, b.BootFiles) && slices.Equal(a.Whiteouts, b.Whiteouts)
 }

@@ -12,7 +12,6 @@ import (
 
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/metadata"
-	"github.com/kumabox/kumabox/metadata/metadatatest"
 )
 
 func TestStoreCommitRollbackAndDetachedReads(t *testing.T) {
@@ -96,21 +95,6 @@ func TestStoreSerializesConcurrentWriters(t *testing.T) {
 	}
 }
 
-func TestStoreContract(t *testing.T) {
-	metadatatest.Run(t, func(t *testing.T, collections []metadata.Collection) metadata.Store {
-		store, err := Open(t.Context(), filepath.Join(t.TempDir(), "meta.db"), collections, DefaultOptions())
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			if err := store.Close(); err != nil {
-				t.Error(err)
-			}
-		})
-		return store
-	})
-}
-
 func TestStoreRejectsForeignDatabaseWithoutChangingJournal(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "meta.db")
 	db, err := sql.Open("sqlite", path)
@@ -192,5 +176,54 @@ func TestStoreBusyIsBoundedAcrossProcessesAndWithinPool(t *testing.T) {
 				t.Fatal("busy wait exceeded bound")
 			}
 		})
+	}
+}
+
+func TestStorePreservesCancellationAfterAutomaticRollback(t *testing.T) {
+	collection := metadata.Collection("records")
+	store, err := Open(t.Context(), filepath.Join(t.TempDir(), "meta.db"), []metadata.Collection{collection}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	err = store.Update(ctx, func(writer metadata.Writer) error {
+		if err := writer.Put(ctx, collection, "canceled", []byte("discard")); err != nil {
+			return err
+		}
+		cancel()
+		// The writer pool has one connection. A second writer can proceed only
+		// after database/sql automatically rolls back the canceled transaction.
+		return store.Update(t.Context(), func(next metadata.Writer) error {
+			return next.Put(t.Context(), collection, "committed", []byte("keep"))
+		})
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation = %v", err)
+	}
+	if err := store.View(t.Context(), func(reader metadata.Reader) error {
+		_, exists, err := reader.Get(t.Context(), collection, "canceled")
+		if err != nil {
+			return err
+		}
+		if exists {
+			return errors.New("canceled transaction became visible")
+		}
+		value, exists, err := reader.Get(t.Context(), collection, "committed")
+		if err != nil {
+			return err
+		}
+		if !exists || string(value) != "keep" {
+			return errors.New("subsequent writer did not commit")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

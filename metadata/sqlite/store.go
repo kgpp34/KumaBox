@@ -105,7 +105,7 @@ func (s *Store) View(ctx context.Context, fn func(metadata.Reader) error) error 
 	if err := fn(handle); err != nil {
 		return errors.Join(err, rollback(tx))
 	}
-	return mapError(tx.Commit())
+	return commit(ctx, tx)
 }
 
 func (s *Store) Update(ctx context.Context, fn func(metadata.Writer) error) error {
@@ -118,7 +118,7 @@ func (s *Store) Update(ctx context.Context, fn func(metadata.Writer) error) erro
 			if err := fn(handle); err != nil {
 				return errors.Join(err, rollback(tx))
 			}
-			return mapError(tx.Commit())
+			return commit(writeCtx, tx)
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -222,7 +222,7 @@ func initialize(ctx context.Context, path string, collections []metadata.Collect
 			return mapError(err)
 		}
 	}
-	return mapError(tx.Commit())
+	return commit(ctx, tx)
 }
 
 func dsn(path string, options Options, immediate bool) string {
@@ -269,6 +269,21 @@ func busy(err error) bool {
 	}
 	code := sqliteErr.Code() & 0xff
 	return code == modernclib.SQLITE_BUSY || code == modernclib.SQLITE_LOCKED
+}
+
+// Cancellation can roll a transaction back before Commit observes its context.
+// Preserve the cancellation cause without reporting cancellation after a successful commit.
+func commit(ctx context.Context, tx *sql.Tx) error {
+	if err := ctx.Err(); err != nil {
+		return errors.Join(err, rollback(tx))
+	}
+	err := tx.Commit()
+	if errors.Is(err, sql.ErrTxDone) {
+		if canceled := ctx.Err(); canceled != nil {
+			return canceled
+		}
+	}
+	return mapError(err)
 }
 
 func rollback(tx *sql.Tx) error {

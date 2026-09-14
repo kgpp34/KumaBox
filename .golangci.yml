@@ -28,29 +28,74 @@ linters:
           files:
             - "$all"
             - "!$test"
+            - "!**/cli/**"
             - "!**/cmd/**"
             - "!**/main.go"
           deny:
             - pkg: github.com/kumabox/kumabox/cmd
-              desc: library packages must not import command packages
+              desc: library packages must not import process entry points
+            - pkg: github.com/kumabox/kumabox/cli
+              desc: library packages must not import CLI adapters
+        composition-does-not-belong-to-modules:
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/core/**"
+            - "!**/cli/**"
+            - "!**/main.go"
+          deny:
+            - pkg: github.com/kumabox/kumabox/core
+              desc: modules must not depend on application composition
+        catalog-is-an-edge-adapter:
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/core/**"
+            - "!**/images/catalog/**"
+          deny:
+            - pkg: github.com/kumabox/kumabox/images/catalog
+              desc: only core may assemble the image catalog adapter
+        image-domain-is-engine-neutral:
+          files:
+            - "**/images/*.go"
+            - "!$test"
+          deny:
+            - pkg: github.com/kumabox/kumabox/metadata
+              desc: image domain contracts must not depend on persistence engines
+        testing-is-test-only:
+          files:
+            - "$all"
+            - "!$test"
+          deny:
+            - pkg: testing
+              desc: test helpers belong in test files, not production packages
         sqlite-is-an-edge-adapter:
           files:
             - "$all"
             - "!$test"
-            - "!**/cmd/image/**"
+            - "!**/core/**"
             - "!**/metadata/sqlite/**"
           deny:
             - pkg: github.com/kumabox/kumabox/metadata/sqlite
-              desc: only cmd/image may assemble the SQLite adapter
-        oci-is-an-edge-adapter:
+              desc: only core may assemble the SQLite adapter
+        source-is-an-edge-adapter:
           files:
             - "$all"
             - "!$test"
-            - "!**/cmd/image/**"
-            - "!**/images/oci/**"
+            - "!**/core/**"
+            - "!**/images/source/**"
           deny:
-            - pkg: github.com/kumabox/kumabox/images/oci
-              desc: only cmd/image may assemble the OCI adapter
+            - pkg: github.com/kumabox/kumabox/images/source
+              desc: only core may assemble container image sources
+        erofs-is-an-edge-adapter:
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/core/**"
+            - "!**/images/erofs/**"
+          deny:
+            - pkg: github.com/kumabox/kumabox/images/erofs
+              desc: only core may assemble the EROFS converter
         sql-only-in-sqlite:
           files:
             - "$all"

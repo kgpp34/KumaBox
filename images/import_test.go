@@ -1,8 +1,9 @@
-package images
+package images_test
 
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kumabox/kumabox/images"
+	imagecatalog "github.com/kumabox/kumabox/images/catalog"
 	"github.com/kumabox/kumabox/metadata"
 	metadatasqlite "github.com/kumabox/kumabox/metadata/sqlite"
 	"github.com/kumabox/kumabox/storage"
@@ -24,14 +27,14 @@ func TestImporterReusesLayerAndRemovesAliases(t *testing.T) {
 		Run:  filepath.Join(base, "run"),
 		Log:  filepath.Join(base, "log"),
 	}
-	paths, err := NewPaths(roots)
+	paths, err := images.NewPaths(roots)
 	if err != nil {
 		t.Fatalf("NewPaths: %v", err)
 	}
 	if err := paths.Ensure(); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	store, err := metadatasqlite.Open(t.Context(), paths.MetadataDB(), Collections(), metadatasqlite.DefaultOptions())
+	store, err := metadatasqlite.Open(t.Context(), paths.MetadataDB(), imagecatalog.Collections(), metadatasqlite.DefaultOptions())
 	if err != nil {
 		t.Fatalf("Open metadata: %v", err)
 	}
@@ -42,13 +45,13 @@ func TestImporterReusesLayerAndRemovesAliases(t *testing.T) {
 	}()
 	layerDigest := testDigest(t, "1")
 	manifestDigest := testDigest(t, "2")
-	source := fakeSource{manifest: Manifest{
-		Digest: manifestDigest, Platform: Platform{OS: "linux", Architecture: "amd64"},
-		Layers: []Descriptor{{Digest: layerDigest, Size: 3}},
+	source := fakeSource{manifest: images.Manifest{
+		Digest: manifestDigest, Platform: images.Platform{OS: "linux", Architecture: "amd64"},
+		Layers: []images.Descriptor{{Digest: layerDigest, Size: 3}},
 	}}
 	converter := &fakeConverter{}
-	catalog := NewMetadataCatalog(store)
-	importer, err := NewImporter(paths, catalog, converter, nil, Options{Parallelism: 1, Now: func() time.Time { return time.Unix(1, 0) }})
+	catalog := imagecatalog.New(store)
+	importer, err := images.NewImporter(paths, catalog, converter, nil, images.Options{Parallelism: 1, Now: func() time.Time { return time.Unix(1, 0) }})
 	if err != nil {
 		t.Fatalf("NewImporter: %v", err)
 	}
@@ -61,20 +64,20 @@ func TestImporterReusesLayerAndRemovesAliases(t *testing.T) {
 	if converter.Calls() != 1 {
 		t.Fatalf("converter calls = %d, want 1", converter.Calls())
 	}
-	image, err := Verify(t.Context(), paths, catalog, "second")
+	image, err := images.Verify(t.Context(), paths, catalog, "second")
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
 	if len(image.Names) != 2 {
 		t.Fatalf("names = %v", image.Names)
 	}
-	if _, err := Remove(t.Context(), paths, catalog, "first"); err != nil {
+	if _, err := images.Remove(t.Context(), paths, catalog, "first"); err != nil {
 		t.Fatalf("remove first alias: %v", err)
 	}
-	if !validFile(paths.EROFS(layerDigest)) {
+	if _, err := images.Verify(t.Context(), paths, catalog, "second"); err != nil {
 		t.Fatal("shared layer removed with remaining alias")
 	}
-	if _, err := Remove(t.Context(), paths, catalog, "second"); err != nil {
+	if _, err := images.Remove(t.Context(), paths, catalog, "second"); err != nil {
 		t.Fatalf("remove final alias: %v", err)
 	}
 	if _, err := os.Stat(paths.EROFS(layerDigest)); !os.IsNotExist(err) {
@@ -83,12 +86,14 @@ func TestImporterReusesLayerAndRemovesAliases(t *testing.T) {
 }
 
 type fakeSource struct {
-	manifest Manifest
+	manifest images.Manifest
 }
 
-func (f fakeSource) Resolve(context.Context, Platform) (Manifest, error) { return f.manifest, nil }
+func (f fakeSource) Resolve(context.Context, images.Platform) (images.Manifest, error) {
+	return f.manifest, nil
+}
 
-func (f fakeSource) OpenLayer(context.Context, Descriptor) (io.ReadCloser, error) {
+func (f fakeSource) OpenLayer(context.Context, images.Descriptor) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader([]byte("tar"))), nil
 }
 
@@ -97,9 +102,9 @@ type fakeConverter struct {
 	calls int
 }
 
-func (f *fakeConverter) Convert(ctx context.Context, descriptor Descriptor, source io.Reader, workDir string) (ConvertedLayer, error) {
+func (f *fakeConverter) Convert(ctx context.Context, descriptor images.Descriptor, source io.Reader, workDir string) (images.ConvertedLayer, error) {
 	if _, err := io.Copy(io.Discard, source); err != nil {
-		return ConvertedLayer{}, err
+		return images.ConvertedLayer{}, err
 	}
 	f.mu.Lock()
 	f.calls++
@@ -109,16 +114,16 @@ func (f *fakeConverter) Convert(ctx context.Context, descriptor Descriptor, sour
 	initrd := filepath.Join(workDir, "initrd.img")
 	for path, data := range map[string][]byte{erofs: []byte("erofs"), kernel: []byte("kernel"), initrd: []byte("initrd")} {
 		if err := os.WriteFile(path, data, 0o640); err != nil {
-			return ConvertedLayer{}, err
+			return images.ConvertedLayer{}, err
 		}
 	}
-	product, size, err := digestFileContext(ctx, erofs)
+	product, err := images.ParseDigest(fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("erofs"))))
 	if err != nil {
-		return ConvertedLayer{}, err
+		return images.ConvertedLayer{}, err
 	}
-	return ConvertedLayer{
+	return images.ConvertedLayer{
 		SourceDigest: descriptor.Digest, EROFSPath: erofs, EROFSDigest: product,
-		Size: size, BootFiles: []StagedBootFile{{Name: "vmlinuz", Path: kernel}, {Name: "initrd.img", Path: initrd}},
+		Size: 5, BootFiles: []images.StagedBootFile{{Name: "vmlinuz", Path: kernel}, {Name: "initrd.img", Path: initrd}},
 	}, nil
 }
 
@@ -128,19 +133,19 @@ func (f *fakeConverter) Calls() int {
 	return f.calls
 }
 
-func testDigest(t *testing.T, digit string) Digest {
+func testDigest(t *testing.T, digit string) images.Digest {
 	t.Helper()
-	digest, err := ParseDigest(fmt.Sprintf("sha256:%s", bytes.Repeat([]byte(digit), 64)))
+	digest, err := images.ParseDigest(fmt.Sprintf("sha256:%s", bytes.Repeat([]byte(digit), 64)))
 	if err != nil {
 		t.Fatalf("ParseDigest: %v", err)
 	}
 	return digest
 }
 
-func testImportState(t *testing.T, store metadata.Store) (Paths, *MetadataCatalog) {
+func testImportState(t *testing.T, store metadata.Store) (images.Paths, *imagecatalog.Store) {
 	t.Helper()
 	base := t.TempDir()
-	paths, err := NewPaths(storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")})
+	paths, err := images.NewPaths(storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +153,7 @@ func testImportState(t *testing.T, store metadata.Store) (Paths, *MetadataCatalo
 		t.Fatal(err)
 	}
 	if store == nil {
-		memory, err := metadata.NewMemory(Collections())
+		memory, err := metadata.NewMemory(imagecatalog.Collections())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -159,17 +164,17 @@ func testImportState(t *testing.T, store metadata.Store) (Paths, *MetadataCatalo
 			t.Error(err)
 		}
 	})
-	return paths, NewMetadataCatalog(store)
+	return paths, imagecatalog.New(store)
 }
 
-func testManifest(t *testing.T, manifestDigit string) Manifest {
+func testManifest(t *testing.T, manifestDigit string) images.Manifest {
 	t.Helper()
-	return Manifest{Digest: testDigest(t, manifestDigit), Platform: Platform{OS: "linux", Architecture: "amd64"}, Layers: []Descriptor{{Digest: testDigest(t, "1"), Size: 3}}}
+	return images.Manifest{Digest: testDigest(t, manifestDigit), Platform: images.Platform{OS: "linux", Architecture: "amd64"}, Layers: []images.Descriptor{{Digest: testDigest(t, "1"), Size: 3}}}
 }
 
-func testImporter(t *testing.T, paths Paths, catalog Catalog, converter Converter) *Importer {
+func testImporter(t *testing.T, paths images.Paths, catalog images.Catalog, converter images.Converter) *images.Importer {
 	t.Helper()
-	importer, err := NewImporter(paths, catalog, converter, nil, Options{Parallelism: 2, Now: func() time.Time { return time.Unix(10, 0) }})
+	importer, err := images.NewImporter(paths, catalog, converter, nil, images.Options{Parallelism: 2, Now: func() time.Time { return time.Unix(10, 0) }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,12 +190,15 @@ func TestImporterRepairsCorruptionAndPreservesCreationTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	importer.options.Now = func() time.Time { return time.Unix(20, 0) }
+	importer, err = images.NewImporter(paths, catalog, converter, nil, images.Options{Parallelism: 2, Now: func() time.Time { return time.Unix(20, 0) }})
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Same length corruption must be detected by content digest, not stat.
 	if err := os.WriteFile(paths.Kernel(manifest.Layers[0].Digest), []byte("broken"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Verify(t.Context(), paths, catalog, "aaaaaaaaaaaa"); err == nil {
+	if _, err := images.Verify(t.Context(), paths, catalog, "aaaaaaaaaaaa"); err == nil {
 		t.Fatal("verify accepted corrupt kernel")
 	}
 	second, err := importer.Import(t.Context(), "alias", manifest.Platform, fakeSource{manifest: manifest})
@@ -200,10 +208,10 @@ func TestImporterRepairsCorruptionAndPreservesCreationTime(t *testing.T) {
 	if !second.CreatedAt.Equal(first.CreatedAt) || converter.Calls() != 2 {
 		t.Fatalf("repeat import = created %s, conversions %d", second.CreatedAt, converter.Calls())
 	}
-	if _, err := Verify(t.Context(), paths, catalog, "alias"); err != nil {
+	if _, err := images.Verify(t.Context(), paths, catalog, "alias"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Remove(t.Context(), paths, catalog, "aaaaaaaaaaaa"); err != nil {
+	if _, err := images.Remove(t.Context(), paths, catalog, "aaaaaaaaaaaa"); err != nil {
 		t.Fatal(err)
 	}
 	remaining, err := catalog.Resolve(t.Context(), "alias")
@@ -218,16 +226,16 @@ type gatedConverter struct {
 	release chan struct{}
 }
 
-func (f *gatedConverter) Convert(ctx context.Context, descriptor Descriptor, reader io.Reader, workDir string) (ConvertedLayer, error) {
+func (f *gatedConverter) Convert(ctx context.Context, descriptor images.Descriptor, reader io.Reader, workDir string) (images.ConvertedLayer, error) {
 	select {
 	case f.started <- struct{}{}:
 	case <-ctx.Done():
-		return ConvertedLayer{}, ctx.Err()
+		return images.ConvertedLayer{}, ctx.Err()
 	}
 	select {
 	case <-f.release:
 	case <-ctx.Done():
-		return ConvertedLayer{}, ctx.Err()
+		return images.ConvertedLayer{}, ctx.Err()
 	}
 	return f.fakeConverter.Convert(ctx, descriptor, reader, workDir)
 }
@@ -261,16 +269,16 @@ func TestImporterConcurrentSharedLayerAndLastReferenceRemoval(t *testing.T) {
 	if err != nil || len(items) != 2 {
 		t.Fatalf("images = %d, %v", len(items), err)
 	}
-	if _, err := Remove(t.Context(), paths, catalog, "2"); err != nil {
+	if _, err := images.Remove(t.Context(), paths, catalog, "2"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Verify(t.Context(), paths, catalog, "3"); err != nil {
+	if _, err := images.Verify(t.Context(), paths, catalog, "3"); err != nil {
 		t.Fatalf("shared layer deleted: %v", err)
 	}
-	if _, err := Remove(t.Context(), paths, catalog, "3"); err != nil {
+	if _, err := images.Remove(t.Context(), paths, catalog, "3"); err != nil {
 		t.Fatal(err)
 	}
-	if validFile(paths.EROFS(testDigest(t, "1"))) {
+	if _, err := os.Stat(paths.EROFS(testDigest(t, "1"))); !os.IsNotExist(err) {
 		t.Fatal("unreferenced layer retained")
 	}
 	entries, err := os.ReadDir(paths.StagingDir())
@@ -293,7 +301,7 @@ func (s *failingStore) Update(ctx context.Context, fn func(metadata.Writer) erro
 }
 
 func TestImporterCommitFailureLeavesInvisibleOrphansAndRetryRebuilds(t *testing.T) {
-	memory, err := metadata.NewMemory(Collections())
+	memory, err := metadata.NewMemory(imagecatalog.Collections())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +329,7 @@ func TestImporterCommitFailureLeavesInvisibleOrphansAndRetryRebuilds(t *testing.
 	if converter.Calls() != 2 {
 		t.Fatalf("retry trusted orphan; conversions = %d", converter.Calls())
 	}
-	if _, err := Verify(t.Context(), paths, catalog, "tiny"); err != nil {
+	if _, err := images.Verify(t.Context(), paths, catalog, "tiny"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -333,9 +341,9 @@ type badConverter struct {
 	escape   string
 }
 
-func (f *badConverter) Convert(ctx context.Context, descriptor Descriptor, source io.Reader, workDir string) (ConvertedLayer, error) {
+func (f *badConverter) Convert(ctx context.Context, descriptor images.Descriptor, source io.Reader, workDir string) (images.ConvertedLayer, error) {
 	if f.fail != nil {
-		return ConvertedLayer{}, f.fail
+		return images.ConvertedLayer{}, f.fail
 	}
 	artifact, err := f.fakeConverter.Convert(ctx, descriptor, source, workDir)
 	if f.omitBoot {
@@ -388,16 +396,16 @@ func TestImporterFailureAndCancellationDoNotCommit(t *testing.T) {
 
 func TestSelectBootAppliesOverwritesAndWhiteouts(t *testing.T) {
 	first, second := testDigest(t, "1"), testDigest(t, "2")
-	layers := []Layer{
-		{SourceDigest: first, BootFiles: []BootFile{{Name: "vmlinuz-1"}, {Name: "vmlinuz-2"}, {Name: "initrd.img"}}},
-		{SourceDigest: second, Whiteouts: []string{"vmlinuz-2"}, BootFiles: []BootFile{{Name: "initrd.img"}}},
+	layers := []images.Layer{
+		{SourceDigest: first, BootFiles: []images.BootFile{{Name: "vmlinuz-1"}, {Name: "vmlinuz-2"}, {Name: "initrd.img"}}},
+		{SourceDigest: second, Whiteouts: []string{"vmlinuz-2"}, BootFiles: []images.BootFile{{Name: "initrd.img"}}},
 	}
-	boot, err := selectBoot(layers)
+	boot, err := images.SelectBoot(layers)
 	if err != nil || boot.KernelFile != "vmlinuz-1" || boot.KernelLayer != first || boot.InitrdLayer != second {
 		t.Fatalf("merged boot = %+v, %v", boot, err)
 	}
 	layers[1].BootOpaque = true
-	if _, err := selectBoot(layers); err == nil {
+	if _, err := images.SelectBoot(layers); err == nil {
 		t.Fatal("opaque layer retained older kernel")
 	}
 }
