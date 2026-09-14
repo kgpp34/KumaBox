@@ -10,12 +10,18 @@ import (
 // Memory is a snapshotting in-memory Store for business tests and engine contracts.
 // It is not a durable metadata engine.
 type Memory struct {
-	mu         sync.RWMutex
+	// mu protects the published snapshot and the closed flag.
+	mu sync.RWMutex
+	// writeToken serializes writers with context-aware acquisition.
 	writeToken chan struct{}
-	records    map[Collection]map[string][]byte
-	closed     bool
+	// records is replaced as a unit after a successful update callback.
+	records map[Collection]map[string][]byte
+	// closed prevents snapshots and commits after Close.
+	closed bool
 }
 
+// NewMemory creates an empty store with exactly the declared collections.
+// Invalid or duplicate declarations fail before a store is returned.
 func NewMemory(collections []Collection) (*Memory, error) {
 	records := make(map[Collection]map[string][]byte)
 	for _, collection := range collections {
@@ -30,6 +36,8 @@ func NewMemory(collections []Collection) (*Memory, error) {
 	return &Memory{writeToken: make(chan struct{}, 1), records: records}, nil
 }
 
+// snapshot copies every record under the read lock; callbacks then run without
+// blocking readers or exposing the live store to mutation.
 func (s *Memory) snapshot(ctx context.Context) (*memoryTransaction, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -49,6 +57,7 @@ func (s *Memory) snapshot(ctx context.Context) (*memoryTransaction, error) {
 	return &memoryTransaction{records: records}, nil
 }
 
+// View reads a detached snapshot and propagates callback failure or cancellation.
 func (s *Memory) View(ctx context.Context, fn func(Reader) error) error {
 	snapshot, err := s.snapshot(ctx)
 	if err != nil {
@@ -60,6 +69,12 @@ func (s *Memory) View(ctx context.Context, fn func(Reader) error) error {
 	return ctx.Err()
 }
 
+// Update serializes writers and swaps in a copied snapshot only after the callback
+// succeeds and cancellation and closure have been checked under the commit lock.
+//
+//	writer token -> copy snapshot -> callback -> commit lock -> replace records
+//	                                  |
+//	                                  +-- failure/cancellation: discard snapshot
 func (s *Memory) Update(ctx context.Context, fn func(Writer) error) error {
 	select {
 	case s.writeToken <- struct{}{}:
@@ -85,12 +100,17 @@ func (s *Memory) Update(ctx context.Context, fn func(Writer) error) error {
 	s.records = snapshot.records
 	return nil
 }
+
+// Close prevents future snapshots and commits without invalidating detached bytes.
 func (s *Memory) Close() error { s.mu.Lock(); defer s.mu.Unlock(); s.closed = true; return nil }
 
+// memoryTransaction is a callback-owned copy, not a concurrent transaction handle.
 type memoryTransaction struct {
+	// records contains only collections declared at store construction.
 	records map[Collection]map[string][]byte
 }
 
+// collection checks cancellation and declaration before accessing a record set.
 func (t *memoryTransaction) collection(ctx context.Context, collection Collection) (map[string][]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -102,6 +122,7 @@ func (t *memoryTransaction) collection(ctx context.Context, collection Collectio
 	return records, nil
 }
 
+// Get clones stored bytes so reads cannot mutate the transaction.
 func (t *memoryTransaction) Get(ctx context.Context, collection Collection, key string) ([]byte, bool, error) {
 	records, err := t.collection(ctx, collection)
 	if err != nil {
@@ -111,6 +132,7 @@ func (t *memoryTransaction) Get(ctx context.Context, collection Collection, key 
 	return slices.Clone(value), ok, nil
 }
 
+// Scan sorts keys for engine-independent ordering and detaches each visited value.
 func (t *memoryTransaction) Scan(ctx context.Context, collection Collection, fn func(string, []byte) error) error {
 	records, err := t.collection(ctx, collection)
 	if err != nil {
@@ -132,6 +154,7 @@ func (t *memoryTransaction) Scan(ctx context.Context, collection Collection, fn 
 	return nil
 }
 
+// Put clones input bytes to keep caller ownership separate from transaction state.
 func (t *memoryTransaction) Put(ctx context.Context, collection Collection, key string, value []byte) error {
 	records, err := t.collection(ctx, collection)
 	if err != nil {
@@ -141,6 +164,7 @@ func (t *memoryTransaction) Put(ctx context.Context, collection Collection, key 
 	return nil
 }
 
+// Delete removes a key from the callback snapshot without touching the live store.
 func (t *memoryTransaction) Delete(ctx context.Context, collection Collection, key string) error {
 	records, err := t.collection(ctx, collection)
 	if err != nil {

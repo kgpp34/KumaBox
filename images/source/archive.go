@@ -16,12 +16,18 @@ import (
 	"github.com/kumabox/kumabox/storage"
 )
 
+// maxArchiveEntries bounds work from archives containing many tiny entries.
 const maxArchiveEntries = 1 << 20
 
+// NewArchive stages a tar or gzip-compressed OCI layout using default limits.
+// Use OpenLocal for format detection or Docker save archives. The caller must run
+// the returned cleanup after consuming the source; use NewArchiveContext to cancel.
 func NewArchive(path, stagingRoot string) (images.Source, func() error, error) {
 	return NewArchiveContext(context.TODO(), path, stagingRoot, images.DefaultLimits())
 }
 
+// NewArchiveContext stages a bounded OCI archive and returns source ownership
+// separately from the cleanup function. Construction failure removes staging.
 func NewArchiveContext(ctx context.Context, path, stagingRoot string, limits images.Limits) (images.Source, func() error, error) {
 	dir, cleanup, err := stageArchive(ctx, path, stagingRoot, limits)
 	if err != nil {
@@ -34,6 +40,8 @@ func NewArchiveContext(ctx context.Context, path, stagingRoot string, limits ima
 	return source, cleanup, nil
 }
 
+// stageArchive extracts into a private temporary directory under stagingRoot.
+// Cleanup is returned only on success; partial extraction is removed on failure.
 func stageArchive(ctx context.Context, path, stagingRoot string, limits images.Limits) (string, func() error, error) {
 	if !limits.Valid() {
 		return "", nil, invalidSource("archive size limits must be positive and bounded")
@@ -55,10 +63,23 @@ func stageArchive(ctx context.Context, path, stagingRoot string, limits images.L
 	return dir, cleanup, nil
 }
 
+// extractArchive is the default-budget, non-cancelable extraction helper.
 func extractArchive(path, destination string) error {
 	return extractArchiveContext(context.TODO(), path, destination, images.DefaultLimits().ArchiveSize)
 }
 
+// extractArchiveContext accepts plain tar or gzip by magic bytes, allowing only
+// directories and newly created regular files. Path validation and os.Root keep
+// file writes within destination; O_EXCL rejects duplicate file destinations.
+// Both declared payload bytes and the full decoded tar stream are bounded.
+//
+//	file --> magic detection --> optional gzip --> decoded byte budget --> tar
+//	                                                                   |
+//	                 entry count + path + type + size checks <----------+
+//	                                   |
+//	                         exclusive regular file writes
+//
+// The EOF drain includes trailing gzip data in the byte budget and checksum.
 func extractArchiveContext(ctx context.Context, path, destination string, limit int64) (returnErr error) {
 	if limit <= 0 {
 		return invalidSource("archive size limit must be positive")
@@ -147,11 +168,16 @@ func extractArchiveContext(ctx context.Context, path, destination string, limit 
 	}
 }
 
+// contextInput stops subsequent reads after cancellation; it cannot interrupt an
+// underlying Read already in progress, which must support cancellation itself.
 type contextInput struct {
-	ctx    context.Context
+	// ctx is checked immediately before each read.
+	ctx context.Context
+	// source supplies archive, file, or decoded bytes.
 	source io.Reader
 }
 
+// Read checks cancellation before delegating to the underlying stream.
 func (r *contextInput) Read(p []byte) (int, error) {
 	if err := r.ctx.Err(); err != nil {
 		return 0, err

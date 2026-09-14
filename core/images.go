@@ -1,4 +1,13 @@
 // Package core assembles application modules and their concrete dependencies.
+// It owns resource construction; image policies and workflows remain in images.
+//
+// Image command assembly:
+//
+//	storage.Roots --> images.Paths -----------+
+//	                    |                    |
+//	                    +--> SQLite --> catalog --> ImageStore
+//	                                           |
+//	                  source + EROFS + reporter +--> images.Importer
 package core
 
 import (
@@ -16,11 +25,16 @@ import (
 // ImageStore owns the resources assembled for one image command.
 // Call Close after using its catalog and managed artifact paths.
 type ImageStore struct {
-	Paths   images.Paths
+	// Paths locates persistent artifacts, staging directories, and image locks.
+	Paths images.Paths
+	// Catalog exposes image metadata operations backed by the owned store.
 	Catalog images.Catalog
-	store   metadata.Store
+	// store owns the database connection released by Close.
+	store metadata.Store
 }
 
+// OpenImages ensures managed directories and opens the image metadata catalog.
+// It does not probe conversion tools, so metadata queries do not require EROFS.
 func OpenImages(ctx context.Context, roots storage.Roots) (*ImageStore, error) {
 	paths, err := images.NewPaths(roots)
 	if err != nil {
@@ -36,6 +50,7 @@ func OpenImages(ctx context.Context, roots storage.Roots) (*ImageStore, error) {
 	return &ImageStore{Paths: paths, Catalog: catalog.New(store), store: store}, nil
 }
 
+// Close releases the metadata store after all catalog operations have finished.
 func (s *ImageStore) Close() error { return s.store.Close() }
 
 // NewImageImporter adds a converter only when an operation needs to import layers.
@@ -50,16 +65,21 @@ func NewImageImporter(ctx context.Context, store *ImageStore, reporter images.Re
 
 // LocalImageOptions selects a local source without exposing adapter types to callers.
 type LocalImageOptions struct {
-	Format    string
+	// Format is auto, docker, or oci; auto detects the source contents.
+	Format string
+	// SourceTag selects an image inside a multi-image Docker save archive.
 	SourceTag string
 }
 
+// Validate rejects unsupported formats before a command opens its metadata store.
 func (o LocalImageOptions) Validate() error {
 	_, err := source.ParseFormat(o.Format)
 	return err
 }
 
-// OpenLocalSource returns a source and the cleanup required for staged archives.
+// OpenLocalSource detects or selects the local adapter and stages archives as needed.
+// On success, the caller must invoke the returned cleanup after using the source.
+// Directory sources also return cleanup, allowing the caller to use one lifecycle.
 func (s *ImageStore) OpenLocalSource(ctx context.Context, path string, options LocalImageOptions) (images.Source, func() error, error) {
 	format, err := source.ParseFormat(options.Format)
 	if err != nil {

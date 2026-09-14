@@ -1,3 +1,5 @@
+// Package errdefs carries stable failure codes, handling classes, and operation
+// context across module boundaries while preserving the original error chain.
 package errdefs
 
 import (
@@ -9,44 +11,73 @@ import (
 type Code string
 
 const (
-	CodeNotFound            Code = "NOT_FOUND"
-	CodeNameTaken           Code = "NAME_TAKEN"
-	CodeInvalidArgument     Code = "INVALID_ARGUMENT"
-	CodeHostIncompatible    Code = "HOST_INCOMPATIBLE"
-	CodeDigestMismatch      Code = "IMAGE_DIGEST_MISMATCH"
-	CodeArtifactCorrupt     Code = "ARTIFACT_CORRUPT"
+	// CodeNotFound indicates the requested entity or name is absent.
+	CodeNotFound Code = "NOT_FOUND"
+	// CodeNameTaken indicates a name is already bound to conflicting state.
+	CodeNameTaken Code = "NAME_TAKEN"
+	// CodeInvalidArgument indicates an argument or option violates the operation contract.
+	CodeInvalidArgument Code = "INVALID_ARGUMENT"
+	// CodeHostIncompatible indicates the host lacks a required tool or supported capability.
+	CodeHostIncompatible Code = "HOST_INCOMPATIBLE"
+	// CodeDigestMismatch indicates content does not match its expected digest or diffID.
+	CodeDigestMismatch Code = "IMAGE_DIGEST_MISMATCH"
+	// CodeArtifactCorrupt indicates an artifact or metadata record has an invalid representation.
+	CodeArtifactCorrupt Code = "ARTIFACT_CORRUPT"
+	// CodeArtifactUnavailable indicates an artifact cannot be accessed or durably written.
 	CodeArtifactUnavailable Code = "ARTIFACT_UNAVAILABLE"
-	CodeReferenced          Code = "REFERENCED"
-	CodeStoreBusy           Code = "STORE_BUSY"
-	CodeInternal            Code = "INTERNAL"
+	// CodeReferenced indicates an entity cannot be removed while live references remain.
+	CodeReferenced Code = "REFERENCED"
+	// CodeStoreBusy indicates the metadata engine cannot acquire a transaction within its budget.
+	CodeStoreBusy Code = "STORE_BUSY"
+	// CodeInternal indicates a failure has no more specific public classification.
+	CodeInternal Code = "INTERNAL"
 )
 
 // Class groups codes that share handling policy.
 type Class uint8
 
 const (
+	// ClassUnknown indicates the zero value has no handling classification.
 	ClassUnknown Class = iota
+	// ClassNotFound indicates the requested entity is absent.
 	ClassNotFound
+	// ClassInvalid indicates the caller must correct arguments or host requirements.
 	ClassInvalid
+	// ClassConflict indicates existing state prevents the requested change.
 	ClassConflict
+	// ClassUnavailable indicates a required resource is temporarily or operationally inaccessible.
 	ClassUnavailable
+	// ClassCorrupt indicates stored or supplied content violates integrity expectations.
 	ClassCorrupt
+	// ClassInternal indicates an unexpected implementation failure occurred.
 	ClassInternal
 )
 
 // Error carries stable classification and diagnostic context across layers.
 type Error struct {
-	Class     Class
-	Code      Code
+	// Class selects broad handling policy independently of the diagnostic message.
+	Class Class
+	// Code identifies the failure for automation without parsing text.
+	Code Code
+	// Operation identifies the user-visible operation that failed.
 	Operation string
-	Entity    string
-	Phase     string
+	// Entity identifies the affected image, name, or other module record.
+	Entity string
+	// Phase locates failure within the operation lifecycle.
+	Phase string
+	// Committed records that durable business state changed despite this error;
+	// callers must inspect resulting state before deciding to retry.
 	Committed bool
-	Retry     bool
-	Action    string
-	Cause     error
+	// Retry is an optional producer hint that another attempt may succeed.
+	Retry bool
+	// Action suggests a recovery step for the caller.
+	Action string
+	// Cause preserves underlying failures for errors.Is and errors.As.
+	Cause error
 }
 
+// Error renders classification and available context, including the recovery action.
+// A nil receiver is printable.
 func (e *Error) Error() string {
 	if e == nil {
 		return "<nil>"
@@ -70,6 +101,7 @@ func (e *Error) Error() string {
 	return message
 }
 
+// Unwrap exposes the cause to standard error-chain inspection, including nil receivers.
 func (e *Error) Unwrap() error {
 	if e == nil {
 		return nil
@@ -85,7 +117,9 @@ func New(class Class, code Code, cause error) *Error {
 	return &Error{Class: class, Code: code, Cause: cause}
 }
 
-// Context adds operation context without changing an existing classification.
+// Context wraps err with operation context without mutating an existing Error.
+// Nonempty supplied fields override prior context, and Committed can only become
+// true. Unclassified errors receive ClassInternal/CodeInternal; nil remains nil.
 func Context(err error, operation, entity, phase, action string, committed bool) error {
 	if err == nil {
 		return nil
@@ -117,6 +151,7 @@ func CodeOf(err error) (Code, bool) {
 	return target.Code, true
 }
 
+// first keeps existing diagnostic context when the wrapping boundary omits a field.
 func first(value, fallback string) string {
 	if value != "" {
 		return value

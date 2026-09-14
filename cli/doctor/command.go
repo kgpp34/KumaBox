@@ -10,19 +10,30 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// checkerName resolves the separately installed host-check script through PATH.
 const checkerName = "kumabox-check"
 
+// processError preserves the checker's exit status without printing its diagnostics twice.
 type processError struct {
-	err  error
+	// err retains the subprocess failure for errors.As and errors.Is.
+	err error
+	// code is the checker process exit status.
 	code int
 }
 
+// Error forwards the original subprocess failure message.
 func (e *processError) Error() string { return e.err.Error() }
-func (e *processError) Unwrap() error { return e.err }
-func (e *processError) ExitCode() int { return e.code }
-func (e *processError) Silent() bool  { return true }
 
-// NewCommand returns the doctor command. Flag parsing belongs to check.sh, so
+// Unwrap preserves access to the original exec.ExitError.
+func (e *processError) Unwrap() error { return e.err }
+
+// ExitCode propagates the checker's status to the kumabox process.
+func (e *processError) ExitCode() int { return e.code }
+
+// Silent reports that the checker already wrote its own diagnostics.
+func (e *processError) Silent() bool { return true }
+
+// NewCommand returns the doctor command. Flag parsing belongs to kumabox-check, so
 // every argument after "doctor" is forwarded unchanged.
 func NewCommand() *cobra.Command {
 	return &cobra.Command{

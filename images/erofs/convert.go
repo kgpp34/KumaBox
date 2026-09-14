@@ -1,3 +1,6 @@
+// Package erofs converts verified layer tar streams into deterministic EROFS
+// artifacts and extracts regular boot candidates. It records overlay deletions
+// for images.SelectBoot instead of choosing boot files within an individual layer.
 package erofs
 
 import (
@@ -22,16 +25,23 @@ import (
 )
 
 const (
+	// erofsBlockSize fixes compression cluster size for reproducible conversion.
 	erofsBlockSize = 4096
 )
 
+// Converter implements images.Converter using mkfs.erofs with fixed output options.
+// Its immutable configuration permits concurrent conversion into distinct work directories.
 type Converter struct {
+	// architecture selects whether an extracted arm64 gzip kernel is decompressed.
 	architecture string
-	limits       images.Limits
+	// limits bounds extracted boot files; source adapters bound the layer streams.
+	limits images.Limits
 }
 
 var _ images.Converter = (*Converter)(nil)
 
+// New validates the target architecture and limits and requires mkfs.erofs >= 1.8.
+// The target architecture can differ from the host running the conversion.
 func New(ctx context.Context, architecture string, limits images.Limits) (*Converter, error) {
 	if !limits.Valid() || (architecture != "amd64" && architecture != "arm64") {
 		return nil, invalidLayer("invalid converter architecture or size limits")
@@ -46,6 +56,18 @@ func New(ctx context.Context, architecture string, limits images.Limits) (*Conve
 	return &Converter{architecture: architecture, limits: limits}, nil
 }
 
+// Convert streams a decompressed tar to mkfs.erofs while extracting boot files
+// into workDir, which must already exist and belong to the caller. The caller
+// owns staging cleanup and source closure. Fixed timestamps, compression options
+// and a source-derived UUID make repeated conversion reproducible.
+//
+//	verified tar -> TeeReader -> boot scan -> staged kernel/initrd
+//	                  |
+//	                  v
+//	             mkfs.erofs stdin -> staged EROFS -> hash and size
+//
+// Draining past tar EOF delivers the full stream to the child process and allows
+// source verification to finish before the generated artifact is accepted.
 func (c *Converter) Convert(ctx context.Context, descriptor images.Descriptor, source io.Reader, workDir string) (images.ConvertedLayer, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -56,7 +78,7 @@ func (c *Converter) Convert(ctx context.Context, descriptor images.Descriptor, s
 		"--tar=f",
 		"-zlz4hc",
 		fmt.Sprintf("-C%d", erofsBlockSize),
-		"-T0",
+		"-T0", // Stable filesystem timestamps are part of the converted artifact identity.
 		"-U", deterministicUUID(descriptor.Digest),
 		outputPath,
 	)
@@ -99,6 +121,9 @@ func (c *Converter) Convert(ctx context.Context, descriptor images.Descriptor, s
 	}, nil
 }
 
+// scanBoot extracts only regular boot candidates and records lower-layer whiteouts.
+// It never materializes arbitrary tar paths or follows archived links. Entries
+// replacing /boot or a candidate with a non-regular node hide earlier candidates.
 func scanBoot(source io.Reader, workDir, architecture string, limit int64) ([]images.StagedBootFile, []string, bool, error) {
 	reader := tar.NewReader(source)
 	var files []images.StagedBootFile
@@ -153,6 +178,8 @@ func scanBoot(source io.Reader, workDir, architecture string, limit int64) ([]im
 	}
 }
 
+// writeBootFile bounds the final extracted size, including gzip expansion when
+// arm64 kernel decompression is requested. Other boot files preserve source bytes.
 func writeBootFile(source io.Reader, destination string, decompressKernel bool, limit int64) error {
 	output, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) //nolint:gosec // destination is a managed staging path
 	if err != nil {
@@ -190,6 +217,8 @@ func writeBootFile(source io.Reader, destination string, decompressKernel bool, 
 	return nil
 }
 
+// requireEROFSVersion accepts a major/minor version with tar-stream support.
+// Version output may include the program name or a patch/suffix component.
 func requireEROFSVersion(output string) error {
 	fields := strings.FieldsFunc(output, func(char rune) bool {
 		return (char < '0' || char > '9') && char != '.'
@@ -212,6 +241,8 @@ func requireEROFSVersion(output string) error {
 	return fmt.Errorf("cannot parse mkfs.erofs version from %q", strings.TrimSpace(output))
 }
 
+// deterministicUUID derives stable UUID-shaped bytes from the source identity
+// to avoid mkfs.erofs generating a different filesystem identity on each run.
 func deterministicUUID(digest images.Digest) string {
 	sum := sha256.Sum256([]byte(digest.String()))
 	sum[6] = (sum[6] & 0x0f) | 0x50
@@ -220,6 +251,7 @@ func deterministicUUID(digest images.Digest) string {
 		sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
 }
 
+// digestPath hashes the generated staged filesystem before it is published.
 func digestPath(ctx context.Context, path string) (images.Digest, int64, error) {
 	file, err := os.Open(path) //nolint:gosec // path is a managed staging path
 	if err != nil {
@@ -239,6 +271,8 @@ func invalidLayer(format string, args ...any) error {
 	return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf(format, args...))
 }
 
+// conversionError preserves cancellation and classified errors while distinguishing
+// compressed-data corruption from unavailable conversion artifacts.
 func conversionError(err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
@@ -252,11 +286,15 @@ func conversionError(err error) error {
 	return errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, err)
 }
 
+// contextReader observes cancellation between reads of a generated local artifact.
 type contextReader struct {
-	ctx    context.Context
+	// ctx stops further reads after cancellation.
+	ctx context.Context
+	// reader supplies the artifact bytes without taking ownership of its lifetime.
 	reader io.Reader
 }
 
+// Read forwards data only while the context remains active.
 func (r contextReader) Read(p []byte) (int, error) {
 	if err := r.ctx.Err(); err != nil {
 		return 0, err

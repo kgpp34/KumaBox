@@ -1,3 +1,5 @@
+// Package image adapts image workflows to Cobra commands and terminal output.
+// Core assembles dependencies; the images module owns import, verification, and removal.
 package image
 
 import (
@@ -12,8 +14,10 @@ import (
 	"github.com/kumabox/kumabox/storage"
 )
 
+// rootsProvider defers reading storage roots until command flags have been parsed.
 type rootsProvider func() storage.Roots
 
+// NewCommand registers the image command tree using invocation-local storage roots.
 func NewCommand(roots rootsProvider) *cobra.Command {
 	command := &cobra.Command{Use: "image", Short: "manage container images", Args: cobra.NoArgs, RunE: func(command *cobra.Command, _ []string) error { return command.Help() }}
 	command.AddCommand(
@@ -27,6 +31,7 @@ func NewCommand(roots rootsProvider) *cobra.Command {
 	return command
 }
 
+// parsePlatform rejects targets unsupported by the Linux image conversion pipeline.
 func parsePlatform(value string) (images.Platform, error) {
 	parts := strings.Split(value, "/")
 	if len(parts) != 2 || parts[0] != "linux" || (parts[1] != "amd64" && parts[1] != "arm64") {
@@ -35,4 +40,5 @@ func parsePlatform(value string) (images.Platform, error) {
 	return images.Platform{OS: parts[0], Architecture: parts[1]}, nil
 }
 
+// defaultPlatform selects the host architecture while keeping the guest OS Linux.
 func defaultPlatform() string { return "linux/" + runtime.GOARCH }

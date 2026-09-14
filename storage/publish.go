@@ -9,6 +9,12 @@ import (
 
 // Publish syncs a regular staged file, then atomically renames and syncs both parents.
 // Rename refuses a different filesystem; it never falls back to a partial copy.
+// Callers serialize destination ownership. A sync error after rename can leave the
+// final path present and must not be interpreted as proof that nothing was published.
+//
+//	staged regular file -> sync file -> rename to final -> sync both parents
+//	                                      |
+//	                                      +-- final path visible; later sync may fail
 func Publish(staged, final string) error {
 	if err := CheckPath(staged); err != nil {
 		return err
@@ -35,6 +41,8 @@ func Publish(staged, final string) error {
 	return errors.Join(syncPath(filepath.Dir(final)), syncPath(filepath.Dir(staged)))
 }
 
+// syncPath opens relative to a directory handle and closes every descriptor while
+// preserving sync and close failures. It supports regular files and directories.
 func syncPath(path string) error {
 	root, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {

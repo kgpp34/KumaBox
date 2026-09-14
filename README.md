@@ -69,6 +69,12 @@ local import), `query.go` (list, inspect and verify), and `remove.go`. Related
 types, interfaces and methods stay together; files are not split by declaration
 kind. Interfaces describe the operations needed by their consumers.
 
+Document each package's responsibility in an existing source file. Exported APIs,
+key types and fields, and complex private methods need comments explaining their
+contracts, units, ownership, and failure boundaries. Keep comments in English and
+use indented ASCII diagrams near workflows where ordering, locking, or commit
+boundaries matter. Update these comments whenever the behavior changes.
+
 Tests live in their owning directories as `*_test.go`. The shared memory/SQLite
 transaction contract is exercised in `metadata/store_test.go`; there is no
 production package for test helpers. Image workflow integration tests use the
@@ -93,6 +99,14 @@ kumabox image inspect tiny
 kumabox image verify tiny
 kumabox image rm tiny
 ```
+
+`image ls` prints a table with names, 12-character image IDs, platforms,
+human-readable sizes, and creation timestamps in UTC. `image inspect` and
+`image ls --json` print indented JSON with full digests and numeric sizes.
+Import and pull show a live spinner and completed layer counts on a terminal.
+Verification and removal also show waiting status; removal reports completed
+image counts. Redirected progress uses plain lines on stderr. Results are
+written to stdout.
 
 `image import NAME PATH` detects the format from source contents by default.
 It accepts OCI layout directories, OCI archives, and `docker save` archives;

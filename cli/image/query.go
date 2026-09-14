@@ -1,10 +1,8 @@
 package image
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -12,6 +10,7 @@ import (
 	"github.com/kumabox/kumabox/images"
 )
 
+// newListCommand renders catalog entries as an aligned table or detailed JSON.
 func newListCommand(roots rootsProvider) *cobra.Command {
 	asJSON := false
 	command := &cobra.Command{
@@ -34,20 +33,16 @@ func newListCommand(roots rootsProvider) *cobra.Command {
 				for _, item := range items {
 					results = append(results, imageResult(item))
 				}
-				return json.NewEncoder(command.OutOrStdout()).Encode(results)
+				return writeJSON(command.OutOrStdout(), results)
 			}
-			for _, item := range items {
-				if _, err := fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%d\n", strings.Join(item.Names, ","), item.ManifestDigest, item.Size); err != nil {
-					return err
-				}
-			}
-			return nil
+			return writeImagesTable(command.OutOrStdout(), items)
 		},
 	}
 	command.Flags().BoolVar(&asJSON, "json", false, "write JSON")
 	return command
 }
 
+// newInspectCommand resolves a name or digest and preserves full metadata in JSON.
 func newInspectCommand(roots rootsProvider) *cobra.Command {
 	return &cobra.Command{
 		Use:   "inspect IMAGE",
@@ -63,17 +58,27 @@ func newInspectCommand(roots rootsProvider) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return json.NewEncoder(command.OutOrStdout()).Encode(imageResult(image))
+			return writeJSON(command.OutOrStdout(), imageResult(image))
 		},
 	}
 }
 
+// newVerifyCommand checks persisted artifacts and reports waiting on stderr.
+// Store cleanup completes before the progress reporter emits its final status.
 func newVerifyCommand(roots rootsProvider) *cobra.Command {
 	return &cobra.Command{
 		Use:   "verify IMAGE",
 		Short: "verify image artifacts",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
+			progress, err := startImageProgress(command, "Verify", args[0])
+			if err != nil {
+				return err
+			}
+			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
+			if err := progress.Status("checking image artifacts"); err != nil {
+				return err
+			}
 			state, err := core.OpenImages(command.Context(), roots())
 			if err != nil {
 				return err
@@ -83,7 +88,7 @@ func newVerifyCommand(roots rootsProvider) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(command.OutOrStdout(), "verified %s\n", image.ManifestDigest)
+			_, err = fmt.Fprintf(progress.Output(command.OutOrStdout()), "verified %s\n", image.ManifestDigest)
 			return err
 		},
 	}

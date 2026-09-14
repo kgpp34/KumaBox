@@ -1,3 +1,6 @@
+// Package sqlite implements metadata transactions using SQLite WAL, separate
+// reader and writer pools, and a cross-process initialization lock. Module record
+// payloads remain opaque; image-specific indexes belong to images/catalog.
 package sqlite
 
 import (
@@ -22,30 +25,46 @@ import (
 )
 
 const (
+	// applicationID distinguishes KumaBox metadata from unrelated SQLite files.
 	applicationID = 0x4B554D41
+	// schemaVersion identifies the collection/record schema accepted by this engine.
 	schemaVersion = 1
-	initLockName  = "init.lock"
+	// initLockName serializes schema initialization across processes in this directory.
+	initLockName = "init.lock"
 )
 
+// Options bounds SQLite lock waits and the overall write transaction lifetime.
+// Both durations must be positive.
 type Options struct {
+	// BusyTimeout is the per-connection SQLite busy-handler wait.
 	BusyTimeout time.Duration
-	RetryLimit  time.Duration
+	// RetryLimit bounds writer acquisition, begin retries, and callback execution.
+	RetryLimit time.Duration
 }
 
+// DefaultOptions uses short individual lock waits within a five-second write budget.
 func DefaultOptions() Options {
 	return Options{BusyTimeout: 50 * time.Millisecond, RetryLimit: 5 * time.Second}
 }
 
 // Store is the SQLite implementation of metadata.Store.
 type Store struct {
-	readers     *sql.DB
-	writer      *sql.DB
+	// readers permits concurrent read snapshots against the WAL database.
+	readers *sql.DB
+	// writer has one connection and begins immediate transactions before callbacks.
+	writer *sql.DB
+	// collections is the immutable allowlist shared by transaction handles.
 	collections map[metadata.Collection]struct{}
-	retryLimit  time.Duration
+	// retryLimit becomes each Update call's context deadline.
+	retryLimit time.Duration
 }
 
 var _ metadata.Store = (*Store)(nil)
 
+// Open validates paths and declarations, initializes an empty database under a
+// transient file lock, and verifies database identity and existing collections.
+// It rejects incompatible populated databases rather than rewriting their schema.
+// The caller owns the returned store and must Close it.
 func Open(ctx context.Context, path string, collections []metadata.Collection, options Options) (*Store, error) {
 	if options.BusyTimeout <= 0 || options.RetryLimit <= 0 {
 		return nil, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("sqlite timeouts must be positive"))
@@ -96,6 +115,7 @@ func Open(ctx context.Context, path string, collections []metadata.Collection, o
 	return store, nil
 }
 
+// View runs one callback in a read-only SQL transaction and rolls back on failure.
 func (s *Store) View(ctx context.Context, fn func(metadata.Reader) error) error {
 	tx, err := s.readers.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -108,6 +128,16 @@ func (s *Store) View(ctx context.Context, fn func(metadata.Reader) error) error 
 	return commit(ctx, tx)
 }
 
+// Update retries busy transaction acquisition within RetryLimit. An immediate
+// transaction obtains SQLite's writer reservation before invoking the callback,
+// so user callbacks run at most once and are never replayed for lock contention.
+//
+//	write deadline -> BEGIN IMMEDIATE -- busy --> jitter and retry
+//	                        |
+//	                        v
+//	                    callback -> success: COMMIT
+//	                        |
+//	                        +-----> failure: ROLLBACK
 func (s *Store) Update(ctx context.Context, fn func(metadata.Writer) error) error {
 	writeCtx, cancel := context.WithTimeout(ctx, s.retryLimit)
 	defer cancel()
@@ -141,8 +171,10 @@ func (s *Store) Update(ctx context.Context, fn func(metadata.Writer) error) erro
 	}
 }
 
+// Close releases both pools and preserves errors from each.
 func (s *Store) Close() error { return errors.Join(s.readers.Close(), s.writer.Close()) }
 
+// verify checks database ownership, schema version, and declared collection presence.
 func (s *Store) verify(ctx context.Context) error {
 	var appID, version int
 	if err := s.readers.QueryRowContext(ctx, "PRAGMA application_id").Scan(&appID); err != nil {
@@ -167,6 +199,8 @@ func (s *Store) verify(ctx context.Context) error {
 	return nil
 }
 
+// initialize creates schema only for an unidentified empty database. The caller
+// holds the directory initialization lock for this entire operation.
 func initialize(ctx context.Context, path string, collections []metadata.Collection, options Options) (returnErr error) {
 	query := url.Values{}
 	query.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", options.BusyTimeout.Milliseconds()))
@@ -225,6 +259,8 @@ func initialize(ctx context.Context, path string, collections []metadata.Collect
 	return commit(ctx, tx)
 }
 
+// dsn configures each connection with WAL durability and foreign-key enforcement;
+// writer connections additionally reserve the write lock when a transaction begins.
 func dsn(path string, options Options, immediate bool) string {
 	query := url.Values{}
 	query.Add("_pragma", "foreign_keys(1)")
@@ -237,6 +273,8 @@ func dsn(path string, options Options, immediate bool) string {
 	return (&url.URL{Scheme: "file", Path: filepath.Clean(path), RawQuery: query.Encode()}).String()
 }
 
+// mapError translates engine failures into shared policy while retaining causes
+// for errors.Is/errors.As and leaving cancellation or unknown errors intact.
 func mapError(err error) error {
 	if err == nil {
 		return nil
@@ -262,6 +300,7 @@ func mapError(err error) error {
 	}
 }
 
+// busy recognizes both database contention and table/schema lock contention.
 func busy(err error) bool {
 	var sqliteErr *moderncsqlite.Error
 	if !errors.As(err, &sqliteErr) {
@@ -271,7 +310,8 @@ func busy(err error) bool {
 	return code == modernclib.SQLITE_BUSY || code == modernclib.SQLITE_LOCKED
 }
 
-// Cancellation can roll a transaction back before Commit observes its context.
+// commit handles the database/sql race where cancellation automatically rolls a
+// transaction back before Commit observes its context.
 // Preserve the cancellation cause without reporting cancellation after a successful commit.
 func commit(ctx context.Context, tx *sql.Tx) error {
 	if err := ctx.Err(); err != nil {
@@ -286,6 +326,7 @@ func commit(ctx context.Context, tx *sql.Tx) error {
 	return mapError(err)
 }
 
+// rollback treats an already completed transaction as successfully cleaned up.
 func rollback(tx *sql.Tx) error {
 	err := tx.Rollback()
 	if errors.Is(err, sql.ErrTxDone) {

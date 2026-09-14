@@ -16,10 +16,16 @@ import (
 	"github.com/kumabox/kumabox/images"
 )
 
+// NewLayout opens an OCI image layout using default source limits. Validation
+// and platform selection occur during Resolve; the directory remains caller-owned.
 func NewLayout(path string) (images.Source, error) {
 	return NewLayoutWithLimits(path, images.DefaultLimits())
 }
 
+// NewLayoutWithLimits opens a caller-owned OCI directory with explicit budgets.
+// Resolve rejects symlinks and special files, validates layout metadata, and
+// requires one image matching the requested OS and architecture. Object reads use
+// os.Root confinement in addition to the initial directory walk.
 func NewLayoutWithLimits(path string, limits images.Limits) (images.Source, error) {
 	if !limits.Valid() {
 		return nil, invalidSource("OCI size limits must be positive and bounded")
@@ -57,6 +63,7 @@ func NewLayoutWithLimits(path string, limits images.Limits) (images.Source, erro
 			return nil, err
 		}
 		var layoutVersion struct {
+			// Version must match the supported OCI layout version 1.0.0.
 			Version string `json:"imageLayoutVersion"`
 		}
 		if err := json.Unmarshal(layoutRaw, &layoutVersion); err != nil || layoutVersion.Version != "1.0.0" {
@@ -72,6 +79,7 @@ func NewLayoutWithLimits(path string, limits images.Limits) (images.Source, erro
 	return source, nil
 }
 
+// imageForPlatform rejects absent or ambiguous matches rather than choosing by order.
 func imageForPlatform(index v1.ImageIndex, platform images.Platform) (v1.Image, error) {
 	candidates, err := platformCandidates(index, platform, 0)
 	if err != nil {
@@ -83,6 +91,20 @@ func imageForPlatform(index v1.ImageIndex, platform images.Platform) (v1.Image, 
 	return candidates[0], nil
 }
 
+// platformCandidates descends bounded OCI indices and verifies each traversed
+// descriptor against object bytes. Platform hints filter branches; image configs
+// determine the actual platform before a leaf becomes a candidate.
+//
+//	index --> descriptor validation --> platform hint matches?
+//	                                         |
+//	                       +-----------------+------------------+
+//	                       |                                    |
+//	                   nested index                         image manifest
+//	                       |                                    |
+//	                recurse (depth bound)             config platform check
+//	                       +-----------------+------------------+
+//	                                         |
+//	                               exactly one candidate
 func platformCandidates(index v1.ImageIndex, platform images.Platform, depth int) ([]v1.Image, error) {
 	if depth > 16 {
 		return nil, invalidSource("OCI index nesting exceeds limit")
@@ -160,6 +182,7 @@ func platformCandidates(index v1.ImageIndex, platform images.Platform, depth int
 	return candidates, nil
 }
 
+// blobName converts a supported digest into the confined OCI blob path.
 func blobName(hash v1.Hash) (string, error) {
 	digest, err := images.ParseDigest(hash.String())
 	if err != nil {
@@ -168,20 +191,34 @@ func blobName(hash v1.Hash) (string, error) {
 	return "blobs/sha256/" + digest.Hex(), nil
 }
 
+// localIndex adapts bounded index bytes and lazily resolves child blob objects.
 type localIndex struct {
+	// path is the caller-owned layout or private staging root.
 	path string
-	raw  []byte
-	ctx  context.Context
+	// raw contains the already bounded index metadata.
+	raw []byte
+	// ctx propagates cancellation to child object reads.
+	ctx context.Context
 }
 
+// MediaType identifies this adapter as an OCI image index.
 func (i *localIndex) MediaType() (types.MediaType, error) { return types.OCIImageIndex, nil }
-func (i *localIndex) Digest() (v1.Hash, error)            { return partial.Digest(i) }
-func (i *localIndex) Size() (int64, error)                { return int64(len(i.raw)), nil }
-func (i *localIndex) RawManifest() ([]byte, error)        { return bytes.Clone(i.raw), nil }
+
+// Digest derives index identity from its exact serialized metadata bytes.
+func (i *localIndex) Digest() (v1.Hash, error) { return partial.Digest(i) }
+
+// Size reports the index byte count for descriptor validation.
+func (i *localIndex) Size() (int64, error) { return int64(len(i.raw)), nil }
+
+// RawManifest returns a copy so callers cannot mutate retained index bytes.
+func (i *localIndex) RawManifest() ([]byte, error) { return bytes.Clone(i.raw), nil }
+
+// IndexManifest parses the retained bytes for descriptor traversal.
 func (i *localIndex) IndexManifest() (*v1.IndexManifest, error) {
 	return v1.ParseIndexManifest(bytes.NewReader(i.raw))
 }
 
+// descriptor restricts child lookup to a bounded descriptor declared by this index.
 func (i *localIndex) descriptor(hash v1.Hash) (v1.Descriptor, error) {
 	manifest, err := i.IndexManifest()
 	if err != nil {
@@ -195,6 +232,7 @@ func (i *localIndex) descriptor(hash v1.Hash) (v1.Descriptor, error) {
 	return v1.Descriptor{}, fmt.Errorf("OCI descriptor %s not found", hash)
 }
 
+// Image opens and verifies a child manifest before adapting its lazy layers.
 func (i *localIndex) Image(hash v1.Hash) (v1.Image, error) {
 	descriptor, err := i.descriptor(hash)
 	if err != nil {
@@ -214,6 +252,7 @@ func (i *localIndex) Image(hash v1.Hash) (v1.Image, error) {
 	return partial.CompressedToImage(&localImage{path: i.path, raw: raw, descriptor: descriptor, ctx: i.ctx})
 }
 
+// ImageIndex opens and verifies a nested index within the same root.
 func (i *localIndex) ImageIndex(hash v1.Hash) (v1.ImageIndex, error) {
 	descriptor, err := i.descriptor(hash)
 	if err != nil {
@@ -233,15 +272,25 @@ func (i *localIndex) ImageIndex(hash v1.Hash) (v1.ImageIndex, error) {
 	return &localIndex{path: i.path, raw: raw, ctx: i.ctx}, nil
 }
 
+// localImage keeps verified manifest bytes while config and layer files stay lazy.
 type localImage struct {
-	path       string
-	raw        []byte
+	// path anchors all child object reads.
+	path string
+	// raw contains manifest bytes verified against descriptor.
+	raw []byte
+	// descriptor records the parent index's image identity.
 	descriptor v1.Descriptor
-	ctx        context.Context
+	// ctx propagates cancellation to local file reads.
+	ctx context.Context
 }
 
+// MediaType preserves the manifest media type declared by the parent index.
 func (i *localImage) MediaType() (types.MediaType, error) { return i.descriptor.MediaType, nil }
-func (i *localImage) RawManifest() ([]byte, error)        { return bytes.Clone(i.raw), nil }
+
+// RawManifest returns a copy of the previously verified manifest bytes.
+func (i *localImage) RawManifest() ([]byte, error) { return bytes.Clone(i.raw), nil }
+
+// RawConfigFile bounds the declared config object; callers verify its digest.
 func (i *localImage) RawConfigFile() ([]byte, error) {
 	manifest, err := v1.ParseManifest(bytes.NewReader(i.raw))
 	if err != nil {
@@ -257,6 +306,7 @@ func (i *localImage) RawConfigFile() ([]byte, error) {
 	return readLocal(i.ctx, i.path, name, maxMetadataSize)
 }
 
+// LayerByDigest adapts only layers declared by this manifest through fileLayer.
 func (i *localImage) LayerByDigest(hash v1.Hash) (partial.CompressedLayer, error) {
 	manifest, err := v1.ParseManifest(bytes.NewReader(i.raw))
 	if err != nil {

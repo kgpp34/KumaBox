@@ -1,3 +1,5 @@
+// Package storage manages host root boundaries and durable filesystem publication.
+// It supplies path and sync mechanisms without interpreting module artifacts.
 package storage
 
 import (
@@ -8,23 +10,32 @@ import (
 )
 
 const (
+	// DefaultDataRoot holds persistent module data.
 	DefaultDataRoot = "/var/lib/kumabox"
-	DefaultRunRoot  = "/run/kumabox"
-	DefaultLogRoot  = "/var/log/kumabox"
+	// DefaultRunRoot holds host runtime state and advisory lock files.
+	DefaultRunRoot = "/run/kumabox"
+	// DefaultLogRoot holds persistent host logs.
+	DefaultLogRoot = "/var/log/kumabox"
 )
 
 // Roots are the three host roots shared by KumaBox modules.
 type Roots struct {
+	// Data is the persistent artifact and metadata root.
 	Data string
-	Run  string
-	Log  string
+	// Run is the runtime state and lock root.
+	Run string
+	// Log is the host log root.
+	Log string
 }
 
+// DefaultRoots returns host defaults; callers may override them before Validate.
 func DefaultRoots() Roots {
 	return Roots{Data: DefaultDataRoot, Run: DefaultRunRoot, Log: DefaultLogRoot}
 }
 
-// Validate normalizes roots and rejects ambiguous ownership boundaries.
+// Validate returns absolute, cleaned, non-overlapping roots, rejecting managed
+// symlinks and non-directory ancestors. Stable macOS system aliases are resolved
+// so two spellings of the same ownership boundary cannot bypass overlap checks.
 func (r Roots) Validate() (Roots, error) {
 	values := []*string{&r.Data, &r.Run, &r.Log}
 	for _, value := range values {
@@ -66,7 +77,9 @@ func (r Roots) Validate() (Roots, error) {
 	return r, nil
 }
 
-// CheckPath refuses symlinks in every existing component, including the file.
+// CheckPath rejects symlinks in existing managed components and non-directory
+// ancestors, except for the stable /tmp, /var, and /etc system aliases. Missing
+// descendants are allowed. This is a path check, not an atomic filesystem guard.
 func CheckPath(path string) error {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -136,7 +149,8 @@ func EnsureDir(path string) error {
 	return syncPath(parent)
 }
 
-// Join returns a contained child path.
+// Join returns a lexically contained child path and checks its existing components.
+// Empty, absolute, and escaping elements fail; it does not create the resulting path.
 func Join(root string, elements ...string) (string, error) {
 	for _, element := range elements {
 		if element == "" || filepath.IsAbs(element) || element == ".." || strings.HasPrefix(element, ".."+string(filepath.Separator)) {
@@ -153,6 +167,7 @@ func Join(root string, elements ...string) (string, error) {
 	return joined, nil
 }
 
+// within compares path components rather than string prefixes, including root itself.
 func within(path, root string) bool {
 	relative, err := filepath.Rel(root, path)
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))

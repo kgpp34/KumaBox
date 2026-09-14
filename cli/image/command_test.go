@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -106,6 +107,28 @@ func TestImageCommandsFromLayoutAndArchive(t *testing.T) {
 	if len(image.Names) != 2 || len(image.Layers) != 1 {
 		t.Fatalf("inspect = %s", out)
 	}
+	if !strings.Contains(out, "\n  \"manifest_digest\":") || !strings.Contains(out, "\n    \"architecture\":") {
+		t.Fatalf("inspect JSON is not indented: %s", out)
+	}
+	list, err := execute("ls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(list, "IMAGE ID") || !strings.Contains(list, "PLATFORM") || !strings.Contains(list, "CREATED") || !strings.Contains(list, image.ManifestDigest[7:19]) || strings.Contains(list, image.ManifestDigest) {
+		t.Fatalf("list is not a readable image table: %s", list)
+	}
+	listJSON, err := execute("ls", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed []imageOutput
+	if err := json.Unmarshal([]byte(listJSON), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].ManifestDigest != image.ManifestDigest || !strings.Contains(listJSON, "\n    \"manifest_digest\":") {
+		t.Fatalf("list JSON is not an indented image array: %s", listJSON)
+	}
+
 	if _, err := execute("rm", "tiny", "alias"); err != nil {
 		t.Fatal(err)
 	}

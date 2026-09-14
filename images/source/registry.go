@@ -16,6 +16,10 @@ import (
 	"github.com/kumabox/kumabox/images"
 )
 
+// NewRegistry parses a registry reference and returns its normalized storage name.
+// Resolve performs platform-specific requests using the default credential
+// keychain; blob reads remain lazy. User-facing errors omit transport diagnostics
+// that may contain credentials, while Unwrap preserves their causes.
 func NewRegistry(reference string) (images.Source, string, error) {
 	// URL userinfo must never reach parser diagnostics or stored image names.
 	if strings.Contains(reference, "://") {
@@ -36,13 +40,22 @@ func NewRegistry(reference string) (images.Source, string, error) {
 	return source, parsed.String(), nil
 }
 
+// safeRegistryError separates a safe display message from diagnostic error identity.
 type safeRegistryError struct {
-	cause   error
+	// cause remains accessible to errors.Is and errors.As.
+	cause error
+	// message is controlled locally rather than copied from transport.
 	message string
 }
 
+// Error exposes only the locally supplied, credential-safe message.
 func (e *safeRegistryError) Error() string { return e.message }
+
+// Unwrap retains the underlying cause without displaying its text.
 func (e *safeRegistryError) Unwrap() error { return e.cause }
+
+// registryError preserves cancellation, maps HTTP 404 to not found, and wraps
+// other failures with a safe availability message.
 func registryError(err error) error {
 	if err == nil {
 		return nil
@@ -57,19 +70,26 @@ func registryError(err error) error {
 	return errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, &safeRegistryError{cause: err, message: "registry request failed; check connectivity and credentials"})
 }
 
-// Wrap lazy operations too: registry I/O continues after remote.Image returns.
-type registryImage struct{ v1.Image }
+// registryImage sanitizes lazy metadata and layer lookup failures because registry
+// I/O continues after remote.Image returns.
+type registryImage struct {
+	// Image retains library behavior for operations not overridden here.
+	v1.Image
+}
 
+// RawManifest reads manifest bytes with sanitized registry errors.
 func (i *registryImage) RawManifest() ([]byte, error) {
 	b, e := i.Image.RawManifest()
 	return b, registryError(e)
 }
 
+// RawConfigFile reads config bytes with sanitized registry errors.
 func (i *registryImage) RawConfigFile() ([]byte, error) {
 	b, e := i.Image.RawConfigFile()
 	return b, registryError(e)
 }
 
+// LayerByDigest wraps lazy layer reads as well as lookup failures.
 func (i *registryImage) LayerByDigest(h v1.Hash) (v1.Layer, error) {
 	layer, err := i.Image.LayerByDigest(h)
 	if err != nil {
@@ -78,8 +98,13 @@ func (i *registryImage) LayerByDigest(h v1.Hash) (v1.Layer, error) {
 	return &registryLayer{Layer: layer}, nil
 }
 
-type registryLayer struct{ v1.Layer }
+// registryLayer extends safe error presentation to encoded layer downloads.
+type registryLayer struct {
+	// Layer supplies the underlying registry-backed layer operations.
+	v1.Layer
+}
 
+// Compressed wraps stream reads and cleanup, not just the opening request.
 func (l *registryLayer) Compressed() (io.ReadCloser, error) {
 	reader, err := l.Layer.Compressed()
 	if err != nil {
@@ -88,8 +113,13 @@ func (l *registryLayer) Compressed() (io.ReadCloser, error) {
 	return &registryReader{ReadCloser: reader}, nil
 }
 
-type registryReader struct{ io.ReadCloser }
+// registryReader sanitizes failures that occur after an HTTP response is opened.
+type registryReader struct {
+	// ReadCloser owns the original registry response stream.
+	io.ReadCloser
+}
 
+// Read preserves EOF so streaming digest checks can finish normally.
 func (r *registryReader) Read(p []byte) (int, error) {
 	n, err := r.ReadCloser.Read(p)
 	if errors.Is(err, io.EOF) {
@@ -97,4 +127,6 @@ func (r *registryReader) Read(p []byte) (int, error) {
 	}
 	return n, registryError(err)
 }
+
+// Close sanitizes transport failures while releasing the response stream.
 func (r *registryReader) Close() error { return registryError(r.ReadCloser.Close()) }

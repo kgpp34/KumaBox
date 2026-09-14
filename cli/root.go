@@ -1,4 +1,5 @@
-// Package cli builds the kumabox command tree.
+// Package cli builds the kumabox command tree and maps command failures to exit statuses.
+// Commands receive explicit streams and storage roots for independent invocations.
 package cli
 
 import (
@@ -16,26 +17,41 @@ import (
 	"github.com/kumabox/kumabox/version"
 )
 
+// exitCoder preserves an explicit usage or subprocess status through error wrapping.
 type exitCoder interface {
+	// ExitCode is the process status to return for this failure.
 	ExitCode() int
 }
 
+// silentError identifies failures whose diagnostics were already written by a command.
 type silentError interface {
+	// Silent suppresses the entry point's additional diagnostic when true.
 	Silent() bool
 }
 
+// codedError attaches a CLI status while preserving the original error chain.
 type codedError struct {
-	err  error
+	// err is the original usage or command failure.
+	err error
+	// code is the status returned by the process entry point.
 	code int
 }
 
+// Error retains the diagnostic produced by the underlying failure.
 func (e *codedError) Error() string { return e.err.Error() }
+
+// Unwrap keeps errors.Is and errors.As available to callers.
 func (e *codedError) Unwrap() error { return e.err }
+
+// ExitCode supplies the CLI status attached during command execution.
 func (e *codedError) ExitCode() int { return e.code }
 
+// exitUsage distinguishes malformed invocations from domain operation failures.
 const exitUsage = 2
 
-// Execute runs one CLI invocation.
+// Execute runs one CLI invocation using the supplied context and output streams.
+// It returns errors without printing them; the process entry point prints diagnostics
+// unless Silent reports that a command already handled them.
 func Execute(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	root := newRootCommand()
 	root.SetArgs(args)
@@ -75,6 +91,8 @@ func Silent(err error) bool {
 	return errors.As(err, &silent) && silent.Silent()
 }
 
+// newRootCommand creates invocation-local flags and registers the command modules.
+// The roots callback observes values after Cobra has parsed persistent flags.
 func newRootCommand() *cobra.Command {
 	roots := storage.DefaultRoots()
 	root := &cobra.Command{
@@ -99,6 +117,7 @@ func newRootCommand() *cobra.Command {
 	return root
 }
 
+// usageArgs classifies positional validation failures as usage errors.
 func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
 	return func(command *cobra.Command, args []string) error {
 		if err := validate(command, args); err != nil {
@@ -108,6 +127,7 @@ func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
 	}
 }
 
+// classifyArguments applies usage classification throughout the registered command tree.
 func classifyArguments(command *cobra.Command) {
 	if command.Args != nil {
 		command.Args = usageArgs(command.Args)
@@ -117,6 +137,7 @@ func classifyArguments(command *cobra.Command) {
 	}
 }
 
+// errorExitCode groups domain error codes into the CLI's documented failure statuses.
 func errorExitCode(err error) int {
 	code, ok := errdefs.CodeOf(err)
 	if !ok {
@@ -136,6 +157,7 @@ func errorExitCode(err error) int {
 	}
 }
 
+// newVersionCommand exposes build metadata as human-readable text or JSON.
 func newVersionCommand() *cobra.Command {
 	var asJSON bool
 	command := &cobra.Command{

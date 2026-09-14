@@ -9,10 +9,15 @@ import (
 	filelock "github.com/kumabox/kumabox/lock/flock"
 )
 
+// ImageResolver is the read-only catalog contract required for verification.
 type ImageResolver interface {
+	// Resolve reads aliases or manifest references from committed metadata.
 	Resolve(context.Context, string) (Image, error)
 }
 
+// Verify hashes every EROFS and extracted boot artifact and checks derived image
+// facts. It holds source digest locks to coordinate with publication and deletion.
+// The reference is resolved again after waiting for locks to detect removal.
 func Verify(ctx context.Context, paths Paths, catalog ImageResolver, reference string) (result Image, returnErr error) {
 	image, err := catalog.Resolve(ctx, reference)
 	if err != nil {
@@ -45,6 +50,8 @@ func Verify(ctx context.Context, paths Paths, catalog ImageResolver, reference s
 	return image, nil
 }
 
+// verifyLayer proves that a committed mapping still matches all managed files.
+// Imports use the same check before authorizing cache reuse.
 func verifyLayer(ctx context.Context, paths Paths, layer Layer) error {
 	if layer.SourceDigest.IsZero() || layer.EROFSDigest.IsZero() || layer.Size <= 0 {
 		return errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("invalid layer metadata"))
@@ -69,6 +76,7 @@ func verifyLayer(ctx context.Context, paths Paths, layer Layer) error {
 	return nil
 }
 
+// verifyFile requires both identity and byte size to match committed metadata.
 func verifyFile(ctx context.Context, path string, expected Digest, expectedSize int64) error {
 	digest, size, err := digestFileContext(ctx, path)
 	if err != nil {

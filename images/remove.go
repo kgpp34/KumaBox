@@ -12,11 +12,20 @@ import (
 	filelock "github.com/kumabox/kumabox/lock/flock"
 )
 
+// RemovalCatalog exposes only the metadata operations needed for safe deletion.
 type RemovalCatalog interface {
 	ImageResolver
+	// Remove atomically deletes references only if the manifest binding is unchanged.
 	Remove(context.Context, string, Digest) (Removal, error)
 }
 
+// Remove drops an alias or a manifest and deletes only layers no longer referenced
+// by the catalog. It holds source digest locks across metadata removal and file
+// cleanup so an importer cannot reuse files while they are being deleted.
+// Cleanup failures are reported as committed: removed metadata is not restored.
+//
+//	resolve -> lock layers -> remove metadata -> delete unreferenced files -> unlock
+//	                           (atomic)           (best effort)
 func Remove(ctx context.Context, paths Paths, catalog RemovalCatalog, reference string) (result Removal, returnErr error) {
 	image, err := catalog.Resolve(ctx, reference)
 	if err != nil {

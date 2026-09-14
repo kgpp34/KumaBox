@@ -8,16 +8,28 @@ import (
 	"github.com/kumabox/kumabox/errdefs"
 )
 
+// IsBootName accepts kernel or initrd basenames and excludes .old backups.
+// It classifies names only; callers must independently require regular files.
 func IsBootName(name string) bool {
 	return filepath.Base(name) == name && !strings.HasSuffix(name, ".old") &&
 		(strings.HasPrefix(name, "vmlinuz") || strings.HasPrefix(name, "initrd.img"))
 }
 
 // SelectBoot applies layer overwrites and whiteouts to regular boot candidates.
+// Layers must be ordered from base to top. For each artifact kind the last
+// surviving candidate wins; a missing regular kernel or initrd is incompatible.
+//
+//	base candidates -> opaque reset -> named whiteouts -> current regular files
+//	                       (repeat for each layer)                  |
+//	                                                               v
+//	                                         last kernel + last initrd
 func SelectBoot(layers []Layer) (Boot, error) {
+	// candidate retains provenance while upper layers overwrite the visible boot set.
 	type candidate struct {
+		// layer keys the managed boot directory for this surviving candidate.
 		layer Digest
-		file  BootFile
+		// file supplies the basename and integrity facts selected for boot.
+		file BootFile
 	}
 	var candidates []candidate
 	for _, layer := range layers {

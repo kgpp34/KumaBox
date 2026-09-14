@@ -15,6 +15,8 @@ import (
 	"github.com/kumabox/kumabox/cli"
 )
 
+// main propagates termination signals, prints unhandled diagnostics, and exits
+// with the status selected by the CLI after command resource cleanup has finished.
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := cli.Execute(ctx, os.Args[1:], os.Stdout, os.Stderr)

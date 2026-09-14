@@ -21,12 +21,17 @@ import (
 	"github.com/kumabox/kumabox/images"
 )
 
+// dockerEntry is one image record in Docker save's manifest.json.
 type dockerEntry struct {
-	Config   string   `json:"Config"`
+	// Config names a config object by its content hash.
+	Config string `json:"Config"`
+	// RepoTags supplies optional source-tag selectors.
 	RepoTags []string `json:"RepoTags"`
-	Layers   []string `json:"Layers"`
+	// Layers records rootfs objects in base-to-top order.
+	Layers []string `json:"Layers"`
 }
 
+// newDockerSource normalizes an optional tag and defers image selection to Resolve.
 func newDockerSource(path string, options LocalOptions) (images.Source, error) {
 	if options.SourceTag != "" {
 		tag, err := name.NewTag(options.SourceTag)
@@ -46,6 +51,8 @@ func newDockerSource(path string, options LocalOptions) (images.Source, error) {
 	return source, nil
 }
 
+// selectDockerEntry requires exactly one tag/platform match. It verifies each
+// relevant config identity before trusting platform or rootfs layer ordering.
 func selectDockerEntry(ctx context.Context, path string, platform images.Platform, sourceTag string) (dockerEntry, []byte, error) {
 	raw, err := readLocal(ctx, path, "manifest.json", maxMetadataSize)
 	if err != nil {
@@ -91,6 +98,7 @@ func selectDockerEntry(ctx context.Context, path string, platform images.Platfor
 	return selected, selectedConfig, nil
 }
 
+// dockerTagMatches compares normalized tags, ignoring malformed archive tags.
 func dockerTagMatches(tags []string, wanted string) bool {
 	for _, value := range tags {
 		tag, err := name.NewTag(value)
@@ -101,6 +109,7 @@ func dockerTagMatches(tags []string, wanted string) bool {
 	return false
 }
 
+// archiveObjectName rejects absolute paths and parent traversal in Docker metadata.
 func archiveObjectName(value string) (string, error) {
 	clean := filepath.Clean(value)
 	if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
@@ -109,12 +118,13 @@ func archiveObjectName(value string) (string, error) {
 	return clean, nil
 }
 
+// readDockerConfig verifies bounded config bytes against the hash in their filename.
 func readDockerConfig(ctx context.Context, path, object string) ([]byte, error) {
 	object, err := archiveObjectName(object)
 	if err != nil {
 		return nil, err
+		// docker save names configs by their content hash (legacy .json names,
 	}
-	// docker save names configs by their content hash (legacy .json names,
 	// sha256:hex names, or modern blobs/sha256/hex paths).
 	hex := strings.TrimPrefix(strings.TrimSuffix(filepath.Base(object), ".json"), "sha256:")
 	digest, err := images.ParseDigest("sha256:" + hex)
@@ -131,9 +141,17 @@ func readDockerConfig(ctx context.Context, path, object string) ([]byte, error) 
 	return raw, nil
 }
 
+// dockerImageFromEntry normalizes the selected Docker entry into an OCI image.
 // Docker archives do not retain a registry manifest. Build a deterministic
 // manifest from the config and ordered layer descriptors, then reuse the same
 // digest/diffID validation and streaming as every other resolvedSource.
+// The synthetic digest need not equal the original registry manifest digest.
+//
+//	manifest.json --> tag + platform match --> verified config
+//	                                              |
+//	ordered layer files --> hash + media type -----+--> synthetic OCI manifest
+//	                                                        |
+//	                                              shared resolvedSource checks
 func dockerImageFromEntry(ctx context.Context, path string, entry dockerEntry, config []byte, limits images.Limits) (v1.Image, error) {
 	configHash := v1.Hash{Algorithm: "sha256", Hex: fmt.Sprintf("%x", sha256.Sum256(config))}
 	manifest := v1.Manifest{
@@ -162,6 +180,9 @@ func dockerImageFromEntry(ctx context.Context, path string, entry dockerEntry, c
 	return partial.CompressedToImage(&dockerImage{config: config, manifest: raw, layers: layers})
 }
 
+// describeArchiveLayer hashes bounded encoded bytes and detects compression by
+// magic rather than filename. Modern content-addressed blob paths must match the
+// computed hash; legacy layer paths obtain their identity from this hash pass.
 func describeArchiveLayer(ctx context.Context, path, object string, limit int64) (v1.Descriptor, error) {
 	reader, err := openLocal(ctx, path, object)
 	if err != nil {
@@ -191,17 +212,28 @@ func describeArchiveLayer(ctx context.Context, path, object string, limit int64)
 	return v1.Descriptor{MediaType: media, Digest: digest, Size: size}, nil
 }
 
+// dockerImage supplies the normalized metadata and lazy file layer adapters.
 type dockerImage struct {
-	config   []byte
+	// config retains the verified Docker config unchanged.
+	config []byte
+	// manifest is the deterministic serialized OCI manifest.
 	manifest []byte
-	layers   map[v1.Hash]*fileLayer
+	// layers indexes encoded objects by computed digest.
+	layers map[v1.Hash]*fileLayer
 }
 
 var _ partial.CompressedImageCore = (*dockerImage)(nil)
 
+// MediaType reports the synthetic OCI manifest format.
 func (i *dockerImage) MediaType() (types.MediaType, error) { return types.OCIManifestSchema1, nil }
-func (i *dockerImage) RawConfigFile() ([]byte, error)      { return bytes.Clone(i.config), nil }
-func (i *dockerImage) RawManifest() ([]byte, error)        { return bytes.Clone(i.manifest), nil }
+
+// RawConfigFile returns an independent copy of the verified source config.
+func (i *dockerImage) RawConfigFile() ([]byte, error) { return bytes.Clone(i.config), nil }
+
+// RawManifest returns an independent copy of the synthetic manifest bytes.
+func (i *dockerImage) RawManifest() ([]byte, error) { return bytes.Clone(i.manifest), nil }
+
+// LayerByDigest rejects objects not included in the selected Docker image.
 func (i *dockerImage) LayerByDigest(hash v1.Hash) (partial.CompressedLayer, error) {
 	layer, ok := i.layers[hash]
 	if !ok {

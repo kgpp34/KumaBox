@@ -1,3 +1,7 @@
+// Package source adapts registry images, OCI layouts, and Docker save archives to
+// the images.Source contract. Metadata selection and validation happen during
+// Resolve; layer content is checked while the importer consumes OpenLayer streams.
+// It owns source decoding and staging, while images owns artifact publication.
 package source
 
 import (
@@ -20,23 +24,37 @@ import (
 	"github.com/kumabox/kumabox/images"
 )
 
+// maxMetadataSize bounds accepted manifest, config, and index object sizes.
 const maxMetadataSize = 16 << 20
 
+// resolvedLayer connects a stored layer descriptor to its expected unpacked hash.
 type resolvedLayer struct {
-	layer     v1.Layer
-	diffID    images.Digest
+	// layer supplies the encoded bytes through the source adapter.
+	layer v1.Layer
+	// diffID is the config hash of the decoded tar stream.
+	diffID images.Digest
+	// mediaType selects gzip, zstd, or raw decoding.
 	mediaType types.MediaType
 }
 
+// resolvedSource shares metadata and streaming checks across all source formats.
 type resolvedSource struct {
+	// resolve selects the format-specific image.
 	resolve func(context.Context, images.Platform) (v1.Image, error)
-	mu      sync.RWMutex
-	layers  map[images.Digest]resolvedLayer
-	limits  images.Limits
+	// mu protects replacement and lookup of the resolved layer map.
+	mu sync.RWMutex
+	// layers is populated only after successful metadata validation.
+	layers map[images.Digest]resolvedLayer
+	// limits bounds encoded and unpacked layer content.
+	limits images.Limits
 }
 
 var _ images.Source = (*resolvedSource)(nil)
 
+// Resolve validates the selected manifest, config, platform, and layer descriptors
+// before publishing the layer lookup used by OpenLayer. Encoded digest, size, and
+// unpacked diffID are checked during layer consumption, even when an adapter has
+// already inspected encoded objects while constructing the image.
 func (s *resolvedSource) Resolve(ctx context.Context, platform images.Platform) (images.Manifest, error) {
 	if err := ctx.Err(); err != nil {
 		return images.Manifest{}, err
@@ -128,6 +146,13 @@ func (s *resolvedSource) Resolve(ctx context.Context, platform images.Platform) 
 	return images.Manifest{Digest: digest, Platform: platform, Layers: descriptors}, nil
 }
 
+// OpenLayer opens a previously resolved layer as a decoded tar stream. The caller
+// must consume it to EOF to complete both hash checks, then close it on all paths.
+// Closing an unread stream releases resources without validating the remainder.
+//
+//	encoded bytes --> size + digest check --> decoder --> limit + diffID check
+//	                      ^                                |
+//	                      +--- drain encoded remainder <---+ EOF
 func (s *resolvedSource) OpenLayer(ctx context.Context, descriptor images.Descriptor) (io.ReadCloser, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -165,17 +190,28 @@ func (s *resolvedSource) OpenLayer(ctx context.Context, descriptor images.Descri
 	return &layerReader{unpacked: unpacked, buffered: buffered, raw: raw, closeDecoder: closeDecoder}, nil
 }
 
+// checkedReader enforces a stream budget and verifies its identity only at EOF.
+// A terminal error is retained so retrying Read cannot bypass a failed check.
 type checkedReader struct {
-	ctx      context.Context
-	reader   io.Reader
-	hash     hash.Hash
+	// ctx is checked before each underlying read.
+	ctx context.Context
+	// reader supplies encoded bytes or the decoded tar stream.
+	reader io.Reader
+	// hash accumulates every byte returned by reader.
+	hash hash.Hash
+	// expected is the stored digest or unpacked diffID.
 	expected images.Digest
-	limit    int64
-	size     int64
-	read     int64
-	lastErr  error
+	// limit is the maximum byte count; Read probes one extra byte for overflow.
+	limit int64
+	// size is the declared byte count, or -1 when no count is declared.
+	size int64
+	// read tracks bytes consumed for the size and budget checks.
+	read int64
+	// lastErr prevents reads after EOF, cancellation, or corruption.
+	lastErr error
 }
 
+// Read detects limit violations immediately and digest or size mismatches at EOF.
 func (r *checkedReader) Read(p []byte) (n int, returnErr error) {
 	if r.lastErr != nil {
 		return 0, r.lastErr
@@ -210,13 +246,19 @@ func (r *checkedReader) Read(p []byte) (n int, returnErr error) {
 	return n, err
 }
 
+// layerReader couples decoder ownership with encoded and unpacked verification.
 type layerReader struct {
-	unpacked     *checkedReader
-	buffered     *bufio.Reader
-	raw          io.ReadCloser
+	// unpacked verifies the decoded stream's diffID.
+	unpacked *checkedReader
+	// buffered retains encoded bytes read ahead by the decoder.
+	buffered *bufio.Reader
+	// raw owns the underlying file or registry response.
+	raw io.ReadCloser
+	// closeDecoder releases gzip or zstd state, if present.
 	closeDecoder func() error
 }
 
+// Read drains encoded read-ahead at decoded EOF so its digest check also completes.
 func (r *layerReader) Read(p []byte) (int, error) {
 	n, err := r.unpacked.Read(p)
 	if errors.Is(err, io.EOF) {
@@ -226,8 +268,11 @@ func (r *layerReader) Read(p []byte) (int, error) {
 	}
 	return n, err
 }
+
+// Close releases both decoder and input, preserving either cleanup failure.
 func (r *layerReader) Close() error { return errors.Join(r.closeDecoder(), r.raw.Close()) }
 
+// validateDescriptor accepts bounded SHA-256 objects and rejects external URLs.
 func validateDescriptor(desc v1.Descriptor, limit int64) error {
 	if _, err := images.ParseDigest(desc.Digest.String()); err != nil {
 		return invalidSource("invalid descriptor: %v", err)
@@ -241,6 +286,7 @@ func validateDescriptor(desc v1.Descriptor, limit int64) error {
 	return nil
 }
 
+// checkBytes verifies a bounded metadata object against its declared identity.
 func checkBytes(raw []byte, expected v1.Hash, size int64) error {
 	if expected.Algorithm != "sha256" || fmt.Sprintf("%x", sha256.Sum256(raw)) != expected.Hex || int64(len(raw)) != size {
 		return errdefs.New(errdefs.ClassCorrupt, errdefs.CodeDigestMismatch, fmt.Errorf("OCI object %s digest or size mismatch", expected))
@@ -248,10 +294,13 @@ func checkBytes(raw []byte, expected v1.Hash, size int64) error {
 	return nil
 }
 
+// invalidSource classifies malformed or unsupported input as an argument error.
 func invalidSource(format string, args ...any) error {
 	return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf(format, args...))
 }
 
+// sourceError preserves cancellation and classified errors, distinguishes gzip
+// corruption, and treats other source I/O failures as unavailable artifacts.
 func sourceError(err error) error {
 	if err == nil {
 		return nil
