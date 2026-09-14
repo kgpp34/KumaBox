@@ -48,3 +48,29 @@ func TestVersion(t *testing.T) {
 		t.Fatalf("version output = %q", stdout.String())
 	}
 }
+
+func TestImageAndUsageExitCodes(t *testing.T) {
+	base := t.TempDir()
+	flags := []string{"--root-dir", filepath.Join(base, "data"), "--run-dir", filepath.Join(base, "run"), "--log-dir", filepath.Join(base, "log")}
+	for _, test := range []struct {
+		name string
+		args []string
+		code int
+	}{
+		{"unknown command", []string{"unknown"}, 2},
+		{"unknown image command", []string{"image", "unknown"}, 2},
+		{"missing image argument", []string{"image", "inspect"}, 2},
+		{"unknown flag", []string{"image", "ls", "--wrong"}, 2},
+		{"unsupported platform", []string{"image", "pull", "example.com/image", "--platform", "windows/amd64"}, 5},
+		{"missing image", []string{"image", "inspect", "missing"}, 3},
+		{"empty list", []string{"image", "ls", "--json"}, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			args := append(append([]string(nil), flags...), test.args...)
+			err := Execute(t.Context(), args, &bytes.Buffer{}, &bytes.Buffer{})
+			if got := ExitCode(err); got != test.code {
+				t.Fatalf("exit = %d, want %d, error %v", got, test.code, err)
+			}
+		})
+	}
+}

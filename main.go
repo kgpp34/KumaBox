@@ -9,14 +9,18 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/kumabox/kumabox/cmd"
 )
 
 func main() {
-	err := cmd.Execute(context.Background(), os.Args[1:], os.Stdout, os.Stderr)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := cmd.Execute(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	if err != nil && !cmd.Silent(err) {
 		fmt.Fprintf(os.Stderr, "kumabox: %v\n", err)
 	}
+	stop()
 	os.Exit(cmd.ExitCode(err))
 }

@@ -9,11 +9,10 @@ A microVM sandbox runtime for AI agents. One node runs one daemon
 Docker-like command line; sandboxes are Cloud Hypervisor microVMs booted from
 OCI images, with CNI networking, cgroups, snapshots and clone.
 
-The core logic is being rewritten from scratch. **The current branch has no
-product code yet** — it contains the specifications and the architecture gate
-only. That is deliberate: each phase of `docs/ROADMAP.md` starts with a
-four-part proposal, and no implementation code is written before it is
-approved.
+The rewrite currently provides the `kumabox` CLI, the host doctor, and OCI
+image management: registry pull, layout/archive import, list, inspect, verify,
+and remove. Each command opens its metadata store and exits. VM lifecycle and
+a daemon are later phases of [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Where the design lives
 
@@ -42,6 +41,39 @@ make race     # race detector, required for concurrency changes
 `make verify` must stay green on macOS with no root and no KVM. Real microVM
 behaviour (Cloud Hypervisor, CNI, KVM) is verified manually on a Linux host
 using the runbook attached to each phase.
+
+## OCI images
+
+Pull or import a Linux image containing regular `/boot/vmlinuz*` and
+`/boot/initrd.img*` files. Image conversion requires `mkfs.erofs` 1.8 or newer;
+unit and integration tests use a stand-in and run on macOS without root/KVM.
+The [synthetic fixture](testdata/oci-layout/README.md) cannot boot a VM.
+
+```bash
+kumabox image pull REGISTRY/IMAGE:TAG --platform linux/amd64
+kumabox image import tiny ./testdata/oci-layout --platform linux/amd64
+kumabox image ls --json
+kumabox image inspect tiny
+kumabox image verify tiny
+kumabox image rm tiny
+```
+
+For a separate data store, pass all three roots:
+
+```bash
+kumabox --root-dir /tmp/kb/data --run-dir /tmp/kb/run --log-dir /tmp/kb/log image ls --json
+```
+
+Import validates OCI manifest/config/layer digests and layer diffIDs, streams
+layers to EROFS, and extracts boot candidates with layer overwrite/whiteout
+semantics. Metadata is committed after durable publication and final digest
+checks. Verification detects EROFS and boot-file corruption. Source OCI blobs
+are never stored persistently; repeated imports reuse verified, registered
+artifacts. Removing a name retains artifacts until the last image reference
+is removed.
+
+The [Linux acceptance runbook](docs/runbooks/s2-oci.md) covers real conversion,
+registry pull, cancellation, concurrency, and crash/retry behavior.
 
 ## Reference material
 

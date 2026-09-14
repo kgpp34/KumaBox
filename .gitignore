@@ -9,3 +9,10 @@ coverage.out
 docs/
 oci-images/ubuntu/kumabox-agent-linux-amd64
 oci-images/ubuntu/kumabox-agent-linux-arm64
+
+# Local Go and tooling caches are generated, never source.
+.cache*/
+.gocache*/
+.gomodcache*/
+gocache*/
+gomodcache*/

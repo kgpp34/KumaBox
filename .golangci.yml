@@ -1,0 +1,118 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  default: none
+  enable:
+    - depguard
+    - dogsled
+    - errcheck
+    - forbidigo
+    - gochecknoinits
+    - gocritic
+    - gosec
+    - govet
+    - ineffassign
+    - modernize
+    - revive
+    - staticcheck
+    - unused
+  settings:
+    depguard:
+      rules:
+        no-command-dependencies:
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/cmd/**"
+            - "!**/main.go"
+          deny:
+            - pkg: github.com/kumabox/kumabox/cmd
+              desc: library packages must not import command packages
+        sqlite-is-an-edge-adapter:
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/cmd/image/**"
+            - "!**/metadata/sqlite/**"
+          deny:
+            - pkg: github.com/kumabox/kumabox/metadata/sqlite
+              desc: only cmd/image may assemble the SQLite adapter
+        oci-is-an-edge-adapter:
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/cmd/image/**"
+            - "!**/images/oci/**"
+          deny:
+            - pkg: github.com/kumabox/kumabox/images/oci
+              desc: only cmd/image may assemble the OCI adapter
+        sql-only-in-sqlite:
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/metadata/sqlite/**"
+          deny:
+            - pkg: database/sql
+              desc: SQL belongs to the metadata engine adapter
+            - pkg: modernc.org/sqlite
+              desc: the SQLite driver belongs to the metadata engine adapter
+        metadata-does-not-own-images:
+          files:
+            - "**/metadata/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/kumabox/kumabox/images
+              desc: image business facts belong to images, not metadata
+        mechanisms-do-not-own-business:
+          files:
+            - "**/storage/**"
+            - "**/lock/**"
+            - "**/errdefs/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/kumabox/kumabox/images
+              desc: mechanisms must not depend on image business logic
+            - pkg: github.com/kumabox/kumabox/metadata
+              desc: mechanisms must not depend on metadata engines
+    forbidigo:
+      forbid:
+        - pattern: ^panic$
+          msg: return a classified error instead of panicking
+        - pattern: ^os\.Getenv$
+          msg: environment access must stay at an approved configuration boundary
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+        - shadow
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+  exclusions:
+    generated: strict
+    paths:
+      - vendor
+      - dist
+    rules:
+      - path: _test\.go
+        linters:
+          - forbidigo
+          - gosec
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      extra:
+        group-params: true
+    goimports:
+      local-prefixes:
+        - github.com/kumabox/kumabox

@@ -37,7 +37,7 @@ func NewCommand() *cobra.Command {
 				return fmt.Errorf("find %s: %w", checkerName, err)
 			}
 
-			check := exec.CommandContext(command.Context(), path, args...)
+			check := exec.CommandContext(command.Context(), path, args...) //nolint:gosec // executable is resolved by name from the operator-controlled PATH
 			check.Stdin = command.InOrStdin()
 			check.Stdout = command.OutOrStdout()
 			check.Stderr = command.ErrOrStderr()
