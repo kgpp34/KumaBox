@@ -15,10 +15,11 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/partial"
-	"github.com/google/go-containerregistry/pkg/v1/types"
+	mediatypes "github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
+	"github.com/kumabox/kumabox/types"
 )
 
 // dockerEntry is one image record in Docker save's manifest.json.
@@ -41,7 +42,7 @@ func newDockerSource(path string, options LocalOptions) (images.Source, error) {
 		options.SourceTag = tag.Name()
 	}
 	source := &resolvedSource{limits: options.Limits}
-	source.resolve = func(ctx context.Context, platform images.Platform) (v1.Image, error) {
+	source.resolve = func(ctx context.Context, platform types.Platform) (v1.Image, error) {
 		entry, config, err := selectDockerEntry(ctx, path, platform, options.SourceTag)
 		if err != nil {
 			return nil, err
@@ -53,7 +54,7 @@ func newDockerSource(path string, options LocalOptions) (images.Source, error) {
 
 // selectDockerEntry requires exactly one tag/platform match. It verifies each
 // relevant config identity before trusting platform or rootfs layer ordering.
-func selectDockerEntry(ctx context.Context, path string, platform images.Platform, sourceTag string) (dockerEntry, []byte, error) {
+func selectDockerEntry(ctx context.Context, path string, platform types.Platform, sourceTag string) (dockerEntry, []byte, error) {
 	raw, err := readLocal(ctx, path, "manifest.json", maxMetadataSize)
 	if err != nil {
 		return dockerEntry{}, nil, err
@@ -127,7 +128,7 @@ func readDockerConfig(ctx context.Context, path, object string) ([]byte, error) 
 	}
 	// sha256:hex names, or modern blobs/sha256/hex paths).
 	hex := strings.TrimPrefix(strings.TrimSuffix(filepath.Base(object), ".json"), "sha256:")
-	digest, err := images.ParseDigest("sha256:" + hex)
+	digest, err := types.ParseDigest("sha256:" + hex)
 	if err != nil {
 		return nil, invalidSource("Docker config filename must contain its sha256 digest")
 	}
@@ -156,8 +157,8 @@ func dockerImageFromEntry(ctx context.Context, path string, entry dockerEntry, c
 	configHash := v1.Hash{Algorithm: "sha256", Hex: fmt.Sprintf("%x", sha256.Sum256(config))}
 	manifest := v1.Manifest{
 		SchemaVersion: 2,
-		MediaType:     types.OCIManifestSchema1,
-		Config:        v1.Descriptor{MediaType: types.OCIConfigJSON, Digest: configHash, Size: int64(len(config))},
+		MediaType:     mediatypes.OCIManifestSchema1,
+		Config:        v1.Descriptor{MediaType: mediatypes.OCIConfigJSON, Digest: configHash, Size: int64(len(config))},
 		Layers:        make([]v1.Descriptor, 0, len(entry.Layers)),
 	}
 	layers := make(map[v1.Hash]*fileLayer, len(entry.Layers))
@@ -190,11 +191,11 @@ func describeArchiveLayer(ctx context.Context, path, object string, limit int64)
 	}
 	buffered := bufio.NewReader(reader)
 	magic, peekErr := buffered.Peek(4)
-	media := types.OCIUncompressedLayer
+	media := mediatypes.OCIUncompressedLayer
 	if len(magic) >= 2 && magic[0] == 0x1f && magic[1] == 0x8b {
-		media = types.OCILayer
+		media = mediatypes.OCILayer
 	} else if len(magic) == 4 && bytes.Equal(magic, []byte{0x28, 0xb5, 0x2f, 0xfd}) {
-		media = types.OCILayerZStd
+		media = mediatypes.OCILayerZStd
 	}
 	if peekErr != nil && !errors.Is(peekErr, io.EOF) {
 		return v1.Descriptor{}, errors.Join(peekErr, reader.Close())
@@ -225,7 +226,9 @@ type dockerImage struct {
 var _ partial.CompressedImageCore = (*dockerImage)(nil)
 
 // MediaType reports the synthetic OCI manifest format.
-func (i *dockerImage) MediaType() (types.MediaType, error) { return types.OCIManifestSchema1, nil }
+func (i *dockerImage) MediaType() (mediatypes.MediaType, error) {
+	return mediatypes.OCIManifestSchema1, nil
+}
 
 // RawConfigFile returns an independent copy of the verified source config.
 func (i *dockerImage) RawConfigFile() ([]byte, error) { return bytes.Clone(i.config), nil }

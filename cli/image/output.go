@@ -8,7 +8,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/kumabox/kumabox/images"
+	"github.com/kumabox/kumabox/types"
 )
 
 // imageOutput is the CLI JSON schema, keeping serialization separate from domain types.
@@ -77,7 +77,7 @@ type (
 )
 
 // imageResult projects domain metadata into the CLI schema without truncating content identities.
-func imageResult(image images.Image) imageOutput {
+func imageResult(image types.Image) imageOutput {
 	layers := make([]layerOutput, 0, len(image.Layers))
 	for _, layer := range image.Layers {
 		bootFiles := make([]bootFileOutput, 0, len(layer.BootFiles))
@@ -90,7 +90,7 @@ func imageResult(image images.Image) imageOutput {
 }
 
 // writeImage reports the aliases and full manifest digest after a successful import.
-func writeImage(writer io.Writer, image images.Image) error {
+func writeImage(writer io.Writer, image types.Image) error {
 	_, err := fmt.Fprintf(writer, "%s\t%s\n", strings.Join(image.Names, ","), image.ManifestDigest)
 	return err
 }
@@ -104,7 +104,7 @@ func writeJSON(writer io.Writer, value any) error {
 
 // writeImagesTable renders a header even for an empty catalog and aligns readable summaries.
 // Full digests remain available through inspect and list --json.
-func writeImagesTable(writer io.Writer, items []images.Image) error {
+func writeImagesTable(writer io.Writer, items []types.Image) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
 	if _, err := fmt.Fprintln(table, "NAME\tIMAGE ID\tPLATFORM\tSIZE\tCREATED"); err != nil {
 		return err

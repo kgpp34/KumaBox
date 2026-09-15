@@ -11,6 +11,7 @@ import (
 
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
+	"github.com/kumabox/kumabox/types"
 )
 
 func TestParseFormat(t *testing.T) {
@@ -97,7 +98,7 @@ func TestOpenLocalFormats(t *testing.T) {
 			staging := t.TempDir()
 			source, cleanup, err := OpenLocal(t.Context(), path, staging, LocalOptions{Format: test.format})
 			if err == nil {
-				_, _, err = readSourceLayers(t.Context(), source, images.Platform{OS: "linux", Architecture: "amd64"})
+				_, _, err = readSourceLayers(t.Context(), source, types.Platform{OS: "linux", Architecture: "amd64"})
 				if cleanupErr := cleanup(); cleanupErr != nil {
 					t.Fatal(cleanupErr)
 				}
@@ -122,7 +123,7 @@ func TestOpenLocalPrefersOCIWithoutFallback(t *testing.T) {
 	entry, dockerObjects, _ := fixtureDockerEntry(t, "amd64", "example/demo:one", "raw")
 	maps.Copy(objects, dockerObjects)
 	objects["manifest.json"] = encodeJSON(t, []dockerEntry{entry})
-	platform := images.Platform{OS: "linux", Architecture: "amd64"}
+	platform := types.Platform{OS: "linux", Architecture: "amd64"}
 	fixture, err := NewLayout("../../testdata/oci-layout")
 	if err != nil {
 		t.Fatal(err)
@@ -193,7 +194,7 @@ func TestOpenLocalCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, resolveErr := source.Resolve(ctx, images.Platform{OS: "linux", Architecture: "amd64"})
+	_, resolveErr := source.Resolve(ctx, types.Platform{OS: "linux", Architecture: "amd64"})
 	if err := cleanup(); err != nil {
 		t.Fatal(err)
 	}

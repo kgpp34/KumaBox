@@ -46,6 +46,23 @@ linters:
           deny:
             - pkg: github.com/kumabox/kumabox/core
               desc: modules must not depend on application composition
+        shared-types-have-no-module-dependencies:
+          files:
+            - "**/types/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/kumabox/kumabox/core
+              desc: shared data contracts must not depend on application services
+            - pkg: github.com/kumabox/kumabox/cli
+              desc: shared data contracts must not depend on command presentation
+            - pkg: github.com/kumabox/kumabox/images
+              desc: shared data contracts must not depend on image implementations
+            - pkg: github.com/kumabox/kumabox/sandbox
+              desc: shared data contracts must not depend on sandbox adapters
+            - pkg: github.com/kumabox/kumabox/disk
+              desc: shared data contracts must not depend on disk adapters
+            - pkg: github.com/kumabox/kumabox/metadata
+              desc: shared data contracts must not depend on persistence engines
         catalog-is-an-edge-adapter:
           files:
             - "$all"

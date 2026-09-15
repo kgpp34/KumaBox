@@ -22,11 +22,12 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/layout"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
-	"github.com/google/go-containerregistry/pkg/v1/types"
+	mediatypes "github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/klauspost/compress/zstd"
 
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
+	"github.com/kumabox/kumabox/types"
 )
 
 func copyFixture(t *testing.T) string {
@@ -47,7 +48,7 @@ func TestSourceChecksOCIObjects(t *testing.T) {
 				t.Fatal(err)
 			}
 			source := indexSource.(*resolvedSource)
-			platform := images.Platform{OS: "linux", Architecture: "amd64"}
+			platform := types.Platform{OS: "linux", Architecture: "amd64"}
 			resolved, err := source.resolve(t.Context(), platform)
 			if err != nil {
 				t.Fatal(err)
@@ -123,7 +124,7 @@ func TestSourceBoundsDecompressionAndCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := source.Resolve(t.Context(), images.Platform{OS: "linux", Architecture: "amd64"})
+	manifest, err := source.Resolve(t.Context(), types.Platform{OS: "linux", Architecture: "amd64"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,13 +158,13 @@ func TestRegistryErrorsDoNotExposeCredentials(t *testing.T) {
 	}
 }
 
-func writeLayout(t *testing.T, compressed, unpacked []byte, media types.MediaType) string {
+func writeLayout(t *testing.T, compressed, unpacked []byte, media mediatypes.MediaType) string {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "blobs", "sha256"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	put := func(raw []byte, media types.MediaType) v1.Descriptor {
+	put := func(raw []byte, media mediatypes.MediaType) v1.Descriptor {
 		digest := fmt.Sprintf("%x", sha256.Sum256(raw))
 		if err := os.WriteFile(filepath.Join(root, "blobs", "sha256", digest), raw, 0o600); err != nil {
 			t.Fatal(err)
@@ -178,9 +179,9 @@ func writeLayout(t *testing.T, compressed, unpacked []byte, media types.MediaTyp
 		return raw
 	}
 	layer := put(compressed, media)
-	config := put(encode(v1.ConfigFile{Architecture: "amd64", OS: "linux", RootFS: v1.RootFS{Type: "layers", DiffIDs: []v1.Hash{{Algorithm: "sha256", Hex: fmt.Sprintf("%x", sha256.Sum256(unpacked))}}}}), types.OCIConfigJSON)
-	manifest := put(encode(v1.Manifest{SchemaVersion: 2, MediaType: types.OCIManifestSchema1, Config: config, Layers: []v1.Descriptor{layer}}), types.OCIManifestSchema1)
-	if err := os.WriteFile(filepath.Join(root, "index.json"), encode(v1.IndexManifest{SchemaVersion: 2, MediaType: types.OCIImageIndex, Manifests: []v1.Descriptor{manifest}}), 0o600); err != nil {
+	config := put(encode(v1.ConfigFile{Architecture: "amd64", OS: "linux", RootFS: v1.RootFS{Type: "layers", DiffIDs: []v1.Hash{{Algorithm: "sha256", Hex: fmt.Sprintf("%x", sha256.Sum256(unpacked))}}}}), mediatypes.OCIConfigJSON)
+	manifest := put(encode(v1.Manifest{SchemaVersion: 2, MediaType: mediatypes.OCIManifestSchema1, Config: config, Layers: []v1.Descriptor{layer}}), mediatypes.OCIManifestSchema1)
+	if err := os.WriteFile(filepath.Join(root, "index.json"), encode(v1.IndexManifest{SchemaVersion: 2, MediaType: mediatypes.OCIImageIndex, Manifests: []v1.Descriptor{manifest}}), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "oci-layout"), []byte(`{"imageLayoutVersion":"1.0.0"}`), 0o600); err != nil {
@@ -191,11 +192,11 @@ func writeLayout(t *testing.T, compressed, unpacked []byte, media types.MediaTyp
 
 func TestSourceSupportsLayerCompressionAndChecksDiffID(t *testing.T) {
 	unpacked := bootTar(t, []*tar.Header{{Name: "boot/vmlinuz", Typeflag: tar.TypeReg, Size: 8}})
-	for _, media := range []types.MediaType{types.OCIUncompressedLayer, types.OCILayer, types.OCILayerZStd} {
+	for _, media := range []mediatypes.MediaType{mediatypes.OCIUncompressedLayer, mediatypes.OCILayer, mediatypes.OCILayerZStd} {
 		t.Run(string(media), func(t *testing.T) {
 			compressed := unpacked
 			switch media {
-			case types.OCILayer:
+			case mediatypes.OCILayer:
 				var buffer bytes.Buffer
 				writer := gzip.NewWriter(&buffer)
 				if _, err := writer.Write(unpacked); err != nil {
@@ -205,7 +206,7 @@ func TestSourceSupportsLayerCompressionAndChecksDiffID(t *testing.T) {
 					t.Fatal(err)
 				}
 				compressed = buffer.Bytes()
-			case types.OCILayerZStd:
+			case mediatypes.OCILayerZStd:
 				writer, err := zstd.NewWriter(nil)
 				if err != nil {
 					t.Fatal(err)
@@ -224,7 +225,7 @@ func TestSourceSupportsLayerCompressionAndChecksDiffID(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				manifest, err := source.Resolve(t.Context(), images.Platform{OS: "linux", Architecture: "amd64"})
+				manifest, err := source.Resolve(t.Context(), types.Platform{OS: "linux", Architecture: "amd64"})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -261,7 +262,7 @@ func TestRegistrySourcePullsFromHTTPRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	image, err := imageForPlatform(index, images.Platform{OS: "linux", Architecture: "amd64"})
+	image, err := imageForPlatform(index, types.Platform{OS: "linux", Architecture: "amd64"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +276,7 @@ func TestRegistrySourcePullsFromHTTPRegistry(t *testing.T) {
 	if normalized != ref.String() {
 		t.Fatalf("reference = %s", normalized)
 	}
-	manifest, err := source.Resolve(t.Context(), images.Platform{OS: "linux", Architecture: "amd64"})
+	manifest, err := source.Resolve(t.Context(), types.Platform{OS: "linux", Architecture: "amd64"})
 	if err != nil {
 		t.Fatal(err)
 	}

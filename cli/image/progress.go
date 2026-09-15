@@ -14,6 +14,7 @@ import (
 
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
+	"github.com/kumabox/kumabox/types"
 )
 
 // imageProgress serializes terminal presentation and implements images.Reporter.
@@ -127,7 +128,7 @@ func (p *imageProgress) Status(status string) error {
 
 // Layer records a completed conversion; position is the zero-based source order.
 // Completion count is independent of position because workers may finish out of order.
-func (p *imageProgress) Layer(position, total int, digest images.Digest) error {
+func (p *imageProgress) Layer(position, total int, digest types.Digest) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.err != nil {
@@ -148,7 +149,7 @@ func (p *imageProgress) Layer(position, total int, digest images.Digest) error {
 
 // Committed records durable import completion while keeping animation alive for cleanup.
 // It preserves reporting failures so the command can distinguish committed-with-error state.
-func (p *imageProgress) Committed(images.Image) error {
+func (p *imageProgress) Committed(types.Image) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.committed = true

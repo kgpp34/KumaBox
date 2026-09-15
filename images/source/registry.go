@@ -14,6 +14,7 @@ import (
 
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
+	"github.com/kumabox/kumabox/types"
 )
 
 // NewRegistry parses a registry reference and returns its normalized storage name.
@@ -30,7 +31,7 @@ func NewRegistry(reference string) (images.Source, string, error) {
 		return nil, "", errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, &safeRegistryError{cause: err, message: "invalid OCI registry reference"})
 	}
 	source := &resolvedSource{limits: images.DefaultLimits()}
-	source.resolve = func(ctx context.Context, platform images.Platform) (v1.Image, error) {
+	source.resolve = func(ctx context.Context, platform types.Platform) (v1.Image, error) {
 		image, err := remote.Image(parsed, remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithPlatform(v1.Platform{OS: platform.OS, Architecture: platform.Architecture}))
 		if err != nil {
 			return nil, registryError(err)

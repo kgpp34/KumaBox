@@ -22,6 +22,7 @@ import (
 
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
+	"github.com/kumabox/kumabox/types"
 )
 
 const (
@@ -68,7 +69,7 @@ func New(ctx context.Context, architecture string, limits images.Limits) (*Conve
 //
 // Draining past tar EOF delivers the full stream to the child process and allows
 // source verification to finish before the generated artifact is accepted.
-func (c *Converter) Convert(ctx context.Context, descriptor images.Descriptor, source io.Reader, workDir string) (images.ConvertedLayer, error) {
+func (c *Converter) Convert(ctx context.Context, descriptor types.Descriptor, source io.Reader, workDir string) (images.ConvertedLayer, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	outputPath := filepath.Join(workDir, descriptor.Digest.Hex()+".erofs")
@@ -243,7 +244,7 @@ func requireEROFSVersion(output string) error {
 
 // deterministicUUID derives stable UUID-shaped bytes from the source identity
 // to avoid mkfs.erofs generating a different filesystem identity on each run.
-func deterministicUUID(digest images.Digest) string {
+func deterministicUUID(digest types.Digest) string {
 	sum := sha256.Sum256([]byte(digest.String()))
 	sum[6] = (sum[6] & 0x0f) | 0x50
 	sum[8] = (sum[8] & 0x3f) | 0x80
@@ -252,18 +253,18 @@ func deterministicUUID(digest images.Digest) string {
 }
 
 // digestPath hashes the generated staged filesystem before it is published.
-func digestPath(ctx context.Context, path string) (images.Digest, int64, error) {
+func digestPath(ctx context.Context, path string) (types.Digest, int64, error) {
 	file, err := os.Open(path) //nolint:gosec // path is a managed staging path
 	if err != nil {
-		return images.Digest{}, 0, fmt.Errorf("open generated EROFS: %w", err)
+		return types.Digest{}, 0, fmt.Errorf("open generated EROFS: %w", err)
 	}
 	hash := sha256.New()
 	size, copyErr := io.Copy(hash, contextReader{ctx: ctx, reader: file})
 	closeErr := file.Close()
 	if err := errors.Join(copyErr, closeErr); err != nil {
-		return images.Digest{}, 0, fmt.Errorf("hash generated EROFS: %w", err)
+		return types.Digest{}, 0, fmt.Errorf("hash generated EROFS: %w", err)
 	}
-	digest, err := images.ParseDigest(fmt.Sprintf("sha256:%x", hash.Sum(nil)))
+	digest, err := types.ParseDigest(fmt.Sprintf("sha256:%x", hash.Sum(nil)))
 	return digest, size, err
 }
 

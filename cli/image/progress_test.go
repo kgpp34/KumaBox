@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/errdefs"
-	"github.com/kumabox/kumabox/images"
+	"github.com/kumabox/kumabox/types"
 )
 
 func TestProgressLogsHaveNoAnimationControls(t *testing.T) {
@@ -22,13 +22,13 @@ func TestProgressLogsHaveNoAnimationControls(t *testing.T) {
 	if err := p.Status("converting layers"); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Layer(1, 2, images.Digest{}); err != nil {
+	if err := p.Layer(1, 2, types.Digest{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Layer(0, 2, images.Digest{}); err != nil {
+	if err := p.Layer(0, 2, types.Digest{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Committed(images.Image{}); err != nil {
+	if err := p.Committed(types.Image{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.Finish(nil); err != nil {
@@ -108,13 +108,13 @@ func TestProgressAnimatesAndCountsConcurrentCompletedLayers(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			if err := p.Layer(position, 3, images.Digest{}); err != nil {
+			if err := p.Layer(position, 3, types.Digest{}); err != nil {
 				t.Error(err)
 			}
 		}()
 	}
 	wait.Wait()
-	if err := p.Committed(images.Image{}); err != nil {
+	if err := p.Committed(types.Image{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.Finish(nil); err != nil {
@@ -161,7 +161,7 @@ func TestProgressRetainsAnimationFailureAfterCommit(t *testing.T) {
 	if err := p.Status("converting layers"); !errors.Is(err, failure) {
 		t.Fatalf("status error = %v", err)
 	}
-	if err := p.Committed(images.Image{}); !errors.Is(err, failure) {
+	if err := p.Committed(types.Image{}); !errors.Is(err, failure) {
 		t.Fatalf("commit report error = %v", err)
 	}
 	err = p.Finish(failure)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/kumabox/kumabox/types"
 )
 
 // ImportCommit contains image facts that a catalog must persist atomically.
@@ -12,11 +14,11 @@ type ImportCommit struct {
 	// Name is the local alias to create or bind to the same existing manifest.
 	Name string
 	// Manifest identifies the image and defines the exact layer order.
-	Manifest Manifest
+	Manifest types.Manifest
 	// Layers contains converted metadata in the same order as Manifest.Layers.
-	Layers []Layer
+	Layers []types.Layer
 	// Boot must equal the overlay-aware selection derived from Layers.
-	Boot Boot
+	Boot types.Boot
 	// Size must equal the sum of converted layer sizes, without overflow.
 	Size int64
 	// Created supplies a nonzero timestamp for a newly registered manifest.
@@ -28,17 +30,17 @@ type Removal struct {
 	// Names contains aliases deleted by the catalog transaction.
 	Names []string
 	// Layers contains source digests no longer referenced by any registered image.
-	Layers []Digest
+	Layers []types.Digest
 }
 
 // CatalogReader reconstructs image facts from a consistent metadata snapshot.
 type CatalogReader interface {
 	// Resolve accepts an exact alias or an unambiguous manifest digest prefix.
-	Resolve(context.Context, string) (Image, error)
+	Resolve(context.Context, string) (types.Image, error)
 	// List returns committed images with their aliases and ordered layers.
-	List(context.Context) ([]Image, error)
+	List(context.Context) ([]types.Image, error)
 	// FindLayers returns committed mappings and rejects conflicting shared artifacts.
-	FindLayers(context.Context, []Digest) (map[Digest]Layer, error)
+	FindLayers(context.Context, []types.Digest) (map[types.Digest]types.Layer, error)
 }
 
 // CatalogWriter changes aliases, image facts and layer references atomically.
@@ -47,7 +49,7 @@ type CatalogWriter interface {
 	CommitImport(context.Context, ImportCommit) error
 	// Remove deletes an alias, or all aliases for a digest reference, and returns
 	// unreferenced layers. expected must still match the resolved manifest.
-	Remove(context.Context, string, Digest) (Removal, error)
+	Remove(context.Context, string, types.Digest) (Removal, error)
 }
 
 // Catalog combines the metadata contracts used by image management commands.

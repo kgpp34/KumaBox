@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/kumabox/kumabox/errdefs"
+	"github.com/kumabox/kumabox/types"
 )
 
 // IsBootName accepts kernel or initrd basenames and excludes .old backups.
@@ -23,13 +24,13 @@ func IsBootName(name string) bool {
 //	                       (repeat for each layer)                  |
 //	                                                               v
 //	                                         last kernel + last initrd
-func SelectBoot(layers []Layer) (Boot, error) {
+func SelectBoot(layers []types.Layer) (types.Boot, error) {
 	// candidate retains provenance while upper layers overwrite the visible boot set.
 	type candidate struct {
 		// layer keys the managed boot directory for this surviving candidate.
-		layer Digest
+		layer types.Digest
 		// file supplies the basename and integrity facts selected for boot.
-		file BootFile
+		file types.BootFile
 	}
 	var candidates []candidate
 	for _, layer := range layers {
@@ -56,7 +57,7 @@ func SelectBoot(layers []Layer) (Boot, error) {
 			candidates = kept
 		}
 	}
-	var boot Boot
+	var boot types.Boot
 	for _, c := range candidates {
 		if strings.HasPrefix(c.file.Name, "vmlinuz") {
 			boot.KernelLayer, boot.KernelFile = c.layer, c.file.Name
@@ -66,10 +67,10 @@ func SelectBoot(layers []Layer) (Boot, error) {
 		}
 	}
 	if boot.KernelLayer.IsZero() {
-		return Boot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, errors.New("image is missing a regular /boot/vmlinuz* kernel"))
+		return types.Boot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, errors.New("image is missing a regular /boot/vmlinuz* kernel"))
 	}
 	if boot.InitrdLayer.IsZero() {
-		return Boot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, errors.New("image is missing a regular /boot/initrd.img* initrd"))
+		return types.Boot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, errors.New("image is missing a regular /boot/initrd.img* initrd"))
 	}
 	return boot, nil
 }

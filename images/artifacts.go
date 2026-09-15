@@ -11,6 +11,7 @@ import (
 
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/storage"
+	"github.com/kumabox/kumabox/types"
 )
 
 // Paths derives managed image, metadata, staging and lock paths from validated roots.
@@ -56,17 +57,17 @@ func (p Paths) LocksDir() string { return filepath.Join(p.roots.Run, "locks", "i
 func (p Paths) MetadataDB() string { return filepath.Join(p.roots.Data, "meta", "meta.db") }
 
 // EROFS returns the managed converted filesystem path for a source digest.
-func (p Paths) EROFS(digest Digest) string {
+func (p Paths) EROFS(digest types.Digest) string {
 	return filepath.Join(p.LayersDir(), digest.Hex()+".erofs")
 }
 
 // BootDir returns the extracted boot directory for a source digest.
-func (p Paths) BootDir(digest Digest) string {
+func (p Paths) BootDir(digest types.Digest) string {
 	return filepath.Join(p.BootBaseDir(), digest.Hex())
 }
 
 // BootFile validates a boot basename before joining it to the managed directory.
-func (p Paths) BootFile(digest Digest, name string) (string, error) {
+func (p Paths) BootFile(digest types.Digest, name string) (string, error) {
 	if !IsBootName(name) {
 		return "", fmt.Errorf("invalid boot artifact name %q", name)
 	}
@@ -74,13 +75,17 @@ func (p Paths) BootFile(digest Digest, name string) (string, error) {
 }
 
 // Kernel returns the conventional vmlinuz path; use BootFile for a selected versioned name.
-func (p Paths) Kernel(digest Digest) string { return filepath.Join(p.BootDir(digest), "vmlinuz") }
+func (p Paths) Kernel(digest types.Digest) string { return filepath.Join(p.BootDir(digest), "vmlinuz") }
 
 // Initrd returns the conventional initrd.img path; use BootFile for a selected versioned name.
-func (p Paths) Initrd(digest Digest) string { return filepath.Join(p.BootDir(digest), "initrd.img") }
+func (p Paths) Initrd(digest types.Digest) string {
+	return filepath.Join(p.BootDir(digest), "initrd.img")
+}
 
 // Lock returns the advisory lock path protecting a source digest and its artifacts.
-func (p Paths) Lock(digest Digest) string { return filepath.Join(p.LocksDir(), digest.Hex()+".lock") }
+func (p Paths) Lock(digest types.Digest) string {
+	return filepath.Join(p.LocksDir(), digest.Hex()+".lock")
+}
 
 // NewStaging creates a unique work directory; the caller must remove it after use.
 func (p Paths) NewStaging(pattern string) (string, error) {
@@ -96,32 +101,32 @@ func (p Paths) NewStaging(pattern string) (string, error) {
 
 // digestFileContext rejects unsafe paths and non-regular artifacts before hashing.
 // Cancellation is checked between reads and all file handles are closed on return.
-func digestFileContext(ctx context.Context, path string) (Digest, int64, error) {
+func digestFileContext(ctx context.Context, path string) (types.Digest, int64, error) {
 	if err := storage.CheckPath(path); err != nil {
-		return Digest{}, 0, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+		return types.Digest{}, 0, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
-		return Digest{}, 0, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, err)
+		return types.Digest{}, 0, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, err)
 	}
 	if !info.Mode().IsRegular() {
-		return Digest{}, 0, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, fmt.Errorf("artifact %s is not a regular file", path))
+		return types.Digest{}, 0, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, fmt.Errorf("artifact %s is not a regular file", path))
 	}
 	root, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
-		return Digest{}, 0, err
+		return types.Digest{}, 0, err
 	}
 	file, err := root.Open(filepath.Base(path))
 	if err != nil {
-		return Digest{}, 0, errors.Join(fmt.Errorf("open %s: %w", path, err), root.Close())
+		return types.Digest{}, 0, errors.Join(fmt.Errorf("open %s: %w", path, err), root.Close())
 	}
 	hash := sha256.New()
 	size, copyErr := io.Copy(hash, contextReader{ctx: ctx, reader: file})
 	closeErr := errors.Join(file.Close(), root.Close())
 	if err := errors.Join(copyErr, closeErr); err != nil {
-		return Digest{}, 0, fmt.Errorf("hash %s: %w", path, err)
+		return types.Digest{}, 0, fmt.Errorf("hash %s: %w", path, err)
 	}
-	digest, err := ParseDigest(fmt.Sprintf("sha256:%x", hash.Sum(nil)))
+	digest, err := types.ParseDigest(fmt.Sprintf("sha256:%x", hash.Sum(nil)))
 	return digest, size, err
 }
 

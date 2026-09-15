@@ -12,6 +12,7 @@ import (
 
 	doctorcmd "github.com/kumabox/kumabox/cli/doctor"
 	imagecmd "github.com/kumabox/kumabox/cli/image"
+	sandboxcmd "github.com/kumabox/kumabox/cli/sandbox"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/version"
@@ -112,6 +113,7 @@ func newRootCommand() *cobra.Command {
 
 	root.AddCommand(doctorcmd.NewCommand())
 	root.AddCommand(imagecmd.NewCommand(func() storage.Roots { return roots }))
+	root.AddCommand(sandboxcmd.NewCreateCommand(func() storage.Roots { return roots }))
 	root.AddCommand(newVersionCommand())
 	classifyArguments(root)
 	return root
@@ -146,7 +148,7 @@ func errorExitCode(err error) int {
 	switch code {
 	case errdefs.CodeNotFound:
 		return 3
-	case errdefs.CodeNameTaken, errdefs.CodeReferenced:
+	case errdefs.CodeNameTaken, errdefs.CodeStateConflict, errdefs.CodeReferenced:
 		return 4
 	case errdefs.CodeInvalidArgument, errdefs.CodeHostIncompatible, errdefs.CodeDigestMismatch, errdefs.CodeArtifactCorrupt:
 		return 5

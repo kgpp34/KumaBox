@@ -15,6 +15,7 @@ import (
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
 	"github.com/kumabox/kumabox/metadata"
+	"github.com/kumabox/kumabox/types"
 )
 
 var _ images.Catalog = (*Store)(nil)
@@ -40,12 +41,42 @@ func Collections() []metadata.Collection {
 type Store struct {
 	// store supplies snapshot reads and atomic writes for all image collections.
 	store metadata.Store
+	// usage checks cross-module references before the final manifest is removed.
+	usage ImageUsage
+}
+
+// ImageUsage checks sandbox references from inside the image removal transaction.
+// Implementations must use reader directly and must not open a nested transaction.
+type ImageUsage interface {
+	InUse(context.Context, metadata.Reader, types.Digest) (bool, error)
+}
+
+// Option configures optional cross-module catalog policies.
+type Option func(*Store)
+
+// WithImageUsage prevents removal of a final manifest while another module uses it.
+func WithImageUsage(usage ImageUsage) Option {
+	return func(store *Store) { store.usage = usage }
 }
 
 // New creates an adapter for a non-nil metadata store whose schema includes
-// Collections. The caller retains ownership of the store's lifetime.
-func New(store metadata.Store) *Store {
-	return &Store{store: store}
+// Collections. The caller retains ownership of the store's lifetime. A catalog
+// sharing metadata with sandboxes must supply WithImageUsage.
+func New(store metadata.Store, options ...Option) *Store {
+	result := &Store{store: store}
+	for _, option := range options {
+		option(result)
+	}
+	return result
+}
+
+// Reader resolves image facts from a transaction owned by another module.
+// It is stateless so core can connect catalogs without creating an import cycle.
+type Reader struct{}
+
+// Resolve reads an alias or digest from the supplied transaction snapshot.
+func (Reader) Resolve(ctx context.Context, reader metadata.Reader, reference string) (types.Image, error) {
+	return resolveRecord(ctx, reader, reference)
 }
 
 // imageRecord stores manifest-wide facts separately from aliases and layer order.
@@ -107,7 +138,7 @@ type bootFileRecord struct {
 	Size int64 `json:"size"`
 }
 
-func encodeBootFiles(files []images.BootFile) []bootFileRecord {
+func encodeBootFiles(files []types.BootFile) []bootFileRecord {
 	result := make([]bootFileRecord, 0, len(files))
 	for _, file := range files {
 		result = append(result, bootFileRecord{Name: file.Name, Digest: file.Digest.String(), Size: file.Size})
@@ -117,10 +148,10 @@ func encodeBootFiles(files []images.BootFile) []bootFileRecord {
 
 // Resolve prefers an exact local alias, then accepts a unique manifest digest
 // prefix of at least 12 hex characters, with or without the sha256: prefix.
-func (c *Store) Resolve(ctx context.Context, reference string) (images.Image, error) {
-	var result images.Image
+func (c *Store) Resolve(ctx context.Context, reference string) (types.Image, error) {
+	var result types.Image
 	err := c.store.View(ctx, func(reader metadata.Reader) error {
-		image, err := resolveRecord(ctx, reader, reference)
+		image, err := (Reader{}).Resolve(ctx, reader, reference)
 		if err != nil {
 			return err
 		}
@@ -132,8 +163,8 @@ func (c *Store) Resolve(ctx context.Context, reference string) (images.Image, er
 
 // List loads a consistent snapshot and sorts images by full manifest digest.
 // Each image includes sorted aliases and manifest-ordered layer occurrences.
-func (c *Store) List(ctx context.Context) ([]images.Image, error) {
-	result := make([]images.Image, 0)
+func (c *Store) List(ctx context.Context) ([]types.Image, error) {
+	result := make([]types.Image, 0)
 	err := c.store.View(ctx, func(reader metadata.Reader) error {
 		return reader.Scan(ctx, CollectionImages, func(id string, _ []byte) error {
 			image, err := loadImage(ctx, reader, id)
@@ -144,7 +175,7 @@ func (c *Store) List(ctx context.Context) ([]images.Image, error) {
 			return nil
 		})
 	})
-	slices.SortFunc(result, func(left, right images.Image) int {
+	slices.SortFunc(result, func(left, right types.Image) int {
 		return strings.Compare(left.ManifestDigest.String(), right.ManifestDigest.String())
 	})
 	return result, errdefs.Context(err, "list images", "", "metadata", "inspect the metadata store", false)
@@ -152,12 +183,12 @@ func (c *Store) List(ctx context.Context) ([]images.Image, error) {
 
 // FindLayers returns committed mappings for requested source digests.
 // Conflicting mappings across images are corruption rather than reusable cache entries.
-func (c *Store) FindLayers(ctx context.Context, digests []images.Digest) (map[images.Digest]images.Layer, error) {
-	wanted := make(map[images.Digest]struct{}, len(digests))
+func (c *Store) FindLayers(ctx context.Context, digests []types.Digest) (map[types.Digest]types.Layer, error) {
+	wanted := make(map[types.Digest]struct{}, len(digests))
 	for _, digest := range digests {
 		wanted[digest] = struct{}{}
 	}
-	result := make(map[images.Digest]images.Layer)
+	result := make(map[types.Digest]types.Layer)
 	err := c.store.View(ctx, func(reader metadata.Reader) error {
 		return reader.Scan(ctx, CollectionLayers, func(_ string, raw []byte) error {
 			var record layerRecord
@@ -246,7 +277,7 @@ func (c *Store) CommitImport(ctx context.Context, commit images.ImportCommit) er
 // expected protects against a reference rebound while the caller waited for locks.
 // The final alias removal drops manifest rows and returns unreferenced source layers;
 // the caller, holding the corresponding artifact locks, performs file cleanup.
-func (c *Store) Remove(ctx context.Context, reference string, expected images.Digest) (images.Removal, error) {
+func (c *Store) Remove(ctx context.Context, reference string, expected types.Digest) (images.Removal, error) {
 	var result images.Removal
 	// The transaction is the reachability boundary for shared artifacts:
 	//
@@ -295,6 +326,15 @@ func (c *Store) Remove(ctx context.Context, reference string, expected images.Di
 		if remaining > 0 {
 			return nil
 		}
+		if c.usage != nil {
+			used, err := c.usage.InUse(ctx, writer, image.ManifestDigest)
+			if err != nil {
+				return err
+			}
+			if used {
+				return errdefs.New(errdefs.ClassConflict, errdefs.CodeReferenced, fmt.Errorf("image %s is used by a sandbox", image.ManifestDigest))
+			}
+		}
 		if err := writer.Delete(ctx, CollectionImages, digest); err != nil {
 			return err
 		}
@@ -317,20 +357,20 @@ func (c *Store) Remove(ctx context.Context, reference string, expected images.Di
 
 // resolveRecord keeps alias precedence consistent between lookup and removal,
 // so even a hex-looking exact alias never accidentally selects a different image.
-func resolveRecord(ctx context.Context, reader metadata.Reader, reference string) (images.Image, error) {
+func resolveRecord(ctx context.Context, reader metadata.Reader, reference string) (types.Image, error) {
 	digestID := ""
 	if raw, ok, err := reader.Get(ctx, CollectionNames, reference); err != nil {
-		return images.Image{}, err
+		return types.Image{}, err
 	} else if ok {
 		var record nameRecord
 		if err := json.Unmarshal(raw, &record); err != nil {
-			return images.Image{}, corruptRecord("name", err)
+			return types.Image{}, corruptRecord("name", err)
 		}
 		digestID = record.ManifestDigest
 	} else {
 		prefix := strings.TrimPrefix(reference, "sha256:")
 		if len(prefix) < minimumDigestPrefix {
-			return images.Image{}, errdefs.New(errdefs.ClassNotFound, errdefs.CodeNotFound, fmt.Errorf("image %q not found", reference))
+			return types.Image{}, errdefs.New(errdefs.ClassNotFound, errdefs.CodeNotFound, fmt.Errorf("image %q not found", reference))
 		}
 		if err := reader.Scan(ctx, CollectionImages, func(id string, _ []byte) error {
 			if strings.HasPrefix(strings.TrimPrefix(id, "sha256:"), prefix) {
@@ -341,11 +381,11 @@ func resolveRecord(ctx context.Context, reader metadata.Reader, reference string
 			}
 			return nil
 		}); err != nil {
-			return images.Image{}, err
+			return types.Image{}, err
 		}
 	}
 	if digestID == "" {
-		return images.Image{}, errdefs.New(errdefs.ClassNotFound, errdefs.CodeNotFound, fmt.Errorf("image %q not found", reference))
+		return types.Image{}, errdefs.New(errdefs.ClassNotFound, errdefs.CodeNotFound, fmt.Errorf("image %q not found", reference))
 	}
 	return loadImage(ctx, reader, digestID)
 }
@@ -353,33 +393,33 @@ func resolveRecord(ctx context.Context, reader metadata.Reader, reference string
 // loadImage reconstructs and validates records within the caller's transaction.
 // Identity, contiguous positions and derived boot/size facts must agree before
 // persisted data can be exposed as a domain image.
-func loadImage(ctx context.Context, reader metadata.Reader, digestID string) (images.Image, error) {
+func loadImage(ctx context.Context, reader metadata.Reader, digestID string) (types.Image, error) {
 	raw, ok, err := reader.Get(ctx, CollectionImages, digestID)
 	if err != nil {
-		return images.Image{}, err
+		return types.Image{}, err
 	}
 	if !ok {
-		return images.Image{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, fmt.Errorf("image record %s is missing", digestID))
+		return types.Image{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, fmt.Errorf("image record %s is missing", digestID))
 	}
 	var record imageRecord
 	if err := json.Unmarshal(raw, &record); err != nil {
-		return images.Image{}, corruptRecord("image", err)
+		return types.Image{}, corruptRecord("image", err)
 	}
-	manifest, err := images.ParseDigest(record.ManifestDigest)
+	manifest, err := types.ParseDigest(record.ManifestDigest)
 	if err != nil {
-		return images.Image{}, corruptRecord("image digest", err)
+		return types.Image{}, corruptRecord("image digest", err)
 	}
-	kernel, err := images.ParseDigest(record.KernelLayer)
+	kernel, err := types.ParseDigest(record.KernelLayer)
 	if err != nil {
-		return images.Image{}, corruptRecord("kernel digest", err)
+		return types.Image{}, corruptRecord("kernel digest", err)
 	}
-	initrd, err := images.ParseDigest(record.InitrdLayer)
+	initrd, err := types.ParseDigest(record.InitrdLayer)
 	if err != nil {
-		return images.Image{}, corruptRecord("initrd digest", err)
+		return types.Image{}, corruptRecord("initrd digest", err)
 	}
-	image := images.Image{
-		ManifestDigest: manifest, Platform: images.Platform{OS: record.OS, Architecture: record.Architecture},
-		Boot: images.Boot{KernelLayer: kernel, InitrdLayer: initrd, KernelFile: record.KernelFile, InitrdFile: record.InitrdFile}, Size: record.Size, CreatedAt: record.CreatedAt,
+	image := types.Image{
+		ManifestDigest: manifest, Platform: types.Platform{OS: record.OS, Architecture: record.Architecture},
+		Boot: types.Boot{KernelLayer: kernel, InitrdLayer: initrd, KernelFile: record.KernelFile, InitrdFile: record.InitrdFile}, Size: record.Size, CreatedAt: record.CreatedAt,
 	}
 	if err := reader.Scan(ctx, CollectionNames, func(name string, raw []byte) error {
 		var item nameRecord
@@ -391,7 +431,7 @@ func loadImage(ctx context.Context, reader metadata.Reader, digestID string) (im
 		}
 		return nil
 	}); err != nil {
-		return images.Image{}, err
+		return types.Image{}, err
 	}
 	var layerRecords []layerRecord
 	if err := reader.Scan(ctx, CollectionLayers, func(key string, raw []byte) error {
@@ -408,28 +448,28 @@ func loadImage(ctx context.Context, reader metadata.Reader, digestID string) (im
 		layerRecords = append(layerRecords, item)
 		return nil
 	}); err != nil {
-		return images.Image{}, err
+		return types.Image{}, err
 	}
 	slices.SortFunc(layerRecords, func(a, b layerRecord) int { return a.Position - b.Position })
 	for pos, item := range layerRecords {
 		if item.Position != pos {
-			return images.Image{}, corruptRecord("layer order", errors.New("noncontiguous layer positions"))
+			return types.Image{}, corruptRecord("layer order", errors.New("noncontiguous layer positions"))
 		}
 		layer, err := decodeLayer(item)
 		if err != nil {
-			return images.Image{}, err
+			return types.Image{}, err
 		}
 		image.Layers = append(image.Layers, layer)
 	}
 	if manifest.String() != digestID {
-		return images.Image{}, corruptRecord("image identity", errors.New("record key differs from manifest digest"))
+		return types.Image{}, corruptRecord("image identity", errors.New("record key differs from manifest digest"))
 	}
-	descriptors := make([]images.Descriptor, len(image.Layers))
+	descriptors := make([]types.Descriptor, len(image.Layers))
 	for pos, layer := range image.Layers {
-		descriptors[pos] = images.Descriptor{Digest: layer.SourceDigest}
+		descriptors[pos] = types.Descriptor{Digest: layer.SourceDigest}
 	}
-	if err := (images.ImportCommit{Name: "stored", Manifest: images.Manifest{Digest: manifest, Platform: image.Platform, Layers: descriptors}, Layers: image.Layers, Boot: image.Boot, Size: image.Size, Created: image.CreatedAt}).Validate(); err != nil {
-		return images.Image{}, corruptRecord("image facts", err)
+	if err := (images.ImportCommit{Name: "stored", Manifest: types.Manifest{Digest: manifest, Platform: image.Platform, Layers: descriptors}, Layers: image.Layers, Boot: image.Boot, Size: image.Size, Created: image.CreatedAt}).Validate(); err != nil {
+		return types.Image{}, corruptRecord("image facts", err)
 	}
 	slices.Sort(image.Names)
 	return image, nil
@@ -437,29 +477,29 @@ func loadImage(ctx context.Context, reader metadata.Reader, digestID string) (im
 
 // decodeLayer validates serialized artifact identities and boot overlay facts.
 // It verifies metadata shape only; images.Verify checks the actual files.
-func decodeLayer(record layerRecord) (images.Layer, error) {
-	source, err := images.ParseDigest(record.SourceDigest)
+func decodeLayer(record layerRecord) (types.Layer, error) {
+	source, err := types.ParseDigest(record.SourceDigest)
 	if err != nil {
-		return images.Layer{}, corruptRecord("source layer digest", err)
+		return types.Layer{}, corruptRecord("source layer digest", err)
 	}
-	erofs, err := images.ParseDigest(record.EROFSDigest)
+	erofs, err := types.ParseDigest(record.EROFSDigest)
 	if err != nil {
-		return images.Layer{}, corruptRecord("erofs digest", err)
+		return types.Layer{}, corruptRecord("erofs digest", err)
 	}
-	layer := images.Layer{SourceDigest: source, EROFSDigest: erofs, Size: record.Size, Whiteouts: record.Whiteouts, BootOpaque: record.BootOpaque}
+	layer := types.Layer{SourceDigest: source, EROFSDigest: erofs, Size: record.Size, Whiteouts: record.Whiteouts, BootOpaque: record.BootOpaque}
 	for _, file := range record.BootFiles {
-		digest, err := images.ParseDigest(file.Digest)
+		digest, err := types.ParseDigest(file.Digest)
 		if err != nil || !images.IsBootName(file.Name) || file.Size <= 0 {
-			return images.Layer{}, corruptRecord("boot file", errors.New("invalid name, digest or size"))
+			return types.Layer{}, corruptRecord("boot file", errors.New("invalid name, digest or size"))
 		}
-		layer.BootFiles = append(layer.BootFiles, images.BootFile{Name: file.Name, Digest: digest, Size: file.Size})
+		layer.BootFiles = append(layer.BootFiles, types.BootFile{Name: file.Name, Digest: digest, Size: file.Size})
 	}
 	if layer.SourceDigest.IsZero() || layer.EROFSDigest.IsZero() || layer.Size <= 0 {
-		return images.Layer{}, corruptRecord("layer", errors.New("invalid digest or size"))
+		return types.Layer{}, corruptRecord("layer", errors.New("invalid digest or size"))
 	}
 	for _, name := range layer.Whiteouts {
 		if !images.IsBootName(name) {
-			return images.Layer{}, corruptRecord("whiteout", errors.New("invalid boot whiteout"))
+			return types.Layer{}, corruptRecord("whiteout", errors.New("invalid boot whiteout"))
 		}
 	}
 	return layer, nil
@@ -478,13 +518,13 @@ func corruptRecord(kind string, cause error) error {
 }
 
 // layerKey preserves distinct repeated source layers by using manifest position.
-func layerKey(manifest images.Digest, position int) string {
+func layerKey(manifest types.Digest, position int) string {
 	return fmt.Sprintf("%s/%08d", manifest.String(), position)
 }
 
 // layerReferenced checks remaining occurrences in the current write transaction
 // before authorizing filesystem reclamation of a shared source digest.
-func layerReferenced(ctx context.Context, reader metadata.Reader, digest images.Digest) (bool, error) {
+func layerReferenced(ctx context.Context, reader metadata.Reader, digest types.Digest) (bool, error) {
 	referenced := false
 	err := reader.Scan(ctx, CollectionLayers, func(_ string, raw []byte) error {
 		var record layerRecord

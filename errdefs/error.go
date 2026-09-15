@@ -15,6 +15,8 @@ const (
 	CodeNotFound Code = "NOT_FOUND"
 	// CodeNameTaken indicates a name is already bound to conflicting state.
 	CodeNameTaken Code = "NAME_TAKEN"
+	// CodeStateConflict indicates a generation or lifecycle precondition changed.
+	CodeStateConflict Code = "STATE_CONFLICT"
 	// CodeInvalidArgument indicates an argument or option violates the operation contract.
 	CodeInvalidArgument Code = "INVALID_ARGUMENT"
 	// CodeHostIncompatible indicates the host lacks a required tool or supported capability.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/storage"
+	"github.com/kumabox/kumabox/types"
 
 	filelock "github.com/kumabox/kumabox/lock/flock"
 )
@@ -16,7 +17,7 @@ import (
 type RemovalCatalog interface {
 	ImageResolver
 	// Remove atomically deletes references only if the manifest binding is unchanged.
-	Remove(context.Context, string, Digest) (Removal, error)
+	Remove(context.Context, string, types.Digest) (Removal, error)
 }
 
 // Remove drops an alias or a manifest and deletes only layers no longer referenced

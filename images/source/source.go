@@ -17,11 +17,12 @@ import (
 	"sync"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
-	"github.com/google/go-containerregistry/pkg/v1/types"
+	mediatypes "github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/klauspost/compress/zstd"
 
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
+	"github.com/kumabox/kumabox/types"
 )
 
 // maxMetadataSize bounds accepted manifest, config, and index object sizes.
@@ -32,19 +33,19 @@ type resolvedLayer struct {
 	// layer supplies the encoded bytes through the source adapter.
 	layer v1.Layer
 	// diffID is the config hash of the decoded tar stream.
-	diffID images.Digest
+	diffID types.Digest
 	// mediaType selects gzip, zstd, or raw decoding.
-	mediaType types.MediaType
+	mediaType mediatypes.MediaType
 }
 
 // resolvedSource shares metadata and streaming checks across all source formats.
 type resolvedSource struct {
 	// resolve selects the format-specific image.
-	resolve func(context.Context, images.Platform) (v1.Image, error)
+	resolve func(context.Context, types.Platform) (v1.Image, error)
 	// mu protects replacement and lookup of the resolved layer map.
 	mu sync.RWMutex
 	// layers is populated only after successful metadata validation.
-	layers map[images.Digest]resolvedLayer
+	layers map[types.Digest]resolvedLayer
 	// limits bounds encoded and unpacked layer content.
 	limits images.Limits
 }
@@ -55,95 +56,95 @@ var _ images.Source = (*resolvedSource)(nil)
 // before publishing the layer lookup used by OpenLayer. Encoded digest, size, and
 // unpacked diffID are checked during layer consumption, even when an adapter has
 // already inspected encoded objects while constructing the image.
-func (s *resolvedSource) Resolve(ctx context.Context, platform images.Platform) (images.Manifest, error) {
+func (s *resolvedSource) Resolve(ctx context.Context, platform types.Platform) (types.Manifest, error) {
 	if err := ctx.Err(); err != nil {
-		return images.Manifest{}, err
+		return types.Manifest{}, err
 	}
 	image, err := s.resolve(ctx, platform)
 	if err != nil {
-		return images.Manifest{}, sourceError(err)
+		return types.Manifest{}, sourceError(err)
 	}
 	raw, err := image.RawManifest()
 	if err != nil {
-		return images.Manifest{}, sourceError(err)
+		return types.Manifest{}, sourceError(err)
 	}
 	if len(raw) > maxMetadataSize {
-		return images.Manifest{}, invalidSource("manifest exceeds metadata limit")
+		return types.Manifest{}, invalidSource("manifest exceeds metadata limit")
 	}
 	manifest, err := v1.ParseManifest(bytes.NewReader(raw))
 	if err != nil {
-		return images.Manifest{}, invalidSource("invalid OCI manifest: %v", err)
+		return types.Manifest{}, invalidSource("invalid OCI manifest: %v", err)
 	}
 	manifestHash, err := image.Digest()
 	if err != nil {
-		return images.Manifest{}, sourceError(err)
+		return types.Manifest{}, sourceError(err)
 	}
 	if err := checkBytes(raw, manifestHash, int64(len(raw))); err != nil {
-		return images.Manifest{}, err
+		return types.Manifest{}, err
 	}
-	digest, err := images.ParseDigest(manifestHash.String())
+	digest, err := types.ParseDigest(manifestHash.String())
 	if err != nil {
-		return images.Manifest{}, invalidSource("invalid manifest digest: %v", err)
+		return types.Manifest{}, invalidSource("invalid manifest digest: %v", err)
 	}
 	if manifest.SchemaVersion != 2 {
-		return images.Manifest{}, invalidSource("unsupported OCI manifest schema version")
+		return types.Manifest{}, invalidSource("unsupported OCI manifest schema version")
 	}
-	if manifest.Config.MediaType != types.OCIConfigJSON && manifest.Config.MediaType != types.DockerConfigJSON {
-		return images.Manifest{}, invalidSource("unsupported OCI config media type")
+	if manifest.Config.MediaType != mediatypes.OCIConfigJSON && manifest.Config.MediaType != mediatypes.DockerConfigJSON {
+		return types.Manifest{}, invalidSource("unsupported OCI config media type")
 	}
 	if err := validateDescriptor(manifest.Config, maxMetadataSize); err != nil {
-		return images.Manifest{}, err
+		return types.Manifest{}, err
 	}
 	configRaw, err := image.RawConfigFile()
 	if err != nil {
-		return images.Manifest{}, sourceError(err)
+		return types.Manifest{}, sourceError(err)
 	}
 	if err := checkBytes(configRaw, manifest.Config.Digest, manifest.Config.Size); err != nil {
-		return images.Manifest{}, err
+		return types.Manifest{}, err
 	}
 	config, err := v1.ParseConfigFile(bytes.NewReader(configRaw))
 	if err != nil {
-		return images.Manifest{}, invalidSource("invalid OCI config: %v", err)
+		return types.Manifest{}, invalidSource("invalid OCI config: %v", err)
 	}
 	if config.OS != platform.OS || config.Architecture != platform.Architecture {
-		return images.Manifest{}, invalidSource("image platform %s/%s does not match %s/%s", config.OS, config.Architecture, platform.OS, platform.Architecture)
+		return types.Manifest{}, invalidSource("image platform %s/%s does not match %s/%s", config.OS, config.Architecture, platform.OS, platform.Architecture)
 	}
 	if config.RootFS.Type != "layers" || len(config.RootFS.DiffIDs) != len(manifest.Layers) {
-		return images.Manifest{}, invalidSource("config rootfs does not match manifest layers")
+		return types.Manifest{}, invalidSource("config rootfs does not match manifest layers")
 	}
-	layers := make(map[images.Digest]resolvedLayer)
-	descriptors := make([]images.Descriptor, len(manifest.Layers))
+	layers := make(map[types.Digest]resolvedLayer)
+	descriptors := make([]types.Descriptor, len(manifest.Layers))
 	for position, desc := range manifest.Layers {
 		if err := validateDescriptor(desc, s.limits.LayerSize); err != nil {
-			return images.Manifest{}, err
+			return types.Manifest{}, err
 		}
 		switch desc.MediaType {
-		case types.OCILayer, types.OCIUncompressedLayer, types.OCILayerZStd, types.DockerLayer, types.DockerUncompressedLayer:
+		case mediatypes.OCILayer, mediatypes.OCIUncompressedLayer, mediatypes.OCILayerZStd, mediatypes.DockerLayer, mediatypes.DockerUncompressedLayer:
 		default:
-			return images.Manifest{}, invalidSource("unsupported layer media type %s", desc.MediaType)
+			return types.Manifest{}, invalidSource("unsupported layer media type %s", desc.MediaType)
 		}
-		digest, err := images.ParseDigest(desc.Digest.String())
+		digest, err := types.ParseDigest(desc.Digest.String())
 		if err != nil {
-			return images.Manifest{}, invalidSource("invalid layer digest: %v", err)
+			return types.Manifest{}, invalidSource("invalid layer digest: %v", err)
 		}
-		diffID, err := images.ParseDigest(config.RootFS.DiffIDs[position].String())
+		diffID, err := types.ParseDigest(config.RootFS.DiffIDs[position].String())
 		if err != nil {
-			return images.Manifest{}, invalidSource("invalid layer diffID: %v", err)
+			return types.Manifest{}, invalidSource("invalid layer diffID: %v", err)
 		}
 		layer, err := image.LayerByDigest(desc.Digest)
 		if err != nil {
-			return images.Manifest{}, sourceError(err)
+			return types.Manifest{}, sourceError(err)
 		}
 		if existing, ok := layers[digest]; ok && existing.diffID != diffID {
-			return images.Manifest{}, invalidSource("repeated layer has inconsistent diffID")
+			return types.Manifest{}, invalidSource("repeated layer has inconsistent diffID")
 		}
 		layers[digest] = resolvedLayer{layer: layer, diffID: diffID, mediaType: desc.MediaType}
-		descriptors[position] = images.Descriptor{Digest: digest, Size: desc.Size}
+		descriptors[position] = types.Descriptor{Digest: digest, Size: desc.Size}
 	}
 	s.mu.Lock()
 	s.layers = layers
 	s.mu.Unlock()
-	return images.Manifest{Digest: digest, Platform: platform, Layers: descriptors}, nil
+	return types.Manifest{Digest: digest, Platform: platform, Layers: descriptors}, nil
 }
 
 // OpenLayer opens a previously resolved layer as a decoded tar stream. The caller
@@ -153,7 +154,7 @@ func (s *resolvedSource) Resolve(ctx context.Context, platform images.Platform) 
 //	encoded bytes --> size + digest check --> decoder --> limit + diffID check
 //	                      ^                                |
 //	                      +--- drain encoded remainder <---+ EOF
-func (s *resolvedSource) OpenLayer(ctx context.Context, descriptor images.Descriptor) (io.ReadCloser, error) {
+func (s *resolvedSource) OpenLayer(ctx context.Context, descriptor types.Descriptor) (io.ReadCloser, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -172,13 +173,13 @@ func (s *resolvedSource) OpenLayer(ctx context.Context, descriptor images.Descri
 	var input io.Reader = buffered
 	closeDecoder := func() error { return nil }
 	switch layer.mediaType {
-	case types.OCILayer, types.DockerLayer:
+	case mediatypes.OCILayer, mediatypes.DockerLayer:
 		decoder, err := gzip.NewReader(buffered)
 		if err != nil {
 			return nil, errors.Join(sourceError(err), raw.Close())
 		}
 		input, closeDecoder = decoder, decoder.Close
-	case types.OCILayerZStd:
+	case mediatypes.OCILayerZStd:
 		decoder, err := zstd.NewReader(buffered, zstd.WithDecoderMaxMemory(uint64(max(1, s.limits.UnpackedSize))), zstd.WithDecoderConcurrency(1))
 		if err != nil {
 			return nil, errors.Join(sourceError(err), raw.Close())
@@ -200,7 +201,7 @@ type checkedReader struct {
 	// hash accumulates every byte returned by reader.
 	hash hash.Hash
 	// expected is the stored digest or unpacked diffID.
-	expected images.Digest
+	expected types.Digest
 	// limit is the maximum byte count; Read probes one extra byte for overflow.
 	limit int64
 	// size is the declared byte count, or -1 when no count is declared.
@@ -274,7 +275,7 @@ func (r *layerReader) Close() error { return errors.Join(r.closeDecoder(), r.raw
 
 // validateDescriptor accepts bounded SHA-256 objects and rejects external URLs.
 func validateDescriptor(desc v1.Descriptor, limit int64) error {
-	if _, err := images.ParseDigest(desc.Digest.String()); err != nil {
+	if _, err := types.ParseDigest(desc.Digest.String()); err != nil {
 		return invalidSource("invalid descriptor: %v", err)
 	}
 	if desc.Size < 0 || desc.Size > limit {

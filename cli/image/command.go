@@ -10,8 +10,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kumabox/kumabox/errdefs"
-	"github.com/kumabox/kumabox/images"
 	"github.com/kumabox/kumabox/storage"
+	"github.com/kumabox/kumabox/types"
 )
 
 // rootsProvider defers reading storage roots until command flags have been parsed.
@@ -32,12 +32,12 @@ func NewCommand(roots rootsProvider) *cobra.Command {
 }
 
 // parsePlatform rejects targets unsupported by the Linux image conversion pipeline.
-func parsePlatform(value string) (images.Platform, error) {
+func parsePlatform(value string) (types.Platform, error) {
 	parts := strings.Split(value, "/")
 	if len(parts) != 2 || parts[0] != "linux" || (parts[1] != "amd64" && parts[1] != "arm64") {
-		return images.Platform{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("unsupported platform %q", value))
+		return types.Platform{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("unsupported platform %q", value))
 	}
-	return images.Platform{OS: parts[0], Architecture: parts[1]}, nil
+	return types.Platform{OS: parts[0], Architecture: parts[1]}, nil
 }
 
 // defaultPlatform selects the host architecture while keeping the guest OS Linux.

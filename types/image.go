@@ -1,8 +1,4 @@
-// Package images defines image identities and manages imports, artifact verification,
-// boot selection and removal. Source, converter and catalog adapters implement the
-// contracts in this package without coupling the workflows to an archive format
-// or metadata engine.
-package images
+package types
 
 import (
 	"encoding/hex"

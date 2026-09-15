@@ -7,25 +7,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kumabox/kumabox/images"
+	"github.com/kumabox/kumabox/types"
 )
 
 func TestImagesTableHeadersAndAlignedRows(t *testing.T) {
-	first, err := images.ParseDigest("sha256:" + strings.Repeat("a", 64))
+	first, err := types.ParseDigest("sha256:" + strings.Repeat("a", 64))
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := images.ParseDigest("sha256:" + strings.Repeat("b", 64))
+	second, err := types.ParseDigest("sha256:" + strings.Repeat("b", 64))
 	if err != nil {
 		t.Fatal(err)
 	}
 	created := time.Date(2026, 9, 14, 16, 30, 0, 0, time.FixedZone("UTC+8", 8*60*60))
-	items := []images.Image{
+	items := []types.Image{
 		{
 			Names: []string{"demo", "demo-alias-with-a-long-name"}, ManifestDigest: first,
-			Platform: images.Platform{OS: "linux", Architecture: "amd64"}, Size: 127600000, CreatedAt: created,
+			Platform: types.Platform{OS: "linux", Architecture: "amd64"}, Size: 127600000, CreatedAt: created,
 		},
-		{ManifestDigest: second, Platform: images.Platform{OS: "linux", Architecture: "arm64"}, Size: 1024, CreatedAt: created},
+		{ManifestDigest: second, Platform: types.Platform{OS: "linux", Architecture: "arm64"}, Size: 1024, CreatedAt: created},
 	}
 	var out bytes.Buffer
 	if err := writeImagesTable(&out, items); err != nil {

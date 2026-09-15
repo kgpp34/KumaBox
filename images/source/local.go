@@ -10,7 +10,7 @@ import (
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/partial"
-	"github.com/google/go-containerregistry/pkg/v1/types"
+	mediatypes "github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/kumabox/kumabox/images"
 )
@@ -218,7 +218,7 @@ func (l *fileLayer) Digest() (v1.Hash, error) { return l.descriptor.Digest, nil 
 func (l *fileLayer) Size() (int64, error) { return l.descriptor.Size, nil }
 
 // MediaType identifies the decoder required for the stored object.
-func (l *fileLayer) MediaType() (types.MediaType, error) { return l.descriptor.MediaType, nil }
+func (l *fileLayer) MediaType() (mediatypes.MediaType, error) { return l.descriptor.MediaType, nil }
 
 // Compressed opens encoded bytes inside the source root; the caller owns Close.
 func (l *fileLayer) Compressed() (io.ReadCloser, error) {

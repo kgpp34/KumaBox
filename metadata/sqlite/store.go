@@ -27,8 +27,8 @@ import (
 const (
 	// applicationID distinguishes KumaBox metadata from unrelated SQLite files.
 	applicationID = 0x4B554D41
-	// schemaVersion identifies the collection/record schema accepted by this engine.
-	schemaVersion = 1
+	// schemaVersion identifies the current application collection contract.
+	schemaVersion = 2
 	// initLockName serializes schema initialization across processes in this directory.
 	initLockName = "init.lock"
 )

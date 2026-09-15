@@ -21,6 +21,7 @@ import (
 
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
+	"github.com/kumabox/kumabox/types"
 )
 
 func encodeJSON(t *testing.T, value any) []byte {
@@ -120,10 +121,10 @@ func writeImageArchive(t *testing.T, objects map[string][]byte, compressed bool)
 	return path
 }
 
-func readSourceLayers(ctx context.Context, source images.Source, platform images.Platform) (images.Manifest, [][]byte, error) {
+func readSourceLayers(ctx context.Context, source images.Source, platform types.Platform) (types.Manifest, [][]byte, error) {
 	manifest, err := source.Resolve(ctx, platform)
 	if err != nil {
-		return images.Manifest{}, nil, err
+		return types.Manifest{}, nil, err
 	}
 	var layers [][]byte
 	for _, descriptor := range manifest.Layers {
@@ -156,7 +157,7 @@ func TestDockerSourcePreservesLayersAndIdentity(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			platform := images.Platform{OS: "linux", Architecture: "amd64"}
+			platform := types.Platform{OS: "linux", Architecture: "amd64"}
 			manifest, layers, err := readSourceLayers(t.Context(), source, platform)
 			if err != nil {
 				t.Fatal(err)
@@ -216,7 +217,7 @@ func TestDockerSourceSelectsTagAndPlatform(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, _, readErr := readSourceLayers(t.Context(), source, images.Platform{OS: "linux", Architecture: test.architecture})
+			_, _, readErr := readSourceLayers(t.Context(), source, types.Platform{OS: "linux", Architecture: test.architecture})
 			if err := cleanup(); err != nil {
 				t.Fatal(err)
 			}
@@ -274,7 +275,7 @@ func TestDockerSourceRejectsCorruptionAndUnsafeReferences(t *testing.T) {
 			staging := t.TempDir()
 			source, cleanup, err := OpenLocal(t.Context(), writeImageArchive(t, objects, false), staging, LocalOptions{Limits: limits})
 			if err == nil {
-				_, _, err = readSourceLayers(t.Context(), source, images.Platform{OS: "linux", Architecture: "amd64"})
+				_, _, err = readSourceLayers(t.Context(), source, types.Platform{OS: "linux", Architecture: "amd64"})
 				if cleanupErr := cleanup(); cleanupErr != nil {
 					t.Fatal(cleanupErr)
 				}
@@ -313,7 +314,7 @@ func TestDockerSourceBlobPaths(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, layers, readErr := readSourceLayers(t.Context(), source, images.Platform{OS: "linux", Architecture: "amd64"})
+			_, layers, readErr := readSourceLayers(t.Context(), source, types.Platform{OS: "linux", Architecture: "amd64"})
 			if err := cleanup(); err != nil {
 				t.Fatal(err)
 			}

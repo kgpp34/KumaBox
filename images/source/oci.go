@@ -11,9 +11,10 @@ import (
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/partial"
-	"github.com/google/go-containerregistry/pkg/v1/types"
+	mediatypes "github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/kumabox/kumabox/images"
+	"github.com/kumabox/kumabox/types"
 )
 
 // NewLayout opens an OCI image layout using default source limits. Validation
@@ -31,7 +32,7 @@ func NewLayoutWithLimits(path string, limits images.Limits) (images.Source, erro
 		return nil, invalidSource("OCI size limits must be positive and bounded")
 	}
 	source := &resolvedSource{limits: limits}
-	source.resolve = func(ctx context.Context, platform images.Platform) (v1.Image, error) {
+	source.resolve = func(ctx context.Context, platform types.Platform) (v1.Image, error) {
 		if err := filepath.WalkDir(path, func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -80,7 +81,7 @@ func NewLayoutWithLimits(path string, limits images.Limits) (images.Source, erro
 }
 
 // imageForPlatform rejects absent or ambiguous matches rather than choosing by order.
-func imageForPlatform(index v1.ImageIndex, platform images.Platform) (v1.Image, error) {
+func imageForPlatform(index v1.ImageIndex, platform types.Platform) (v1.Image, error) {
 	candidates, err := platformCandidates(index, platform, 0)
 	if err != nil {
 		return nil, err
@@ -105,7 +106,7 @@ func imageForPlatform(index v1.ImageIndex, platform images.Platform) (v1.Image, 
 //	                       +-----------------+------------------+
 //	                                         |
 //	                               exactly one candidate
-func platformCandidates(index v1.ImageIndex, platform images.Platform, depth int) ([]v1.Image, error) {
+func platformCandidates(index v1.ImageIndex, platform types.Platform, depth int) ([]v1.Image, error) {
 	if depth > 16 {
 		return nil, invalidSource("OCI index nesting exceeds limit")
 	}
@@ -125,7 +126,7 @@ func platformCandidates(index v1.ImageIndex, platform images.Platform, depth int
 			continue
 		}
 		switch descriptor.MediaType {
-		case types.OCIImageIndex, types.DockerManifestList:
+		case mediatypes.OCIImageIndex, mediatypes.DockerManifestList:
 			nested, err := index.ImageIndex(descriptor.Digest)
 			if err != nil {
 				return nil, err
@@ -142,7 +143,7 @@ func platformCandidates(index v1.ImageIndex, platform images.Platform, depth int
 				return nil, err
 			}
 			candidates = append(candidates, images...)
-		case types.OCIManifestSchema1, types.DockerManifestSchema2:
+		case mediatypes.OCIManifestSchema1, mediatypes.DockerManifestSchema2:
 			image, err := index.Image(descriptor.Digest)
 			if err != nil {
 				return nil, err
@@ -184,7 +185,7 @@ func platformCandidates(index v1.ImageIndex, platform images.Platform, depth int
 
 // blobName converts a supported digest into the confined OCI blob path.
 func blobName(hash v1.Hash) (string, error) {
-	digest, err := images.ParseDigest(hash.String())
+	digest, err := types.ParseDigest(hash.String())
 	if err != nil {
 		return "", invalidSource("invalid OCI blob digest: %v", err)
 	}
@@ -202,7 +203,7 @@ type localIndex struct {
 }
 
 // MediaType identifies this adapter as an OCI image index.
-func (i *localIndex) MediaType() (types.MediaType, error) { return types.OCIImageIndex, nil }
+func (i *localIndex) MediaType() (mediatypes.MediaType, error) { return mediatypes.OCIImageIndex, nil }
 
 // Digest derives index identity from its exact serialized metadata bytes.
 func (i *localIndex) Digest() (v1.Hash, error) { return partial.Digest(i) }
@@ -285,7 +286,7 @@ type localImage struct {
 }
 
 // MediaType preserves the manifest media type declared by the parent index.
-func (i *localImage) MediaType() (types.MediaType, error) { return i.descriptor.MediaType, nil }
+func (i *localImage) MediaType() (mediatypes.MediaType, error) { return i.descriptor.MediaType, nil }
 
 // RawManifest returns a copy of the previously verified manifest bytes.
 func (i *localImage) RawManifest() ([]byte, error) { return bytes.Clone(i.raw), nil }

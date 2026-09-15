@@ -18,6 +18,7 @@ import (
 	"github.com/kumabox/kumabox/metadata"
 	metadatasqlite "github.com/kumabox/kumabox/metadata/sqlite"
 	"github.com/kumabox/kumabox/storage"
+	"github.com/kumabox/kumabox/types"
 )
 
 func TestImporterReusesLayerAndRemovesAliases(t *testing.T) {
@@ -45,9 +46,9 @@ func TestImporterReusesLayerAndRemovesAliases(t *testing.T) {
 	}()
 	layerDigest := testDigest(t, "1")
 	manifestDigest := testDigest(t, "2")
-	source := fakeSource{manifest: images.Manifest{
-		Digest: manifestDigest, Platform: images.Platform{OS: "linux", Architecture: "amd64"},
-		Layers: []images.Descriptor{{Digest: layerDigest, Size: 3}},
+	source := fakeSource{manifest: types.Manifest{
+		Digest: manifestDigest, Platform: types.Platform{OS: "linux", Architecture: "amd64"},
+		Layers: []types.Descriptor{{Digest: layerDigest, Size: 3}},
 	}}
 	converter := &fakeConverter{}
 	catalog := imagecatalog.New(store)
@@ -86,14 +87,14 @@ func TestImporterReusesLayerAndRemovesAliases(t *testing.T) {
 }
 
 type fakeSource struct {
-	manifest images.Manifest
+	manifest types.Manifest
 }
 
-func (f fakeSource) Resolve(context.Context, images.Platform) (images.Manifest, error) {
+func (f fakeSource) Resolve(context.Context, types.Platform) (types.Manifest, error) {
 	return f.manifest, nil
 }
 
-func (f fakeSource) OpenLayer(context.Context, images.Descriptor) (io.ReadCloser, error) {
+func (f fakeSource) OpenLayer(context.Context, types.Descriptor) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader([]byte("tar"))), nil
 }
 
@@ -102,7 +103,7 @@ type fakeConverter struct {
 	calls int
 }
 
-func (f *fakeConverter) Convert(ctx context.Context, descriptor images.Descriptor, source io.Reader, workDir string) (images.ConvertedLayer, error) {
+func (f *fakeConverter) Convert(ctx context.Context, descriptor types.Descriptor, source io.Reader, workDir string) (images.ConvertedLayer, error) {
 	if _, err := io.Copy(io.Discard, source); err != nil {
 		return images.ConvertedLayer{}, err
 	}
@@ -117,7 +118,7 @@ func (f *fakeConverter) Convert(ctx context.Context, descriptor images.Descripto
 			return images.ConvertedLayer{}, err
 		}
 	}
-	product, err := images.ParseDigest(fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("erofs"))))
+	product, err := types.ParseDigest(fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("erofs"))))
 	if err != nil {
 		return images.ConvertedLayer{}, err
 	}
@@ -133,9 +134,9 @@ func (f *fakeConverter) Calls() int {
 	return f.calls
 }
 
-func testDigest(t *testing.T, digit string) images.Digest {
+func testDigest(t *testing.T, digit string) types.Digest {
 	t.Helper()
-	digest, err := images.ParseDigest(fmt.Sprintf("sha256:%s", bytes.Repeat([]byte(digit), 64)))
+	digest, err := types.ParseDigest(fmt.Sprintf("sha256:%s", bytes.Repeat([]byte(digit), 64)))
 	if err != nil {
 		t.Fatalf("ParseDigest: %v", err)
 	}
@@ -167,9 +168,9 @@ func testImportState(t *testing.T, store metadata.Store) (images.Paths, *imageca
 	return paths, imagecatalog.New(store)
 }
 
-func testManifest(t *testing.T, manifestDigit string) images.Manifest {
+func testManifest(t *testing.T, manifestDigit string) types.Manifest {
 	t.Helper()
-	return images.Manifest{Digest: testDigest(t, manifestDigit), Platform: images.Platform{OS: "linux", Architecture: "amd64"}, Layers: []images.Descriptor{{Digest: testDigest(t, "1"), Size: 3}}}
+	return types.Manifest{Digest: testDigest(t, manifestDigit), Platform: types.Platform{OS: "linux", Architecture: "amd64"}, Layers: []types.Descriptor{{Digest: testDigest(t, "1"), Size: 3}}}
 }
 
 func testImporter(t *testing.T, paths images.Paths, catalog images.Catalog, converter images.Converter) *images.Importer {
@@ -226,7 +227,7 @@ type gatedConverter struct {
 	release chan struct{}
 }
 
-func (f *gatedConverter) Convert(ctx context.Context, descriptor images.Descriptor, reader io.Reader, workDir string) (images.ConvertedLayer, error) {
+func (f *gatedConverter) Convert(ctx context.Context, descriptor types.Descriptor, reader io.Reader, workDir string) (images.ConvertedLayer, error) {
 	select {
 	case f.started <- struct{}{}:
 	case <-ctx.Done():
@@ -341,7 +342,7 @@ type badConverter struct {
 	escape   string
 }
 
-func (f *badConverter) Convert(ctx context.Context, descriptor images.Descriptor, source io.Reader, workDir string) (images.ConvertedLayer, error) {
+func (f *badConverter) Convert(ctx context.Context, descriptor types.Descriptor, source io.Reader, workDir string) (images.ConvertedLayer, error) {
 	if f.fail != nil {
 		return images.ConvertedLayer{}, f.fail
 	}
@@ -396,9 +397,9 @@ func TestImporterFailureAndCancellationDoNotCommit(t *testing.T) {
 
 func TestSelectBootAppliesOverwritesAndWhiteouts(t *testing.T) {
 	first, second := testDigest(t, "1"), testDigest(t, "2")
-	layers := []images.Layer{
-		{SourceDigest: first, BootFiles: []images.BootFile{{Name: "vmlinuz-1"}, {Name: "vmlinuz-2"}, {Name: "initrd.img"}}},
-		{SourceDigest: second, Whiteouts: []string{"vmlinuz-2"}, BootFiles: []images.BootFile{{Name: "initrd.img"}}},
+	layers := []types.Layer{
+		{SourceDigest: first, BootFiles: []types.BootFile{{Name: "vmlinuz-1"}, {Name: "vmlinuz-2"}, {Name: "initrd.img"}}},
+		{SourceDigest: second, Whiteouts: []string{"vmlinuz-2"}, BootFiles: []types.BootFile{{Name: "initrd.img"}}},
 	}
 	boot, err := images.SelectBoot(layers)
 	if err != nil || boot.KernelFile != "vmlinuz-1" || boot.KernelLayer != first || boot.InitrdLayer != second {

@@ -9,10 +9,10 @@ A microVM sandbox runtime for AI agents. One node runs one daemon
 Docker-like command line; sandboxes are Cloud Hypervisor microVMs booted from
 OCI images, with CNI networking, cgroups, snapshots and clone.
 
-The rewrite currently provides the `kumabox` CLI, the host doctor, and container
-image management: registry pull, Docker/OCI import, list, inspect, verify,
-and remove. Each command opens its metadata store and exits. VM lifecycle and
-a daemon are later phases of [docs/ROADMAP.md](docs/ROADMAP.md).
+The rewrite currently provides the `kumabox` CLI, the host doctor, container
+image management, and persistent sandbox creation. Each command opens its
+metadata store, performs one operation, and exits. Starting a VMM and the rest
+of the sandbox lifecycle are later phases of [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Where the design lives
 
@@ -48,21 +48,24 @@ or a generic `pkg` container:
 | Package | Responsibility |
 |---|---|
 | `cmd/kumabox` | Process entry point, signals and exit status |
-| `cli`, `cli/image`, `cli/doctor` | Command trees, argument parsing and presentation |
-| `core` | Assemble concrete adapters and own their resources |
-| `images` | Managed image model, import, verification and removal rules |
+| `cli`, `cli/image`, `cli/sandbox`, `cli/doctor` | Command trees, argument parsing and presentation |
+| `core` | Application services, operation ordering and concrete adapter assembly |
+| `types` | Shared image and sandbox resource models and value objects |
+| `images` | Image import, verification, boot selection and removal rules |
 | `images/catalog` | Persist image identities, name bindings and layer references |
 | `images/source` | Read Docker archives, OCI layouts/archives and registries |
 | `images/erofs` | Convert source layers and extract boot candidates |
+| `sandbox`, `sandbox/catalog` | Sandbox filesystem ownership and metadata persistence |
+| `disk` | Prepare and remove sandbox-owned sparse ext4 COW disks |
 | `metadata`, `metadata/sqlite` | Engine-neutral transactions and the SQLite implementation |
 | `storage`, `lock/flock` | Managed filesystem operations and file locks |
 | `errdefs`, `version` | Error classification and build information |
 
-`core` connects modules through constructors; it is not a second implementation
-of their business operations. CLI handlers use the assembled modules. Only
-`core` selects concrete image and metadata adapters. The image core does not
-import adapters or metadata engines, and modules do not import `core` or `cli`.
-These dependency directions are enforced by depguard in `.golangci.yml`.
+`core` owns application workflows that cross module boundaries and connects
+their concrete adapters. CLI handlers use those services. Shared resource data
+belongs to `types`; capability interfaces stay beside their consumers and are
+not collected in `types`. Modules do not import `core` or `cli`. These dependency
+directions are enforced by depguard in `.golangci.yml`.
 
 The image command groups complete responsibilities into `import.go` (pull and
 local import), `query.go` (list, inspect and verify), and `remove.go`. Related
@@ -143,10 +146,32 @@ semantics. Metadata is committed after durable publication and final digest
 checks. Verification detects EROFS and boot-file corruption. Source OCI blobs
 are never stored persistently; repeated imports reuse verified, registered
 artifacts. Removing a name retains artifacts until the last image reference
-is removed.
+is removed. A final manifest cannot be removed while a sandbox pins it.
 
 The [Linux acceptance runbook](docs/runbooks/s2-oci.md) covers real conversion,
 registry pull, cancellation, concurrency, and crash/retry behavior.
+
+## Create a sandbox
+
+`create` resolves an existing local image, reserves the sandbox name and exact
+manifest digest, then creates a private sparse ext4 COW directly at
+`Data/sandboxes/<ID>/cow.raw`. It does not start a VMM.
+
+```bash
+kumabox create IMAGE --name NAME \
+  --cpus 2 --memory 1GiB --storage 10GiB
+```
+
+Successful text output is the full sandbox UUID. `--json` returns an indented
+object containing the ID, name, manifest digest, `created` state, resource
+shape, and creation time. Progress is written to stderr. `mkfs.ext4` from
+e2fsprogs must be available on the host.
+
+`Created` means the disk and metadata exist but the sandbox has never started;
+`Stopped` is reserved for a sandbox whose VMM has exited after a start. The
+metadata schema is version 2. Pre-S3 development roots use version 1 and are
+rejected rather than modified automatically; create a fresh isolated root and
+re-import the image.
 
 ## Reference material
 

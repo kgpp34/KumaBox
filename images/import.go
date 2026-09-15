@@ -1,3 +1,6 @@
+// Package images owns image import, artifact verification, boot selection, and
+// removal workflows. Shared image data contracts live in types; source,
+// converter, and catalog adapters implement the interfaces consumed here.
 package images
 
 import (
@@ -17,6 +20,7 @@ import (
 	"github.com/kumabox/kumabox/errdefs"
 	filelock "github.com/kumabox/kumabox/lock/flock"
 	"github.com/kumabox/kumabox/storage"
+	"github.com/kumabox/kumabox/types"
 )
 
 // Source resolves an image and supplies verified, decompressed layer tar streams.
@@ -24,19 +28,19 @@ import (
 // must keep the source alive until Import returns.
 type Source interface {
 	// Resolve selects exactly one manifest matching the requested platform.
-	Resolve(context.Context, Platform) (Manifest, error)
+	Resolve(context.Context, types.Platform) (types.Manifest, error)
 	// OpenLayer returns a stream whose final read or Close may report verification
 	// failures. After successful conversion the importer drains the remaining bytes;
 	// every successfully opened stream is closed, including on conversion failure.
-	OpenLayer(context.Context, Descriptor) (io.ReadCloser, error)
+	OpenLayer(context.Context, types.Descriptor) (io.ReadCloser, error)
 }
 
 // ImportCatalog provides the metadata operations needed by an import.
 type ImportCatalog interface {
 	// Resolve reads an image by its local alias or manifest identity.
-	Resolve(context.Context, string) (Image, error)
+	Resolve(context.Context, string) (types.Image, error)
 	// FindLayers returns committed artifact mappings for the requested source blobs.
-	FindLayers(context.Context, []Digest) (map[Digest]Layer, error)
+	FindLayers(context.Context, []types.Digest) (map[types.Digest]types.Layer, error)
 	// CommitImport atomically registers the image, alias and ordered layer mappings.
 	CommitImport(context.Context, ImportCommit) error
 }
@@ -46,17 +50,17 @@ type ImportCatalog interface {
 type Converter interface {
 	// Convert consumes a decompressed tar stream and returns staged artifacts.
 	// Artifact paths must remain within the supplied work directory.
-	Convert(context.Context, Descriptor, io.Reader, string) (ConvertedLayer, error)
+	Convert(context.Context, types.Descriptor, io.Reader, string) (ConvertedLayer, error)
 }
 
 // ConvertedLayer contains files awaiting validation and publication by Importer.
 type ConvertedLayer struct {
 	// SourceDigest must match the descriptor that was converted.
-	SourceDigest Digest
+	SourceDigest types.Digest
 	// EROFSPath is the staged EROFS file, or a verified managed file on cache reuse.
 	EROFSPath string
 	// EROFSDigest is the expected hash of EROFSPath.
-	EROFSDigest Digest
+	EROFSDigest types.Digest
 	// Size is the expected EROFS size in bytes.
 	Size int64
 	// BootFiles contains staged regular boot candidates.
@@ -80,19 +84,19 @@ type StagedBootFile struct {
 // Reporting errors abort work or report a failure after metadata was committed.
 type Reporter interface {
 	// Layer receives the zero-based manifest position, total count and source digest.
-	Layer(int, int, Digest) error
+	Layer(int, int, types.Digest) error
 	// Committed runs after the atomic catalog commit and readback succeed.
-	Committed(Image) error
+	Committed(types.Image) error
 }
 
 // DiscardReporter disables progress reporting without conditional workflow logic.
 type DiscardReporter struct{}
 
 // Layer accepts a layer completion without retaining it.
-func (DiscardReporter) Layer(int, int, Digest) error { return nil }
+func (DiscardReporter) Layer(int, int, types.Digest) error { return nil }
 
 // Committed accepts a successful catalog commit without retaining it.
-func (DiscardReporter) Committed(Image) error { return nil }
+func (DiscardReporter) Committed(types.Image) error { return nil }
 
 // Limits bound compressed input and decompressed source and boot artifacts.
 // Adapters enforce the relevant bounds while reading; all values are byte counts.
@@ -181,37 +185,37 @@ func NewImporter(paths Paths, catalog ImportCatalog, converter Converter, report
 //	                                                       |
 //	                                                       v
 //	                                              report -> unlock -> staging cleanup
-func (i *Importer) Import(ctx context.Context, name string, platform Platform, source Source) (result Image, returnErr error) {
+func (i *Importer) Import(ctx context.Context, name string, platform types.Platform, source Source) (result types.Image, returnErr error) {
 	if strings.TrimSpace(name) == "" || strings.ContainsAny(name, "\r\n\t") || source == nil || !platform.Valid() {
-		return Image{}, invalidImage("image name, supported platform and source are required")
+		return types.Image{}, invalidImage("image name, supported platform and source are required")
 	}
 	if err := ctx.Err(); err != nil {
-		return Image{}, err
+		return types.Image{}, err
 	}
 	if err := i.paths.Ensure(); err != nil {
-		return Image{}, errdefs.Context(err, "import image", name, "prepare", "check managed directory permissions", false)
+		return types.Image{}, errdefs.Context(err, "import image", name, "prepare", "check managed directory permissions", false)
 	}
 	manifest, err := source.Resolve(ctx, platform)
 	if err != nil {
-		return Image{}, errdefs.Context(err, "import image", name, "resolve", "check the image source and platform", false)
+		return types.Image{}, errdefs.Context(err, "import image", name, "resolve", "check the image source and platform", false)
 	}
 	if manifest.Digest.IsZero() || manifest.Platform != platform || len(manifest.Layers) == 0 {
-		return Image{}, invalidImage("invalid image manifest or platform")
+		return types.Image{}, invalidImage("invalid image manifest or platform")
 	}
-	digests := make([]Digest, len(manifest.Layers))
+	digests := make([]types.Digest, len(manifest.Layers))
 	for position, descriptor := range manifest.Layers {
 		if descriptor.Digest.IsZero() || descriptor.Size < 0 || descriptor.Size > i.options.Limits.LayerSize {
-			return Image{}, invalidImage("invalid layer descriptor")
+			return types.Image{}, invalidImage("invalid layer descriptor")
 		}
 		digests[position] = descriptor.Digest
 	}
 	known, err := i.catalog.FindLayers(ctx, digests)
 	if err != nil {
-		return Image{}, err
+		return types.Image{}, err
 	}
 	staging, err := i.paths.NewStaging("image-*")
 	if err != nil {
-		return Image{}, err
+		return types.Image{}, err
 	}
 	committed := false
 	defer func() {
@@ -243,7 +247,7 @@ func (i *Importer) Import(ctx context.Context, name string, platform Platform, s
 		})
 	}
 	if err := group.Wait(); err != nil {
-		return Image{}, errdefs.Context(err, "import image", name, "convert", "fix source or converter and retry", false)
+		return types.Image{}, errdefs.Context(err, "import image", name, "convert", "fix source or converter and retry", false)
 	}
 	lockPaths := make([]string, len(digests))
 	for pos, digest := range digests {
@@ -251,7 +255,7 @@ func (i *Importer) Import(ctx context.Context, name string, platform Platform, s
 	}
 	var locks filelock.Set
 	if err := locks.Lock(ctx, lockPaths...); err != nil {
-		return Image{}, err
+		return types.Image{}, err
 	}
 	defer func() {
 		returnErr = errors.Join(returnErr, errdefs.Context(locks.Unlock(context.WithoutCancel(ctx)), "import image", name, "unlock", "inspect runtime locks", committed))
@@ -259,12 +263,12 @@ func (i *Importer) Import(ctx context.Context, name string, platform Platform, s
 	// Conversion is slow; metadata and files may have changed while we were staging.
 	current, err := i.catalog.FindLayers(ctx, digests)
 	if err != nil {
-		return Image{}, err
+		return types.Image{}, err
 	}
-	layers := make([]Layer, len(converted))
+	layers := make([]types.Layer, len(converted))
 	for pos, artifact := range converted {
 		if err := ctx.Err(); err != nil {
-			return Image{}, err
+			return types.Image{}, err
 		}
 		if layer, ok := current[artifact.SourceDigest]; ok && verifyLayer(ctx, i.paths, layer) == nil {
 			layers[pos] = layer
@@ -272,21 +276,21 @@ func (i *Importer) Import(ctx context.Context, name string, platform Platform, s
 		}
 		// A cache hit may have been removed meanwhile. Retry without downloading under a lock.
 		if artifact.EROFSPath == i.paths.EROFS(artifact.SourceDigest) {
-			return Image{}, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, errors.New("cached layer changed during import; retry"))
+			return types.Image{}, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, errors.New("cached layer changed during import; retry"))
 		}
 		layer, err := i.publishLayer(ctx, artifact, staging)
 		if err != nil {
-			return Image{}, errdefs.Context(err, "import image", name, "publish", "retry the import", false)
+			return types.Image{}, errdefs.Context(err, "import image", name, "publish", "retry the import", false)
 		}
 		if old, exists := current[layer.SourceDigest]; exists && !old.Equal(layer) {
-			return Image{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("rebuilt layer differs from committed metadata"))
+			return types.Image{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("rebuilt layer differs from committed metadata"))
 		}
 		current[layer.SourceDigest] = layer
 		layers[pos] = layer
 	}
 	boot, err := SelectBoot(layers)
 	if err != nil {
-		return Image{}, err
+		return types.Image{}, err
 	}
 	var total int64
 	for _, layer := range layers {
@@ -295,17 +299,17 @@ func (i *Importer) Import(ctx context.Context, name string, platform Platform, s
 	// Revalidate every final artifact while holding all digest locks, before the transaction.
 	for _, layer := range layers {
 		if err := verifyLayer(ctx, i.paths, layer); err != nil {
-			return Image{}, err
+			return types.Image{}, err
 		}
 	}
 	commit := ImportCommit{Name: name, Manifest: manifest, Layers: layers, Boot: boot, Size: total, Created: i.options.Now().UTC()}
 	if err := i.catalog.CommitImport(ctx, commit); err != nil {
-		return Image{}, errdefs.Context(err, "import image", name, "catalog commit", "retry; unregistered artifacts will be rebuilt", false)
+		return types.Image{}, errdefs.Context(err, "import image", name, "catalog commit", "retry; unregistered artifacts will be rebuilt", false)
 	}
 	committed = true
 	result, err = i.catalog.Resolve(ctx, name)
 	if err != nil {
-		return Image{}, errdefs.Context(err, "import image", name, "read committed image", "run image verify", true)
+		return types.Image{}, errdefs.Context(err, "import image", name, "read committed image", "run image verify", true)
 	}
 	i.reportMu.Lock()
 	defer i.reportMu.Unlock()
@@ -314,7 +318,7 @@ func (i *Importer) Import(ctx context.Context, name string, platform Platform, s
 
 // convert drains the source after tar processing so trailing hash, compression
 // and size checks cannot be bypassed by a converter that stops at tar EOF.
-func (i *Importer) convert(ctx context.Context, source Source, descriptor Descriptor, workDir string) (ConvertedLayer, error) {
+func (i *Importer) convert(ctx context.Context, source Source, descriptor types.Descriptor, workDir string) (ConvertedLayer, error) {
 	reader, err := source.OpenLayer(ctx, descriptor)
 	if err != nil {
 		return ConvertedLayer{}, err
@@ -335,7 +339,7 @@ func (i *Importer) convert(ctx context.Context, source Source, descriptor Descri
 
 // cachedArtifact adapts verified committed files to the staging result shape.
 // Their managed paths let publication detect a cache entry removed during staging.
-func cachedArtifact(paths Paths, layer Layer) ConvertedLayer {
+func cachedArtifact(paths Paths, layer types.Layer) ConvertedLayer {
 	artifact := ConvertedLayer{SourceDigest: layer.SourceDigest, EROFSPath: paths.EROFS(layer.SourceDigest), EROFSDigest: layer.EROFSDigest, Size: layer.Size, Whiteouts: layer.Whiteouts, BootOpaque: layer.BootOpaque}
 	for _, file := range layer.BootFiles {
 		artifact.BootFiles = append(artifact.BootFiles, StagedBootFile{Name: file.Name, Path: filepath.Join(paths.BootDir(layer.SourceDigest), file.Name)})
@@ -345,57 +349,57 @@ func cachedArtifact(paths Paths, layer Layer) ConvertedLayer {
 
 // publishLayer validates staged hashes and committed mappings before replacing
 // shared files. The caller must hold the source digest lock throughout publication.
-func (i *Importer) publishLayer(ctx context.Context, artifact ConvertedLayer, staging string) (Layer, error) {
-	layer := Layer{SourceDigest: artifact.SourceDigest, EROFSDigest: artifact.EROFSDigest, Size: artifact.Size, Whiteouts: artifact.Whiteouts, BootOpaque: artifact.BootOpaque}
+func (i *Importer) publishLayer(ctx context.Context, artifact ConvertedLayer, staging string) (types.Layer, error) {
+	layer := types.Layer{SourceDigest: artifact.SourceDigest, EROFSDigest: artifact.EROFSDigest, Size: artifact.Size, Whiteouts: artifact.Whiteouts, BootOpaque: artifact.BootOpaque}
 	// Do not trust a file merely because it already exists: only committed metadata authorizes reuse.
 	actual, size, err := stagedDigest(ctx, staging, artifact.EROFSPath)
 	if err != nil {
-		return Layer{}, err
+		return types.Layer{}, err
 	}
 	if actual != artifact.EROFSDigest || size != artifact.Size || size <= 0 {
-		return Layer{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("staged EROFS does not match converter result"))
+		return types.Layer{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("staged EROFS does not match converter result"))
 	}
 	for _, file := range artifact.BootFiles {
 		if !IsBootName(file.Name) {
-			return Layer{}, invalidImage("invalid boot file name")
+			return types.Layer{}, invalidImage("invalid boot file name")
 		}
 		digest, size, err := stagedDigest(ctx, staging, file.Path)
 		if err != nil {
-			return Layer{}, err
+			return types.Layer{}, err
 		}
 		if size == 0 {
-			return Layer{}, invalidImage("empty boot file %s", file.Name)
+			return types.Layer{}, invalidImage("empty boot file %s", file.Name)
 		}
-		layer.BootFiles = append(layer.BootFiles, BootFile{Name: file.Name, Digest: digest, Size: size})
+		layer.BootFiles = append(layer.BootFiles, types.BootFile{Name: file.Name, Digest: digest, Size: size})
 	}
 	// Check against every existing committed mapping BEFORE replacing shared files.
-	known, err := i.catalog.FindLayers(ctx, []Digest{layer.SourceDigest})
+	known, err := i.catalog.FindLayers(ctx, []types.Digest{layer.SourceDigest})
 	if err != nil {
-		return Layer{}, err
+		return types.Layer{}, err
 	}
 	if old, exists := known[layer.SourceDigest]; exists && !old.Equal(layer) {
-		return Layer{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("rebuilt layer differs from committed metadata"))
+		return types.Layer{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("rebuilt layer differs from committed metadata"))
 	}
 	if err := storage.Publish(artifact.EROFSPath, i.paths.EROFS(artifact.SourceDigest)); err != nil {
-		return Layer{}, err
+		return types.Layer{}, err
 	}
 	for _, file := range artifact.BootFiles {
 		final, err := i.paths.BootFile(artifact.SourceDigest, file.Name)
 		if err != nil {
-			return Layer{}, err
+			return types.Layer{}, err
 		}
 		if err := storage.Publish(file.Path, final); err != nil {
-			return Layer{}, err
+			return types.Layer{}, err
 		}
 	}
 	return layer, nil
 }
 
 // stagedDigest rejects converter paths outside this import before hashing files.
-func stagedDigest(ctx context.Context, staging, path string) (Digest, int64, error) {
+func stagedDigest(ctx context.Context, staging, path string) (types.Digest, int64, error) {
 	rel, err := filepath.Rel(staging, path)
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return Digest{}, 0, invalidImage("converter artifact escapes staging")
+		return types.Digest{}, 0, invalidImage("converter artifact escapes staging")
 	}
 	return digestFileContext(ctx, path)
 }

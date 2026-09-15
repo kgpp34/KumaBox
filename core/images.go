@@ -1,5 +1,5 @@
-// Package core assembles application modules and their concrete dependencies.
-// It owns resource construction; image policies and workflows remain in images.
+// Package core owns application workflows that cross module boundaries and
+// assembles their concrete adapters. Module-local policies remain with modules.
 //
 // Image command assembly:
 //
@@ -19,7 +19,9 @@ import (
 	"github.com/kumabox/kumabox/images/source"
 	"github.com/kumabox/kumabox/metadata"
 	"github.com/kumabox/kumabox/metadata/sqlite"
+	sandboxcatalog "github.com/kumabox/kumabox/sandbox/catalog"
 	"github.com/kumabox/kumabox/storage"
+	"github.com/kumabox/kumabox/types"
 )
 
 // ImageStore owns the resources assembled for one image command.
@@ -43,18 +45,19 @@ func OpenImages(ctx context.Context, roots storage.Roots) (*ImageStore, error) {
 	if err := paths.Ensure(); err != nil {
 		return nil, err
 	}
-	store, err := sqlite.Open(ctx, paths.MetadataDB(), catalog.Collections(), sqlite.DefaultOptions())
+	store, err := sqlite.Open(ctx, paths.MetadataDB(), metadataCollections(), sqlite.DefaultOptions())
 	if err != nil {
 		return nil, err
 	}
-	return &ImageStore{Paths: paths, Catalog: catalog.New(store), store: store}, nil
+	imageCatalog := catalog.New(store, catalog.WithImageUsage(sandboxcatalog.Usage{}))
+	return &ImageStore{Paths: paths, Catalog: imageCatalog, store: store}, nil
 }
 
 // Close releases the metadata store after all catalog operations have finished.
 func (s *ImageStore) Close() error { return s.store.Close() }
 
 // NewImageImporter adds a converter only when an operation needs to import layers.
-func NewImageImporter(ctx context.Context, store *ImageStore, reporter images.Reporter, platform images.Platform) (*images.Importer, error) {
+func NewImageImporter(ctx context.Context, store *ImageStore, reporter images.Reporter, platform types.Platform) (*images.Importer, error) {
 	options := images.DefaultOptions()
 	converter, err := erofs.New(ctx, platform.Architecture, options.Limits)
 	if err != nil {
@@ -93,4 +96,12 @@ func (s *ImageStore) OpenLocalSource(ctx context.Context, path string, options L
 // NewRegistrySource selects the registry adapter and returns the normalized local name.
 func NewRegistrySource(reference string) (images.Source, string, error) {
 	return source.NewRegistry(reference)
+}
+
+// metadataCollections declares the complete schema opened by every command.
+// Initializing all collections together prevents command order from changing
+// the database shape without an explicit migration.
+func metadataCollections() []metadata.Collection {
+	result := catalog.Collections()
+	return append(result, sandboxcatalog.Collections()...)
 }

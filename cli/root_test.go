@@ -60,6 +60,7 @@ func TestImageAndUsageExitCodes(t *testing.T) {
 		{"unknown command", []string{"unknown"}, 2},
 		{"unknown image command", []string{"image", "unknown"}, 2},
 		{"missing image argument", []string{"image", "inspect"}, 2},
+		{"missing create image", []string{"create", "--name", "box"}, 2},
 		{"unknown flag", []string{"image", "ls", "--wrong"}, 2},
 		{"unsupported platform", []string{"image", "pull", "example.com/image", "--platform", "windows/amd64"}, 5},
 		{"missing image", []string{"image", "inspect", "missing"}, 3},
