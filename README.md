@@ -169,9 +169,9 @@ e2fsprogs must be available on the host.
 
 `Created` means the disk and metadata exist but the sandbox has never started;
 `Stopped` is reserved for a sandbox whose VMM has exited after a start. The
-metadata schema is version 2. Pre-S3 development roots use version 1 and are
-rejected rather than modified automatically; create a fresh isolated root and
-re-import the image.
+metadata schema is version 2. Existing version 1 roots are migrated in one
+transaction when first opened: image records and artifacts remain in place,
+and the new sandbox collections become available without changing CLI roots.
 
 ## Reference material
 

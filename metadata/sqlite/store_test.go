@@ -126,6 +126,116 @@ func TestStoreRejectsForeignDatabaseWithoutChangingJournal(t *testing.T) {
 	}
 }
 
+func TestStoreMigratesVersionOneAndPreservesRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "meta.db")
+	legacy := metadata.Collection("images")
+	added := metadata.Collection("sandboxes")
+	writeVersionOneDatabase(t, path, "CREATE TABLE collections (name TEXT NOT NULL PRIMARY KEY)")
+
+	store, err := Open(t.Context(), path, []metadata.Collection{legacy, added}, DefaultOptions())
+	if err != nil {
+		t.Fatalf("Open migrated database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := store.View(t.Context(), func(reader metadata.Reader) error {
+		value, exists, err := reader.Get(t.Context(), legacy, "legacy")
+		if err != nil {
+			return err
+		}
+		if !exists || string(value) != "keep" {
+			return fmt.Errorf("legacy record = %q, %v", value, exists)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(t.Context(), func(writer metadata.Writer) error {
+		return writer.Put(t.Context(), added, "new", []byte("sandbox"))
+	}); err != nil {
+		t.Fatalf("write added collection: %v", err)
+	}
+	var version int
+	if err := store.readers.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != schemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, schemaVersion)
+	}
+}
+
+func TestStoreMigrationFailureRollsBackVersionAndCollections(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "meta.db")
+	writeVersionOneDatabase(t, path, "CREATE TABLE collections (name TEXT NOT NULL PRIMARY KEY CHECK(name <> 'sandboxes'))")
+
+	if store, err := Open(t.Context(), path, []metadata.Collection{"images", "sandboxes"}, DefaultOptions()); err == nil {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+		t.Fatal("migration unexpectedly succeeded")
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	var version int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != firstSchemaVersion {
+		t.Fatalf("schema version after rollback = %d, want %d", version, firstSchemaVersion)
+	}
+	var added int
+	if err := db.QueryRow("SELECT count(*) FROM collections WHERE name = 'sandboxes'").Scan(&added); err != nil {
+		t.Fatal(err)
+	}
+	if added != 0 {
+		t.Fatal("failed migration published sandbox collection")
+	}
+	var value []byte
+	if err := db.QueryRow("SELECT data FROM records WHERE collection = 'images' AND id = 'legacy'").Scan(&value); err != nil {
+		t.Fatal(err)
+	}
+	if string(value) != "keep" {
+		t.Fatalf("legacy record after rollback = %q", value)
+	}
+}
+
+// writeVersionOneDatabase creates the exact generic table shape used before
+// sandbox collections existed and leaves one image record as migration evidence.
+func writeVersionOneDatabase(t *testing.T, path, collectionsDDL string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statements := []string{
+		collectionsDDL,
+		"CREATE TABLE records (collection TEXT NOT NULL, id TEXT NOT NULL, data BLOB NOT NULL, PRIMARY KEY(collection, id), FOREIGN KEY(collection) REFERENCES collections(name))",
+		fmt.Sprintf("PRAGMA application_id = %d", applicationID),
+		fmt.Sprintf("PRAGMA user_version = %d", firstSchemaVersion),
+		"INSERT INTO collections(name) VALUES ('images')",
+		"INSERT INTO records(collection,id,data) VALUES ('images','legacy',x'6b656570')",
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			_ = db.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStoreBusyIsBoundedAcrossProcessesAndWithinPool(t *testing.T) {
 	for _, shared := range []bool{false, true} {
 		t.Run(fmt.Sprint(shared), func(t *testing.T) {

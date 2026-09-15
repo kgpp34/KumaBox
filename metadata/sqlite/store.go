@@ -29,6 +29,8 @@ const (
 	applicationID = 0x4B554D41
 	// schemaVersion identifies the current application collection contract.
 	schemaVersion = 2
+	// firstSchemaVersion is the oldest metadata version with an in-place migration.
+	firstSchemaVersion = 1
 	// initLockName serializes schema initialization across processes in this directory.
 	initLockName = "init.lock"
 )
@@ -61,9 +63,8 @@ type Store struct {
 
 var _ metadata.Store = (*Store)(nil)
 
-// Open validates paths and declarations, initializes an empty database under a
-// transient file lock, and verifies database identity and existing collections.
-// It rejects incompatible populated databases rather than rewriting their schema.
+// Open validates paths and declarations, initializes or migrates the database
+// under a transient file lock, and verifies identity and declared collections.
 // The caller owns the returned store and must Close it.
 func Open(ctx context.Context, path string, collections []metadata.Collection, options Options) (*Store, error) {
 	if options.BusyTimeout <= 0 || options.RetryLimit <= 0 {
@@ -199,8 +200,9 @@ func (s *Store) verify(ctx context.Context) error {
 	return nil
 }
 
-// initialize creates schema only for an unidentified empty database. The caller
-// holds the directory initialization lock for this entire operation.
+// initialize creates an unidentified empty database or applies a supported
+// forward migration. The caller holds the directory initialization lock for
+// this entire operation.
 func initialize(ctx context.Context, path string, collections []metadata.Collection, options Options) (returnErr error) {
 	query := url.Values{}
 	query.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", options.BusyTimeout.Milliseconds()))
@@ -223,10 +225,17 @@ func initialize(ctx context.Context, path string, collections []metadata.Collect
 		return mapError(err)
 	}
 	if tables > 0 {
-		if appID != applicationID || version != schemaVersion {
-			return errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, fmt.Errorf("populated database has identity %#x/version %d", appID, version))
+		if appID != applicationID {
+			return errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, fmt.Errorf("database belongs to application %#x, expected KumaBox %#x", appID, applicationID))
 		}
-		return nil
+		switch version {
+		case schemaVersion:
+			return nil
+		case firstSchemaVersion:
+			return migrateVersionOne(ctx, db, collections)
+		default:
+			return errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, fmt.Errorf("metadata schema version %d is unsupported; this binary supports versions %d through %d", version, firstSchemaVersion, schemaVersion))
+		}
 	}
 	if appID != 0 || version != 0 {
 		return errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("empty database has unexpected identity"))
@@ -255,6 +264,34 @@ func initialize(ctx context.Context, path string, collections []metadata.Collect
 		if _, err := tx.ExecContext(ctx, "INSERT INTO collections(name) VALUES (?)", collection.String()); err != nil {
 			return mapError(err)
 		}
+	}
+	return commit(ctx, tx)
+}
+
+// migrateVersionOne adds the collections introduced with sandbox management
+// and publishes version 2 only after every declaration is durable. Version 1
+// already uses the same collections and records tables, so record payloads and
+// image artifacts remain unchanged.
+//
+//	BEGIN IMMEDIATE -> register missing collections -> user_version=2 -> COMMIT
+//	       \---------------- any failure: ROLLBACK -----------------/
+func migrateVersionOne(ctx context.Context, db *sql.DB, collections []metadata.Collection) (returnErr error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return mapError(err)
+	}
+	defer func() {
+		if returnErr != nil {
+			returnErr = errors.Join(returnErr, rollback(tx))
+		}
+	}()
+	for _, collection := range collections {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO collections(name) VALUES (?) ON CONFLICT(name) DO NOTHING", collection.String()); err != nil {
+			return mapError(err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+		return mapError(err)
 	}
 	return commit(ctx, tx)
 }
