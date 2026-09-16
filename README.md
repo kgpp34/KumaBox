@@ -173,6 +173,21 @@ metadata schema is version 2. Existing version 1 roots are migrated in one
 transaction when first opened: image records and artifacts remain in place,
 and the new sandbox collections become available without changing CLI roots.
 
+List active sandboxes with `ps`, or include created, stopped, failed, and
+deleting records with `-a`:
+
+```bash
+kumabox ps
+kumabox ps -a
+kumabox ps -a --quiet
+kumabox ps -a --json
+```
+
+The table always includes headers and prints complete sandbox UUIDs that can be
+passed directly to `rm`. `--quiet` writes only those UUIDs, one per line. JSON
+uses the same complete resource facts as `create --json` and returns `[]` for
+an empty result.
+
 Remove a non-running sandbox by its exact name or complete UUID:
 
 ```bash

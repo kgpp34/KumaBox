@@ -34,6 +34,50 @@ func TestResolveRejectsDanglingNameBinding(t *testing.T) {
 	}
 }
 
+func TestListReturnsValidatedRecordsNewestFirst(t *testing.T) {
+	store, err := metadata.NewMemory(Collections())
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := time.Date(2026, 9, 16, 10, 0, 0, 0, time.UTC)
+	digest := testDigest(t, 'a')
+	older := types.Sandbox{
+		ID:          types.SandboxID("123e4567-e89b-42d3-a456-426614174000"),
+		Config:      types.SandboxConfig{Name: "older", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+		ImageDigest: digest, State: types.SandboxStateCreated, Generation: 2,
+		CreatedAt: created, UpdatedAt: created,
+	}
+	newer := older
+	newer.ID = types.SandboxID("223e4567-e89b-42d3-a456-426614174000")
+	newer.Config.Name = "newer"
+	newer.CreatedAt, newer.UpdatedAt = created.Add(time.Minute), created.Add(time.Minute)
+	if err := store.Update(t.Context(), func(writer metadata.Writer) error {
+		if err := putJSON(t.Context(), writer, CollectionSandboxes, older.ID.String(), encode(older)); err != nil {
+			return err
+		}
+		return putJSON(t.Context(), writer, CollectionSandboxes, newer.ID.String(), encode(newer))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	records, err := New(store, nil).List(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records[0].ID != newer.ID || records[1].ID != older.ID {
+		t.Fatalf("List = %+v", records)
+	}
+	if err := store.Update(t.Context(), func(writer metadata.Writer) error {
+		return putJSON(t.Context(), writer, CollectionSandboxes, "323e4567-e89b-42d3-a456-426614174000", encode(older))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(store, nil).List(t.Context()); err == nil {
+		t.Fatal("List accepted a record whose key differs from its ID")
+	} else if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeArtifactCorrupt {
+		t.Fatalf("List error code = %q, %v; want %q", code, err, errdefs.CodeArtifactCorrupt)
+	}
+}
+
 func TestReservationPinsImageInsideRemovalTransaction(t *testing.T) {
 	collections := append(imagecatalog.Collections(), Collections()...)
 	store, err := metadata.NewMemory(collections)

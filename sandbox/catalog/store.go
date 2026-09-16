@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/kumabox/kumabox/errdefs"
@@ -155,6 +157,35 @@ func (c *Store) Resolve(ctx context.Context, reference string) (types.Sandbox, e
 		return err
 	})
 	return result, errdefs.Context(err, "resolve sandbox", reference, "metadata", "check the sandbox name or ID", false)
+}
+
+// List returns one validated snapshot ordered newest first, with ID as the
+// deterministic tie-breaker. A malformed record fails the whole query.
+func (c *Store) List(ctx context.Context) ([]types.Sandbox, error) {
+	if c == nil || c.store == nil {
+		return nil, errors.New("sandbox catalog is not configured")
+	}
+	result := make([]types.Sandbox, 0)
+	err := c.store.View(ctx, func(reader metadata.Reader) error {
+		return reader.Scan(ctx, CollectionSandboxes, func(id string, raw []byte) error {
+			record, err := decode(raw)
+			if err != nil {
+				return err
+			}
+			if record.ID.String() != id {
+				return corrupt("sandbox ID", errors.New("record key differs from stored ID"))
+			}
+			result = append(result, record)
+			return nil
+		})
+	})
+	slices.SortFunc(result, func(left, right types.Sandbox) int {
+		if order := right.CreatedAt.Compare(left.CreatedAt); order != 0 {
+			return order
+		}
+		return strings.Compare(left.ID.String(), right.ID.String())
+	})
+	return result, errdefs.Context(err, "list sandboxes", "", "metadata", "inspect the sandbox metadata store", false)
 }
 
 // BeginDelete records durable cleanup intent before any owned file is removed.

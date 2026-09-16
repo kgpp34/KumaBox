@@ -71,6 +71,14 @@ func (f *fakeCatalog) Resolve(_ context.Context, _ string) (types.Sandbox, error
 	return f.record, nil
 }
 
+func (f *fakeCatalog) List(context.Context) ([]types.Sandbox, error) {
+	*f.steps = append(*f.steps, "list")
+	if f.deleted || f.record.ID == "" {
+		return []types.Sandbox{}, nil
+	}
+	return []types.Sandbox{f.record}, nil
+}
+
 func (f *fakeCatalog) BeginDelete(_ context.Context, _ types.SandboxID, expected uint64, updated time.Time) (types.Sandbox, error) {
 	*f.steps = append(*f.steps, "deleting")
 	if f.record.Generation != expected {
@@ -145,7 +153,7 @@ func newTestSandboxService(t *testing.T, diskError error) (*SandboxService, *[]s
 	}
 	steps := []string{}
 	catalog := &fakeCatalog{steps: &steps}
-	service := newSandboxService(paths, fakeGuard{image: types.Image{ManifestDigest: digest}, steps: &steps}, catalog, catalog, fakeDisk{steps: &steps, prepare: diskError}, fakeReporter{steps: &steps})
+	service := newSandboxService(paths, fakeGuard{image: types.Image{ManifestDigest: digest}, steps: &steps}, catalog, catalog, catalog, fakeDisk{steps: &steps, prepare: diskError}, fakeReporter{steps: &steps})
 	service.newID = func() (types.SandboxID, error) { return fixedID, nil }
 	service.now = func() time.Time { return time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC) }
 	return service, &steps
@@ -218,6 +226,33 @@ func TestCreateRetainsErrorOwnerWhenDiskCleanupFails(t *testing.T) {
 	wantTail := []string{"disk", "remove", "error"}
 	if got := (*steps)[len(*steps)-len(wantTail):]; !reflect.DeepEqual(got, wantTail) {
 		t.Fatalf("cleanup steps = %v, want %v", got, wantTail)
+	}
+}
+
+func TestListFiltersInactiveSandboxesUnlessAllRequested(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo", Config: types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	*steps = nil
+	if records, err := service.List(t.Context(), false); err != nil {
+		t.Fatal(err)
+	} else if len(records) != 0 {
+		t.Fatalf("active records = %+v, want none", records)
+	}
+	if records, err := service.List(t.Context(), true); err != nil {
+		t.Fatal(err)
+	} else if len(records) != 1 || records[0].ID != fixedID {
+		t.Fatalf("all records = %+v", records)
+	}
+	catalog := service.reader.(*fakeCatalog)
+	catalog.record.State = types.SandboxStateRunning
+	if records, err := service.List(t.Context(), false); err != nil {
+		t.Fatal(err)
+	} else if len(records) != 1 || records[0].State != types.SandboxStateRunning {
+		t.Fatalf("running records = %+v", records)
 	}
 }
 

@@ -62,11 +62,14 @@ func TestImageAndUsageExitCodes(t *testing.T) {
 		{"missing image argument", []string{"image", "inspect"}, 2},
 		{"missing create image", []string{"create", "--name", "box"}, 2},
 		{"missing remove sandbox", []string{"rm"}, 2},
+		{"unexpected ps argument", []string{"ps", "box"}, 2},
 		{"unknown flag", []string{"image", "ls", "--wrong"}, 2},
 		{"unsupported platform", []string{"image", "pull", "example.com/image", "--platform", "windows/amd64"}, 5},
+		{"incompatible ps output", []string{"ps", "--json", "--quiet"}, 5},
 		{"missing image", []string{"image", "inspect", "missing"}, 3},
 		{"missing sandbox", []string{"rm", "missing"}, 3},
 		{"empty list", []string{"image", "ls", "--json"}, 0},
+		{"empty ps", []string{"ps", "--all", "--json"}, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			args := append(append([]string(nil), flags...), test.args...)

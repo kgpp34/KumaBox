@@ -53,14 +53,14 @@ func TestWriteResultUsesFullIDAndIndentedJSON(t *testing.T) {
 		CreatedAt: time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 9, 15, 10, 0, 1, 0, time.UTC),
 	}
 	var text bytes.Buffer
-	if err := writeResult(&text, record, false); err != nil {
+	if err := writeCreateResult(&text, record, false); err != nil {
 		t.Fatal(err)
 	}
 	if text.String() != record.ID.String()+"\n" {
 		t.Fatalf("text result = %q", text.String())
 	}
 	var jsonOut bytes.Buffer
-	if err := writeResult(&jsonOut, record, true); err != nil {
+	if err := writeCreateResult(&jsonOut, record, true); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(jsonOut.String(), "\n  \"id\":") || !strings.Contains(jsonOut.String(), "\"state\": \"created\"") || !strings.HasSuffix(jsonOut.String(), "\n") {
@@ -99,7 +99,7 @@ func TestCreateCommandPersistsCreatedSandboxAndFinalCOW(t *testing.T) {
 	if err := command.ExecuteContext(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	var output result
+	var output sandboxOutput
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatalf("decode output %q: %v", stdout.String(), err)
 	}

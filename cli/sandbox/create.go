@@ -4,13 +4,10 @@
 package sandbox
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"strconv"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -66,7 +63,7 @@ func NewCreateCommand(roots rootsProvider) *cobra.Command {
 				return err
 			}
 			committed = true
-			if err := writeResult(progress.Output(command.OutOrStdout()), record, asJSON); err != nil {
+			if err := writeCreateResult(progress.Output(command.OutOrStdout()), record, asJSON); err != nil {
 				return errdefs.Context(err, "create sandbox", name, "output", "sandbox was created; inspect it before retrying", true)
 			}
 			return nil
@@ -78,46 +75,6 @@ func NewCreateCommand(roots rootsProvider) *cobra.Command {
 	command.Flags().StringVar(&storageSize, "storage", storageSize, "logical sparse COW size (minimum 10GiB)")
 	command.Flags().BoolVar(&asJSON, "json", false, "print the created sandbox as indented JSON")
 	return command
-}
-
-// result is the stable JSON projection returned by create --json.
-type result struct {
-	// ID is the complete immutable sandbox UUID.
-	ID string `json:"id"`
-	// Name is the human-readable lookup key supplied by the user.
-	Name string `json:"name"`
-	// ImageDigest is the exact pinned manifest identity.
-	ImageDigest string `json:"image_digest"`
-	// State is created after persistent resources are ready.
-	State string `json:"state"`
-	// CPUs is the requested virtual CPU count.
-	CPUs uint32 `json:"cpus"`
-	// Memory is requested guest memory in bytes.
-	Memory int64 `json:"memory"`
-	// Storage is the logical sparse COW size in bytes.
-	Storage int64 `json:"storage"`
-	// Generation fences stale lifecycle transitions.
-	Generation uint64 `json:"generation"`
-	// CreatedAt is the identity reservation time.
-	CreatedAt time.Time `json:"created_at"`
-	// UpdatedAt is the Created transition time.
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// writeResult keeps the default output script-friendly and JSON complete.
-func writeResult(writer io.Writer, sandbox types.Sandbox, asJSON bool) error {
-	if !asJSON {
-		_, err := fmt.Fprintln(writer, sandbox.ID)
-		return err
-	}
-	encoder := json.NewEncoder(writer)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(result{
-		ID: sandbox.ID.String(), Name: sandbox.Config.Name, ImageDigest: sandbox.ImageDigest.String(),
-		State: string(sandbox.State), CPUs: sandbox.Config.CPUs, Memory: sandbox.Config.Memory,
-		Storage: sandbox.Config.Storage, Generation: sandbox.Generation,
-		CreatedAt: sandbox.CreatedAt, UpdatedAt: sandbox.UpdatedAt,
-	})
 }
 
 // parseBytes accepts integer bytes or binary IEC units without floating-point rounding.

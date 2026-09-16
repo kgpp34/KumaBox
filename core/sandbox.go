@@ -43,9 +43,14 @@ type sandboxCreator interface {
 	Forget(context.Context, types.SandboxID, uint64) error
 }
 
+// sandboxReader is the metadata capability consumed by sandbox queries and lookup.
+type sandboxReader interface {
+	Resolve(context.Context, string) (types.Sandbox, error)
+	List(context.Context) ([]types.Sandbox, error)
+}
+
 // sandboxRemover is the metadata capability consumed by sandbox removal.
 type sandboxRemover interface {
-	Resolve(context.Context, string) (types.Sandbox, error)
 	BeginDelete(context.Context, types.SandboxID, uint64, time.Time) (types.Sandbox, error)
 	FinalizeDelete(context.Context, types.SandboxID, uint64) error
 }
@@ -70,7 +75,9 @@ type SandboxService struct {
 	images imageGuard
 	// creator commits identity, image references, and create transitions.
 	creator sandboxCreator
-	// remover resolves references and commits delete transitions.
+	// reader supplies consistent sandbox snapshots without changing state.
+	reader sandboxReader
+	// remover commits generation-fenced delete transitions.
 	remover sandboxRemover
 	// cows prepares and cleans the sandbox-owned writable disk.
 	cows cowStore
@@ -84,11 +91,11 @@ type SandboxService struct {
 }
 
 // newSandboxService connects the explicit capabilities needed by sandbox commands.
-func newSandboxService(paths sandbox.Paths, images imageGuard, creator sandboxCreator, remover sandboxRemover, cows cowStore, reporter SandboxReporter) *SandboxService {
+func newSandboxService(paths sandbox.Paths, images imageGuard, creator sandboxCreator, reader sandboxReader, remover sandboxRemover, cows cowStore, reporter SandboxReporter) *SandboxService {
 	if reporter == nil {
 		reporter = discardReporter{}
 	}
-	return &SandboxService{paths: paths, images: images, creator: creator, remover: remover, cows: cows, reporter: reporter, newID: types.NewSandboxID, now: time.Now}
+	return &SandboxService{paths: paths, images: images, creator: creator, reader: reader, remover: remover, cows: cows, reporter: reporter, newID: types.NewSandboxID, now: time.Now}
 }
 
 // OpenSandbox assembles the image guard, metadata catalog, and ext4 COW adapter
@@ -115,7 +122,7 @@ func OpenSandbox(ctx context.Context, roots storage.Roots, reporter SandboxRepor
 	}
 	imageCatalog := imagecatalog.New(store, imagecatalog.WithImageUsage(sandboxcatalog.Usage{}))
 	sandboxCatalog := sandboxcatalog.New(store, imagecatalog.Reader{})
-	service := newSandboxService(sandboxPaths, images.NewGuard(imagePaths, imageCatalog), sandboxCatalog, sandboxCatalog, disk.NewExt4(sandboxPaths), reporter)
+	service := newSandboxService(sandboxPaths, images.NewGuard(imagePaths, imageCatalog), sandboxCatalog, sandboxCatalog, sandboxCatalog, disk.NewExt4(sandboxPaths), reporter)
 	service.store = store
 	return service, nil
 }
@@ -211,6 +218,29 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 	return created, nil
 }
 
+// List returns a consistent sandbox snapshot. Unless includeAll is true, only
+// states associated with an active VMM operation are returned.
+func (s *SandboxService) List(ctx context.Context, includeAll bool) ([]types.Sandbox, error) {
+	if s == nil || s.reader == nil {
+		return nil, errors.New("sandbox service is not configured")
+	}
+	records, err := s.reader.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if includeAll {
+		return records, nil
+	}
+	active := make([]types.Sandbox, 0, len(records))
+	for _, record := range records {
+		switch record.State {
+		case types.SandboxStateStarting, types.SandboxStateRunning, types.SandboxStateStopping:
+			active = append(active, record)
+		}
+	}
+	return active, nil
+}
+
 // Remove records cleanup intent before deleting the COW directory and releases
 // the name and image reference only after filesystem cleanup succeeds.
 //
@@ -227,7 +257,7 @@ func (s *SandboxService) Remove(ctx context.Context, reference string) (result t
 	if err := s.reporter.Status("resolving sandbox"); err != nil {
 		return types.Sandbox{}, err
 	}
-	record, err := s.remover.Resolve(ctx, reference)
+	record, err := s.reader.Resolve(ctx, reference)
 	if err != nil {
 		return types.Sandbox{}, err
 	}
