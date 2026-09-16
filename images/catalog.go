@@ -83,6 +83,7 @@ func (commit ImportCommit) Validate() error {
 		}
 	}
 	boot, err := SelectBoot(commit.Layers)
+	boot.Profile = commit.Manifest.BootProfile
 	if err != nil || boot != commit.Boot || size != commit.Size {
 		return errors.New("inconsistent boot selection or total image size")
 	}

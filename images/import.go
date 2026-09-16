@@ -292,6 +292,9 @@ func (i *Importer) Import(ctx context.Context, name string, platform types.Platf
 	if err != nil {
 		return types.Image{}, err
 	}
+	// The source declaration and selected artifacts form one boot contract. An
+	// empty profile remains empty for images imported before profiles existed.
+	boot.Profile = manifest.BootProfile
 	var total int64
 	for _, layer := range layers {
 		total += layer.Size

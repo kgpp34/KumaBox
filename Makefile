@@ -75,8 +75,9 @@ install: build ## Install kumabox and kumabox-check
 test: vet ## Run tests with race detection and coverage
 	go test -race -timeout 120s -count=1 -cover -coverprofile=coverage.out ./...
 
-doctor-check: ## Check the doctor script syntax
+doctor-check: ## Check host and guest shell script syntax
 	bash -n scripts/kumabox-check.sh
+	sh -n oci-images/ubuntu/overlay.sh
 
 race: ## Run all Go tests with race detection
 	go test -race ./...

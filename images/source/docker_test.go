@@ -41,7 +41,10 @@ func fixtureDockerEntry(t *testing.T, architecture, tag, compression string) (do
 	}
 	entry := dockerEntry{RepoTags: []string{tag}}
 	objects := map[string][]byte{}
-	config := v1.ConfigFile{OS: "linux", Architecture: architecture, RootFS: v1.RootFS{Type: "layers"}, Config: v1.Config{Env: []string{"FIXTURE=" + tag}}}
+	config := v1.ConfigFile{
+		OS: "linux", Architecture: architecture, RootFS: v1.RootFS{Type: "layers"},
+		Config: v1.Config{Env: []string{"FIXTURE=" + tag}, Labels: map[string]string{types.ImageBootProfileLabel: string(types.BootProfileOverlayV1)}},
+	}
 	for index, raw := range unpacked {
 		config.RootFS.DiffIDs = append(config.RootFS.DiffIDs, v1.Hash{Algorithm: "sha256", Hex: fmt.Sprintf("%x", sha256.Sum256(raw))})
 		var buffer bytes.Buffer
@@ -161,6 +164,9 @@ func TestDockerSourcePreservesLayersAndIdentity(t *testing.T) {
 			manifest, layers, err := readSourceLayers(t.Context(), source, platform)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if manifest.BootProfile != types.BootProfileOverlayV1 {
+				t.Fatalf("boot profile = %q", manifest.BootProfile)
 			}
 			if len(layers) != len(expected) {
 				t.Fatalf("layer count = %d, want %d", len(layers), len(expected))

@@ -153,14 +153,47 @@ func TestReservationPinsImageInsideRemovalTransaction(t *testing.T) {
 			t.Fatalf("Resolve %q = %+v", reference, resolved)
 		}
 	}
-	deleting, err := sandboxStore.BeginDelete(t.Context(), id, createdRecord.Generation, created.Add(3*time.Second))
+	starting, err := sandboxStore.BeginStart(t.Context(), id, createdRecord.Generation, created.Add(3*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deleting.State != types.SandboxStateDeleting || deleting.Generation != 3 {
+	if starting.State != types.SandboxStateStarting || starting.Generation != 3 {
+		t.Fatalf("starting record = %+v", starting)
+	}
+	resumedStart, err := sandboxStore.BeginStart(t.Context(), id, starting.Generation, created.Add(4*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumedStart.Generation != starting.Generation || !resumedStart.UpdatedAt.Equal(starting.UpdatedAt) {
+		t.Fatalf("resumed start changed record: before=%+v after=%+v", starting, resumedStart)
+	}
+	running, err := sandboxStore.MarkRunning(t.Context(), id, starting.Generation, created.Add(5*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := sandboxStore.MarkStopped(t.Context(), id, running.Generation, created.Add(6*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarting, err := sandboxStore.BeginStart(t.Context(), id, stopped.Generation, created.Add(7*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, err := sandboxStore.MarkStartError(t.Context(), id, restarting.Generation, types.SandboxFailure{Phase: "launch VMM", Message: "exited"}, created.Add(8*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.State != types.SandboxStateError || failed.Generation != 7 || failed.Failure == nil {
+		t.Fatalf("failed start record = %+v", failed)
+	}
+	deleting, err := sandboxStore.BeginDelete(t.Context(), id, failed.Generation, created.Add(9*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleting.State != types.SandboxStateDeleting || deleting.Generation != 8 {
 		t.Fatalf("deleting record = %+v", deleting)
 	}
-	resumed, err := sandboxStore.BeginDelete(t.Context(), id, deleting.Generation, created.Add(4*time.Second))
+	resumed, err := sandboxStore.BeginDelete(t.Context(), id, deleting.Generation, created.Add(10*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}

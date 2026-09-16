@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/kumabox/kumabox/cgroup"
 	"github.com/kumabox/kumabox/disk"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
@@ -18,6 +19,8 @@ import (
 	sandboxcatalog "github.com/kumabox/kumabox/sandbox/catalog"
 	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/types"
+	"github.com/kumabox/kumabox/vmm"
+	"github.com/kumabox/kumabox/vmm/cloudhypervisor"
 )
 
 const cleanupTimeout = 10 * time.Second
@@ -55,10 +58,30 @@ type sandboxRemover interface {
 	FinalizeDelete(context.Context, types.SandboxID, uint64) error
 }
 
+// sandboxStarter is the generation-fenced metadata capability used by start.
+type sandboxStarter interface {
+	BeginStart(context.Context, types.SandboxID, uint64, time.Time) (types.Sandbox, error)
+	MarkRunning(context.Context, types.SandboxID, uint64, time.Time) (types.Sandbox, error)
+	MarkStartError(context.Context, types.SandboxID, uint64, types.SandboxFailure, time.Time) (types.Sandbox, error)
+	MarkStopped(context.Context, types.SandboxID, uint64, time.Time) (types.Sandbox, error)
+}
+
 // cowStore is the private writable-disk capability consumed by sandbox creation.
 type cowStore interface {
 	Prepare(context.Context, types.SandboxID, int64) error
+	Check(context.Context, types.SandboxID, int64) error
 	Remove(context.Context, types.SandboxID) error
+}
+
+// vmmRuntime is the process capability consumed by lifecycle orchestration.
+// Its implementation owns process identity and readiness, not durable state.
+type vmmRuntime interface {
+	Preflight() error
+	Observe(context.Context, types.SandboxID, uint64) (vmm.Observation, error)
+	WaitReady(context.Context, vmm.Process) error
+	Launch(context.Context, vmm.LaunchPlan) (vmm.Process, error)
+	Abort(context.Context, vmm.Process) error
+	Cleanup(context.Context, types.SandboxID) error
 }
 
 // SandboxReporter receives user-visible stages without controlling workflows.
@@ -79,8 +102,14 @@ type SandboxService struct {
 	reader sandboxReader
 	// remover commits generation-fenced delete transitions.
 	remover sandboxRemover
+	// starter commits generation-fenced start, running, error, and recovery transitions.
+	starter sandboxStarter
 	// cows prepares and cleans the sandbox-owned writable disk.
 	cows cowStore
+	// imagePaths derives immutable artifacts after the image guard verifies them.
+	imagePaths images.Paths
+	// runtime owns Cloud Hypervisor process identity, readiness, and cleanup.
+	runtime vmmRuntime
 	// reporter emits progress independently of command results.
 	reporter SandboxReporter
 	// newID and now are replaceable in same-package tests.
@@ -91,11 +120,15 @@ type SandboxService struct {
 }
 
 // newSandboxService connects the explicit capabilities needed by sandbox commands.
-func newSandboxService(paths sandbox.Paths, images imageGuard, creator sandboxCreator, reader sandboxReader, remover sandboxRemover, cows cowStore, reporter SandboxReporter) *SandboxService {
+func newSandboxService(paths sandbox.Paths, imagePaths images.Paths, images imageGuard, creator sandboxCreator, reader sandboxReader, remover sandboxRemover, starter sandboxStarter, cows cowStore, runtime vmmRuntime, reporter SandboxReporter) *SandboxService {
 	if reporter == nil {
 		reporter = discardReporter{}
 	}
-	return &SandboxService{paths: paths, images: images, creator: creator, reader: reader, remover: remover, cows: cows, reporter: reporter, newID: types.NewSandboxID, now: time.Now}
+	return &SandboxService{
+		paths: paths, imagePaths: imagePaths, images: images, creator: creator, reader: reader,
+		remover: remover, starter: starter, cows: cows, runtime: runtime, reporter: reporter,
+		newID: types.NewSandboxID, now: time.Now,
+	}
 }
 
 // OpenSandbox assembles the image guard, metadata catalog, and ext4 COW adapter
@@ -122,7 +155,22 @@ func OpenSandbox(ctx context.Context, roots storage.Roots, reporter SandboxRepor
 	}
 	imageCatalog := imagecatalog.New(store, imagecatalog.WithImageUsage(sandboxcatalog.Usage{}))
 	sandboxCatalog := sandboxcatalog.New(store, imagecatalog.Reader{})
-	service := newSandboxService(sandboxPaths, images.NewGuard(imagePaths, imageCatalog), sandboxCatalog, sandboxCatalog, sandboxCatalog, disk.NewExt4(sandboxPaths), reporter)
+	vmmPaths, err := vmm.NewPaths(roots)
+	if err != nil {
+		return nil, errors.Join(err, store.Close())
+	}
+	scopes, err := cgroup.New("")
+	if err != nil {
+		return nil, errors.Join(err, store.Close())
+	}
+	runtimeDriver, err := cloudhypervisor.New(vmmPaths, scopes, cloudhypervisor.Options{})
+	if err != nil {
+		return nil, errors.Join(err, store.Close())
+	}
+	service := newSandboxService(
+		sandboxPaths, imagePaths, images.NewGuard(imagePaths, imageCatalog), sandboxCatalog,
+		sandboxCatalog, sandboxCatalog, sandboxCatalog, disk.NewExt4(sandboxPaths), runtimeDriver, reporter,
+	)
 	service.store = store
 	return service, nil
 }
@@ -251,6 +299,257 @@ func (s *SandboxService) Inspect(ctx context.Context, reference string) (types.S
 		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("SANDBOX must not be empty"))
 	}
 	return s.reader.Resolve(ctx, reference)
+}
+
+// Start validates persistent inputs, recovers an interrupted launch when
+// possible, and commits Running only after the exact VMM reports readiness.
+//
+//	resolve + lock -> verify image/COW -> Starting -> launch -> API Running
+//	                        ^               |                    |
+//	                        +---- retry ----+-------- CAS Running+
+//	                                        |
+//	                              abort + retained Error
+func (s *SandboxService) Start(ctx context.Context, reference string) (result types.Sandbox, returnErr error) {
+	if s == nil || s.reader == nil || s.starter == nil || s.images == nil || s.cows == nil || s.runtime == nil || s.reporter == nil || s.now == nil {
+		return types.Sandbox{}, errors.New("sandbox service is not configured")
+	}
+	if reference == "" {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("SANDBOX must not be empty"))
+	}
+	if err := s.reporter.Status("resolving sandbox"); err != nil {
+		return types.Sandbox{}, err
+	}
+	record, err := s.reader.Resolve(ctx, reference)
+	if err != nil {
+		return types.Sandbox{}, err
+	}
+	lockPath, err := s.paths.Lock(record.ID)
+	if err != nil {
+		return types.Sandbox{}, err
+	}
+	if err := s.reporter.Status("waiting for sandbox operation lock"); err != nil {
+		return types.Sandbox{}, err
+	}
+	lock := filelock.New(lockPath)
+	if err := lock.Lock(ctx); err != nil {
+		return types.Sandbox{}, errdefs.Context(err, "start sandbox", reference, "lock", "retry the start", false)
+	}
+	committed := false
+	defer func() {
+		if unlockErr := lock.Unlock(context.WithoutCancel(ctx)); unlockErr != nil {
+			returnErr = errdefs.Context(errors.Join(returnErr, unlockErr), "start sandbox", reference, "unlock", "inspect the sandbox before retrying", committed)
+		}
+	}()
+
+	// The first resolve selects the lock; this second resolve is authoritative.
+	record, err = s.reader.Resolve(ctx, record.ID.String())
+	if err != nil {
+		return types.Sandbox{}, err
+	}
+	beforeRecovery := record
+	result, done, err := s.recoverStart(ctx, record)
+	if err != nil {
+		return types.Sandbox{}, errdefs.Context(err, "start sandbox", reference, "recover runtime", "inspect the sandbox and VMM log before retrying", false)
+	}
+	committed = result.Generation != beforeRecovery.Generation || result.State != beforeRecovery.State
+	if done {
+		committed = true
+		if err := s.reporter.Committed(result); err != nil {
+			return result, errdefs.Context(err, "start sandbox", reference, "report", "sandbox is running; inspect it before retrying", true)
+		}
+		return result, nil
+	}
+	record = result
+	failBeforeLaunch := func(phase string, cause error) error {
+		if record.State == types.SandboxStateStarting {
+			return s.failStart(ctx, record, phase, cause, vmm.Process{})
+		}
+		return errdefs.Context(cause, "start sandbox", reference, phase, "fix the validation failure and retry", committed)
+	}
+
+	if err := s.reporter.Status("checking host runtime"); err != nil {
+		return record, failBeforeLaunch("report", err)
+	}
+	if err := s.runtime.Preflight(); err != nil {
+		return record, failBeforeLaunch("host preflight", err)
+	}
+	if int(record.Config.CPUs) > runtime.NumCPU() {
+		return record, failBeforeLaunch("host capacity", errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, fmt.Errorf("requested %d vCPUs exceeds available host CPUs (%d)", record.Config.CPUs, runtime.NumCPU())))
+	}
+	if err := s.reporter.Status("verifying image and sandbox disk"); err != nil {
+		return record, failBeforeLaunch("report", err)
+	}
+	var plan vmm.LaunchPlan
+	_, err = s.images.WithAvailable(ctx, record.ImageDigest.String(), func(image types.Image) error {
+		var buildErr error
+		plan, buildErr = s.launchPlan(record, image)
+		if buildErr != nil {
+			return buildErr
+		}
+		return s.cows.Check(ctx, record.ID, record.Config.Storage)
+	})
+	if err != nil {
+		return record, failBeforeLaunch("validate artifacts", err)
+	}
+
+	if err := s.reporter.Status("committing starting state"); err != nil {
+		return record, failBeforeLaunch("report", err)
+	}
+	starting, err := s.starter.BeginStart(ctx, record.ID, record.Generation, s.now().UTC())
+	if err != nil {
+		return record, errdefs.Context(err, "start sandbox", reference, "mark starting", "inspect the sandbox before retrying", committed)
+	}
+	committed = true
+	result = starting
+	plan.Generation = starting.Generation
+	if err := plan.Validate(); err != nil {
+		return starting, s.failStart(ctx, starting, "build launch plan", err, vmm.Process{})
+	}
+	if err := s.reporter.Status("launching Cloud Hypervisor"); err != nil {
+		return starting, s.failStart(ctx, starting, "report", err, vmm.Process{})
+	}
+	process, err := s.runtime.Launch(ctx, plan)
+	if err != nil {
+		return starting, s.failStart(ctx, starting, "launch VMM", err, process)
+	}
+	if err := s.reporter.Status("committing running state"); err != nil {
+		return starting, s.failStart(ctx, starting, "report", err, process)
+	}
+	running, err := s.starter.MarkRunning(ctx, starting.ID, starting.Generation, s.now().UTC())
+	if err != nil {
+		return starting, s.failStart(ctx, starting, "commit running", err, process)
+	}
+	result = running
+	if err := s.reporter.Committed(running); err != nil {
+		return running, errdefs.Context(err, "start sandbox", reference, "report", "sandbox is running; inspect it before retrying", true)
+	}
+	return running, nil
+}
+
+// recoverStart reconciles durable lifecycle state with an owned process. The
+// returned boolean is true when Running is already established.
+func (s *SandboxService) recoverStart(ctx context.Context, record types.Sandbox) (types.Sandbox, bool, error) {
+	switch record.State {
+	case types.SandboxStateCreating, types.SandboxStateStopping, types.SandboxStateDeleting:
+		return record, false, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s in state %s cannot start", record.ID, record.State))
+	}
+	expected := record.Generation
+	if record.State == types.SandboxStateRunning {
+		if record.Generation < 2 {
+			return record, false, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("running sandbox has no Starting generation"))
+		}
+		expected--
+	}
+	if err := s.reporter.Status("checking existing runtime"); err != nil {
+		return record, false, err
+	}
+	observation, err := s.runtime.Observe(ctx, record.ID, expected)
+	if err != nil {
+		return record, false, err
+	}
+	switch record.State {
+	case types.SandboxStateRunning:
+		switch observation.State {
+		case vmm.ProcessRunning:
+			return record, true, nil
+		case vmm.ProcessStarting:
+			if err := s.runtime.WaitReady(ctx, observation.Process); err != nil {
+				return record, false, err
+			}
+			return record, true, nil
+		case vmm.ProcessAbsent:
+			if err := s.runtime.Cleanup(ctx, record.ID); err != nil {
+				return record, false, err
+			}
+			stopped, err := s.starter.MarkStopped(ctx, record.ID, record.Generation, s.now().UTC())
+			return stopped, false, err
+		}
+	case types.SandboxStateStarting:
+		switch observation.State {
+		case vmm.ProcessRunning:
+			running, err := s.starter.MarkRunning(ctx, record.ID, record.Generation, s.now().UTC())
+			return running, err == nil, err
+		case vmm.ProcessStarting:
+			if err := s.runtime.WaitReady(ctx, observation.Process); err != nil {
+				return record, false, s.failStart(ctx, record, "recover VMM", err, observation.Process)
+			}
+			running, err := s.starter.MarkRunning(ctx, record.ID, record.Generation, s.now().UTC())
+			if err != nil {
+				return record, false, s.failStart(ctx, record, "commit recovered VMM", err, observation.Process)
+			}
+			return running, true, nil
+		case vmm.ProcessAbsent:
+			if err := s.runtime.Cleanup(ctx, record.ID); err != nil {
+				return record, false, err
+			}
+			return record, false, nil
+		}
+	default:
+		if observation.State != vmm.ProcessAbsent {
+			return record, false, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s has a live VMM while state is %s", record.ID, record.State))
+		}
+		if err := s.runtime.Cleanup(ctx, record.ID); err != nil {
+			return record, false, err
+		}
+		return record, false, nil
+	}
+	return record, false, errdefs.New(errdefs.ClassInternal, errdefs.CodeInternal, fmt.Errorf("unknown VMM observation %q", observation.State))
+}
+
+// launchPlan maps a pinned image and sandbox resource request into the public
+// overlay-v1 guest ABI. It does not inspect or mutate host files.
+func (s *SandboxService) launchPlan(record types.Sandbox, image types.Image) (vmm.LaunchPlan, error) {
+	if image.ManifestDigest != record.ImageDigest {
+		return vmm.LaunchPlan{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("resolved image differs from the sandbox pin"))
+	}
+	if image.Platform.OS != "linux" || image.Platform.Architecture != runtime.GOARCH {
+		return vmm.LaunchPlan{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeImageIncompatible, fmt.Errorf("image platform %s/%s cannot run on %s/%s", image.Platform.OS, image.Platform.Architecture, runtime.GOOS, runtime.GOARCH))
+	}
+	if image.Boot.Profile != types.BootProfileOverlayV1 {
+		return vmm.LaunchPlan{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeImageIncompatible, fmt.Errorf("image boot profile %q is not supported; expected %q", image.Boot.Profile, types.BootProfileOverlayV1))
+	}
+	kernel, err := s.imagePaths.BootFile(image.Boot.KernelLayer, image.Boot.KernelFile)
+	if err != nil {
+		return vmm.LaunchPlan{}, err
+	}
+	initrd, err := s.imagePaths.BootFile(image.Boot.InitrdLayer, image.Boot.InitrdFile)
+	if err != nil {
+		return vmm.LaunchPlan{}, err
+	}
+	cmdline, err := vmm.OverlayV1Cmdline(len(image.Layers))
+	if err != nil {
+		return vmm.LaunchPlan{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeImageIncompatible, err)
+	}
+	disks := make([]vmm.Disk, 0, len(image.Layers)+1)
+	for position, layer := range image.Layers {
+		disks = append(disks, vmm.Disk{Path: s.imagePaths.EROFS(layer.SourceDigest), Serial: fmt.Sprintf("%s%d", vmm.LayerSerialPrefix, position), ReadOnly: true})
+	}
+	cow, err := s.paths.COW(record.ID)
+	if err != nil {
+		return vmm.LaunchPlan{}, err
+	}
+	disks = append(disks, vmm.Disk{Path: cow, Serial: vmm.COWSerial})
+	return vmm.LaunchPlan{
+		SandboxID: record.ID, CPUs: record.Config.CPUs, Memory: record.Config.Memory,
+		BootProfile: image.Boot.Profile, Kernel: kernel, Initrd: initrd, Cmdline: cmdline, Disks: disks,
+	}, nil
+}
+
+// failStart cleans only the exact process identity (when available) and retains
+// an Error record so the next start or removal has an explicit owner.
+func (s *SandboxService) failStart(ctx context.Context, starting types.Sandbox, phase string, cause error, process vmm.Process) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+	defer cancel()
+	var cleanupErr error
+	if process.PID > 0 {
+		cleanupErr = s.runtime.Abort(cleanupCtx, process)
+	} else {
+		cleanupErr = s.runtime.Cleanup(cleanupCtx, starting.ID)
+	}
+	failureCause := errors.Join(cause, cleanupErr)
+	failure := types.SandboxFailure{Phase: phase, Message: failureCause.Error()}
+	_, markErr := s.starter.MarkStartError(cleanupCtx, starting.ID, starting.Generation, failure, s.now().UTC())
+	return errdefs.Context(errors.Join(failureCause, markErr), "start sandbox", starting.Config.Name, phase, "inspect the retained error sandbox and VMM log", true)
 }
 
 // Remove records cleanup intent before deleting the COW directory and releases

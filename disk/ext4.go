@@ -93,6 +93,25 @@ func (d *Ext4) Prepare(ctx context.Context, id types.SandboxID, size int64) erro
 	return nil
 }
 
+// Check verifies that an existing sandbox COW is the expected regular ext4
+// file. It never repairs or reformats data during a lifecycle operation.
+func (d *Ext4) Check(_ context.Context, id types.SandboxID, size int64) error {
+	if d == nil {
+		return errors.New("ext4 disk store is not configured")
+	}
+	path, err := d.paths.COW(id)
+	if err != nil {
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+	}
+	if err := validate(path, size); err != nil {
+		return errdefs.Context(
+			errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err),
+			"check sandbox disk", id.String(), "validate ext4", "remove and recreate the sandbox", false,
+		)
+	}
+	return nil
+}
+
 // Remove deletes only the directory derived from a validated sandbox ID.
 // Missing directories are already clean.
 func (d *Ext4) Remove(_ context.Context, id types.SandboxID) error {

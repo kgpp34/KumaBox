@@ -1,0 +1,148 @@
+// Package vmm defines launch plans and runtime process facts shared by the
+// application service and virtual-machine-monitor adapters. It contains no
+// lifecycle persistence or CLI presentation.
+package vmm
+
+import (
+	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	"github.com/kumabox/kumabox/types"
+)
+
+const (
+	// LayerSerialPrefix identifies immutable EROFS disks by manifest position.
+	LayerSerialPrefix = "kumabox-layer"
+	// COWSerial identifies the sandbox-private ext4 overlay disk.
+	COWSerial = "kumabox-cow"
+	// VsockGuestCID is safe because every sandbox has a private host Unix socket.
+	VsockGuestCID uint32 = 3
+)
+
+// Disk is one block device in VMM attachment order.
+type Disk struct {
+	// Path is an absolute managed artifact path on the host.
+	Path string
+	// Serial is the stable guest-visible identity used by early userspace.
+	Serial string
+	// ReadOnly protects shared image layers from guest writes.
+	ReadOnly bool
+}
+
+// LaunchPlan is a complete, immutable request for one VMM process.
+type LaunchPlan struct {
+	// SandboxID owns every runtime path and process created from the plan.
+	SandboxID types.SandboxID
+	// Generation is the durable Starting generation that owns this launch.
+	Generation uint64
+	// CPUs is the number of boot vCPUs.
+	CPUs uint32
+	// Memory is guest RAM in bytes.
+	Memory int64
+	// BootProfile selects the host/guest direct-boot contract.
+	BootProfile types.BootProfile
+	// Kernel is the verified direct-boot kernel artifact.
+	Kernel string
+	// Initrd is the verified early-userspace artifact.
+	Initrd string
+	// Cmdline carries the versioned boot profile parameters.
+	Cmdline string
+	// Disks are attached base-to-top followed by the private COW disk.
+	Disks []Disk
+}
+
+// Validate rejects incomplete plans before an adapter creates runtime state.
+func (p LaunchPlan) Validate() error {
+	if _, err := types.ParseSandboxID(p.SandboxID.String()); err != nil {
+		return err
+	}
+	if p.Generation == 0 || p.CPUs == 0 || p.Memory <= 0 {
+		return errors.New("launch generation, CPUs, and memory must be positive")
+	}
+	if p.BootProfile != types.BootProfileOverlayV1 {
+		return fmt.Errorf("unsupported boot profile %q", p.BootProfile)
+	}
+	if !filepath.IsAbs(p.Kernel) || !filepath.IsAbs(p.Initrd) || p.Cmdline == "" || len(p.Disks) < 2 {
+		return errors.New("launch plan requires absolute boot artifacts, a cmdline, image layers, and COW")
+	}
+	seen := make(map[string]bool, len(p.Disks))
+	for position, disk := range p.Disks {
+		if !filepath.IsAbs(disk.Path) || disk.Serial == "" || seen[disk.Serial] {
+			return errors.New("launch plan contains an invalid or duplicate disk")
+		}
+		seen[disk.Serial] = true
+		last := position == len(p.Disks)-1
+		if last != (disk.Serial == COWSerial && !disk.ReadOnly) {
+			return errors.New("launch plan must end with one writable kumabox-cow disk")
+		}
+		if !last && (!disk.ReadOnly || disk.Serial != fmt.Sprintf("%s%d", LayerSerialPrefix, position)) {
+			return errors.New("image disks must be read-only and serialed by manifest position")
+		}
+	}
+	return nil
+}
+
+// OverlayV1Cmdline renders the public KumaBox boot ABI. Layer disks attach in
+// base-to-top order, while OverlayFS lowerdirs must be listed top-to-base.
+func OverlayV1Cmdline(layerCount int) (string, error) {
+	if layerCount <= 0 {
+		return "", errors.New("overlay-v1 requires at least one image layer")
+	}
+	serials := make([]string, 0, layerCount)
+	for position := layerCount - 1; position >= 0; position-- {
+		serials = append(serials, fmt.Sprintf("%s%d", LayerSerialPrefix, position))
+	}
+	return "console=hvc0 loglevel=3 boot=kumabox-overlay kumabox.layers=" + strings.Join(serials, ",") +
+		" kumabox.cow=" + COWSerial + " clocksource=kvm-clock rw", nil
+}
+
+// Process identifies one Linux process generation independently of PID reuse.
+type Process struct {
+	// PID is the host process ID observed immediately after launch.
+	PID int `json:"pid"`
+	// StartTicks is Linux /proc stat starttime for this PID generation.
+	StartTicks uint64 `json:"start_ticks"`
+	// BootID invalidates all process identities after a host reboot.
+	BootID string `json:"boot_id"`
+	// SandboxID binds the process to one managed runtime directory.
+	SandboxID types.SandboxID `json:"sandbox_id"`
+	// Generation is the Starting catalog generation that launched the process.
+	Generation uint64 `json:"generation"`
+	// Binary is the executable basename required during process verification.
+	Binary string `json:"binary"`
+	// APISocket is the exact unique argument required during process verification.
+	APISocket string `json:"api_socket"`
+}
+
+// Validate rejects identities that cannot safely authorize observation or signals.
+func (p Process) Validate() error {
+	if p.PID <= 0 || p.StartTicks == 0 || p.BootID == "" || p.Generation == 0 || p.Binary == "" || !filepath.IsAbs(p.APISocket) {
+		return errors.New("process identity is incomplete")
+	}
+	if _, err := types.ParseSandboxID(p.SandboxID.String()); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ProcessState summarizes facts proven from process identity and the VMM API.
+type ProcessState string
+
+const (
+	// ProcessAbsent means no owned VMM process is alive.
+	ProcessAbsent ProcessState = "absent"
+	// ProcessStarting means the owned process exists but its API is not Running.
+	ProcessStarting ProcessState = "starting"
+	// ProcessRunning means both identity and vm.info report a running VM.
+	ProcessRunning ProcessState = "running"
+)
+
+// Observation is one fail-closed runtime snapshot.
+type Observation struct {
+	// State is absent, starting, or running.
+	State ProcessState
+	// Process is populated for starting and running observations.
+	Process Process
+}

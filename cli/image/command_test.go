@@ -19,6 +19,7 @@ import (
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
 	"github.com/kumabox/kumabox/storage"
+	"github.com/kumabox/kumabox/types"
 )
 
 func newImageTestExecutor(t *testing.T) (storage.Roots, func(...string) (string, error)) {
@@ -167,6 +168,10 @@ func TestImageCommandsFromDockerArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	image, err = mutate.Config(image, v1.Config{Labels: map[string]string{types.ImageBootProfileLabel: string(types.BootProfileOverlayV1)}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	tag, err := name.NewTag("example/demo:one")
 	if err != nil {
 		t.Fatal(err)
@@ -194,7 +199,7 @@ func TestImageCommandsFromDockerArchive(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &first); err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Names) != 2 || len(first.Layers) != 1 || first.Boot.KernelFile == "" || first.Boot.InitrdFile == "" {
+	if len(first.Names) != 2 || len(first.Layers) != 1 || first.Boot.Profile != string(types.BootProfileOverlayV1) || first.Boot.KernelFile == "" || first.Boot.InitrdFile == "" {
 		t.Fatalf("Docker inspect = %s", out)
 	}
 	if _, err := execute("import", "docker-first", archive, "--platform", "linux/amd64"); err != nil {

@@ -21,6 +21,8 @@ const (
 	CodeInvalidArgument Code = "INVALID_ARGUMENT"
 	// CodeHostIncompatible indicates the host lacks a required tool or supported capability.
 	CodeHostIncompatible Code = "HOST_INCOMPATIBLE"
+	// CodeImageIncompatible indicates an image cannot satisfy the requested runtime contract.
+	CodeImageIncompatible Code = "IMAGE_INCOMPATIBLE"
 	// CodeDigestMismatch indicates content does not match its expected digest or diffID.
 	CodeDigestMismatch Code = "IMAGE_DIGEST_MISMATCH"
 	// CodeArtifactCorrupt indicates an artifact or metadata record has an invalid representation.

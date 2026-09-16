@@ -87,6 +87,9 @@ type imageRecord struct {
 	OS string `json:"os"`
 	// Architecture is the platform instruction set, independent of the host.
 	Architecture string `json:"architecture"`
+	// BootProfile is the versioned early-userspace contract declared by the image.
+	// Missing values preserve compatibility with records written before profiles.
+	BootProfile string `json:"boot_profile,omitempty"`
 	// KernelLayer identifies the source layer owning the selected kernel.
 	KernelLayer string `json:"kernel_layer"`
 	// KernelFile is the selected regular boot basename.
@@ -251,8 +254,8 @@ func (c *Store) CommitImport(ctx context.Context, commit images.ImportCommit) er
 		}
 		record := imageRecord{
 			ManifestDigest: commit.Manifest.Digest.String(), OS: commit.Manifest.Platform.OS,
-			Architecture: commit.Manifest.Platform.Architecture,
-			KernelLayer:  commit.Boot.KernelLayer.String(), InitrdLayer: commit.Boot.InitrdLayer.String(), KernelFile: commit.Boot.KernelFile, InitrdFile: commit.Boot.InitrdFile,
+			Architecture: commit.Manifest.Platform.Architecture, BootProfile: string(commit.Boot.Profile),
+			KernelLayer: commit.Boot.KernelLayer.String(), InitrdLayer: commit.Boot.InitrdLayer.String(), KernelFile: commit.Boot.KernelFile, InitrdFile: commit.Boot.InitrdFile,
 			Size: commit.Size, CreatedAt: commit.Created,
 		}
 		if err := putJSON(ctx, writer, CollectionImages, commit.Manifest.Digest.String(), record); err != nil {
@@ -419,7 +422,7 @@ func loadImage(ctx context.Context, reader metadata.Reader, digestID string) (ty
 	}
 	image := types.Image{
 		ManifestDigest: manifest, Platform: types.Platform{OS: record.OS, Architecture: record.Architecture},
-		Boot: types.Boot{KernelLayer: kernel, InitrdLayer: initrd, KernelFile: record.KernelFile, InitrdFile: record.InitrdFile}, Size: record.Size, CreatedAt: record.CreatedAt,
+		Boot: types.Boot{Profile: types.BootProfile(record.BootProfile), KernelLayer: kernel, InitrdLayer: initrd, KernelFile: record.KernelFile, InitrdFile: record.InitrdFile}, Size: record.Size, CreatedAt: record.CreatedAt,
 	}
 	if err := reader.Scan(ctx, CollectionNames, func(name string, raw []byte) error {
 		var item nameRecord
@@ -468,7 +471,7 @@ func loadImage(ctx context.Context, reader metadata.Reader, digestID string) (ty
 	for pos, layer := range image.Layers {
 		descriptors[pos] = types.Descriptor{Digest: layer.SourceDigest}
 	}
-	if err := (images.ImportCommit{Name: "stored", Manifest: types.Manifest{Digest: manifest, Platform: image.Platform, Layers: descriptors}, Layers: image.Layers, Boot: image.Boot, Size: image.Size, Created: image.CreatedAt}).Validate(); err != nil {
+	if err := (images.ImportCommit{Name: "stored", Manifest: types.Manifest{Digest: manifest, Platform: image.Platform, BootProfile: image.Boot.Profile, Layers: descriptors}, Layers: image.Layers, Boot: image.Boot, Size: image.Size, Created: image.CreatedAt}).Validate(); err != nil {
 		return types.Image{}, corruptRecord("image facts", err)
 	}
 	slices.Sort(image.Names)

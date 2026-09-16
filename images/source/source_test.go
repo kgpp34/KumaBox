@@ -179,7 +179,11 @@ func writeLayout(t *testing.T, compressed, unpacked []byte, media mediatypes.Med
 		return raw
 	}
 	layer := put(compressed, media)
-	config := put(encode(v1.ConfigFile{Architecture: "amd64", OS: "linux", RootFS: v1.RootFS{Type: "layers", DiffIDs: []v1.Hash{{Algorithm: "sha256", Hex: fmt.Sprintf("%x", sha256.Sum256(unpacked))}}}}), mediatypes.OCIConfigJSON)
+	config := put(encode(v1.ConfigFile{
+		Architecture: "amd64", OS: "linux",
+		RootFS: v1.RootFS{Type: "layers", DiffIDs: []v1.Hash{{Algorithm: "sha256", Hex: fmt.Sprintf("%x", sha256.Sum256(unpacked))}}},
+		Config: v1.Config{Labels: map[string]string{types.ImageBootProfileLabel: string(types.BootProfileOverlayV1)}},
+	}), mediatypes.OCIConfigJSON)
 	manifest := put(encode(v1.Manifest{SchemaVersion: 2, MediaType: mediatypes.OCIManifestSchema1, Config: config, Layers: []v1.Descriptor{layer}}), mediatypes.OCIManifestSchema1)
 	if err := os.WriteFile(filepath.Join(root, "index.json"), encode(v1.IndexManifest{SchemaVersion: 2, MediaType: mediatypes.OCIImageIndex, Manifests: []v1.Descriptor{manifest}}), 0o600); err != nil {
 		t.Fatal(err)
@@ -228,6 +232,9 @@ func TestSourceSupportsLayerCompressionAndChecksDiffID(t *testing.T) {
 				manifest, err := source.Resolve(t.Context(), types.Platform{OS: "linux", Architecture: "amd64"})
 				if err != nil {
 					t.Fatal(err)
+				}
+				if manifest.BootProfile != types.BootProfileOverlayV1 {
+					t.Fatalf("boot profile = %q", manifest.BootProfile)
 				}
 				reader, err := source.OpenLayer(t.Context(), manifest.Layers[0])
 				if err != nil {

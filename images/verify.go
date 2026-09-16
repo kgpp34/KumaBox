@@ -132,6 +132,9 @@ func validateFacts(image types.Image) error {
 		total += layer.Size
 	}
 	boot, err := SelectBoot(image.Layers)
+	// Profile is declared by the image config rather than derived from layer
+	// filenames, so preserve the committed declaration for the consistency check.
+	boot.Profile = image.Boot.Profile
 	if err != nil || boot != image.Boot || total != image.Size {
 		return errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("image layer mapping or boot selection is inconsistent"))
 	}

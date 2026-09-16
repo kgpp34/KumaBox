@@ -65,6 +65,8 @@ type (
 	}
 	// bootOutput identifies the selected boot filenames and their source layer identities.
 	bootOutput struct {
+		// Profile names the declared host/guest boot contract; empty is undeclared.
+		Profile string `json:"profile"`
 		// KernelLayer is the source digest of the layer providing the selected kernel.
 		KernelLayer string `json:"kernel_layer"`
 		// KernelFile is the selected kernel filename.
@@ -86,7 +88,7 @@ func imageResult(image types.Image) imageOutput {
 		}
 		layers = append(layers, layerOutput{SourceDigest: layer.SourceDigest.String(), EROFSDigest: layer.EROFSDigest.String(), Size: layer.Size, BootFiles: bootFiles, Whiteouts: layer.Whiteouts, BootOpaque: layer.BootOpaque})
 	}
-	return imageOutput{Names: image.Names, ManifestDigest: image.ManifestDigest.String(), Platform: platformOutput{OS: image.Platform.OS, Architecture: image.Platform.Architecture}, Layers: layers, Boot: bootOutput{KernelLayer: image.Boot.KernelLayer.String(), KernelFile: image.Boot.KernelFile, InitrdLayer: image.Boot.InitrdLayer.String(), InitrdFile: image.Boot.InitrdFile}, Size: image.Size, CreatedAt: image.CreatedAt}
+	return imageOutput{Names: image.Names, ManifestDigest: image.ManifestDigest.String(), Platform: platformOutput{OS: image.Platform.OS, Architecture: image.Platform.Architecture}, Layers: layers, Boot: bootOutput{Profile: string(image.Boot.Profile), KernelLayer: image.Boot.KernelLayer.String(), KernelFile: image.Boot.KernelFile, InitrdLayer: image.Boot.InitrdLayer.String(), InitrdFile: image.Boot.InitrdFile}, Size: image.Size, CreatedAt: image.CreatedAt}
 }
 
 // writeImage reports the aliases and full manifest digest after a successful import.

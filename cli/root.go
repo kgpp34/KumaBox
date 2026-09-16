@@ -117,6 +117,7 @@ func newRootCommand() *cobra.Command {
 	root.AddCommand(sandboxcmd.NewInspectCommand(func() storage.Roots { return roots }))
 	root.AddCommand(sandboxcmd.NewListCommand(func() storage.Roots { return roots }))
 	root.AddCommand(sandboxcmd.NewRemoveCommand(func() storage.Roots { return roots }))
+	root.AddCommand(sandboxcmd.NewStartCommand(func() storage.Roots { return roots }))
 	root.AddCommand(newVersionCommand())
 	classifyArguments(root)
 	return root
@@ -153,7 +154,7 @@ func errorExitCode(err error) int {
 		return 3
 	case errdefs.CodeNameTaken, errdefs.CodeStateConflict, errdefs.CodeReferenced:
 		return 4
-	case errdefs.CodeInvalidArgument, errdefs.CodeHostIncompatible, errdefs.CodeDigestMismatch, errdefs.CodeArtifactCorrupt:
+	case errdefs.CodeInvalidArgument, errdefs.CodeHostIncompatible, errdefs.CodeImageIncompatible, errdefs.CodeDigestMismatch, errdefs.CodeArtifactCorrupt:
 		return 5
 	case errdefs.CodeArtifactUnavailable, errdefs.CodeStoreBusy:
 		return 6

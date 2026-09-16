@@ -112,6 +112,7 @@ func (s *resolvedSource) Resolve(ctx context.Context, platform types.Platform) (
 	if config.RootFS.Type != "layers" || len(config.RootFS.DiffIDs) != len(manifest.Layers) {
 		return types.Manifest{}, invalidSource("config rootfs does not match manifest layers")
 	}
+	bootProfile := types.BootProfile(config.Config.Labels[types.ImageBootProfileLabel])
 	layers := make(map[types.Digest]resolvedLayer)
 	descriptors := make([]types.Descriptor, len(manifest.Layers))
 	for position, desc := range manifest.Layers {
@@ -144,7 +145,7 @@ func (s *resolvedSource) Resolve(ctx context.Context, platform types.Platform) (
 	s.mu.Lock()
 	s.layers = layers
 	s.mu.Unlock()
-	return types.Manifest{Digest: digest, Platform: platform, Layers: descriptors}, nil
+	return types.Manifest{Digest: digest, Platform: platform, BootProfile: bootProfile, Layers: descriptors}, nil
 }
 
 // OpenLayer opens a previously resolved layer as a decoded tar stream. The caller

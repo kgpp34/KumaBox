@@ -8,6 +8,24 @@ import (
 	"time"
 )
 
+const (
+	// ImageBootProfileLabel is the OCI config label used by an image to declare
+	// the host/guest boot contract it implements.
+	ImageBootProfileLabel = "io.kumabox.boot.profile"
+)
+
+// BootProfile names a versioned contract between the VMM launch plan and the
+// image's early userspace. An empty value means that an older image did not
+// declare a contract; consumers must not infer one from boot filenames.
+type BootProfile string
+
+const (
+	// BootProfileOverlayV1 mounts EROFS layers named kumabox-layerN over an ext4
+	// disk named kumabox-cow. The kernel command line selects kumabox-overlay and
+	// supplies kumabox.layers plus kumabox.cow.
+	BootProfileOverlayV1 BootProfile = "overlay-v1"
+)
+
 // Digest is a validated SHA-256 content identity.
 type Digest struct {
 	// value prevents constructing malformed textual identities outside this package.
@@ -88,6 +106,8 @@ type BootFile struct {
 
 // Boot identifies the surviving kernel and initrd selected across all layers.
 type Boot struct {
+	// Profile is the declared host/guest boot contract. Empty means undeclared.
+	Profile BootProfile
 	// KernelFile is the selected kernel basename within its layer's boot directory.
 	KernelFile string
 	// InitrdFile is the selected initrd basename within its layer's boot directory.
@@ -122,6 +142,8 @@ type Manifest struct {
 	Digest Digest
 	// Platform must match the platform requested from Source.Resolve.
 	Platform Platform
+	// BootProfile is copied from the OCI config label without guessing a default.
+	BootProfile BootProfile
 	// Layers lists original source blobs in filesystem overlay order.
 	Layers []Descriptor
 }

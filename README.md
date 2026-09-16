@@ -10,9 +10,10 @@ Docker-like command line; sandboxes are Cloud Hypervisor microVMs booted from
 OCI images, with CNI networking, cgroups, snapshots and clone.
 
 The rewrite currently provides the `kumabox` CLI, the host doctor, container
-image management, and persistent sandbox creation. Each command opens its
-metadata store, performs one operation, and exits. Starting a VMM and the rest
-of the sandbox lifecycle are later phases of [docs/ROADMAP.md](docs/ROADMAP.md).
+image management, persistent sandbox creation, and recoverable Cloud Hypervisor
+startup. Each command opens its metadata store, performs one operation, and
+exits. The remaining sandbox lifecycle is tracked in
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Where the design lives
 
@@ -57,6 +58,8 @@ or a generic `pkg` container:
 | `images/erofs` | Convert source layers and extract boot candidates |
 | `sandbox`, `sandbox/catalog` | Sandbox filesystem ownership and metadata persistence |
 | `disk` | Prepare and remove sandbox-owned sparse ext4 COW disks |
+| `vmm`, `vmm/cloudhypervisor` | VMM launch contracts, process identity, arguments and readiness |
+| `cgroup` | Per-sandbox cgroup v2 preparation and reclamation |
 | `metadata`, `metadata/sqlite` | Engine-neutral transactions and the SQLite implementation |
 | `storage`, `lock/flock` | Managed filesystem operations and file locks |
 | `errdefs`, `version` | Error classification and build information |
@@ -89,9 +92,12 @@ The host checker source is `scripts/kumabox-check.sh`.
 ## Container images
 
 Pull or import a Linux image containing regular `/boot/vmlinuz*` and
-`/boot/initrd.img*` files. Image conversion requires `mkfs.erofs` 1.8 or newer;
-unit and integration tests use a stand-in and run on macOS without root/KVM.
-The [synthetic fixture](testdata/oci-layout/README.md) cannot boot a VM.
+`/boot/initrd.img*` files. A bootable KumaBox image also declares the OCI config
+label `io.kumabox.boot.profile=overlay-v1`; older images without the label remain
+importable and inspectable but will be rejected by `start`. Image conversion
+requires `mkfs.erofs` 1.8 or newer; unit and integration tests use a stand-in and
+run on macOS without root/KVM. The
+[synthetic fixture](testdata/oci-layout/README.md) cannot boot a VM.
 
 ```bash
 kumabox image pull REGISTRY/IMAGE:TAG --platform linux/amd64
@@ -106,6 +112,9 @@ kumabox image rm tiny
 `image ls` prints a table with names, 12-character image IDs, platforms,
 human-readable sizes, and creation timestamps in UTC. `image inspect` and
 `image ls --json` print indented JSON with full digests and numeric sizes.
+The inspect response reports the declaration as `boot.profile`; an empty value
+means the source did not declare a boot contract. KumaBox never guesses a profile
+from kernel or initrd filenames.
 Import and pull show a live spinner and completed layer counts on a terminal.
 Verification and removal also show waiting status; removal reports completed
 image counts. Redirected progress uses plain lines on stderr. Results are
@@ -133,6 +142,11 @@ Docker archives are normalized to a deterministic OCI manifest. Its digest
 identifies the imported config and ordered layers and may differ from the
 original registry manifest digest. Repacking or changing source tags preserves
 the imported digest. Docker images must meet the same kernel/initrd requirements.
+
+The reference Ubuntu guest image is built from
+[`oci-images/ubuntu`](oci-images/ubuntu). Its independently implemented initramfs
+script consumes only `kumabox.*` kernel parameters and virtio serials. It does
+not expose or depend on another runtime's guest protocol.
 
 For a separate data store, pass all three roots:
 
@@ -172,6 +186,14 @@ e2fsprogs must be available on the host.
 metadata schema is version 2. Existing version 1 roots are migrated in one
 transaction when first opened: image records and artifacts remain in place,
 and the new sandbox collections become available without changing CLI roots.
+
+`start SANDBOX` accepts an exact name or complete UUID. It checks KVM, the
+Cloud Hypervisor executable, the pinned image, its declared `overlay-v1` boot
+profile, and the existing ext4 COW before committing `Starting`. It records a
+PID-reuse-safe process identity and commits `Running` only after the private
+Cloud Hypervisor API reports readiness. Retrying recovers the same `Starting`
+generation; a failed launch is terminated and retained as `Error` with a
+diagnostic. `--json` returns the complete indented sandbox object.
 
 List active sandboxes with `ps`, or include created, stopped, failed, and
 deleting records with `-a`:

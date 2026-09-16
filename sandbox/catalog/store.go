@@ -144,6 +144,64 @@ func (c *Store) MarkError(ctx context.Context, id types.SandboxID, expected uint
 	return c.transition(ctx, id, expected, types.SandboxStateCreating, types.SandboxStateError, &failure, updated)
 }
 
+// BeginStart records launch ownership before runtime files or a VMM process are
+// created. Retrying an unchanged Starting generation resumes that operation.
+func (c *Store) BeginStart(ctx context.Context, id types.SandboxID, expected uint64, updated time.Time) (types.Sandbox, error) {
+	var result types.Sandbox
+	err := c.store.Update(ctx, func(writer metadata.Writer) error {
+		record, err := load(ctx, writer, id)
+		if err != nil {
+			return err
+		}
+		if record.Generation != expected {
+			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s changed from expected generation %d", id, expected))
+		}
+		if record.State == types.SandboxStateStarting {
+			result = record
+			return nil
+		}
+		switch record.State {
+		case types.SandboxStateCreated, types.SandboxStateStopped, types.SandboxStateError:
+		default:
+			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s in state %s cannot start", id, record.State))
+		}
+		record.State = types.SandboxStateStarting
+		record.Generation++
+		record.Failure = nil
+		record.UpdatedAt = updated
+		if err := record.Validate(); err != nil {
+			return corrupt("sandbox start transition", err)
+		}
+		if err := putJSON(ctx, writer, CollectionSandboxes, id.String(), encode(record)); err != nil {
+			return err
+		}
+		result = record
+		return nil
+	})
+	return result, errdefs.Context(err, "start sandbox", id.String(), "mark starting", "inspect the sandbox state before retrying", false)
+}
+
+// MarkRunning commits readiness only for the Starting generation that launched
+// the observed process.
+func (c *Store) MarkRunning(ctx context.Context, id types.SandboxID, expected uint64, updated time.Time) (types.Sandbox, error) {
+	return c.transition(ctx, id, expected, types.SandboxStateStarting, types.SandboxStateRunning, nil, updated)
+}
+
+// MarkStartError retains launch diagnostics and ownership after cleanup was
+// attempted for one Starting generation.
+func (c *Store) MarkStartError(ctx context.Context, id types.SandboxID, expected uint64, failure types.SandboxFailure, updated time.Time) (types.Sandbox, error) {
+	if failure.Phase == "" || failure.Message == "" {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("start error transition requires phase and message"))
+	}
+	return c.transition(ctx, id, expected, types.SandboxStateStarting, types.SandboxStateError, &failure, updated)
+}
+
+// MarkStopped converges a stale Running record after the owned process is
+// proven absent. A later BeginStart receives the new generation.
+func (c *Store) MarkStopped(ctx context.Context, id types.SandboxID, expected uint64, updated time.Time) (types.Sandbox, error) {
+	return c.transition(ctx, id, expected, types.SandboxStateRunning, types.SandboxStateStopped, nil, updated)
+}
+
 // Resolve returns one sandbox by exact name or complete ID. Exact names take
 // precedence so UUID-shaped names follow the same lookup rule as image aliases.
 func (c *Store) Resolve(ctx context.Context, reference string) (types.Sandbox, error) {
