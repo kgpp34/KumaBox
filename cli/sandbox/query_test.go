@@ -57,6 +57,49 @@ func TestEmptySandboxOutputsRemainScriptFriendly(t *testing.T) {
 	}
 }
 
+func TestInspectCommandAlwaysReturnsIndentedJSONByNameOrID(t *testing.T) {
+	base := t.TempDir()
+	roots := storage.Roots{
+		Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log"),
+	}
+	seedImage(t, roots)
+	installFakeMKFS(t, base)
+	id := executeCreate(t, roots, "box")
+
+	byName := executeInspect(t, roots, "box")
+	byID := executeInspect(t, roots, id.String())
+	if byName != byID || !strings.Contains(byName, "\n  \"id\"") {
+		t.Fatalf("inspect outputs are not identical indented JSON:\nname=%s\nid=%s", byName, byID)
+	}
+	var output sandboxOutput
+	if err := json.Unmarshal([]byte(byName), &output); err != nil {
+		t.Fatalf("decode inspect JSON %q: %v", byName, err)
+	}
+	if output.ID != id.String() || output.Name != "box" || output.State != "created" || output.Failure != nil {
+		t.Fatalf("inspect = %+v", output)
+	}
+	if output.ImageDigest == "" || output.CPUs != 1 || output.Memory != types.DefaultSandboxMemory || output.Storage != types.DefaultSandboxStorage {
+		t.Fatalf("inspect omitted identity or resources: %+v", output)
+	}
+}
+
+func TestSandboxJSONIncludesRetainedFailure(t *testing.T) {
+	record := testSandboxRecord(t)
+	record.State = types.SandboxStateError
+	record.Failure = &types.SandboxFailure{Phase: "disk", Message: "mkfs failed"}
+	var output bytes.Buffer
+	if err := writeSandboxJSON(&output, record); err != nil {
+		t.Fatal(err)
+	}
+	var decoded sandboxOutput
+	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Failure == nil || decoded.Failure.Phase != "disk" || decoded.Failure.Message != "mkfs failed" {
+		t.Fatalf("failure = %+v", decoded.Failure)
+	}
+}
+
 func TestListCommandShowsCreatedOnlyWithAllAndTracksRemoval(t *testing.T) {
 	base := t.TempDir()
 	roots := storage.Roots{
@@ -117,8 +160,9 @@ func (writer sandboxFailingOutput) Write([]byte) (int, error) { return 0, writer
 func TestSandboxListOutputPreservesWriteErrors(t *testing.T) {
 	failure := errors.New("output closed")
 	for name, write := range map[string]func() error{
-		"table": func() error { return writeSandboxTable(sandboxFailingOutput{failure}, nil) },
-		"json":  func() error { return writeSandboxListJSON(sandboxFailingOutput{failure}, nil) },
+		"inspect": func() error { return writeSandboxJSON(sandboxFailingOutput{failure}, testSandboxRecord(t)) },
+		"table":   func() error { return writeSandboxTable(sandboxFailingOutput{failure}, nil) },
+		"json":    func() error { return writeSandboxListJSON(sandboxFailingOutput{failure}, nil) },
 		"quiet": func() error {
 			return writeSandboxIDs(sandboxFailingOutput{failure}, []types.Sandbox{testSandboxRecord(t)})
 		},
@@ -129,6 +173,19 @@ func TestSandboxListOutputPreservesWriteErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func executeInspect(t *testing.T, roots storage.Roots, reference string) string {
+	t.Helper()
+	command := NewInspectCommand(func() storage.Roots { return roots })
+	command.SetArgs([]string{reference})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&bytes.Buffer{})
+	if err := command.ExecuteContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return output.String()
 }
 
 func executeList(t *testing.T, roots storage.Roots, args ...string) string {

@@ -9,6 +9,31 @@ import (
 	"github.com/kumabox/kumabox/errdefs"
 )
 
+// NewInspectCommand builds the read-only detailed sandbox query. Inspect always
+// writes JSON so its complete output remains stable for people and scripts.
+func NewInspectCommand(roots rootsProvider) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "inspect SANDBOX",
+		Short: "show detailed sandbox information as JSON",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) (returnErr error) {
+			service, err := core.OpenSandbox(command.Context(), roots(), nil)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "inspect sandbox", args[0], "close metadata", "retry the query", false))
+			}()
+			record, err := service.Inspect(command.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return writeSandboxJSON(command.OutOrStdout(), record)
+		},
+	}
+	return command
+}
+
 // NewListCommand builds the top-level Docker-style sandbox process listing.
 func NewListCommand(roots rootsProvider) *cobra.Command {
 	var includeAll, asJSON, quiet bool

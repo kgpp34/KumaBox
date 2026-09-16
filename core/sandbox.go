@@ -241,6 +241,18 @@ func (s *SandboxService) List(ctx context.Context, includeAll bool) ([]types.San
 	return active, nil
 }
 
+// Inspect resolves one sandbox snapshot without changing persistent or runtime state.
+// Runtime observation will be added here when the VMM lifecycle is available.
+func (s *SandboxService) Inspect(ctx context.Context, reference string) (types.Sandbox, error) {
+	if s == nil || s.reader == nil {
+		return types.Sandbox{}, errors.New("sandbox service is not configured")
+	}
+	if reference == "" {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("SANDBOX must not be empty"))
+	}
+	return s.reader.Resolve(ctx, reference)
+}
+
 // Remove records cleanup intent before deleting the COW directory and releases
 // the name and image reference only after filesystem cleanup succeeds.
 //
@@ -248,7 +260,7 @@ func (s *SandboxService) List(ctx context.Context, includeAll bool) ([]types.San
 //	                              |                            |
 //	                              +---- retry resumes here <---+
 func (s *SandboxService) Remove(ctx context.Context, reference string) (result types.Sandbox, returnErr error) {
-	if s == nil || s.remover == nil || s.cows == nil || s.reporter == nil || s.now == nil {
+	if s == nil || s.reader == nil || s.remover == nil || s.cows == nil || s.reporter == nil || s.now == nil {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")
 	}
 	if reference == "" {

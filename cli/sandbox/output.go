@@ -30,10 +30,20 @@ type sandboxOutput struct {
 	Storage int64 `json:"storage"`
 	// Generation fences stale lifecycle transitions.
 	Generation uint64 `json:"generation"`
+	// Failure explains retained cleanup work for an error-state sandbox.
+	Failure *sandboxFailureOutput `json:"failure,omitempty"`
 	// CreatedAt is the identity reservation time.
 	CreatedAt time.Time `json:"created_at"`
 	// UpdatedAt is the latest committed transition time.
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// sandboxFailureOutput is the user-facing diagnostic for an error-state sandbox.
+type sandboxFailureOutput struct {
+	// Phase identifies the lifecycle step that failed.
+	Phase string `json:"phase"`
+	// Message preserves the operator-facing failure detail.
+	Message string `json:"message"`
 }
 
 // removeOutput is the stable JSON result for a completed sandbox removal.
@@ -46,12 +56,23 @@ type removeOutput struct {
 
 // sandboxResult projects a validated domain record into the CLI JSON schema.
 func sandboxResult(sandbox types.Sandbox) sandboxOutput {
-	return sandboxOutput{
+	result := sandboxOutput{
 		ID: sandbox.ID.String(), Name: sandbox.Config.Name, ImageDigest: sandbox.ImageDigest.String(),
 		State: string(sandbox.State), CPUs: sandbox.Config.CPUs, Memory: sandbox.Config.Memory,
 		Storage: sandbox.Config.Storage, Generation: sandbox.Generation,
 		CreatedAt: sandbox.CreatedAt.UTC(), UpdatedAt: sandbox.UpdatedAt.UTC(),
 	}
+	if sandbox.Failure != nil {
+		result.Failure = &sandboxFailureOutput{Phase: sandbox.Failure.Phase, Message: sandbox.Failure.Message}
+	}
+	return result
+}
+
+// writeSandboxJSON emits one complete sandbox as indented JSON.
+func writeSandboxJSON(writer io.Writer, sandbox types.Sandbox) error {
+	encoder := json.NewEncoder(writer)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(sandboxResult(sandbox))
 }
 
 // writeCreateResult keeps default output script-friendly and JSON complete.
@@ -60,9 +81,7 @@ func writeCreateResult(writer io.Writer, sandbox types.Sandbox, asJSON bool) err
 		_, err := fmt.Fprintln(writer, sandbox.ID)
 		return err
 	}
-	encoder := json.NewEncoder(writer)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(sandboxResult(sandbox))
+	return writeSandboxJSON(writer, sandbox)
 }
 
 // writeRemoveResult keeps text output script-friendly and JSON self-describing.

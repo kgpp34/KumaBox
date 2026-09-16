@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -253,6 +254,26 @@ func TestListFiltersInactiveSandboxesUnlessAllRequested(t *testing.T) {
 		t.Fatal(err)
 	} else if len(records) != 1 || records[0].State != types.SandboxStateRunning {
 		t.Fatalf("running records = %+v", records)
+	}
+}
+
+func TestInspectReturnsResolvedPersistentRecord(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo", Config: types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	*steps = nil
+	record, err := service.Inspect(t.Context(), "box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.ID != fixedID || record.Config.Name != "box" || record.State != types.SandboxStateCreated {
+		t.Fatalf("Inspect = %+v", record)
+	}
+	if diff := strings.Join(*steps, ","); diff != "resolve" {
+		t.Fatalf("steps = %q, want resolve", diff)
 	}
 }
 

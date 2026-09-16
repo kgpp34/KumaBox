@@ -188,6 +188,14 @@ passed directly to `rm`. `--quiet` writes only those UUIDs, one per line. JSON
 uses the same complete resource facts as `create --json` and returns `[]` for
 an empty result.
 
+Inspect one sandbox by its exact name or complete UUID. The command always
+writes indented JSON, including retained failure diagnostics when present:
+
+```bash
+kumabox inspect NAME
+kumabox inspect 123e4567-e89b-42d3-a456-426614174000
+```
+
 Remove a non-running sandbox by its exact name or complete UUID:
 
 ```bash
