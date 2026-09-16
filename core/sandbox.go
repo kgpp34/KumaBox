@@ -35,12 +35,19 @@ type imageGuard interface {
 	WithAvailable(context.Context, string, func(types.Image) error) (types.Image, error)
 }
 
-// sandboxCatalog is the metadata capability consumed by sandbox creation.
-type sandboxCatalog interface {
+// sandboxCreator is the metadata capability consumed by sandbox creation.
+type sandboxCreator interface {
 	Reserve(context.Context, string, types.Digest, types.Sandbox) error
 	MarkCreated(context.Context, types.SandboxID, uint64, time.Time) (types.Sandbox, error)
 	MarkError(context.Context, types.SandboxID, uint64, types.SandboxFailure, time.Time) (types.Sandbox, error)
 	Forget(context.Context, types.SandboxID, uint64) error
+}
+
+// sandboxRemover is the metadata capability consumed by sandbox removal.
+type sandboxRemover interface {
+	Resolve(context.Context, string) (types.Sandbox, error)
+	BeginDelete(context.Context, types.SandboxID, uint64, time.Time) (types.Sandbox, error)
+	FinalizeDelete(context.Context, types.SandboxID, uint64) error
 }
 
 // cowStore is the private writable-disk capability consumed by sandbox creation.
@@ -49,8 +56,8 @@ type cowStore interface {
 	Remove(context.Context, types.SandboxID) error
 }
 
-// CreateReporter receives user-visible stages without controlling the workflow.
-type CreateReporter interface {
+// SandboxReporter receives user-visible stages without controlling workflows.
+type SandboxReporter interface {
 	Status(string) error
 	Committed(types.Sandbox) error
 }
@@ -61,12 +68,14 @@ type SandboxService struct {
 	paths sandbox.Paths
 	// images closes the verify/pin race with image removal.
 	images imageGuard
-	// catalog commits identity, references, and state transitions.
-	catalog sandboxCatalog
+	// creator commits identity, image references, and create transitions.
+	creator sandboxCreator
+	// remover resolves references and commits delete transitions.
+	remover sandboxRemover
 	// cows prepares and cleans the sandbox-owned writable disk.
 	cows cowStore
 	// reporter emits progress independently of command results.
-	reporter CreateReporter
+	reporter SandboxReporter
 	// newID and now are replaceable in same-package tests.
 	newID func() (types.SandboxID, error)
 	now   func() time.Time
@@ -75,11 +84,11 @@ type SandboxService struct {
 }
 
 // newSandboxService connects the explicit capabilities needed by sandbox commands.
-func newSandboxService(paths sandbox.Paths, images imageGuard, catalog sandboxCatalog, cows cowStore, reporter CreateReporter) *SandboxService {
+func newSandboxService(paths sandbox.Paths, images imageGuard, creator sandboxCreator, remover sandboxRemover, cows cowStore, reporter SandboxReporter) *SandboxService {
 	if reporter == nil {
 		reporter = discardReporter{}
 	}
-	return &SandboxService{paths: paths, images: images, catalog: catalog, cows: cows, reporter: reporter, newID: types.NewSandboxID, now: time.Now}
+	return &SandboxService{paths: paths, images: images, creator: creator, remover: remover, cows: cows, reporter: reporter, newID: types.NewSandboxID, now: time.Now}
 }
 
 // OpenSandbox assembles the image guard, metadata catalog, and ext4 COW adapter
@@ -88,7 +97,7 @@ func newSandboxService(paths sandbox.Paths, images imageGuard, catalog sandboxCa
 //	shared SQLite -> image catalog <---- transaction reader ---- sandbox catalog
 //	       |              ^                                      |
 //	       +---- usage ---+---- image guard + ext4 COW ----------> service
-func OpenSandbox(ctx context.Context, roots storage.Roots, reporter CreateReporter) (*SandboxService, error) {
+func OpenSandbox(ctx context.Context, roots storage.Roots, reporter SandboxReporter) (*SandboxService, error) {
 	imagePaths, err := images.NewPaths(roots)
 	if err != nil {
 		return nil, err
@@ -106,7 +115,7 @@ func OpenSandbox(ctx context.Context, roots storage.Roots, reporter CreateReport
 	}
 	imageCatalog := imagecatalog.New(store, imagecatalog.WithImageUsage(sandboxcatalog.Usage{}))
 	sandboxCatalog := sandboxcatalog.New(store, imagecatalog.Reader{})
-	service := newSandboxService(sandboxPaths, images.NewGuard(imagePaths, imageCatalog), sandboxCatalog, disk.NewExt4(sandboxPaths), reporter)
+	service := newSandboxService(sandboxPaths, images.NewGuard(imagePaths, imageCatalog), sandboxCatalog, sandboxCatalog, disk.NewExt4(sandboxPaths), reporter)
 	service.store = store
 	return service, nil
 }
@@ -126,7 +135,7 @@ func (s *SandboxService) Close() error {
 //	                            |                         |
 //	                            +---- failure cleanup <---+
 func (s *SandboxService) Create(ctx context.Context, request CreateSandboxRequest) (result types.Sandbox, returnErr error) {
-	if s == nil || s.images == nil || s.catalog == nil || s.cows == nil || s.reporter == nil || s.newID == nil || s.now == nil {
+	if s == nil || s.images == nil || s.creator == nil || s.cows == nil || s.reporter == nil || s.newID == nil || s.now == nil {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")
 	}
 	if request.ImageReference == "" {
@@ -170,7 +179,7 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 			State: types.SandboxStateCreating, Generation: 1,
 			CreatedAt: createdAt, UpdatedAt: createdAt,
 		}
-		if err := s.catalog.Reserve(ctx, request.ImageReference, image.ManifestDigest, record); err != nil {
+		if err := s.creator.Reserve(ctx, request.ImageReference, image.ManifestDigest, record); err != nil {
 			return err
 		}
 		reserved = true
@@ -191,7 +200,7 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 	if err := s.reporter.Status("committing created state"); err != nil {
 		return types.Sandbox{}, s.compensate(ctx, record, "report", err)
 	}
-	created, err := s.catalog.MarkCreated(ctx, id, record.Generation, s.now().UTC())
+	created, err := s.creator.MarkCreated(ctx, id, record.Generation, s.now().UTC())
 	if err != nil {
 		return types.Sandbox{}, s.compensate(ctx, record, "commit", err)
 	}
@@ -202,6 +211,71 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 	return created, nil
 }
 
+// Remove records cleanup intent before deleting the COW directory and releases
+// the name and image reference only after filesystem cleanup succeeds.
+//
+//	resolve -> sandbox lock -> Deleting -> remove files -> forget record + name
+//	                              |                            |
+//	                              +---- retry resumes here <---+
+func (s *SandboxService) Remove(ctx context.Context, reference string) (result types.Sandbox, returnErr error) {
+	if s == nil || s.remover == nil || s.cows == nil || s.reporter == nil || s.now == nil {
+		return types.Sandbox{}, errors.New("sandbox service is not configured")
+	}
+	if reference == "" {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("SANDBOX must not be empty"))
+	}
+	if err := s.reporter.Status("resolving sandbox"); err != nil {
+		return types.Sandbox{}, err
+	}
+	record, err := s.remover.Resolve(ctx, reference)
+	if err != nil {
+		return types.Sandbox{}, err
+	}
+	lockPath, err := s.paths.Lock(record.ID)
+	if err != nil {
+		return types.Sandbox{}, err
+	}
+	if err := s.reporter.Status("waiting for sandbox operation lock"); err != nil {
+		return types.Sandbox{}, err
+	}
+	lock := filelock.New(lockPath)
+	if err := lock.Lock(ctx); err != nil {
+		return types.Sandbox{}, errdefs.Context(err, "remove sandbox", reference, "lock", "retry the removal", false)
+	}
+	committed := false
+	defer func() {
+		unlockErr := lock.Unlock(context.WithoutCancel(ctx))
+		if unlockErr != nil {
+			returnErr = errdefs.Context(errors.Join(returnErr, unlockErr), "remove sandbox", reference, "unlock", "inspect the sandbox removal state before retrying", committed)
+		}
+	}()
+	if err := s.reporter.Status("marking sandbox for deletion"); err != nil {
+		return types.Sandbox{}, err
+	}
+	deleting, err := s.remover.BeginDelete(ctx, record.ID, record.Generation, s.now().UTC())
+	if err != nil {
+		return types.Sandbox{}, err
+	}
+	committed = true
+	result = deleting
+	if err := s.reporter.Status("removing sandbox disk"); err != nil {
+		return deleting, errdefs.Context(err, "remove sandbox", reference, "report", "retry removal to finish cleanup", true)
+	}
+	if err := s.cows.Remove(ctx, deleting.ID); err != nil {
+		return deleting, errdefs.Context(err, "remove sandbox", reference, "disk cleanup", "retry removal to finish cleanup", true)
+	}
+	if err := s.reporter.Status("releasing metadata and image reference"); err != nil {
+		return deleting, errdefs.Context(err, "remove sandbox", reference, "report", "retry removal to finish cleanup", true)
+	}
+	if err := s.remover.FinalizeDelete(ctx, deleting.ID, deleting.Generation); err != nil {
+		return deleting, errdefs.Context(err, "remove sandbox", reference, "finalize", "retry removal to finish cleanup", true)
+	}
+	if err := s.reporter.Committed(deleting); err != nil {
+		return deleting, errdefs.Context(err, "remove sandbox", reference, "report", "sandbox was deleted; do not retry", true)
+	}
+	return deleting, nil
+}
+
 // compensate removes the owned disk before forgetting the Creating reservation.
 // If cleanup cannot be proven complete, Error retains the resource owner and image pin.
 func (s *SandboxService) compensate(ctx context.Context, record types.Sandbox, phase string, cause error) error {
@@ -209,14 +283,14 @@ func (s *SandboxService) compensate(ctx context.Context, record types.Sandbox, p
 	defer cancel()
 	removeErr := s.cows.Remove(cleanupCtx, record.ID)
 	if removeErr == nil {
-		forgetErr := s.catalog.Forget(cleanupCtx, record.ID, record.Generation)
+		forgetErr := s.creator.Forget(cleanupCtx, record.ID, record.Generation)
 		if forgetErr == nil {
 			return errdefs.Context(cause, "create sandbox", record.Config.Name, phase, "fix the failure and retry", false)
 		}
 		removeErr = forgetErr
 	}
 	failure := types.SandboxFailure{Phase: phase, Message: errors.Join(cause, removeErr).Error()}
-	_, markErr := s.catalog.MarkError(cleanupCtx, record.ID, record.Generation, failure, s.now().UTC())
+	_, markErr := s.creator.MarkError(cleanupCtx, record.ID, record.Generation, failure, s.now().UTC())
 	return errdefs.Context(errors.Join(cause, removeErr, markErr), "create sandbox", record.Config.Name, phase, "inspect or remove the retained error sandbox", false)
 }
 

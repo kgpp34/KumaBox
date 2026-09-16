@@ -142,6 +142,74 @@ func (c *Store) MarkError(ctx context.Context, id types.SandboxID, expected uint
 	return c.transition(ctx, id, expected, types.SandboxStateCreating, types.SandboxStateError, &failure, updated)
 }
 
+// Resolve returns one sandbox by exact name or complete ID. Exact names take
+// precedence so UUID-shaped names follow the same lookup rule as image aliases.
+func (c *Store) Resolve(ctx context.Context, reference string) (types.Sandbox, error) {
+	if c == nil || c.store == nil {
+		return types.Sandbox{}, errors.New("sandbox catalog is not configured")
+	}
+	var result types.Sandbox
+	err := c.store.View(ctx, func(reader metadata.Reader) error {
+		var err error
+		result, err = resolveRecord(ctx, reader, reference)
+		return err
+	})
+	return result, errdefs.Context(err, "resolve sandbox", reference, "metadata", "check the sandbox name or ID", false)
+}
+
+// BeginDelete records durable cleanup intent before any owned file is removed.
+// A retained Deleting record resumes without advancing its generation again.
+func (c *Store) BeginDelete(ctx context.Context, id types.SandboxID, expected uint64, updated time.Time) (types.Sandbox, error) {
+	var result types.Sandbox
+	err := c.store.Update(ctx, func(writer metadata.Writer) error {
+		record, err := load(ctx, writer, id)
+		if err != nil {
+			return err
+		}
+		if record.Generation != expected {
+			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s changed from expected generation %d", id, expected))
+		}
+		if record.State == types.SandboxStateDeleting {
+			result = record
+			return nil
+		}
+		switch record.State {
+		case types.SandboxStateCreating, types.SandboxStateCreated, types.SandboxStateStopped, types.SandboxStateError:
+		default:
+			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s in state %s cannot be removed without stopping it", id, record.State))
+		}
+		record.State = types.SandboxStateDeleting
+		record.Generation++
+		record.Failure = nil
+		record.UpdatedAt = updated
+		if err := record.Validate(); err != nil {
+			return corrupt("sandbox delete transition", err)
+		}
+		if err := putJSON(ctx, writer, CollectionSandboxes, id.String(), encode(record)); err != nil {
+			return err
+		}
+		result = record
+		return nil
+	})
+	return result, errdefs.Context(err, "remove sandbox", id.String(), "mark deleting", "stop the sandbox if it is running, then retry", false)
+}
+
+// FinalizeDelete atomically releases the name and image reference only after
+// the caller has removed every resource derived from the sandbox record.
+func (c *Store) FinalizeDelete(ctx context.Context, id types.SandboxID, expected uint64) error {
+	err := c.store.Update(ctx, func(writer metadata.Writer) error {
+		record, err := load(ctx, writer, id)
+		if err != nil {
+			return err
+		}
+		if record.Generation != expected || record.State != types.SandboxStateDeleting {
+			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s is no longer the expected Deleting generation %d", id, expected))
+		}
+		return deleteRecord(ctx, writer, record)
+	})
+	return errdefs.Context(err, "remove sandbox", id.String(), "finalize metadata", "retry removal to finish cleanup", false)
+}
+
 // transition applies one generation-fenced state change and returns the committed record.
 func (c *Store) transition(ctx context.Context, id types.SandboxID, expected uint64, from, to types.SandboxState, failure *types.SandboxFailure, updated time.Time) (types.Sandbox, error) {
 	var result types.Sandbox
@@ -180,24 +248,7 @@ func (c *Store) Forget(ctx context.Context, id types.SandboxID, expected uint64)
 		if record.Generation != expected || record.State != types.SandboxStateCreating {
 			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s is no longer the expected Creating reservation", id))
 		}
-		raw, exists, err := writer.Get(ctx, CollectionNames, record.Config.Name)
-		if err != nil {
-			return err
-		}
-		if !exists {
-			return corrupt("sandbox name", errors.New("name binding is missing"))
-		}
-		var name nameData
-		if err := json.Unmarshal(raw, &name); err != nil {
-			return corrupt("sandbox name", err)
-		}
-		if name.ID != id.String() {
-			return corrupt("sandbox name", errors.New("name binding points to another sandbox"))
-		}
-		if err := writer.Delete(ctx, CollectionNames, record.Config.Name); err != nil {
-			return err
-		}
-		return writer.Delete(ctx, CollectionSandboxes, id.String())
+		return deleteRecord(ctx, writer, record)
 	})
 	return errdefs.Context(err, "forget sandbox", id.String(), "metadata", "inspect the retained sandbox record", false)
 }
@@ -239,6 +290,56 @@ func load(ctx context.Context, reader metadata.Reader, id types.SandboxID) (type
 		return types.Sandbox{}, corrupt("sandbox ID", errors.New("record key differs from stored ID"))
 	}
 	return record, nil
+}
+
+// resolveRecord prefers an exact name and otherwise accepts a complete ID.
+func resolveRecord(ctx context.Context, reader metadata.Reader, reference string) (types.Sandbox, error) {
+	raw, exists, err := reader.Get(ctx, CollectionNames, reference)
+	if err != nil {
+		return types.Sandbox{}, err
+	}
+	if exists {
+		var binding nameData
+		if err := json.Unmarshal(raw, &binding); err != nil {
+			return types.Sandbox{}, corrupt("sandbox name", err)
+		}
+		id, err := types.ParseSandboxID(binding.ID)
+		if err != nil {
+			return types.Sandbox{}, corrupt("sandbox name owner", err)
+		}
+		record, err := load(ctx, reader, id)
+		if code, ok := errdefs.CodeOf(err); ok && code == errdefs.CodeNotFound {
+			return types.Sandbox{}, corrupt("sandbox name owner", errors.New("sandbox record is missing"))
+		}
+		return record, err
+	}
+	id, err := types.ParseSandboxID(reference)
+	if err != nil {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassNotFound, errdefs.CodeNotFound, fmt.Errorf("sandbox %q not found", reference))
+	}
+	return load(ctx, reader, id)
+}
+
+// deleteRecord verifies name ownership and removes both indexes in one transaction.
+func deleteRecord(ctx context.Context, writer metadata.Writer, record types.Sandbox) error {
+	raw, exists, err := writer.Get(ctx, CollectionNames, record.Config.Name)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return corrupt("sandbox name", errors.New("name binding is missing"))
+	}
+	var name nameData
+	if err := json.Unmarshal(raw, &name); err != nil {
+		return corrupt("sandbox name", err)
+	}
+	if name.ID != record.ID.String() {
+		return corrupt("sandbox name", errors.New("name binding points to another sandbox"))
+	}
+	if err := writer.Delete(ctx, CollectionNames, record.Config.Name); err != nil {
+		return err
+	}
+	return writer.Delete(ctx, CollectionSandboxes, record.ID.String())
 }
 
 // encode maps the domain aggregate to stable adapter-owned storage fields.

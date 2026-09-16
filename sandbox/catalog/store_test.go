@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -10,6 +11,28 @@ import (
 	"github.com/kumabox/kumabox/metadata"
 	"github.com/kumabox/kumabox/types"
 )
+
+func TestResolveRejectsDanglingNameBinding(t *testing.T) {
+	store, err := metadata.NewMemory(Collections())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := types.SandboxID("123e4567-e89b-42d3-a456-426614174000")
+	raw, err := json.Marshal(nameData{ID: id.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(t.Context(), func(writer metadata.Writer) error {
+		return writer.Put(t.Context(), CollectionNames, "dangling", raw)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(store, imagecatalog.Reader{}).Resolve(t.Context(), "dangling"); err == nil {
+		t.Fatal("resolved a name whose sandbox record is missing")
+	} else if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeArtifactCorrupt {
+		t.Fatalf("Resolve error code = %q, %v; want %q", code, err, errdefs.CodeArtifactCorrupt)
+	}
+}
 
 func TestReservationPinsImageInsideRemovalTransaction(t *testing.T) {
 	collections := append(imagecatalog.Collections(), Collections()...)
@@ -76,6 +99,45 @@ func TestReservationPinsImageInsideRemovalTransaction(t *testing.T) {
 		t.Fatal("stale generation transition succeeded")
 	} else if code, _ := errdefs.CodeOf(err); code != errdefs.CodeStateConflict {
 		t.Fatalf("stale transition error = %v", err)
+	}
+	for _, reference := range []string{"box", id.String()} {
+		resolved, err := sandboxStore.Resolve(t.Context(), reference)
+		if err != nil {
+			t.Fatalf("Resolve %q: %v", reference, err)
+		}
+		if resolved.ID != id || resolved.State != types.SandboxStateCreated {
+			t.Fatalf("Resolve %q = %+v", reference, resolved)
+		}
+	}
+	deleting, err := sandboxStore.BeginDelete(t.Context(), id, createdRecord.Generation, created.Add(3*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleting.State != types.SandboxStateDeleting || deleting.Generation != 3 {
+		t.Fatalf("deleting record = %+v", deleting)
+	}
+	resumed, err := sandboxStore.BeginDelete(t.Context(), id, deleting.Generation, created.Add(4*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Generation != deleting.Generation || !resumed.UpdatedAt.Equal(deleting.UpdatedAt) {
+		t.Fatalf("resumed deletion changed record: before=%+v after=%+v", deleting, resumed)
+	}
+	if _, err := imageStore.Remove(t.Context(), "demo", manifest); err == nil {
+		t.Fatal("removed image before sandbox deletion finalized")
+	} else if code, _ := errdefs.CodeOf(err); code != errdefs.CodeReferenced {
+		t.Fatalf("referenced deleting image error = %v", err)
+	}
+	if err := sandboxStore.FinalizeDelete(t.Context(), id, deleting.Generation); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sandboxStore.Resolve(t.Context(), "box"); err == nil {
+		t.Fatal("resolved finalized sandbox")
+	} else if code, _ := errdefs.CodeOf(err); code != errdefs.CodeNotFound {
+		t.Fatalf("finalized sandbox error = %v", err)
+	}
+	if _, err := imageStore.Remove(t.Context(), "demo", manifest); err != nil {
+		t.Fatalf("remove image after sandbox finalization: %v", err)
 	}
 }
 

@@ -90,16 +90,7 @@ func TestCreateCommandPersistsCreatedSandboxAndFinalCOW(t *testing.T) {
 		Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log"),
 	}
 	seedImage(t, roots)
-	binDir := filepath.Join(base, "bin")
-	if err := os.Mkdir(binDir, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	formatter := filepath.Join(binDir, "mkfs.ext4")
-	script := []byte("#!/bin/sh\nfor last do :; done\nprintf '\\123\\357' | dd of=\"$last\" bs=1 seek=1080 conv=notrunc 2>/dev/null\n")
-	if err := os.WriteFile(formatter, script, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	installFakeMKFS(t, base)
 	command := NewCreateCommand(func() storage.Roots { return roots })
 	command.SetArgs([]string{"demo", "--name", "box", "--cpus", "1", "--json"})
 	var stdout, stderr bytes.Buffer
@@ -199,9 +190,23 @@ func digestOf(t *testing.T, data []byte) types.Digest {
 	return digest
 }
 
-func newTestProgress(writer *bytes.Buffer) (*createProgress, error) {
-	progress := &createProgress{
-		writer: writer, label: `Create "box"`, status: "preparing sandbox",
+func installFakeMKFS(t *testing.T, base string) {
+	t.Helper()
+	binDir := filepath.Join(base, "bin")
+	if err := os.Mkdir(binDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	formatter := filepath.Join(binDir, "mkfs.ext4")
+	script := []byte("#!/bin/sh\nfor last do :; done\nprintf '\\123\\357' | dd of=\"$last\" bs=1 seek=1080 conv=notrunc 2>/dev/null\n")
+	if err := os.WriteFile(formatter, script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func newTestProgress(writer *bytes.Buffer) (*sandboxProgress, error) {
+	progress := &sandboxProgress{
+		writer: writer, operation: "create sandbox", label: `Create "box"`, status: "preparing sandbox", recovery: "inspect the sandbox state",
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
 	if err := progress.render(); err != nil {

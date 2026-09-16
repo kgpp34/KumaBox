@@ -173,6 +173,20 @@ metadata schema is version 2. Existing version 1 roots are migrated in one
 transaction when first opened: image records and artifacts remain in place,
 and the new sandbox collections become available without changing CLI roots.
 
+Remove a non-running sandbox by its exact name or complete UUID:
+
+```bash
+kumabox rm NAME
+kumabox rm 123e4567-e89b-42d3-a456-426614174000 --json
+```
+
+Removal records durable `Deleting` intent before deleting the private disk.
+If cleanup is interrupted, running the same command again resumes it. The
+sandbox name and image reference are released together only after disk cleanup
+succeeds. Text output is the removed sandbox's full UUID; `--json` returns its
+ID and released name. Active lifecycle states are rejected until the sandbox
+has been stopped; force removal will be added with VMM lifecycle support.
+
 ## Reference material
 
 - Cocoon at `../cocoon@27ae1e0b2a65c9082c7a1b33c5245bfe43a4854d` is the
