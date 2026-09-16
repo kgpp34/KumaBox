@@ -19,7 +19,7 @@ type rootsProvider func() storage.Roots
 
 // NewCommand registers the image command tree using invocation-local storage roots.
 func NewCommand(roots rootsProvider) *cobra.Command {
-	command := &cobra.Command{Use: "image", Short: "manage container images", Args: cobra.NoArgs, RunE: func(command *cobra.Command, _ []string) error { return command.Help() }}
+	command := &cobra.Command{Use: "image", Short: "manage OCI/docker images", Args: cobra.NoArgs, RunE: func(command *cobra.Command, _ []string) error { return command.Help() }}
 	command.AddCommand(
 		newPullCommand(roots),
 		newImportCommand(roots),
