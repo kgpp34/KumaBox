@@ -9,16 +9,16 @@ import (
 	"github.com/kumabox/kumabox/errdefs"
 )
 
-// NewStartCommand builds the top-level sandbox start command.
-func NewStartCommand(roots rootsProvider) *cobra.Command {
+// NewStopCommand builds the top-level sandbox stop command.
+func NewStopCommand(roots rootsProvider) *cobra.Command {
 	asJSON := false
 	command := &cobra.Command{
-		Use:   "start SANDBOX",
-		Short: "start a created or stopped sandbox",
+		Use:   "stop SANDBOX",
+		Short: "stop a running or interrupted sandbox",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
 			reference := args[0]
-			progress, err := startStartProgress(command, reference)
+			progress, err := startStopProgress(command, reference)
 			if err != nil {
 				return err
 			}
@@ -30,19 +30,19 @@ func NewStartCommand(roots rootsProvider) *cobra.Command {
 			committed := false
 			defer func() {
 				closeErr := service.Close()
-				returnErr = errors.Join(returnErr, errdefs.Context(closeErr, "start sandbox", reference, "close metadata", "inspect the sandbox before retrying", committed))
+				returnErr = errors.Join(returnErr, errdefs.Context(closeErr, "stop sandbox", reference, "close metadata", "inspect the sandbox before retrying", committed))
 			}()
-			record, err := service.Start(command.Context(), reference)
+			record, err := service.Stop(command.Context(), reference)
 			if err != nil {
 				return err
 			}
 			committed = true
 			if err := writeSandboxResult(progress.Output(command.OutOrStdout()), record, asJSON); err != nil {
-				return errdefs.Context(err, "start sandbox", reference, "output", "sandbox is running; inspect it before retrying", true)
+				return errdefs.Context(err, "stop sandbox", reference, "output", "sandbox is stopped; inspect it before retrying", true)
 			}
 			return nil
 		},
 	}
-	command.Flags().BoolVar(&asJSON, "json", false, "print the running sandbox as indented JSON")
+	command.Flags().BoolVar(&asJSON, "json", false, "print the stopped sandbox as indented JSON")
 	return command
 }

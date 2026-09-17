@@ -196,10 +196,50 @@ func (c *Store) MarkStartError(ctx context.Context, id types.SandboxID, expected
 	return c.transition(ctx, id, expected, types.SandboxStateStarting, types.SandboxStateError, &failure, updated)
 }
 
-// MarkStopped converges a stale Running record after the owned process is
-// proven absent. A later BeginStart receives the new generation.
-func (c *Store) MarkStopped(ctx context.Context, id types.SandboxID, expected uint64, updated time.Time) (types.Sandbox, error) {
-	return c.transition(ctx, id, expected, types.SandboxStateRunning, types.SandboxStateStopped, nil, updated)
+// BeginStop records shutdown ownership before signalling the VMM. Retrying an
+// unchanged Stopping generation resumes the same operation.
+func (c *Store) BeginStop(ctx context.Context, id types.SandboxID, expected uint64, updated time.Time) (types.Sandbox, error) {
+	var result types.Sandbox
+	err := c.store.Update(ctx, func(writer metadata.Writer) error {
+		record, err := load(ctx, writer, id)
+		if err != nil {
+			return err
+		}
+		if record.Generation != expected {
+			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s changed from expected generation %d", id, expected))
+		}
+		if record.State == types.SandboxStateStopping {
+			result = record
+			return nil
+		}
+		if record.State != types.SandboxStateRunning {
+			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s in state %s cannot begin stopping", id, record.State))
+		}
+		record.State = types.SandboxStateStopping
+		record.Generation++
+		record.Failure = nil
+		record.UpdatedAt = updated
+		if err := record.Validate(); err != nil {
+			return corrupt("sandbox stop transition", err)
+		}
+		if err := putJSON(ctx, writer, CollectionSandboxes, id.String(), encode(record)); err != nil {
+			return err
+		}
+		result = record
+		return nil
+	})
+	return result, errdefs.Context(err, "stop sandbox", id.String(), "mark stopping", "inspect the sandbox state before retrying", false)
+}
+
+// MarkStopped commits process absence from a lifecycle state that can own a
+// VMM. The caller must prove absence before this generation-fenced transition.
+func (c *Store) MarkStopped(ctx context.Context, id types.SandboxID, expected uint64, from types.SandboxState, updated time.Time) (types.Sandbox, error) {
+	switch from {
+	case types.SandboxStateStarting, types.SandboxStateRunning, types.SandboxStateStopping:
+	default:
+		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("state %s cannot transition to stopped", from))
+	}
+	return c.transition(ctx, id, expected, from, types.SandboxStateStopped, nil, updated)
 }
 
 // Resolve returns one sandbox by exact name or complete ID. Exact names take

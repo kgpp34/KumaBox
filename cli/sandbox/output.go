@@ -75,8 +75,8 @@ func writeSandboxJSON(writer io.Writer, sandbox types.Sandbox) error {
 	return encoder.Encode(sandboxResult(sandbox))
 }
 
-// writeCreateResult keeps default output script-friendly and JSON complete.
-func writeCreateResult(writer io.Writer, sandbox types.Sandbox, asJSON bool) error {
+// writeSandboxResult keeps lifecycle command output script-friendly and JSON complete.
+func writeSandboxResult(writer io.Writer, sandbox types.Sandbox, asJSON bool) error {
 	if !asJSON {
 		_, err := fmt.Fprintln(writer, sandbox.ID)
 		return err

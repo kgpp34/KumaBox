@@ -64,6 +64,7 @@ func TestImageAndUsageExitCodes(t *testing.T) {
 		{"missing inspect sandbox", []string{"inspect"}, 2},
 		{"missing remove sandbox", []string{"rm"}, 2},
 		{"missing start sandbox", []string{"start"}, 2},
+		{"missing stop sandbox", []string{"stop"}, 2},
 		{"unexpected ps argument", []string{"ps", "box"}, 2},
 		{"unsupported inspect flag", []string{"inspect", "box", "--json"}, 2},
 		{"unknown flag", []string{"image", "ls", "--wrong"}, 2},

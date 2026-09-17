@@ -11,7 +11,7 @@ OCI images, with CNI networking, cgroups, snapshots and clone.
 
 The rewrite currently provides the `kumabox` CLI, the host doctor, container
 image management, persistent sandbox creation, and recoverable Cloud Hypervisor
-startup. Each command opens its metadata store, performs one operation, and
+start/stop. Each command opens its metadata store, performs one operation, and
 exits. The remaining sandbox lifecycle is tracked in
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -195,6 +195,23 @@ Cloud Hypervisor API reports readiness. Retrying recovers the same `Starting`
 generation; a failed launch is terminated and retained as `Error` with a
 diagnostic. `--json` returns the complete indented sandbox object.
 
+`stop SANDBOX` follows the same direct-boot behavior as Cocoon. It first makes
+a best-effort request to Cloud Hypervisor's private `vm.shutdown` endpoint,
+then terminates the exact identity-checked VMM process with `SIGTERM`, waits up
+to five seconds, and uses `SIGKILL` if it is still alive. There is no guest ACPI
+shutdown wait and no `--force` or `--timeout` mode. Runtime files and the empty
+cgroup are removed before the generation-fenced transition to `Stopped`.
+
+```bash
+kumabox stop NAME
+kumabox stop 123e4567-e89b-42d3-a456-426614174000 --json
+```
+
+An interrupted stop retains `Stopping`; running the same command again resumes
+the operation. It also recovers `Starting` records left by an interrupted start.
+Stopping an already `Created` or `Stopped` sandbox succeeds without changing
+its lifecycle history.
+
 List active sandboxes with `ps`, or include created, stopped, failed, and
 deleting records with `-a`:
 
@@ -230,7 +247,7 @@ If cleanup is interrupted, running the same command again resumes it. The
 sandbox name and image reference are released together only after disk cleanup
 succeeds. Text output is the removed sandbox's full UUID; `--json` returns its
 ID and released name. Active lifecycle states are rejected until the sandbox
-has been stopped; force removal will be added with VMM lifecycle support.
+has been stopped with `kumabox stop`.
 
 ## Reference material
 

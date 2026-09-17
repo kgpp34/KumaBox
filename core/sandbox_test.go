@@ -94,10 +94,25 @@ func (f *fakeCatalog) MarkStartError(_ context.Context, _ types.SandboxID, expec
 	return f.record, nil
 }
 
-func (f *fakeCatalog) MarkStopped(_ context.Context, _ types.SandboxID, expected uint64, updated time.Time) (types.Sandbox, error) {
+func (f *fakeCatalog) BeginStop(_ context.Context, _ types.SandboxID, expected uint64, updated time.Time) (types.Sandbox, error) {
+	*f.steps = append(*f.steps, "stopping")
+	if f.record.Generation != expected {
+		return types.Sandbox{}, errors.New("wrong generation")
+	}
+	if f.record.State == types.SandboxStateStopping {
+		return f.record, nil
+	}
+	if f.record.State != types.SandboxStateRunning {
+		return types.Sandbox{}, errors.New("wrong running state")
+	}
+	f.record.State, f.record.Generation, f.record.UpdatedAt = types.SandboxStateStopping, expected+1, updated
+	return f.record, nil
+}
+
+func (f *fakeCatalog) MarkStopped(_ context.Context, _ types.SandboxID, expected uint64, from types.SandboxState, updated time.Time) (types.Sandbox, error) {
 	*f.steps = append(*f.steps, "stopped")
-	if f.record.State != types.SandboxStateRunning || f.record.Generation != expected {
-		return types.Sandbox{}, errors.New("wrong running generation")
+	if f.record.State != from || f.record.Generation != expected {
+		return types.Sandbox{}, errors.New("wrong stoppable generation")
 	}
 	f.record.State, f.record.Generation, f.record.UpdatedAt = types.SandboxStateStopped, expected+1, updated
 	return f.record, nil
@@ -190,12 +205,18 @@ type fakeRuntime struct {
 	observation  vmm.Observation
 	preflightErr error
 	launchErr    error
+	stopErr      error
 	plan         vmm.LaunchPlan
 }
 
 func (f *fakeRuntime) Preflight() error {
 	*f.steps = append(*f.steps, "preflight")
 	return f.preflightErr
+}
+
+func (f *fakeRuntime) Locate(context.Context, types.SandboxID, uint64) (vmm.Process, bool, error) {
+	*f.steps = append(*f.steps, "locate")
+	return f.observation.Process, f.observation.State != vmm.ProcessAbsent, nil
 }
 
 func (f *fakeRuntime) Observe(context.Context, types.SandboxID, uint64) (vmm.Observation, error) {
@@ -221,6 +242,11 @@ func (f *fakeRuntime) Launch(_ context.Context, plan vmm.LaunchPlan) (vmm.Proces
 func (f *fakeRuntime) Abort(context.Context, vmm.Process) error {
 	*f.steps = append(*f.steps, "abort")
 	return nil
+}
+
+func (f *fakeRuntime) Stop(context.Context, vmm.Process) error {
+	*f.steps = append(*f.steps, "stop")
+	return f.stopErr
 }
 
 func (f *fakeRuntime) Cleanup(context.Context, types.SandboxID) error {
@@ -417,7 +443,7 @@ func TestStartRecoversRunningProcessFromStartingState(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	catalog := service.starter.(*fakeCatalog)
+	catalog := service.lifecycle.(*fakeCatalog)
 	catalog.record.State, catalog.record.Generation = types.SandboxStateStarting, 3
 	runtimeAdapter := service.runtime.(*fakeRuntime)
 	runtimeAdapter.observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42}}
@@ -452,7 +478,7 @@ func TestStartFailureAbortsProcessAndRetainsError(t *testing.T) {
 			t.Fatalf("Start did not report retained state: %v", err)
 		}
 	}
-	catalog := service.starter.(*fakeCatalog)
+	catalog := service.lifecycle.(*fakeCatalog)
 	if catalog.record.State != types.SandboxStateError || catalog.record.Failure == nil || catalog.record.Failure.Phase != "launch VMM" {
 		t.Fatalf("failed start record = %+v", catalog.record)
 	}
@@ -469,7 +495,7 @@ func TestStartRetryDoesNotLeaveStartingAfterPreflightFailure(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	catalog := service.starter.(*fakeCatalog)
+	catalog := service.lifecycle.(*fakeCatalog)
 	catalog.record.State, catalog.record.Generation = types.SandboxStateStarting, 3
 	failure := errors.New("KVM unavailable")
 	service.runtime.(*fakeRuntime).preflightErr = failure
@@ -482,6 +508,138 @@ func TestStartRetryDoesNotLeaveStartingAfterPreflightFailure(t *testing.T) {
 	}
 	if got := strings.Join(*steps, ","); !strings.Contains(got, "observe,cleanup,status:checking host runtime,preflight,cleanup,start-error") {
 		t.Fatalf("recovery steps = %v", *steps)
+	}
+}
+
+func TestStopRecordsIntentBeforeTerminatingRunningVMM(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo", Config: types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	catalog := service.lifecycle.(*fakeCatalog)
+	catalog.record.State, catalog.record.Generation = types.SandboxStateRunning, 4
+	service.runtime.(*fakeRuntime).observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42}}
+	*steps = nil
+	record, err := service.Stop(t.Context(), "box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State != types.SandboxStateStopped || record.Generation != 6 {
+		t.Fatalf("stopped record = %+v", record)
+	}
+	want := []string{
+		"status:resolving sandbox", "resolve", "status:waiting for sandbox operation lock", "resolve",
+		"status:checking existing runtime", "locate", "status:committing stopping state", "stopping",
+		"status:stopping Cloud Hypervisor", "stop", "status:cleaning runtime state", "cleanup",
+		"status:committing stopped state", "stopped", "report",
+	}
+	if !reflect.DeepEqual(*steps, want) {
+		t.Fatalf("steps = %v, want %v", *steps, want)
+	}
+}
+
+func TestStopResumesStoppingAndRecoversStarting(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		state      types.SandboxState
+		generation uint64
+		want       uint64
+	}{
+		{name: "stopping", state: types.SandboxStateStopping, generation: 5, want: 6},
+		{name: "starting", state: types.SandboxStateStarting, generation: 3, want: 4},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service, steps := newTestSandboxService(t, nil)
+			if _, err := service.Create(t.Context(), CreateSandboxRequest{
+				ImageReference: "demo", Config: types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			catalog := service.lifecycle.(*fakeCatalog)
+			catalog.record.State, catalog.record.Generation = test.state, test.generation
+			service.runtime.(*fakeRuntime).observation = vmm.Observation{State: vmm.ProcessStarting, Process: vmm.Process{PID: 42}}
+			*steps = nil
+			record, err := service.Stop(t.Context(), "box")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if record.State != types.SandboxStateStopped || record.Generation != test.want {
+				t.Fatalf("stopped record = %+v", record)
+			}
+			if got := strings.Join(*steps, ","); strings.Contains(got, ",stopping,") || !strings.Contains(got, "locate,status:stopping Cloud Hypervisor,stop,status:cleaning runtime state,cleanup") {
+				t.Fatalf("recovery steps = %v", *steps)
+			}
+		})
+	}
+}
+
+func TestStopConvergesAbsentRunningWithoutSignalling(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo", Config: types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	catalog := service.lifecycle.(*fakeCatalog)
+	catalog.record.State, catalog.record.Generation = types.SandboxStateRunning, 4
+	*steps = nil
+	record, err := service.Stop(t.Context(), "box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State != types.SandboxStateStopped || record.Generation != 5 {
+		t.Fatalf("stopped record = %+v", record)
+	}
+	if got := strings.Join(*steps, ","); strings.Contains(got, ",stop,") || strings.Contains(got, ",stopping,") {
+		t.Fatalf("absent VMM was signalled or marked Stopping: %v", *steps)
+	}
+}
+
+func TestStopFailureRetainsRetryableStoppingState(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo", Config: types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	catalog := service.lifecycle.(*fakeCatalog)
+	catalog.record.State, catalog.record.Generation = types.SandboxStateRunning, 4
+	failure := errors.New("signal failed")
+	runtimeAdapter := service.runtime.(*fakeRuntime)
+	runtimeAdapter.observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42}}
+	runtimeAdapter.stopErr = failure
+	*steps = nil
+	if _, err := service.Stop(t.Context(), "box"); !errors.Is(err, failure) {
+		t.Fatalf("Stop error = %v", err)
+	}
+	if catalog.record.State != types.SandboxStateStopping || catalog.record.Generation != 5 {
+		t.Fatalf("retained record = %+v", catalog.record)
+	}
+	if strings.Contains(strings.Join(*steps, ","), "cleanup") {
+		t.Fatalf("runtime was cleaned before process absence: %v", *steps)
+	}
+}
+
+func TestStopCreatedIsIdempotentAndPreservesCreated(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	created, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo", Config: types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	*steps = nil
+	record, err := service.Stop(t.Context(), "box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State != types.SandboxStateCreated || record.Generation != created.Generation {
+		t.Fatalf("idempotent stop changed created record = %+v", record)
+	}
+	if got := strings.Join(*steps, ","); !strings.Contains(got, "status:cleaning stale runtime state,cleanup,report") {
+		t.Fatalf("idempotent steps = %v", *steps)
 	}
 }
 

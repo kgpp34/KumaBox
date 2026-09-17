@@ -31,6 +31,7 @@ const (
 	probeInterval         = 50 * time.Millisecond
 	probeTimeout          = 500 * time.Millisecond
 	abortGrace            = 3 * time.Second
+	stopGrace             = 5 * time.Second
 	maxAPIResponse        = 1 << 20
 )
 
@@ -169,32 +170,45 @@ func (d *Driver) Launch(ctx context.Context, plan vmm.LaunchPlan) (result vmm.Pr
 	return result, nil
 }
 
-// Observe verifies process generation, boot ID, executable, unique API argument,
-// socket type, and vm.info. A missing process file falls back to the owned cgroup
-// to close the exec-before-identity crash window.
-func (d *Driver) Observe(ctx context.Context, id types.SandboxID, generation uint64) (vmm.Observation, error) {
+// Locate verifies process generation, boot ID, executable, and unique API
+// argument without depending on VM API health. A missing process file falls
+// back to the owned cgroup to close the exec-before-identity crash window.
+func (d *Driver) Locate(_ context.Context, id types.SandboxID, generation uint64) (vmm.Process, bool, error) {
 	if d == nil || d.scopes == nil {
-		return vmm.Observation{}, errors.New("cloud hypervisor driver is not configured")
+		return vmm.Process{}, false, errors.New("cloud hypervisor driver is not configured")
 	}
 	process, err := d.paths.ReadProcess(id)
 	if errors.Is(err, fs.ErrNotExist) {
 		process, err = d.recoverProcess(id, generation)
 	}
 	if err != nil {
-		return vmm.Observation{}, err
+		return vmm.Process{}, false, err
 	}
 	if process.PID == 0 {
-		return vmm.Observation{State: vmm.ProcessAbsent}, nil
+		return vmm.Process{}, false, nil
 	}
 	alive, err := verifyProcess(process)
 	if err != nil {
-		return vmm.Observation{}, err
+		return vmm.Process{}, false, err
 	}
 	if !alive {
-		return vmm.Observation{State: vmm.ProcessAbsent}, nil
+		return vmm.Process{}, false, nil
 	}
 	if process.Generation != generation {
-		return vmm.Observation{}, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("live VMM belongs to Starting generation %d, expected %d", process.Generation, generation))
+		return vmm.Process{}, false, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("live VMM belongs to Starting generation %d, expected %d", process.Generation, generation))
+	}
+	return process, true, nil
+}
+
+// Observe combines identity-safe process location with the private vm.info API
+// to distinguish startup from readiness.
+func (d *Driver) Observe(ctx context.Context, id types.SandboxID, generation uint64) (vmm.Observation, error) {
+	process, exists, err := d.Locate(ctx, id, generation)
+	if err != nil {
+		return vmm.Observation{}, err
+	}
+	if !exists {
+		return vmm.Observation{State: vmm.ProcessAbsent}, nil
 	}
 	state, err := d.queryState(ctx, process.APISocket)
 	if err != nil {
@@ -251,6 +265,23 @@ func (d *Driver) Abort(ctx context.Context, process vmm.Process) error {
 	return d.Cleanup(ctx, process.SandboxID)
 }
 
+// Stop mirrors Cloud Hypervisor direct-boot shutdown semantics: vm.shutdown is
+// advisory, while identity-checked TERM and KILL provide the completion guarantee.
+func (d *Driver) Stop(ctx context.Context, process vmm.Process) error {
+	if err := process.Validate(); err != nil {
+		return err
+	}
+	alive, err := verifyProcess(process)
+	if err != nil {
+		return err
+	}
+	if !alive {
+		return nil
+	}
+	_ = d.requestShutdown(ctx, process.APISocket)
+	return terminateProcess(ctx, process, stopGrace)
+}
+
 // Cleanup removes runtime state and an empty cgroup after absence is proven.
 func (d *Driver) Cleanup(ctx context.Context, id types.SandboxID) error {
 	if err := d.scopes.Remove(ctx, id); err != nil {
@@ -293,18 +324,11 @@ func (d *Driver) recoverProcess(id types.SandboxID, generation uint64) (vmm.Proc
 
 // queryState performs one bounded request over the private Unix socket.
 func (d *Driver) queryState(ctx context.Context, socket string) (string, error) {
-	info, err := os.Lstat(socket)
+	client, closeClient, err := unixAPIClient(socket)
 	if err != nil {
 		return "", err
 	}
-	if info.Mode()&os.ModeSocket == 0 {
-		return "", errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("cloud hypervisor API path is not a Unix socket"))
-	}
-	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
-	}}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: probeTimeout}
+	defer closeClient()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/api/v1/vm.info", nil)
 	if err != nil {
 		return "", err
@@ -329,6 +353,46 @@ func (d *Driver) queryState(ctx context.Context, socket string) (string, error) 
 		return "", errors.New("cloud hypervisor vm.info omitted state")
 	}
 	return payload.State, nil
+}
+
+// requestShutdown asks Cloud Hypervisor to stop its VM before process signals
+// are used. Callers deliberately treat failure as advisory.
+func (d *Driver) requestShutdown(ctx context.Context, socket string) error {
+	client, closeClient, err := unixAPIClient(socket)
+	if err != nil {
+		return err
+	}
+	defer closeClient()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://localhost/api/v1/vm.shutdown", nil)
+	if err != nil {
+		return err
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close() //nolint:errcheck // status is authoritative
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxAPIResponse))
+	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("cloud hypervisor vm.shutdown returned HTTP %d", response.StatusCode)
+	}
+	return nil
+}
+
+// unixAPIClient validates the private socket before constructing a bounded
+// HTTP client. The close function releases idle Unix connections.
+func unixAPIClient(socket string) (*http.Client, func(), error) {
+	info, err := os.Lstat(socket)
+	if err != nil {
+		return nil, nil, err
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return nil, nil, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("cloud hypervisor API path is not a Unix socket"))
+	}
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+	}}
+	return &http.Client{Transport: transport, Timeout: probeTimeout}, transport.CloseIdleConnections, nil
 }
 
 func socketUnavailable(err error) bool {

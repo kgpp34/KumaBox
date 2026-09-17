@@ -118,6 +118,7 @@ func newRootCommand() *cobra.Command {
 	root.AddCommand(sandboxcmd.NewListCommand(func() storage.Roots { return roots }))
 	root.AddCommand(sandboxcmd.NewRemoveCommand(func() storage.Roots { return roots }))
 	root.AddCommand(sandboxcmd.NewStartCommand(func() storage.Roots { return roots }))
+	root.AddCommand(sandboxcmd.NewStopCommand(func() storage.Roots { return roots }))
 	root.AddCommand(newVersionCommand())
 	classifyArguments(root)
 	return root

@@ -58,12 +58,13 @@ type sandboxRemover interface {
 	FinalizeDelete(context.Context, types.SandboxID, uint64) error
 }
 
-// sandboxStarter is the generation-fenced metadata capability used by start.
-type sandboxStarter interface {
+// sandboxLifecycle is the generation-fenced metadata capability used by start and stop.
+type sandboxLifecycle interface {
 	BeginStart(context.Context, types.SandboxID, uint64, time.Time) (types.Sandbox, error)
 	MarkRunning(context.Context, types.SandboxID, uint64, time.Time) (types.Sandbox, error)
 	MarkStartError(context.Context, types.SandboxID, uint64, types.SandboxFailure, time.Time) (types.Sandbox, error)
-	MarkStopped(context.Context, types.SandboxID, uint64, time.Time) (types.Sandbox, error)
+	BeginStop(context.Context, types.SandboxID, uint64, time.Time) (types.Sandbox, error)
+	MarkStopped(context.Context, types.SandboxID, uint64, types.SandboxState, time.Time) (types.Sandbox, error)
 }
 
 // cowStore is the private writable-disk capability consumed by sandbox creation.
@@ -77,10 +78,12 @@ type cowStore interface {
 // Its implementation owns process identity and readiness, not durable state.
 type vmmRuntime interface {
 	Preflight() error
+	Locate(context.Context, types.SandboxID, uint64) (vmm.Process, bool, error)
 	Observe(context.Context, types.SandboxID, uint64) (vmm.Observation, error)
 	WaitReady(context.Context, vmm.Process) error
 	Launch(context.Context, vmm.LaunchPlan) (vmm.Process, error)
 	Abort(context.Context, vmm.Process) error
+	Stop(context.Context, vmm.Process) error
 	Cleanup(context.Context, types.SandboxID) error
 }
 
@@ -102,8 +105,8 @@ type SandboxService struct {
 	reader sandboxReader
 	// remover commits generation-fenced delete transitions.
 	remover sandboxRemover
-	// starter commits generation-fenced start, running, error, and recovery transitions.
-	starter sandboxStarter
+	// lifecycle commits generation-fenced start, stop, and recovery transitions.
+	lifecycle sandboxLifecycle
 	// cows prepares and cleans the sandbox-owned writable disk.
 	cows cowStore
 	// imagePaths derives immutable artifacts after the image guard verifies them.
@@ -120,13 +123,13 @@ type SandboxService struct {
 }
 
 // newSandboxService connects the explicit capabilities needed by sandbox commands.
-func newSandboxService(paths sandbox.Paths, imagePaths images.Paths, images imageGuard, creator sandboxCreator, reader sandboxReader, remover sandboxRemover, starter sandboxStarter, cows cowStore, runtime vmmRuntime, reporter SandboxReporter) *SandboxService {
+func newSandboxService(paths sandbox.Paths, imagePaths images.Paths, images imageGuard, creator sandboxCreator, reader sandboxReader, remover sandboxRemover, lifecycle sandboxLifecycle, cows cowStore, runtime vmmRuntime, reporter SandboxReporter) *SandboxService {
 	if reporter == nil {
 		reporter = discardReporter{}
 	}
 	return &SandboxService{
 		paths: paths, imagePaths: imagePaths, images: images, creator: creator, reader: reader,
-		remover: remover, starter: starter, cows: cows, runtime: runtime, reporter: reporter,
+		remover: remover, lifecycle: lifecycle, cows: cows, runtime: runtime, reporter: reporter,
 		newID: types.NewSandboxID, now: time.Now,
 	}
 }
@@ -310,7 +313,7 @@ func (s *SandboxService) Inspect(ctx context.Context, reference string) (types.S
 //	                                        |
 //	                              abort + retained Error
 func (s *SandboxService) Start(ctx context.Context, reference string) (result types.Sandbox, returnErr error) {
-	if s == nil || s.reader == nil || s.starter == nil || s.images == nil || s.cows == nil || s.runtime == nil || s.reporter == nil || s.now == nil {
+	if s == nil || s.reader == nil || s.lifecycle == nil || s.images == nil || s.cows == nil || s.runtime == nil || s.reporter == nil || s.now == nil {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")
 	}
 	if reference == "" {
@@ -395,7 +398,7 @@ func (s *SandboxService) Start(ctx context.Context, reference string) (result ty
 	if err := s.reporter.Status("committing starting state"); err != nil {
 		return record, failBeforeLaunch("report", err)
 	}
-	starting, err := s.starter.BeginStart(ctx, record.ID, record.Generation, s.now().UTC())
+	starting, err := s.lifecycle.BeginStart(ctx, record.ID, record.Generation, s.now().UTC())
 	if err != nil {
 		return record, errdefs.Context(err, "start sandbox", reference, "mark starting", "inspect the sandbox before retrying", committed)
 	}
@@ -415,7 +418,7 @@ func (s *SandboxService) Start(ctx context.Context, reference string) (result ty
 	if err := s.reporter.Status("committing running state"); err != nil {
 		return starting, s.failStart(ctx, starting, "report", err, process)
 	}
-	running, err := s.starter.MarkRunning(ctx, starting.ID, starting.Generation, s.now().UTC())
+	running, err := s.lifecycle.MarkRunning(ctx, starting.ID, starting.Generation, s.now().UTC())
 	if err != nil {
 		return starting, s.failStart(ctx, starting, "commit running", err, process)
 	}
@@ -461,19 +464,19 @@ func (s *SandboxService) recoverStart(ctx context.Context, record types.Sandbox)
 			if err := s.runtime.Cleanup(ctx, record.ID); err != nil {
 				return record, false, err
 			}
-			stopped, err := s.starter.MarkStopped(ctx, record.ID, record.Generation, s.now().UTC())
+			stopped, err := s.lifecycle.MarkStopped(ctx, record.ID, record.Generation, types.SandboxStateRunning, s.now().UTC())
 			return stopped, false, err
 		}
 	case types.SandboxStateStarting:
 		switch observation.State {
 		case vmm.ProcessRunning:
-			running, err := s.starter.MarkRunning(ctx, record.ID, record.Generation, s.now().UTC())
+			running, err := s.lifecycle.MarkRunning(ctx, record.ID, record.Generation, s.now().UTC())
 			return running, err == nil, err
 		case vmm.ProcessStarting:
 			if err := s.runtime.WaitReady(ctx, observation.Process); err != nil {
 				return record, false, s.failStart(ctx, record, "recover VMM", err, observation.Process)
 			}
-			running, err := s.starter.MarkRunning(ctx, record.ID, record.Generation, s.now().UTC())
+			running, err := s.lifecycle.MarkRunning(ctx, record.ID, record.Generation, s.now().UTC())
 			if err != nil {
 				return record, false, s.failStart(ctx, record, "commit recovered VMM", err, observation.Process)
 			}
@@ -548,8 +551,148 @@ func (s *SandboxService) failStart(ctx context.Context, starting types.Sandbox, 
 	}
 	failureCause := errors.Join(cause, cleanupErr)
 	failure := types.SandboxFailure{Phase: phase, Message: failureCause.Error()}
-	_, markErr := s.starter.MarkStartError(cleanupCtx, starting.ID, starting.Generation, failure, s.now().UTC())
+	_, markErr := s.lifecycle.MarkStartError(cleanupCtx, starting.ID, starting.Generation, failure, s.now().UTC())
 	return errdefs.Context(errors.Join(failureCause, markErr), "start sandbox", starting.Config.Name, phase, "inspect the retained error sandbox and VMM log", true)
+}
+
+// Stop terminates the exact VMM process owned by one sandbox and commits
+// Stopped only after process absence and runtime cleanup are proven.
+//
+//	Running + live VMM -> Stopping -> TERM -> 5s -> KILL -> cleanup -> Stopped
+//	Starting/Stopping  ----- retry resumes the owned process generation -----^
+//	Running + no VMM  --------------------- cleanup ------------------------^
+func (s *SandboxService) Stop(ctx context.Context, reference string) (result types.Sandbox, returnErr error) {
+	if s == nil || s.reader == nil || s.lifecycle == nil || s.runtime == nil || s.reporter == nil || s.now == nil {
+		return types.Sandbox{}, errors.New("sandbox service is not configured")
+	}
+	if reference == "" {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("SANDBOX must not be empty"))
+	}
+	if err := s.reporter.Status("resolving sandbox"); err != nil {
+		return types.Sandbox{}, err
+	}
+	record, err := s.reader.Resolve(ctx, reference)
+	if err != nil {
+		return types.Sandbox{}, err
+	}
+	lockPath, err := s.paths.Lock(record.ID)
+	if err != nil {
+		return types.Sandbox{}, err
+	}
+	if err := s.reporter.Status("waiting for sandbox operation lock"); err != nil {
+		return types.Sandbox{}, err
+	}
+	lock := filelock.New(lockPath)
+	if err := lock.Lock(ctx); err != nil {
+		return types.Sandbox{}, errdefs.Context(err, "stop sandbox", reference, "lock", "retry the stop", false)
+	}
+	committed := false
+	defer func() {
+		if unlockErr := lock.Unlock(context.WithoutCancel(ctx)); unlockErr != nil {
+			returnErr = errdefs.Context(errors.Join(returnErr, unlockErr), "stop sandbox", reference, "unlock", "inspect the sandbox before retrying", committed)
+		}
+	}()
+
+	// The first resolve selects the lock; this second resolve is authoritative.
+	record, err = s.reader.Resolve(ctx, record.ID.String())
+	if err != nil {
+		return types.Sandbox{}, err
+	}
+	result = record
+	if record.State == types.SandboxStateCreating || record.State == types.SandboxStateDeleting {
+		return record, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s in state %s cannot stop", record.ID, record.State))
+	}
+	if record.State == types.SandboxStateCreated || record.State == types.SandboxStateStopped {
+		if err := s.reporter.Status("cleaning stale runtime state"); err != nil {
+			return record, err
+		}
+		if err := s.runtime.Cleanup(ctx, record.ID); err != nil {
+			return record, errdefs.Context(err, "stop sandbox", reference, "cleanup runtime", "inspect the runtime scope before retrying", false)
+		}
+		if err := s.reporter.Committed(record); err != nil {
+			return record, errdefs.Context(err, "stop sandbox", reference, "report", "sandbox is not running", false)
+		}
+		return record, nil
+	}
+
+	processGeneration, err := stopProcessGeneration(record)
+	if err != nil {
+		return record, err
+	}
+	if err := s.reporter.Status("checking existing runtime"); err != nil {
+		return record, err
+	}
+	process, exists, err := s.runtime.Locate(ctx, record.ID, processGeneration)
+	if err != nil {
+		return record, errdefs.Context(err, "stop sandbox", reference, "observe runtime", "inspect the sandbox runtime before retrying", false)
+	}
+
+	if record.State == types.SandboxStateRunning && exists {
+		if err := s.reporter.Status("committing stopping state"); err != nil {
+			return record, err
+		}
+		record, err = s.lifecycle.BeginStop(ctx, record.ID, record.Generation, s.now().UTC())
+		if err != nil {
+			return result, errdefs.Context(err, "stop sandbox", reference, "mark stopping", "inspect the sandbox before retrying", false)
+		}
+		result, committed = record, true
+	}
+
+	if exists {
+		if err := s.reporter.Status("stopping Cloud Hypervisor"); err != nil {
+			return record, errdefs.Context(err, "stop sandbox", reference, "report", "retry the stop to resume Stopping", committed)
+		}
+		if err := s.runtime.Stop(ctx, process); err != nil {
+			return record, errdefs.Context(err, "stop sandbox", reference, "stop VMM", "retry the stop; the retained state preserves ownership", committed)
+		}
+	}
+	if err := s.reporter.Status("cleaning runtime state"); err != nil {
+		return record, errdefs.Context(err, "stop sandbox", reference, "report", "retry the stop to finish cleanup", committed)
+	}
+	if err := s.runtime.Cleanup(ctx, record.ID); err != nil {
+		return record, errdefs.Context(err, "stop sandbox", reference, "cleanup runtime", "retry the stop to finish cleanup", committed)
+	}
+
+	// Error retains the original start/create diagnostic after any residual VMM
+	// is gone. It can be removed or started explicitly by the next command.
+	if record.State == types.SandboxStateError {
+		if err := s.reporter.Committed(record); err != nil {
+			return record, errdefs.Context(err, "stop sandbox", reference, "report", "the VMM is stopped; inspect the retained error", committed)
+		}
+		return record, nil
+	}
+	if err := s.reporter.Status("committing stopped state"); err != nil {
+		return record, errdefs.Context(err, "stop sandbox", reference, "report", "retry the stop to commit process absence", committed)
+	}
+	stopped, err := s.lifecycle.MarkStopped(ctx, record.ID, record.Generation, record.State, s.now().UTC())
+	if err != nil {
+		return record, errdefs.Context(err, "stop sandbox", reference, "mark stopped", "inspect the sandbox before retrying", committed)
+	}
+	result, committed = stopped, true
+	if err := s.reporter.Committed(stopped); err != nil {
+		return stopped, errdefs.Context(err, "stop sandbox", reference, "report", "sandbox is stopped; inspect it before retrying", true)
+	}
+	return stopped, nil
+}
+
+// stopProcessGeneration maps durable lifecycle transitions back to the
+// Starting generation stored in process identity.
+func stopProcessGeneration(record types.Sandbox) (uint64, error) {
+	var offset uint64
+	switch record.State {
+	case types.SandboxStateStarting:
+		offset = 0
+	case types.SandboxStateRunning, types.SandboxStateError:
+		offset = 1
+	case types.SandboxStateStopping:
+		offset = 2
+	default:
+		return 0, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s in state %s has no stoppable process generation", record.ID, record.State))
+	}
+	if record.Generation <= offset {
+		return 0, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, fmt.Errorf("sandbox %s state %s has invalid generation %d", record.ID, record.State, record.Generation))
+	}
+	return record.Generation - offset, nil
 }
 
 // Remove records cleanup intent before deleting the COW directory and releases

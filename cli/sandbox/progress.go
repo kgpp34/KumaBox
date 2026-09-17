@@ -65,6 +65,11 @@ func startStartProgress(command *cobra.Command, reference string) (*sandboxProgr
 	return startProgress(command, "start sandbox", fmt.Sprintf("Start %q", reference), "preparing start", "inspect the sandbox state and VMM log")
 }
 
+// startStopProgress starts progress for one controlled VMM termination.
+func startStopProgress(command *cobra.Command, reference string) (*sandboxProgress, error) {
+	return startProgress(command, "stop sandbox", fmt.Sprintf("Stop %q", reference), "preparing stop", "retry the stop or inspect the sandbox runtime")
+}
+
 // startProgress writes an initial stage before starting its ticker.
 func startProgress(command *cobra.Command, operation, label, status, recovery string) (*sandboxProgress, error) {
 	writer := command.ErrOrStderr()

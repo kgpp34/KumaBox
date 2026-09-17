@@ -63,7 +63,7 @@ func NewCreateCommand(roots rootsProvider) *cobra.Command {
 				return err
 			}
 			committed = true
-			if err := writeCreateResult(progress.Output(command.OutOrStdout()), record, asJSON); err != nil {
+			if err := writeSandboxResult(progress.Output(command.OutOrStdout()), record, asJSON); err != nil {
 				return errdefs.Context(err, "create sandbox", name, "output", "sandbox was created; inspect it before retrying", true)
 			}
 			return nil

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/kumabox/kumabox/errdefs"
@@ -30,12 +31,17 @@ func TestQueryStateRequiresUnixSocketAndDecodesRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var shutdown atomic.Bool
 	server := &http.Server{Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/api/v1/vm.info" {
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/api/v1/vm.info":
+			_, _ = writer.Write([]byte(`{"state":"Running"}`))
+		case request.Method == http.MethodPut && request.URL.Path == "/api/v1/vm.shutdown":
+			shutdown.Store(true)
+			writer.WriteHeader(http.StatusNoContent)
+		default:
 			http.NotFound(writer, request)
-			return
 		}
-		_, _ = writer.Write([]byte(`{"state":"Running"}`))
 	})}
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() {
@@ -50,6 +56,12 @@ func TestQueryStateRequiresUnixSocketAndDecodesRunning(t *testing.T) {
 	}
 	if state != "Running" {
 		t.Fatalf("state = %q", state)
+	}
+	if err := driver.requestShutdown(t.Context(), socket); err != nil {
+		t.Fatal(err)
+	}
+	if !shutdown.Load() {
+		t.Fatal("vm.shutdown request was not received")
 	}
 
 	regular := filepath.Join(t.TempDir(), "not-a-socket")
