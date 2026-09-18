@@ -31,6 +31,28 @@ const (
 
 var validSandboxName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
 
+// VMMType identifies the virtual machine monitor that owns a sandbox's
+// runtime. It is persisted so every later lifecycle operation selects the same
+// backend that created the sandbox.
+type VMMType string
+
+const (
+	// VMMCloudHypervisor selects the Cloud Hypervisor process adapter.
+	VMMCloudHypervisor VMMType = "cloud-hypervisor"
+	// VMMFirecracker reserves the stable identity for the future Firecracker adapter.
+	VMMFirecracker VMMType = "firecracker"
+)
+
+// Validate rejects unknown VMM identities before they reach backend routing.
+func (v VMMType) Validate() error {
+	switch v {
+	case VMMCloudHypervisor, VMMFirecracker:
+		return nil
+	default:
+		return fmt.Errorf("unsupported VMM %q", v)
+	}
+}
+
 // SandboxState records a durable lifecycle fact. Its zero value is invalid so
 // omitted metadata cannot be mistaken for a usable sandbox.
 type SandboxState string
@@ -144,6 +166,8 @@ type Sandbox struct {
 	Config SandboxConfig
 	// ImageDigest pins the exact manifest independently of a mutable local alias.
 	ImageDigest Digest
+	// VMM selects the backend that owns this sandbox's runtime artifacts.
+	VMM VMMType
 	// State controls which operations may consume owned resources.
 	State SandboxState
 	// Generation increments on every state transition and fences stale operations.
@@ -166,6 +190,9 @@ func (s Sandbox) Validate() error {
 	}
 	if s.ImageDigest.IsZero() || s.Generation == 0 || s.CreatedAt.IsZero() || s.UpdatedAt.IsZero() {
 		return errors.New("sandbox image, generation, and timestamps must be set")
+	}
+	if err := s.VMM.Validate(); err != nil {
+		return err
 	}
 	switch s.State {
 	case SandboxStateCreating, SandboxStateCreated, SandboxStateStarting, SandboxStateRunning,

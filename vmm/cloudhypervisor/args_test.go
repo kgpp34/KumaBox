@@ -35,7 +35,7 @@ func TestQueryStateRequiresUnixSocketAndDecodesRunning(t *testing.T) {
 	server := &http.Server{Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch {
 		case request.Method == http.MethodGet && request.URL.Path == "/api/v1/vm.info":
-			_, _ = writer.Write([]byte(`{"state":"Running"}`))
+			_, _ = writer.Write([]byte(`{"state":"Running","config":{"console":{"mode":"Pty","file":"/dev/pts/7"}}}`))
 		case request.Method == http.MethodPut && request.URL.Path == "/api/v1/vm.shutdown":
 			shutdown.Store(true)
 			writer.WriteHeader(http.StatusNoContent)
@@ -57,6 +57,13 @@ func TestQueryStateRequiresUnixSocketAndDecodesRunning(t *testing.T) {
 	if state != "Running" {
 		t.Fatalf("state = %q", state)
 	}
+	info, err := driver.queryInfo(t.Context(), socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Config.Console.Mode != "Pty" || info.Config.Console.File != "/dev/pts/7" {
+		t.Fatalf("console info = %+v", info.Config.Console)
+	}
 	if err := driver.requestShutdown(t.Context(), socket); err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +79,20 @@ func TestQueryStateRequiresUnixSocketAndDecodesRunning(t *testing.T) {
 		t.Fatal("accepted a regular file as the VMM API socket")
 	} else if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeArtifactCorrupt {
 		t.Fatalf("regular socket error = %v", err)
+	}
+}
+
+func TestOpenConsolePTYRejectsUnmanagedOrRegularPaths(t *testing.T) {
+	regular := filepath.Join(t.TempDir(), "7")
+	if err := os.WriteFile(regular, []byte("not a PTY"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{regular, "/tmp/7", "/dev/pts/not-a-number", "dev/pts/7"} {
+		if _, err := openConsolePTY(path); err == nil {
+			t.Fatalf("accepted invalid console path %q", path)
+		} else if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeArtifactCorrupt {
+			t.Fatalf("console path %q error = %v", path, err)
+		}
 	}
 }
 

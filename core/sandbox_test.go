@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"io"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -201,12 +202,21 @@ func (f fakeReporter) Committed(types.Sandbox) error {
 }
 
 type fakeRuntime struct {
+	typ          types.VMMType
 	steps        *[]string
 	observation  vmm.Observation
 	preflightErr error
 	launchErr    error
 	stopErr      error
 	plan         vmm.LaunchPlan
+	console      io.ReadWriteCloser
+}
+
+func (f *fakeRuntime) Type() types.VMMType {
+	if f.typ == "" {
+		return types.VMMCloudHypervisor
+	}
+	return f.typ
 }
 
 func (f *fakeRuntime) Preflight() error {
@@ -249,8 +259,25 @@ func (f *fakeRuntime) Stop(context.Context, vmm.Process) error {
 	return f.stopErr
 }
 
+func (f *fakeRuntime) Console(context.Context, vmm.Process) (io.ReadWriteCloser, error) {
+	*f.steps = append(*f.steps, "console")
+	if f.console == nil {
+		f.console = &fakeConsole{}
+	}
+	return f.console, nil
+}
+
 func (f *fakeRuntime) Cleanup(context.Context, types.SandboxID) error {
 	*f.steps = append(*f.steps, "cleanup")
+	return nil
+}
+
+type fakeConsole struct{ closed bool }
+
+func (*fakeConsole) Read([]byte) (int, error)       { return 0, io.EOF }
+func (*fakeConsole) Write(data []byte) (int, error) { return len(data), nil }
+func (f *fakeConsole) Close() error {
+	f.closed = true
 	return nil
 }
 
@@ -283,7 +310,7 @@ func newTestSandboxService(t *testing.T, diskError error) (*SandboxService, *[]s
 		Boot:   types.Boot{Profile: types.BootProfileOverlayV1, KernelLayer: digest, InitrdLayer: digest, KernelFile: "vmlinuz", InitrdFile: "initrd.img"},
 	}
 	runtimeAdapter := &fakeRuntime{steps: &steps, observation: vmm.Observation{State: vmm.ProcessAbsent}}
-	service := newSandboxService(paths, imagePaths, fakeGuard{image: image, steps: &steps}, catalog, catalog, catalog, catalog, fakeDisk{steps: &steps, prepare: diskError}, runtimeAdapter, fakeReporter{steps: &steps})
+	service := newSandboxService(paths, imagePaths, fakeGuard{image: image, steps: &steps}, catalog, catalog, catalog, catalog, fakeDisk{steps: &steps, prepare: diskError}, vmmBackends{runtimeAdapter.Type(): runtimeAdapter}, fakeReporter{steps: &steps})
 	service.newID = func() (types.SandboxID, error) { return fixedID, nil }
 	service.now = func() time.Time { return time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC) }
 	return service, &steps
@@ -300,9 +327,57 @@ func TestCreateCommitsCreatedAfterDiskPreparation(t *testing.T) {
 	if record.ID != fixedID || record.State != types.SandboxStateCreated || record.Generation != 2 {
 		t.Fatalf("created record = %+v", record)
 	}
+	if record.VMM != types.VMMCloudHypervisor {
+		t.Fatalf("VMM = %q, want %q", record.VMM, types.VMMCloudHypervisor)
+	}
 	want := []string{"status:resolving and checking image", "verify", "reserve", "status:creating sparse ext4 disk", "disk", "status:committing created state", "created", "report"}
 	if !reflect.DeepEqual(*steps, want) {
 		t.Fatalf("steps = %v, want %v", *steps, want)
+	}
+}
+
+func TestSandboxLifecycleRoutesToPersistedVMM(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	firecracker := &fakeRuntime{typ: types.VMMFirecracker, steps: steps, observation: vmm.Observation{State: vmm.ProcessAbsent}}
+	service.runtimes[types.VMMFirecracker] = firecracker
+	record, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config:         types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+		VMM:            types.VMMFirecracker,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.VMM != types.VMMFirecracker {
+		t.Fatalf("VMM = %q, want %q", record.VMM, types.VMMFirecracker)
+	}
+	*steps = nil
+	if _, err := service.Start(t.Context(), "box"); err != nil {
+		t.Fatal(err)
+	}
+	if firecracker.plan.SandboxID != fixedID {
+		t.Fatalf("Firecracker did not receive launch plan: %+v", firecracker.plan)
+	}
+	if got := strings.Join(*steps, ","); !strings.Contains(got, "status:launching firecracker,launch") {
+		t.Fatalf("start was not routed through Firecracker: %v", *steps)
+	}
+}
+
+func TestCreateRejectsUnavailableVMMBeforeReservation(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	_, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config:         types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+		VMM:            types.VMMFirecracker,
+	})
+	if err == nil {
+		t.Fatal("Create accepted an unavailable VMM")
+	}
+	if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeHostIncompatible {
+		t.Fatalf("Create error = %v", err)
+	}
+	if len(*steps) != 0 {
+		t.Fatalf("Create mutated state before rejecting VMM: %v", *steps)
 	}
 }
 
@@ -421,7 +496,7 @@ func TestStartCommitsRunningOnlyAfterLaunchReadiness(t *testing.T) {
 	if record.State != types.SandboxStateRunning || record.Generation != 4 {
 		t.Fatalf("running record = %+v", record)
 	}
-	runtimeAdapter := service.runtime.(*fakeRuntime)
+	runtimeAdapter := service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime)
 	if runtimeAdapter.plan.Generation != 3 || len(runtimeAdapter.plan.Disks) != 2 || runtimeAdapter.plan.Disks[0].Serial != "kumabox-layer0" || runtimeAdapter.plan.Disks[1].Serial != vmm.COWSerial {
 		t.Fatalf("launch plan = %+v", runtimeAdapter.plan)
 	}
@@ -429,7 +504,7 @@ func TestStartCommitsRunningOnlyAfterLaunchReadiness(t *testing.T) {
 		"status:resolving sandbox", "resolve", "status:waiting for sandbox operation lock", "resolve",
 		"status:checking existing runtime", "observe", "cleanup", "status:checking host runtime", "preflight",
 		"status:verifying image and sandbox disk", "verify", "check", "status:committing starting state", "starting",
-		"status:launching Cloud Hypervisor", "launch", "status:committing running state", "running", "report",
+		"status:launching cloud-hypervisor", "launch", "status:committing running state", "running", "report",
 	}
 	if !reflect.DeepEqual(*steps, want) {
 		t.Fatalf("steps = %v, want %v", *steps, want)
@@ -445,7 +520,7 @@ func TestStartRecoversRunningProcessFromStartingState(t *testing.T) {
 	}
 	catalog := service.lifecycle.(*fakeCatalog)
 	catalog.record.State, catalog.record.Generation = types.SandboxStateStarting, 3
-	runtimeAdapter := service.runtime.(*fakeRuntime)
+	runtimeAdapter := service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime)
 	runtimeAdapter.observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42}}
 	*steps = nil
 	record, err := service.Start(t.Context(), "box")
@@ -468,7 +543,7 @@ func TestStartFailureAbortsProcessAndRetainsError(t *testing.T) {
 		t.Fatal(err)
 	}
 	failure := errors.New("VMM exited")
-	service.runtime.(*fakeRuntime).launchErr = failure
+	service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime).launchErr = failure
 	*steps = nil
 	if _, err := service.Start(t.Context(), "box"); !errors.Is(err, failure) {
 		t.Fatalf("Start error = %v", err)
@@ -498,7 +573,7 @@ func TestStartRetryDoesNotLeaveStartingAfterPreflightFailure(t *testing.T) {
 	catalog := service.lifecycle.(*fakeCatalog)
 	catalog.record.State, catalog.record.Generation = types.SandboxStateStarting, 3
 	failure := errors.New("KVM unavailable")
-	service.runtime.(*fakeRuntime).preflightErr = failure
+	service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime).preflightErr = failure
 	*steps = nil
 	if _, err := service.Start(t.Context(), "box"); !errors.Is(err, failure) {
 		t.Fatalf("Start error = %v", err)
@@ -520,7 +595,7 @@ func TestStopRecordsIntentBeforeTerminatingRunningVMM(t *testing.T) {
 	}
 	catalog := service.lifecycle.(*fakeCatalog)
 	catalog.record.State, catalog.record.Generation = types.SandboxStateRunning, 4
-	service.runtime.(*fakeRuntime).observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42}}
+	service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime).observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42}}
 	*steps = nil
 	record, err := service.Stop(t.Context(), "box")
 	if err != nil {
@@ -532,7 +607,7 @@ func TestStopRecordsIntentBeforeTerminatingRunningVMM(t *testing.T) {
 	want := []string{
 		"status:resolving sandbox", "resolve", "status:waiting for sandbox operation lock", "resolve",
 		"status:checking existing runtime", "locate", "status:committing stopping state", "stopping",
-		"status:stopping Cloud Hypervisor", "stop", "status:cleaning runtime state", "cleanup",
+		"status:stopping cloud-hypervisor", "stop", "status:cleaning runtime state", "cleanup",
 		"status:committing stopped state", "stopped", "report",
 	}
 	if !reflect.DeepEqual(*steps, want) {
@@ -559,7 +634,7 @@ func TestStopResumesStoppingAndRecoversStarting(t *testing.T) {
 			}
 			catalog := service.lifecycle.(*fakeCatalog)
 			catalog.record.State, catalog.record.Generation = test.state, test.generation
-			service.runtime.(*fakeRuntime).observation = vmm.Observation{State: vmm.ProcessStarting, Process: vmm.Process{PID: 42}}
+			service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime).observation = vmm.Observation{State: vmm.ProcessStarting, Process: vmm.Process{PID: 42}}
 			*steps = nil
 			record, err := service.Stop(t.Context(), "box")
 			if err != nil {
@@ -568,7 +643,7 @@ func TestStopResumesStoppingAndRecoversStarting(t *testing.T) {
 			if record.State != types.SandboxStateStopped || record.Generation != test.want {
 				t.Fatalf("stopped record = %+v", record)
 			}
-			if got := strings.Join(*steps, ","); strings.Contains(got, ",stopping,") || !strings.Contains(got, "locate,status:stopping Cloud Hypervisor,stop,status:cleaning runtime state,cleanup") {
+			if got := strings.Join(*steps, ","); strings.Contains(got, ",stopping,") || !strings.Contains(got, "locate,status:stopping cloud-hypervisor,stop,status:cleaning runtime state,cleanup") {
 				t.Fatalf("recovery steps = %v", *steps)
 			}
 		})
@@ -607,7 +682,7 @@ func TestStopFailureRetainsRetryableStoppingState(t *testing.T) {
 	catalog := service.lifecycle.(*fakeCatalog)
 	catalog.record.State, catalog.record.Generation = types.SandboxStateRunning, 4
 	failure := errors.New("signal failed")
-	runtimeAdapter := service.runtime.(*fakeRuntime)
+	runtimeAdapter := service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime)
 	runtimeAdapter.observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42}}
 	runtimeAdapter.stopErr = failure
 	*steps = nil
@@ -640,6 +715,52 @@ func TestStopCreatedIsIdempotentAndPreservesCreated(t *testing.T) {
 	}
 	if got := strings.Join(*steps, ","); !strings.Contains(got, "status:cleaning stale runtime state,cleanup,report") {
 		t.Fatalf("idempotent steps = %v", *steps)
+	}
+}
+
+func TestConsoleOpensExactRunningGenerationWithoutHoldingOperationLock(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo", Config: types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	catalog := service.lifecycle.(*fakeCatalog)
+	catalog.record.State, catalog.record.Generation = types.SandboxStateRunning, 4
+	runtimeAdapter := service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime)
+	runtimeAdapter.observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42, Generation: 3}}
+	*steps = nil
+
+	connection, err := service.Console(t.Context(), "box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(*steps, ","); got != "resolve,resolve,locate,console" {
+		t.Fatalf("console steps = %q", got)
+	}
+	if err := connection.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !runtimeAdapter.console.(*fakeConsole).closed {
+		t.Fatal("caller did not own the returned console")
+	}
+}
+
+func TestConsoleRejectsNonRunningSandboxBeforeRuntimeAccess(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo", Config: types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	*steps = nil
+	if _, err := service.Console(t.Context(), "box"); err == nil {
+		t.Fatal("Console succeeded for Created sandbox")
+	} else if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeStateConflict {
+		t.Fatalf("Console error = %v", err)
+	}
+	if got := strings.Join(*steps, ","); got != "resolve,resolve" {
+		t.Fatalf("non-running console touched runtime: %q", got)
 	}
 }
 

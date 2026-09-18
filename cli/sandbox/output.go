@@ -20,6 +20,8 @@ type sandboxOutput struct {
 	Name string `json:"name"`
 	// ImageDigest is the exact pinned manifest identity.
 	ImageDigest string `json:"image_digest"`
+	// VMM is the backend that owns this sandbox's runtime.
+	VMM string `json:"vmm"`
 	// State is the durable sandbox lifecycle state.
 	State string `json:"state"`
 	// CPUs is the requested virtual CPU count.
@@ -57,7 +59,7 @@ type removeOutput struct {
 // sandboxResult projects a validated domain record into the CLI JSON schema.
 func sandboxResult(sandbox types.Sandbox) sandboxOutput {
 	result := sandboxOutput{
-		ID: sandbox.ID.String(), Name: sandbox.Config.Name, ImageDigest: sandbox.ImageDigest.String(),
+		ID: sandbox.ID.String(), Name: sandbox.Config.Name, ImageDigest: sandbox.ImageDigest.String(), VMM: string(sandbox.VMM),
 		State: string(sandbox.State), CPUs: sandbox.Config.CPUs, Memory: sandbox.Config.Memory,
 		Storage: sandbox.Config.Storage, Generation: sandbox.Generation,
 		CreatedAt: sandbox.CreatedAt.UTC(), UpdatedAt: sandbox.UpdatedAt.UTC(),
@@ -119,12 +121,12 @@ func writeSandboxIDs(writer io.Writer, records []types.Sandbox) error {
 // writeSandboxTable renders headers for empty results and keeps IDs actionable.
 func writeSandboxTable(writer io.Writer, records []types.Sandbox) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(table, "SANDBOX ID\tNAME\tIMAGE ID\tSTATE\tCPUS\tMEMORY\tSTORAGE\tCREATED"); err != nil {
+	if _, err := fmt.Fprintln(table, "SANDBOX ID\tNAME\tIMAGE ID\tVMM\tSTATE\tCPUS\tMEMORY\tSTORAGE\tCREATED"); err != nil {
 		return err
 	}
 	for _, record := range records {
-		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
-			record.ID, record.Config.Name, record.ImageDigest.Hex()[:12], record.State, record.Config.CPUs,
+		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
+			record.ID, record.Config.Name, record.ImageDigest.Hex()[:12], record.VMM, record.State, record.Config.CPUs,
 			formatIECBytes(record.Config.Memory), formatIECBytes(record.Config.Storage),
 			record.CreatedAt.UTC().Format(time.RFC3339),
 		); err != nil {

@@ -58,7 +58,7 @@ or a generic `pkg` container:
 | `images/erofs` | Convert source layers and extract boot candidates |
 | `sandbox`, `sandbox/catalog` | Sandbox filesystem ownership and metadata persistence |
 | `disk` | Prepare and remove sandbox-owned sparse ext4 COW disks |
-| `vmm`, `vmm/cloudhypervisor` | VMM launch contracts, process identity, arguments and readiness |
+| `vmm`, `vmm/cloudhypervisor` | VMM backend contract, launch/process facts, and the Cloud Hypervisor adapter |
 | `cgroup` | Per-sandbox cgroup v2 preparation and reclamation |
 | `metadata`, `metadata/sqlite` | Engine-neutral transactions and the SQLite implementation |
 | `storage`, `lock/flock` | Managed filesystem operations and file locks |
@@ -211,6 +211,20 @@ An interrupted stop retains `Stopping`; running the same command again resumes
 the operation. It also recovers `Starting` records left by an interrupted start.
 Stopping an already `Created` or `Stopped` sandbox succeeds without changing
 its lifecycle history.
+
+Attach to the direct-boot PTY of a running sandbox with `console`. The command
+verifies the current process generation and Cloud Hypervisor API state before
+opening the kernel PTY, switches the local terminal to raw mode, and restores it
+on every exit path. Press `Ctrl-]` followed by `.` to detach without stopping
+the sandbox; use `--escape-char` to select another ASCII escape character.
+
+```bash
+kumabox console NAME
+kumabox console 123e4567-e89b-42d3-a456-426614174000 --escape-char '^A'
+```
+
+Console requires terminal stdin. A concurrent `stop` closes the PTY session;
+the console command does not hold the sandbox operation lock while relaying I/O.
 
 List active sandboxes with `ps`, or include created, stopped, failed, and
 deleting records with `-a`:

@@ -211,7 +211,7 @@ func testSandboxRecord(t *testing.T) types.Sandbox {
 	return types.Sandbox{
 		ID:          types.SandboxID("123e4567-e89b-42d3-a456-426614174000"),
 		Config:      types.SandboxConfig{Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
-		ImageDigest: digest, State: types.SandboxStateCreated, Generation: 2,
+		ImageDigest: digest, VMM: types.VMMCloudHypervisor, State: types.SandboxStateCreated, Generation: 2,
 		CreatedAt: created, UpdatedAt: created.Add(time.Second),
 	}
 }

@@ -62,6 +62,8 @@ type Driver struct {
 	startupTimeout time.Duration
 }
 
+var _ vmm.Backend = (*Driver)(nil)
+
 // New constructs a driver without probing host capabilities.
 func New(paths vmm.Paths, scopes *cgroup.Manager, options Options) (*Driver, error) {
 	if scopes == nil {
@@ -78,6 +80,9 @@ func New(paths vmm.Paths, scopes *cgroup.Manager, options Options) (*Driver, err
 	}
 	return &Driver{paths: paths, scopes: scopes, binary: options.Binary, startupTimeout: options.StartupTimeout}, nil
 }
+
+// Type returns the durable backend identity stored with every owned sandbox.
+func (*Driver) Type() types.VMMType { return types.VMMCloudHypervisor }
 
 // Preflight checks Linux/KVM and the configured binary before Starting is committed.
 func (d *Driver) Preflight() error {
@@ -282,6 +287,43 @@ func (d *Driver) Stop(ctx context.Context, process vmm.Process) error {
 	return terminateProcess(ctx, process, stopGrace)
 }
 
+// Console opens the direct-boot PTY reported by the exact live VMM. The caller
+// owns the returned descriptor and closing it only detaches the console.
+func (d *Driver) Console(ctx context.Context, process vmm.Process) (io.ReadWriteCloser, error) {
+	if err := process.Validate(); err != nil {
+		return nil, err
+	}
+	alive, err := verifyProcess(process)
+	if err != nil {
+		return nil, err
+	}
+	if !alive {
+		return nil, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, errors.New("cloud-hypervisor process is absent"))
+	}
+	info, err := d.queryInfo(ctx, process.APISocket)
+	if err != nil {
+		return nil, err
+	}
+	if info.State != "Running" {
+		return nil, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("cloud-hypervisor state is %q, not Running", info.State))
+	}
+	if info.Config.Console.Mode != "Pty" || info.Config.Console.File == "" {
+		return nil, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, fmt.Errorf("cloud-hypervisor console PTY is unavailable in mode %q", info.Config.Console.Mode))
+	}
+	console, err := openConsolePTY(info.Config.Console.File)
+	if err != nil {
+		return nil, err
+	}
+	alive, verifyErr := verifyProcess(process)
+	if verifyErr != nil || !alive {
+		if verifyErr == nil {
+			verifyErr = errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, errors.New("cloud-hypervisor exited while opening its console"))
+		}
+		return nil, errors.Join(verifyErr, console.Close())
+	}
+	return console, nil
+}
+
 // Cleanup removes runtime state and an empty cgroup after absence is proven.
 func (d *Driver) Cleanup(ctx context.Context, id types.SandboxID) error {
 	if err := d.scopes.Remove(ctx, id); err != nil {
@@ -324,35 +366,79 @@ func (d *Driver) recoverProcess(id types.SandboxID, generation uint64) (vmm.Proc
 
 // queryState performs one bounded request over the private Unix socket.
 func (d *Driver) queryState(ctx context.Context, socket string) (string, error) {
-	client, closeClient, err := unixAPIClient(socket)
+	info, err := d.queryInfo(ctx, socket)
 	if err != nil {
 		return "", err
+	}
+	return info.State, nil
+}
+
+// vmInfo contains the readiness and console facts consumed from vm.info.
+type vmInfo struct {
+	State  string `json:"state"`
+	Config struct {
+		Console struct {
+			Mode string `json:"mode"`
+			File string `json:"file"`
+		} `json:"console"`
+	} `json:"config"`
+}
+
+// queryInfo performs one bounded vm.info request over the private Unix socket.
+func (d *Driver) queryInfo(ctx context.Context, socket string) (vmInfo, error) {
+	client, closeClient, err := unixAPIClient(socket)
+	if err != nil {
+		return vmInfo{}, err
 	}
 	defer closeClient()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/api/v1/vm.info", nil)
 	if err != nil {
-		return "", err
+		return vmInfo{}, err
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return "", err
+		return vmInfo{}, err
 	}
 	defer response.Body.Close() //nolint:errcheck // response decode error is authoritative
 	if response.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxAPIResponse))
-		return "", fmt.Errorf("cloud hypervisor vm.info returned HTTP %d", response.StatusCode)
+		return vmInfo{}, fmt.Errorf("cloud hypervisor vm.info returned HTTP %d", response.StatusCode)
 	}
-	var payload struct {
-		State string `json:"state"`
-	}
+	var payload vmInfo
 	decoder := json.NewDecoder(io.LimitReader(response.Body, maxAPIResponse+1))
 	if err := decoder.Decode(&payload); err != nil {
-		return "", fmt.Errorf("decode Cloud Hypervisor vm.info: %w", err)
+		return vmInfo{}, fmt.Errorf("decode Cloud Hypervisor vm.info: %w", err)
 	}
 	if payload.State == "" {
-		return "", errors.New("cloud hypervisor vm.info omitted state")
+		return vmInfo{}, errors.New("cloud hypervisor vm.info omitted state")
 	}
-	return payload.State, nil
+	return payload, nil
+}
+
+// openConsolePTY accepts only the kernel-owned /dev/pts/N shape returned by
+// Cloud Hypervisor and verifies the opened descriptor is a character device.
+func openConsolePTY(path string) (*os.File, error) {
+	clean := filepath.Clean(path)
+	index, parseErr := strconv.Atoi(filepath.Base(clean))
+	if !filepath.IsAbs(path) || filepath.Dir(clean) != "/dev/pts" || parseErr != nil || index < 0 {
+		return nil, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, fmt.Errorf("invalid cloud-hypervisor console PTY path %q", path))
+	}
+	info, err := os.Lstat(clean)
+	if err != nil {
+		return nil, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, fmt.Errorf("stat console PTY: %w", err))
+	}
+	if info.Mode()&os.ModeCharDevice == 0 {
+		return nil, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, fmt.Errorf("console PTY %s is not a character device", clean))
+	}
+	file, err := os.OpenFile(clean, os.O_RDWR, 0) //nolint:gosec // path is restricted to a validated kernel PTY leaf
+	if err != nil {
+		return nil, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, fmt.Errorf("open console PTY: %w", err))
+	}
+	opened, err := file.Stat()
+	if err != nil || opened.Mode()&os.ModeCharDevice == 0 {
+		return nil, errors.Join(errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("opened console is not a character device")), file.Close())
+	}
+	return file, nil
 }
 
 // requestShutdown asks Cloud Hypervisor to stop its VM before process signals

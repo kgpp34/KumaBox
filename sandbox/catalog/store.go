@@ -63,6 +63,9 @@ type recordData struct {
 	Storage int64 `json:"storage"`
 	// ImageDigest pins the canonical manifest record.
 	ImageDigest string `json:"image_digest"`
+	// VMM identifies the backend that owns runtime artifacts. Empty legacy
+	// records are decoded as cloud-hypervisor.
+	VMM string `json:"vmm,omitempty"`
 	// State is explicitly mapped back into the domain enum.
 	State string `json:"state"`
 	// Generation fences stale state transitions.
@@ -476,7 +479,7 @@ func encode(record types.Sandbox) recordData {
 	data := recordData{
 		ID: record.ID.String(), Name: record.Config.Name, CPUs: record.Config.CPUs,
 		Memory: record.Config.Memory, Storage: record.Config.Storage,
-		ImageDigest: record.ImageDigest.String(), State: string(record.State),
+		ImageDigest: record.ImageDigest.String(), VMM: string(record.VMM), State: string(record.State),
 		Generation: record.Generation, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}
 	if record.Failure != nil {
@@ -499,9 +502,12 @@ func decode(raw []byte) (types.Sandbox, error) {
 	if err != nil {
 		return types.Sandbox{}, corrupt("sandbox image", err)
 	}
+	if data.VMM == "" {
+		data.VMM = string(types.VMMCloudHypervisor)
+	}
 	record := types.Sandbox{
 		ID: id, Config: types.SandboxConfig{Name: data.Name, CPUs: data.CPUs, Memory: data.Memory, Storage: data.Storage},
-		ImageDigest: digest, State: types.SandboxState(data.State), Generation: data.Generation,
+		ImageDigest: digest, VMM: types.VMMType(data.VMM), State: types.SandboxState(data.State), Generation: data.Generation,
 		CreatedAt: data.CreatedAt, UpdatedAt: data.UpdatedAt,
 	}
 	if data.Failure != nil {

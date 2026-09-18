@@ -12,6 +12,32 @@ import (
 	"github.com/kumabox/kumabox/types"
 )
 
+func TestDecodeLegacySandboxDefaultsCloudHypervisor(t *testing.T) {
+	created := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
+	raw, err := json.Marshal(recordData{
+		ID:          "123e4567-e89b-42d3-a456-426614174000",
+		Name:        "legacy",
+		CPUs:        1,
+		Memory:      types.DefaultSandboxMemory,
+		Storage:     types.DefaultSandboxStorage,
+		ImageDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		State:       string(types.SandboxStateCreated),
+		Generation:  2,
+		CreatedAt:   created,
+		UpdatedAt:   created,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.VMM != types.VMMCloudHypervisor {
+		t.Fatalf("legacy VMM = %q, want %q", record.VMM, types.VMMCloudHypervisor)
+	}
+}
+
 func TestResolveRejectsDanglingNameBinding(t *testing.T) {
 	store, err := metadata.NewMemory(Collections())
 	if err != nil {
@@ -44,7 +70,7 @@ func TestListReturnsValidatedRecordsNewestFirst(t *testing.T) {
 	older := types.Sandbox{
 		ID:          types.SandboxID("123e4567-e89b-42d3-a456-426614174000"),
 		Config:      types.SandboxConfig{Name: "older", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
-		ImageDigest: digest, State: types.SandboxStateCreated, Generation: 2,
+		ImageDigest: digest, VMM: types.VMMCloudHypervisor, State: types.SandboxStateCreated, Generation: 2,
 		CreatedAt: created, UpdatedAt: created,
 	}
 	newer := older
@@ -112,7 +138,7 @@ func TestReservationPinsImageInsideRemovalTransaction(t *testing.T) {
 	id := types.SandboxID("123e4567-e89b-42d3-a456-426614174000")
 	record := types.Sandbox{
 		ID: id, Config: types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
-		ImageDigest: manifest, State: types.SandboxStateCreating, Generation: 1, CreatedAt: created, UpdatedAt: created,
+		ImageDigest: manifest, VMM: types.VMMCloudHypervisor, State: types.SandboxStateCreating, Generation: 1, CreatedAt: created, UpdatedAt: created,
 	}
 	if err := sandboxStore.Reserve(t.Context(), "demo", manifest, record); err != nil {
 		t.Fatal(err)

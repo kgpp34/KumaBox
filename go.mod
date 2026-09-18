@@ -7,12 +7,14 @@ require (
 	github.com/google/go-containerregistry v0.20.6
 	github.com/klauspost/compress v1.18.0
 	github.com/mattn/go-isatty v0.0.20
+	github.com/moby/term v0.5.2
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sync v0.15.0
 	modernc.org/sqlite v1.38.2
 )
 
 require (
+	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/containerd/stargz-snapshotter/estargz v0.16.3 // indirect
 	github.com/docker/cli v28.2.2+incompatible // indirect
 	github.com/docker/distribution v2.8.3+incompatible // indirect
