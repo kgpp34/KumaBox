@@ -1,142 +1,114 @@
 #!/bin/sh
+# KumaBox overlay-v1 initramfs root provider.
+#
+# The host attaches immutable EROFS disks as kumabox-layer0..N in manifest
+# order and one ext4 disk as kumabox-cow. The kernel command line reverses the
+# layer serials so OverlayFS sees the top layer first:
+#
+#   EROFS disks + ext4 COW
+#            |
+#            v
+#   kumabox.layers=top,...,base  kumabox.cow=kumabox-cow
+#            |                         |
+#            +---- lowerdir list       +---- upper/work
+#                           \           /
+#                            overlay root
 
 . /scripts/functions
 
-boot_phase() {
-    phase="$1"
-    phase_dir=/run/kumabox
-    uptime="$(cut -d' ' -f1 /proc/uptime 2>/dev/null || true)"
-    seconds="${uptime%%.*}"
-    fraction="${uptime#*.}"
-    [ "$seconds" != "$uptime" ] || seconds=0
-    [ -n "$fraction" ] || fraction=0
-    fraction="$(printf '%s000' "$fraction" | cut -c1-3)"
-    mkdir -p "$phase_dir"
-    printf 'KumaBox: boot-phase=%s monotonic-ms=%s\n' \
-        "$phase" "$((seconds * 1000 + fraction))" >>"$phase_dir/boot-phases"
+# kumabox_device resolves one virtio block serial with a bounded wait. Device
+# letters are deliberately ignored because VMM attachment order is not an ABI.
+kumabox_device() {
+	serial=$1
+	attempt=0
+	while [ "$attempt" -lt "$KUMABOX_DEVICE_TIMEOUT" ]; do
+		for sysdev in /sys/block/*; do
+			[ -d "$sysdev" ] || continue
+			value=
+			if [ -r "$sysdev/serial" ]; then
+				value=$(cat "$sysdev/serial")
+			elif [ -r "$sysdev/device/serial" ]; then
+				value=$(cat "$sysdev/device/serial")
+			fi
+			if [ "$value" = "$serial" ]; then
+				printf '/dev/%s\n' "${sysdev##*/}"
+				return 0
+			fi
+		done
+		sleep 1
+		attempt=$((attempt + 1))
+	done
+	return 1
 }
 
-resolve_disk() {
-    serial="$1"
-    timeout="${KUMABOX_TIMEOUT:-10}"
-    i=0
-
-    case "$timeout" in
-        ''|*[!0-9]*) timeout=10 ;;
-    esac
-
-    case "$serial" in
-        /dev/*)
-            while [ "$i" -lt "$timeout" ]; do
-                [ -b "$serial" ] && echo "$serial" && return 0
-                sleep 1
-                i=$((i + 1))
-            done
-            echo "KumaBox: device ${serial} not present after ${timeout}s" >&2
-            return 1
-            ;;
-    esac
-
-    while [ "$i" -lt "$timeout" ]; do
-        by_id="/dev/disk/by-id/virtio-${serial}"
-        if [ -b "$by_id" ]; then
-            echo "$by_id"
-            return 0
-        fi
-        for sysdev in /sys/block/vd*; do
-            [ -d "$sysdev" ] || continue
-            dev_serial=""
-            if [ -f "$sysdev/serial" ]; then
-                dev_serial="$(cat "$sysdev/serial")"
-            fi
-            if [ -z "$dev_serial" ] && [ -f "$sysdev/device/serial" ]; then
-                dev_serial="$(cat "$sysdev/device/serial")"
-            fi
-            while :; do
-                case "$dev_serial" in
-                    *[[:space:]]) dev_serial="${dev_serial%[[:space:]]}" ;;
-                    *) break ;;
-                esac
-            done
-            if [ "$dev_serial" = "$serial" ]; then
-                echo "/dev/${sysdev##*/}"
-                return 0
-            fi
-        done
-        sleep 1
-        i=$((i + 1))
-    done
-    return 1
-}
-
+# mountroot is called by initramfs-tools when boot=kumabox-overlay is selected.
 mountroot() {
-    boot_phase overlay-start
-    log_begin_msg "KumaBox: mounting OCI overlay rootfs"
+	KUMABOX_LAYERS=
+	KUMABOX_COW=
+	KUMABOX_HOSTNAME=
+	KUMABOX_DEVICE_TIMEOUT=10
+	for argument in $(cat /proc/cmdline); do
+		case "$argument" in
+			kumabox.layers=*) KUMABOX_LAYERS=${argument#kumabox.layers=} ;;
+			kumabox.cow=*) KUMABOX_COW=${argument#kumabox.cow=} ;;
+			kumabox.hostname=*) KUMABOX_HOSTNAME=${argument#kumabox.hostname=} ;;
+			kumabox.timeout=*) KUMABOX_DEVICE_TIMEOUT=${argument#kumabox.timeout=} ;;
+		esac
+	done
 
-    if ! ls /run/net-*.conf >/dev/null 2>&1; then
-        for arg in $(cat /proc/cmdline); do
-            case "$arg" in
-                ip=*) configure_networking; break ;;
-            esac
-        done
-    fi
+	case "$KUMABOX_DEVICE_TIMEOUT" in
+		''|*[!0-9]*) panic "kumabox.timeout must be an integer" ;;
+	esac
+	[ "$KUMABOX_DEVICE_TIMEOUT" -gt 0 ] || panic "kumabox.timeout must be positive"
+	[ -n "$KUMABOX_LAYERS" ] || panic "kumabox.layers is required"
+	[ -n "$KUMABOX_COW" ] || panic "kumabox.cow is required"
+	[ -n "$KUMABOX_HOSTNAME" ] || panic "kumabox.hostname is required"
+	case "$KUMABOX_LAYERS" in
+		,*|*,|*,,*) panic "kumabox.layers contains an empty serial" ;;
+	esac
+	case "$KUMABOX_COW" in
+		*[!A-Za-z0-9_.-]*) panic "kumabox.cow contains an invalid serial" ;;
+	esac
+	case "$KUMABOX_HOSTNAME" in
+		*[!A-Za-z0-9_.-]*) panic "kumabox.hostname contains an invalid character" ;;
+	esac
 
-    modprobe erofs 2>/dev/null || true
-    modprobe overlay 2>/dev/null || true
-    modprobe ext4 2>/dev/null || true
+	modprobe erofs 2>/dev/null || true
+	modprobe overlay 2>/dev/null || true
+	modprobe ext4 2>/dev/null || true
+	udevadm settle 2>/dev/null || true
 
-    for arg in $(cat /proc/cmdline); do
-        case "$arg" in
-            kumabox.layers=*) LAYERS="${arg#kumabox.layers=}" ;;
-            kumabox.cow=*) COW="${arg#kumabox.cow=}" ;;
-            kumabox.timeout=*) KUMABOX_TIMEOUT="${arg#kumabox.timeout=}" ;;
-        esac
-    done
+	workspace=/.kumabox
+	mkdir -p "$workspace/layers" "$workspace/cow"
+	lowerdirs=
+	old_ifs=$IFS
+	IFS=,
+	for serial in $KUMABOX_LAYERS; do
+		case "$serial" in
+			*[!A-Za-z0-9_.-]*) panic "kumabox.layers contains an invalid serial" ;;
+		esac
+		device=$(kumabox_device "$serial") || panic "KumaBox layer $serial was not found"
+		mountpoint="$workspace/layers/$serial"
+		mkdir -p "$mountpoint"
+		mount -t erofs -o ro "$device" "$mountpoint" || panic "KumaBox layer $serial could not be mounted"
+		if [ -n "$lowerdirs" ]; then
+			lowerdirs="$lowerdirs:$mountpoint"
+		else
+			lowerdirs=$mountpoint
+		fi
+	done
+	IFS=$old_ifs
 
-    [ -n "${LAYERS:-}" ] || panic "kumabox.layers= not set"
-    [ -n "${COW:-}" ] || panic "kumabox.cow= not set"
+	cow_device=$(kumabox_device "$KUMABOX_COW") || panic "KumaBox COW disk $KUMABOX_COW was not found"
+	mount -t ext4 -o noatime "$cow_device" "$workspace/cow" || panic "KumaBox COW disk could not be mounted"
+	mkdir -p "$workspace/cow/upper" "$workspace/cow/work"
+	mount -t overlay overlay \
+		-o "lowerdir=$lowerdirs,upperdir=$workspace/cow/upper,workdir=$workspace/cow/work" \
+		"$rootmnt" || panic "KumaBox overlay root could not be mounted"
 
-    udevadm settle 2>/dev/null || true
-
-    internal="/.kumabox"
-    mkdir -p "$internal"
-
-    lower=""
-    layer_devs=""
-    old_ifs="$IFS"
-    IFS=,
-    for serial in $LAYERS; do
-        dev="$(resolve_disk "$serial")" || panic "layer device ${serial} not found"
-        mnt="${internal}/layers/${serial}"
-        mkdir -p "$mnt"
-        mount -t erofs -o ro "$dev" "$mnt" || panic "mount layer ${serial} failed"
-        [ -n "$lower" ] && lower="${lower}:"
-        lower="${lower}${mnt}"
-        layer_devs="${layer_devs} ${dev}"
-    done
-    IFS="$old_ifs"
-
-    cow_dev="$(resolve_disk "$COW")" || panic "COW device ${COW} not found"
-    mkdir -p "${internal}/cow"
-    mount -t ext4 -o noatime "$cow_dev" "${internal}/cow" || panic "mount COW failed"
-    mkdir -p "${internal}/cow/upper" "${internal}/cow/work"
-
-    overlay_opts="lowerdir=${lower},upperdir=${internal}/cow/upper,workdir=${internal}/cow/work,index=on,redirect_dir=on,metacopy=on,xino=on"
-    mount -t overlay overlay -o "$overlay_opts" "$rootmnt" || panic "overlay rootfs failed"
-
-    mkdir -p "${rootmnt}/dev" "${rootmnt}/proc" "${rootmnt}/sys" "${rootmnt}/run"
-
-    # Every VM gets a fresh machine identity, including native clones.
-    rm -f "${rootmnt}/etc/machine-id" 2>/dev/null || true
-    : >"${rootmnt}/etc/machine-id"
-
-    for dev in $layer_devs; do
-        blk="${dev##*/}"
-        [ -e "/sys/block/${blk}/queue/scheduler" ] && echo none >"/sys/block/${blk}/queue/scheduler" 2>/dev/null || true
-    done
-    cow_blk="${cow_dev##*/}"
-    [ -e "/sys/block/${cow_blk}/queue/scheduler" ] && echo mq-deadline >"/sys/block/${cow_blk}/queue/scheduler" 2>/dev/null || true
-
-    boot_phase overlay-ready
-    log_success_msg "KumaBox: OCI overlay rootfs ready"
+	mkdir -p "$rootmnt/dev" "$rootmnt/proc" "$rootmnt/sys" "$rootmnt/run" "$rootmnt/etc"
+	rm -f "$rootmnt/etc/machine-id"
+	: >"$rootmnt/etc/machine-id"
+	printf '%s\n' "$KUMABOX_HOSTNAME" >"$rootmnt/etc/hostname"
+	log_success_msg "KumaBox overlay-v1 root is ready"
 }

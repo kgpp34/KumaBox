@@ -4,277 +4,290 @@
 
 # KumaBox
 
-KumaBox is a daemonless microVM sandbox runtime for agents, automation, and
-untrusted workloads. It runs OCI images inside Cloud Hypervisor VMs on KVM and
-provides a container-like CLI for lifecycle, networking, command execution,
-snapshots, cloning, and device management.
+A microVM sandbox runtime for AI agents. One node runs one daemon
+(`kumaboxd`) that owns all state, plus a thin client (`kumabox`) with a
+Docker-like command line; sandboxes are Cloud Hypervisor microVMs booted from
+OCI images, with CNI networking, cgroups, snapshots and clone.
 
-[![CI](https://github.com/kgpp34/KumaBox/actions/workflows/ci.yml/badge.svg)](https://github.com/kgpp34/KumaBox/actions/workflows/ci.yml)
-[![Go](https://img.shields.io/badge/Go-1.24.4%2B-00ADD8?logo=go&logoColor=white)](https://go.dev/)
-[![Platform](https://img.shields.io/badge/platform-Linux-FCC624?logo=linux&logoColor=black)](https://www.kernel.org/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+The rewrite currently provides the `kumabox` CLI, the host doctor, container
+image management, persistent sandbox creation, and recoverable Cloud Hypervisor
+start/stop. Each command opens its metadata store, performs one operation, and
+exits. The remaining sandbox lifecycle is tracked in
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
-> [!WARNING]
-> KumaBox is under active development. The CLI, metadata schema, and snapshot
-> format are not yet covered by a stable compatibility guarantee. Use it on
-> disposable Linux/KVM hosts until the first stable release.
+## Where the design lives
 
-## Highlights
+Read these in order. They are the only specifications; anything else under
+`docs/` is history.
 
-- **MicroVM isolation**: each sandbox runs behind KVM in its own Cloud
-  Hypervisor process instead of sharing the host kernel.
-- **Daemonless control plane**: commands open durable state, lock the affected
-  resources, perform one operation, and exit. No KumaBox service is required.
-- **OCI direct boot**: OCI layers are converted to shared EROFS images and
-  combined with a private writable disk for each VM.
-- **Guest execution**: run commands, stream stdin/stdout/stderr, allocate a TTY,
-  and update guest identity through the vsock agent.
-- **CNI networking**: the default `cni:kumabox` network supports per-VM
-  namespaces, TAP devices, multi-NIC configuration, cleanup, and reconciliation.
-- **Snapshots and clones**: capture stopped or running VMs, export and import
-  snapshots, restore in place, hibernate, or clone with a fresh identity.
-- **Runtime devices**: attach data disks, virtio-fs shares, and VFIO PCI devices
-  where the host and Cloud Hypervisor configuration support them.
-- **Switchable metadata**: JSON is the default; SQLite is available for stronger
-  concurrent access, backup, and integrity checks.
+| Document | Answers |
+|---|---|
+| [docs/PRODUCT.md](docs/PRODUCT.md) | What this is, who uses it, what v1 must do, what it will not do, how it relates to Cocoon, shared vocabulary |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layering and the import matrix, fact ownership, the execution model, transactions and locks, cross-cutting contracts, testing tiers, naming and code style |
+| [docs/BEHAVIOR.md](docs/BEHAVIOR.md) | What happens on the machine when a command runs, and what is left behind when it fails |
+| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | How performance is measured, how it is compared against Cocoon, and which scenarios must match or beat it |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | What each phase does, why, how, and the evidence that closes it |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | Decisions taken, why the previous design was discarded, what is still open |
 
-## Positioning
+Documentation is intentionally not tracked by Git (see `.gitignore`), so these
+files live only in the working tree — keep local backups.
 
-KumaBox is a sandbox manager, not a Kubernetes container runtime and not a VMM
-library. The projects below operate at different layers:
-
-| Project | Interface presented to users | Isolation model | Primary use case |
-| --- | --- | --- | --- |
-| **KumaBox** | Daemonless VM-oriented CLI | KVM microVM through Cloud Hypervisor | Local agent sandboxes, automation, and explicit VM lifecycle management |
-| [Kata Containers](https://katacontainers.io/) | OCI/CRI container runtime | Lightweight VM containing the container workload | Adding VM isolation to containerd, CRI, and Kubernetes workflows |
-| [gVisor](https://gvisor.dev/) | OCI runtime (`runsc`) | Userspace application kernel; not a traditional guest VM | Sandboxing containers while retaining Docker/Kubernetes integration |
-| [Firecracker](https://firecracker-microvm.github.io/) | VMM process and API | KVM microVM with a deliberately minimal device model | Building serverless or container platforms that provide their own control plane |
-| [Cloud Hypervisor](https://www.cloudhypervisor.org/) | VMM process and API | KVM/MSHV VM optimized for modern cloud workloads | Building VM products; KumaBox uses it as its current backend |
-| [Cocoon](https://github.com/cocoonstack/cocoon) | Daemonless VM-oriented CLI | MicroVM through Cloud Hypervisor or Firecracker | A broader, more mature direct alternative in the same product category |
-
-Kata Containers is therefore not simply "a container running a nested VM."
-Container tooling calls the Kata runtime, and Kata places the workload inside a
-lightweight VM while preserving the expected container interface. Choose Kata
-when CRI/containerd/Kubernetes compatibility is the primary requirement. Choose
-gVisor when a userspace-kernel sandbox fits that container workflow. Choose a
-raw VMM when you are building the surrounding image, network, metadata, and
-lifecycle control plane yourself.
-
-KumaBox is intended for users who want to manage the sandbox directly as a VM
-without first deploying Kubernetes or a resident KumaBox daemon. It is not a
-drop-in OCI runtime replacement for Kata or gVisor, and its current backend and
-platform coverage are narrower than established projects.
-
-### KumaBox and Cocoon
-
-KumaBox and Cocoon are the closest comparison because both expose a daemonless,
-VM-oriented CLI and manage OCI images, CNI networking, snapshots, cloning,
-guest exec, hotplug, GC, and JSON/SQLite metadata. Their main difference is
-focus rather than basic command coverage:
-
-| Design area | KumaBox | Cocoon | Practical effect |
-| --- | --- | --- | --- |
-| VMM scope | Cloud Hypervisor only | Cloud Hypervisor and Firecracker | KumaBox has a smaller compatibility matrix; Cocoon offers more backend choice |
-| Guest scope | Linux direct boot and UEFI | Linux plus Windows support | Cocoon is the better fit when Windows or Firecracker is required |
-| Interrupted operations | One durable operation journal covers VM lifecycle, network, devices, snapshots, clone, restore, and hibernate | Targeted reconciliation and self-healing in individual lifecycle and device paths | KumaBox exposes one consistency model for auditing and extending crash recovery |
-| Integrity diagnostics | `metadata status`, `metadata verify`, verified SQLite backup, and `snapshot verify` | Metadata init/convert/backup and validation during normal operations | KumaBox provides explicit read-only preflight commands before maintenance or restore |
-| Dry-run output | Versioned JSON launch plan that must not create records or files | Human-readable generated launch commands | KumaBox is easier to consume from automated validation tooling |
-| Failure testing | Named fault points across metadata, network, snapshot, clone, delete, and GC boundaries | Extensive subsystem tests and targeted recovery tests | KumaBox tests one shared interruption model across subsystems |
-
-KumaBox's advantage is not broader feature coverage. It is a deliberately
-narrower Cloud Hypervisor product with centralized durability rules,
-machine-readable diagnostics, and fewer backend-specific branches to audit.
-Those advantages matter when building or operating Linux agent sandboxes around
-Cloud Hypervisor. Cocoon remains the stronger choice when backend flexibility,
-Windows guests, or its broader established feature set matters more.
-
-## Quick Start
-
-KumaBox currently supports Linux amd64 and arm64 hosts. The setup command
-installs pinned Cloud Hypervisor, firmware, CNI plugins, EROFS tooling, and the
-default `cni:kumabox` network.
+## Working on it
 
 ```bash
-# Install the latest release and verify its checksum.
-curl -fsSLO https://github.com/kgpp34/KumaBox/releases/latest/download/kumabox-install.sh
-curl -fsSLO https://github.com/kgpp34/KumaBox/releases/latest/download/kumabox-install.sh.sha256
-sha256sum --check kumabox-install.sh.sha256
-sudo sh kumabox-install.sh
-
-# Prepare and verify the host once.
-sudo kumabox-check --upgrade
-sudo kumabox doctor
-
-# Import the published OCI guest image.
-sudo kumabox image build \
-  ghcr.io/kgpp34/kumabox/ubuntu:24.04 \
-  --name ubuntu
-
-# Start a VM on the default CNI network.
-sudo kumabox run ubuntu \
-  --name my-vm \
-  --cpus 2 \
-  --memory 1G \
-  --storage 4G
-
-# Interact with the guest. Run console in a separate terminal when needed.
-sudo kumabox exec my-vm -- uname -a
-sudo kumabox exec -it my-vm -- sh
-sudo kumabox console my-vm
-
-# Capture running state and create an independent clone.
-sudo kumabox snapshot create my-vm --name base --type running
-sudo kumabox clone base --name fresh
-sudo kumabox exec fresh -- hostname
-
-# Clean up.
-sudo kumabox delete fresh my-vm --force
-sudo kumabox snapshot rm base
-sudo kumabox image rm ubuntu
-sudo kumabox gc
+make verify   # formatting, vet, tests, build
+make race     # race detector, required for concurrency changes
 ```
 
-The host and guest artifacts are a matched release pair. Pin a versioned guest
-tag such as `24.04-v0.1.0`, or an OCI digest, when reproducibility matters.
+`make verify` must stay green on macOS with no root and no KVM. Real microVM
+behaviour (Cloud Hypervisor, CNI, KVM) is verified manually on a Linux host
+using the runbook attached to each phase.
 
-## How It Works
+Code is organized as importable modules by responsibility, without `internal`
+or a generic `pkg` container:
 
-```mermaid
-flowchart LR
-    User[User or automation] --> CLI
+| Package | Responsibility |
+|---|---|
+| `cmd/kumabox` | Process entry point, signals and exit status |
+| `cli`, `cli/image`, `cli/sandbox`, `cli/doctor` | Command trees, argument parsing and presentation |
+| `core` | Application services, operation ordering and concrete adapter assembly |
+| `types` | Shared image and sandbox resource models and value objects |
+| `images` | Image import, verification, boot selection and removal rules |
+| `images/catalog` | Persist image identities, name bindings and layer references |
+| `images/source` | Read Docker archives, OCI layouts/archives and registries |
+| `images/erofs` | Convert source layers and extract boot candidates |
+| `sandbox`, `sandbox/catalog` | Sandbox filesystem ownership and metadata persistence |
+| `disk` | Prepare and remove sandbox-owned sparse ext4 COW disks |
+| `vmm`, `vmm/cloudhypervisor` | VMM backend contract, launch/process facts, and the Cloud Hypervisor adapter |
+| `cgroup` | Per-sandbox cgroup v2 preparation and reclamation |
+| `metadata`, `metadata/sqlite` | Engine-neutral transactions and the SQLite implementation |
+| `storage`, `lock/flock` | Managed filesystem operations and file locks |
+| `errdefs`, `version` | Error classification and build information |
 
-    subgraph Command[One KumaBox command]
-        CLI[kumabox CLI]
-        Locks[Process and resource locks]
-        Runtime[VM lifecycle orchestration]
-        State[Durable state<br/>JSON or SQLite]
+`core` owns application workflows that cross module boundaries and connects
+their concrete adapters. CLI handlers use those services. Shared resource data
+belongs to `types`; capability interfaces stay beside their consumers and are
+not collected in `types`. Modules do not import `core` or `cli`. These dependency
+directions are enforced by depguard in `.golangci.yml`.
 
-        CLI --> Locks
-        CLI --> Runtime
-        CLI <--> State
-        Runtime --> State
-    end
+The image command groups complete responsibilities into `import.go` (pull and
+local import), `query.go` (list, inspect and verify), and `remove.go`. Related
+types, interfaces and methods stay together; files are not split by declaration
+kind. Interfaces describe the operations needed by their consumers.
 
-    Runtime --> Image[OCI and EROFS layers]
-    Runtime --> Disk[Writable disks]
-    Runtime --> Network[CNI, netns, and TAP]
-    Image --> VMM[Cloud Hypervisor]
-    Disk --> VMM
-    Network --> VMM
-    VMM --> Guest[MicroVM guest]
-    Guest --> Agent[kumabox-agent]
-    CLI <-->|vsock| Agent
+Document each package's responsibility in an existing source file. Exported APIs,
+key types and fields, and complex private methods need comments explaining their
+contracts, units, ownership, and failure boundaries. Keep comments in English and
+use indented ASCII diagrams near workflows where ordering, locking, or commit
+boundaries matter. Update these comments whenever the behavior changes.
 
-    CLI -. exits after the operation .-> NoDaemon[No resident KumaBox daemon]
-    VMM -. remains while the VM runs .-> VMProcess[One VMM process per running VM]
-```
+Tests live in their owning directories as `*_test.go`. The shared memory/SQLite
+transaction contract is exercised in `metadata/store_test.go`; there is no
+production package for test helpers. Image workflow integration tests use the
+public module APIs and cover the assembled catalog with both metadata engines.
 
-Durable data lives under `/var/lib/kumabox`, runtime sockets and native restore
-staging under `/var/lib/kumabox/run`, and logs under `/var/log/kumabox`.
-KumaBox reconciles these records with observed VMM and host-network state after
-an interrupted command or host restart.
+Build with `make build`, or run the entry point with `go run ./cmd/kumabox`.
+The host checker source is `scripts/kumabox-check.sh`.
 
-## Requirements
+## Container images
 
-| Component | Requirement |
-| --- | --- |
-| Host | Linux amd64 or arm64 |
-| Virtualization | Hardware virtualization and accessible `/dev/kvm` |
-| VMM | Cloud Hypervisor |
-| Disk tools | `qemu-img`, ext4 tools, and `mkfs.erofs` 1.8+ |
-| Networking | `/dev/net/tun`, `ip`, CNI plugins, and host forwarding |
-| Privileges | Root for KVM, TAP/CNI, device, and system-state operations |
-| Source builds | Go 1.24.4 or newer |
-
-Run `sudo kumabox-check` for a read-only host audit. Run
-`sudo kumabox-check --fix` to create missing KumaBox directories and network
-configuration without upgrading pinned dependencies.
-
-## Core Commands
-
-| Area | Commands |
-| --- | --- |
-| VM lifecycle | `run`, `create`, `start`, `stop`, `pause`, `resume`, `delete`, `ps`, `inspect` |
-| Guest access | `exec`, `console`, `logs`, `agent` |
-| Images | `image add`, `image build`, `image pull`, `image inspect`, `image ls`, `image rm` |
-| Snapshots | `snapshot create`, `snapshot verify`, `snapshot export`, `snapshot import`, `restore`, `clone`, `hibernate` |
-| Networking | `network inspect`, `network setup`, `network teardown`, `network resize` |
-| Devices | `disk`, `fs`, `device` |
-| Operations | `doctor`, `metadata`, `usage`, `gc`, `debug` |
-
-Use `kumabox <command> --help` as the authoritative CLI reference. Inspection
-and automation-oriented commands support structured JSON output where shown by
-their help.
-
-## Metadata Backends
-
-JSON metadata is used by default:
+Pull or import a Linux image containing regular `/boot/vmlinuz*` and
+`/boot/initrd.img*` files. A bootable KumaBox image also declares the OCI config
+label `io.kumabox.boot.profile=overlay-v1`; older images without the label remain
+importable and inspectable but will be rejected by `start`. Image conversion
+requires `mkfs.erofs` 1.8 or newer; unit and integration tests use a stand-in and
+run on macOS without root/KVM. The
+[synthetic fixture](testdata/oci-layout/README.md) cannot boot a VM.
 
 ```bash
-sudo kumabox ps
+kumabox image pull REGISTRY/IMAGE:TAG --platform linux/amd64
+kumabox image import tiny ./testdata/oci-layout --platform linux/amd64
+kumabox image import demo ./docker-save.tar --format docker --platform linux/amd64
+kumabox image ls --json
+kumabox image inspect tiny
+kumabox image verify tiny
+kumabox image rm tiny
 ```
 
-Select SQLite consistently for every command that accesses the same state:
+`image ls` prints a table with names, 12-character image IDs, platforms,
+human-readable sizes, and creation timestamps in UTC. `image inspect` and
+`image ls --json` print indented JSON with full digests and numeric sizes.
+The inspect response reports the declaration as `boot.profile`; an empty value
+means the source did not declare a boot contract. KumaBox never guesses a profile
+from kernel or initrd filenames.
+Import and pull show a live spinner and completed layer counts on a terminal.
+Verification and removal also show waiting status; removal reports completed
+image counts. Redirected progress uses plain lines on stderr. Results are
+written to stdout.
+
+`image import NAME PATH` detects the format from source contents by default.
+It accepts OCI layout directories, OCI archives, and `docker save` archives;
+archives can be plain tar or gzip, regardless of their filename extension.
+Use `--format oci` or `--format docker` to select a format explicitly.
+For Docker archives containing multiple images for the target platform, use
+`--source-tag REPOSITORY:TAG` to select the source image; `NAME` is its local
+KumaBox name. Archives containing both OCI and Docker metadata use OCI by
+default; pass `--format docker --source-tag REPOSITORY:TAG` for Docker tag
+selection. `docker export` filesystem archives are not supported.
+
+To import an image already present in Docker:
 
 ```bash
-sudo kumabox --metadata-backend sqlite metadata init
-sudo kumabox --metadata-backend sqlite run ubuntu --name sqlite-vm --storage 4G
-sudo kumabox --metadata-backend sqlite ps
-sudo kumabox --metadata-backend sqlite metadata backup /var/lib/kumabox/metadata-backup.db
+docker save -o demo.tar your-image:tag
+kumabox image import demo ./demo.tar --platform linux/amd64
+kumabox image verify demo
 ```
 
-Do not switch backends for an existing resource set without using the metadata
-conversion workflow exposed by `kumabox metadata --help`.
+Docker archives are normalized to a deterministic OCI manifest. Its digest
+identifies the imported config and ordered layers and may differ from the
+original registry manifest digest. Repacking or changing source tags preserves
+the imported digest. Docker images must meet the same kernel/initrd requirements.
 
-## Build and Test
+The reference Ubuntu guest image is built from
+[`oci-images/ubuntu`](oci-images/ubuntu). Its independently implemented initramfs
+script consumes only `kumabox.*` kernel parameters and virtio serials. It does
+not expose or depend on another runtime's guest protocol.
+
+For a separate data store, pass all three roots:
 
 ```bash
-git clone https://github.com/kgpp34/KumaBox.git
-cd KumaBox
-make build
-make test
-go vet ./...
-./bin/kumabox version --json
+kumabox --root-dir /tmp/kb/data --run-dir /tmp/kb/run --log-dir /tmp/kb/log image ls --json
 ```
 
-The full test suite requires a Linux/KVM host and exercises OCI image creation,
-cold boot, guest exec and TTY, CNI allocation and cleanup, stopped and native
-snapshots, clone/restore, disk hotplug, and metadata backup:
+Import validates OCI manifest/config/layer digests and layer diffIDs, streams
+layers to EROFS, and extracts boot candidates with layer overwrite/whiteout
+semantics. Metadata is committed after durable publication and final digest
+checks. Verification detects EROFS and boot-file corruption. Source OCI blobs
+are never stored persistently; repeated imports reuse verified, registered
+artifacts. Removing a name retains artifacts until the last image reference
+is removed. A final manifest cannot be removed while a sandbox pins it.
+
+The [Linux acceptance runbook](docs/runbooks/s2-oci.md) covers real conversion,
+registry pull, cancellation, concurrency, and crash/retry behavior.
+
+## Create a sandbox
+
+`create` resolves an existing local image, reserves the sandbox name and exact
+manifest digest, then creates a private sparse ext4 COW directly at
+`Data/sandboxes/<ID>/cow.raw`. It does not start a VMM.
 
 ```bash
-GO_BIN="$(go env GOROOT)/bin/go"
-
-sudo test/e2e/e2e.sh \
-  --go-bin "$GO_BIN" \
-  --metadata-backend sqlite
-
-sudo test/e2e/e2e.sh \
-  --go-bin "$GO_BIN" \
-  --metadata-backend json
+kumabox create IMAGE --name NAME \
+  --cpus 2 --memory 1GiB --storage 10GiB
 ```
 
-The E2E script uses KumaBox's fixed system paths and reserved `e2e-*` resource
-names. It reuses an existing managed E2E image unless `--rebuild-image` is
-specified.
+Successful text output is the full sandbox UUID. `--json` returns an indented
+object containing the ID, name, manifest digest, `created` state, resource
+shape, and creation time. Progress is written to stderr. `mkfs.ext4` from
+e2fsprogs must be available on the host.
 
-## Security and Limitations
+`Created` means the disk and metadata exist but the sandbox has never started;
+`Stopped` is reserved for a sandbox whose VMM has exited after a start. The
+metadata schema is version 2. Existing version 1 roots are migrated in one
+transaction when first opened: image records and artifacts remain in place,
+and the new sandbox collections become available without changing CLI roots.
 
-- KumaBox improves workload isolation by adding a VM boundary, but the VMM,
-  KVM, guest kernel, firmware, image, agent, and host integrations remain in the
-  trusted computing base.
-- Host setup changes privileged networking and system configuration. Review
-  `scripts/check.sh` before running `--fix` or `--upgrade`.
-- VFIO passes a physical device to a guest and requires correct IOMMU grouping;
-  misuse can affect host stability and isolation.
-- Snapshot compatibility depends on the host architecture, Cloud Hypervisor
-  version, VM configuration, and capture mode.
-- Cloud Hypervisor is the only supported VMM backend. Firecracker is not part of
-  the current release scope.
+`start SANDBOX` accepts an exact name or complete UUID. It checks KVM, the
+Cloud Hypervisor executable, the pinned image, its declared `overlay-v1` boot
+profile, and the existing ext4 COW before committing `Starting`. It records a
+PID-reuse-safe process identity and commits `Running` only after the private
+Cloud Hypervisor API reports readiness. Retrying recovers the same `Starting`
+generation; a failed launch is terminated and retained as `Error` with a
+diagnostic. `--json` returns the complete indented sandbox object.
 
-Report reproducible bugs and security concerns through the repository issue
-tracker. Do not include secrets, private images, or production snapshots in a
-public report.
+`stop SANDBOX` follows the same direct-boot behavior as Cocoon. It first makes
+a best-effort request to Cloud Hypervisor's private `vm.shutdown` endpoint,
+then terminates the exact identity-checked VMM process with `SIGTERM`, waits up
+to five seconds, and uses `SIGKILL` if it is still alive. There is no guest ACPI
+shutdown wait and no `--force` or `--timeout` mode. Runtime files and the empty
+cgroup are removed before the generation-fenced transition to `Stopped`.
+
+```bash
+kumabox stop NAME
+kumabox stop 123e4567-e89b-42d3-a456-426614174000 --json
+```
+
+An interrupted stop retains `Stopping`; running the same command again resumes
+the operation. It also recovers `Starting` records left by an interrupted start.
+Stopping an already `Created` or `Stopped` sandbox succeeds without changing
+its lifecycle history.
+
+Attach to the direct-boot PTY of a running sandbox with `console`. The command
+verifies the current process generation and Cloud Hypervisor API state before
+opening the kernel PTY, switches the local terminal to raw mode, and restores it
+on every exit path. Press `Ctrl-]` followed by `.` to detach without stopping
+the sandbox; use `--escape-char` to select another ASCII escape character.
+
+```bash
+kumabox console NAME
+kumabox console 123e4567-e89b-42d3-a456-426614174000 --escape-char '^A'
+```
+
+Console requires terminal stdin. A concurrent `stop` closes the PTY session;
+the console command does not hold the sandbox operation lock while relaying I/O.
+
+Run a command inside a running sandbox with `exec`. Arguments are sent directly
+to the guest without an implicit shell. Standard output and standard error are
+streamed independently, and the guest command status becomes the local process
+status. Standard input is closed by default; use `-i` to attach it.
+
+```bash
+kumabox exec NAME -- uname -a
+kumabox exec -e FOO=bar NAME -- sh -c 'echo "$FOO"'
+echo hello | kumabox exec -i NAME -- cat
+```
+
+The official Ubuntu image starts `kumabox-agent` on vsock port 1024. Early
+userspace also applies the sandbox name as the guest hostname, so the serial
+console and `hostname` report the same identity.
+
+List active sandboxes with `ps`, or include created, stopped, failed, and
+deleting records with `-a`:
+
+```bash
+kumabox ps
+kumabox ps -a
+kumabox ps -a --quiet
+kumabox ps -a --json
+```
+
+The table always includes headers and prints complete sandbox UUIDs that can be
+passed directly to `rm`. `--quiet` writes only those UUIDs, one per line. JSON
+uses the same complete resource facts as `create --json` and returns `[]` for
+an empty result.
+
+Inspect one sandbox by its exact name or complete UUID. The command always
+writes indented JSON, including retained failure diagnostics when present:
+
+```bash
+kumabox inspect NAME
+kumabox inspect 123e4567-e89b-42d3-a456-426614174000
+```
+
+Remove a non-running sandbox by its exact name or complete UUID:
+
+```bash
+kumabox rm NAME
+kumabox rm 123e4567-e89b-42d3-a456-426614174000 --json
+```
+
+Removal records durable `Deleting` intent before deleting the private disk.
+If cleanup is interrupted, running the same command again resumes it. The
+sandbox name and image reference are released together only after disk cleanup
+succeeds. Text output is the removed sandbox's full UUID; `--json` returns its
+ID and released name. Active lifecycle states are rejected until the sandbox
+has been stopped with `kumabox stop`.
+
+## Reference material
+
+- Cocoon at `../cocoon@27ae1e0b2a65c9082c7a1b33c5245bfe43a4854d` is the
+  capability floor: match its lifecycle ordering and failure recovery, never
+  copy its package structure or its dual metadata backends.
+- The pre-rewrite KumaBox source is available read-only from the protected tag
+  `pre-p12-rewrite-20260909` (and as an archive under `.rewrite-backup/`). It is
+  reference material for behaviour only; no code, types, schema or tests are
+  reused from it.
 
 ## License
 
-KumaBox is available under the [MIT License](LICENSE).
+[MIT](LICENSE)

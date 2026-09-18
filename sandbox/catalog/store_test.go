@@ -1,0 +1,273 @@
+package catalog
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/kumabox/kumabox/errdefs"
+	"github.com/kumabox/kumabox/images"
+	imagecatalog "github.com/kumabox/kumabox/images/catalog"
+	"github.com/kumabox/kumabox/metadata"
+	"github.com/kumabox/kumabox/types"
+)
+
+func TestDecodeLegacySandboxDefaultsCloudHypervisor(t *testing.T) {
+	created := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
+	raw, err := json.Marshal(recordData{
+		ID:          "123e4567-e89b-42d3-a456-426614174000",
+		Name:        "legacy",
+		CPUs:        1,
+		Memory:      types.DefaultSandboxMemory,
+		Storage:     types.DefaultSandboxStorage,
+		ImageDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		State:       string(types.SandboxStateCreated),
+		Generation:  2,
+		CreatedAt:   created,
+		UpdatedAt:   created,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.VMM != types.VMMCloudHypervisor {
+		t.Fatalf("legacy VMM = %q, want %q", record.VMM, types.VMMCloudHypervisor)
+	}
+}
+
+func TestResolveRejectsDanglingNameBinding(t *testing.T) {
+	store, err := metadata.NewMemory(Collections())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := types.SandboxID("123e4567-e89b-42d3-a456-426614174000")
+	raw, err := json.Marshal(nameData{ID: id.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(t.Context(), func(writer metadata.Writer) error {
+		return writer.Put(t.Context(), CollectionNames, "dangling", raw)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(store, imagecatalog.Reader{}).Resolve(t.Context(), "dangling"); err == nil {
+		t.Fatal("resolved a name whose sandbox record is missing")
+	} else if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeArtifactCorrupt {
+		t.Fatalf("Resolve error code = %q, %v; want %q", code, err, errdefs.CodeArtifactCorrupt)
+	}
+}
+
+func TestListReturnsValidatedRecordsNewestFirst(t *testing.T) {
+	store, err := metadata.NewMemory(Collections())
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := time.Date(2026, 9, 16, 10, 0, 0, 0, time.UTC)
+	digest := testDigest(t, 'a')
+	older := types.Sandbox{
+		ID:          types.SandboxID("123e4567-e89b-42d3-a456-426614174000"),
+		Config:      types.SandboxConfig{Name: "older", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+		ImageDigest: digest, VMM: types.VMMCloudHypervisor, State: types.SandboxStateCreated, Generation: 2,
+		CreatedAt: created, UpdatedAt: created,
+	}
+	newer := older
+	newer.ID = types.SandboxID("223e4567-e89b-42d3-a456-426614174000")
+	newer.Config.Name = "newer"
+	newer.CreatedAt, newer.UpdatedAt = created.Add(time.Minute), created.Add(time.Minute)
+	if err := store.Update(t.Context(), func(writer metadata.Writer) error {
+		if err := putJSON(t.Context(), writer, CollectionSandboxes, older.ID.String(), encode(older)); err != nil {
+			return err
+		}
+		return putJSON(t.Context(), writer, CollectionSandboxes, newer.ID.String(), encode(newer))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	records, err := New(store, nil).List(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records[0].ID != newer.ID || records[1].ID != older.ID {
+		t.Fatalf("List = %+v", records)
+	}
+	if err := store.Update(t.Context(), func(writer metadata.Writer) error {
+		return putJSON(t.Context(), writer, CollectionSandboxes, "323e4567-e89b-42d3-a456-426614174000", encode(older))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(store, nil).List(t.Context()); err == nil {
+		t.Fatal("List accepted a record whose key differs from its ID")
+	} else if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeArtifactCorrupt {
+		t.Fatalf("List error code = %q, %v; want %q", code, err, errdefs.CodeArtifactCorrupt)
+	}
+}
+
+func TestReservationPinsImageInsideRemovalTransaction(t *testing.T) {
+	collections := append(imagecatalog.Collections(), Collections()...)
+	store, err := metadata.NewMemory(collections)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageStore := imagecatalog.New(store, imagecatalog.WithImageUsage(Usage{}))
+	sandboxStore := New(store, imagecatalog.Reader{})
+	manifest := testDigest(t, 'a')
+	layerDigest := testDigest(t, 'b')
+	erofsDigest := testDigest(t, 'c')
+	kernelDigest := testDigest(t, 'd')
+	initrdDigest := testDigest(t, 'e')
+	layer := types.Layer{
+		SourceDigest: layerDigest, EROFSDigest: erofsDigest, Size: 4096,
+		BootFiles: []types.BootFile{
+			{Name: "vmlinuz", Digest: kernelDigest, Size: 10},
+			{Name: "initrd.img", Digest: initrdDigest, Size: 20},
+		},
+	}
+	boot, err := images.SelectBoot([]types.Layer{layer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
+	if err := imageStore.CommitImport(t.Context(), images.ImportCommit{
+		Name: "demo", Manifest: types.Manifest{Digest: manifest, Platform: types.Platform{OS: "linux", Architecture: "amd64"}, Layers: []types.Descriptor{{Digest: layerDigest, Size: 100}}},
+		Layers: []types.Layer{layer}, Boot: boot, Size: layer.Size, Created: created,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	id := types.SandboxID("123e4567-e89b-42d3-a456-426614174000")
+	record := types.Sandbox{
+		ID: id, Config: types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+		ImageDigest: manifest, VMM: types.VMMCloudHypervisor, State: types.SandboxStateCreating, Generation: 1, CreatedAt: created, UpdatedAt: created,
+	}
+	if err := sandboxStore.Reserve(t.Context(), "demo", manifest, record); err != nil {
+		t.Fatal(err)
+	}
+	other := record
+	other.ID = types.SandboxID("223e4567-e89b-42d3-a456-426614174000")
+	if err := sandboxStore.Reserve(t.Context(), "demo", manifest, other); err == nil {
+		t.Fatal("reserved a duplicate sandbox name")
+	} else if code, _ := errdefs.CodeOf(err); code != errdefs.CodeNameTaken {
+		t.Fatalf("duplicate name error = %v", err)
+	}
+	if _, err := imageStore.Remove(t.Context(), "demo", manifest); err == nil {
+		t.Fatal("removed an image pinned by a sandbox")
+	} else if code, _ := errdefs.CodeOf(err); code != errdefs.CodeReferenced {
+		t.Fatalf("Remove error = %v", err)
+	}
+	if _, err := imageStore.Resolve(t.Context(), "demo"); err != nil {
+		t.Fatalf("referenced image removal did not roll back: %v", err)
+	}
+	createdRecord, err := sandboxStore.MarkCreated(t.Context(), id, 1, created.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createdRecord.State != types.SandboxStateCreated || createdRecord.Generation != 2 {
+		t.Fatalf("created record = %+v", createdRecord)
+	}
+	if _, err := sandboxStore.MarkCreated(t.Context(), id, 1, created.Add(2*time.Second)); err == nil {
+		t.Fatal("stale generation transition succeeded")
+	} else if code, _ := errdefs.CodeOf(err); code != errdefs.CodeStateConflict {
+		t.Fatalf("stale transition error = %v", err)
+	}
+	for _, reference := range []string{"box", id.String()} {
+		resolved, err := sandboxStore.Resolve(t.Context(), reference)
+		if err != nil {
+			t.Fatalf("Resolve %q: %v", reference, err)
+		}
+		if resolved.ID != id || resolved.State != types.SandboxStateCreated {
+			t.Fatalf("Resolve %q = %+v", reference, resolved)
+		}
+	}
+	starting, err := sandboxStore.BeginStart(t.Context(), id, createdRecord.Generation, created.Add(3*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if starting.State != types.SandboxStateStarting || starting.Generation != 3 {
+		t.Fatalf("starting record = %+v", starting)
+	}
+	resumedStart, err := sandboxStore.BeginStart(t.Context(), id, starting.Generation, created.Add(4*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumedStart.Generation != starting.Generation || !resumedStart.UpdatedAt.Equal(starting.UpdatedAt) {
+		t.Fatalf("resumed start changed record: before=%+v after=%+v", starting, resumedStart)
+	}
+	running, err := sandboxStore.MarkRunning(t.Context(), id, starting.Generation, created.Add(5*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopping, err := sandboxStore.BeginStop(t.Context(), id, running.Generation, created.Add(6*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopping.State != types.SandboxStateStopping || stopping.Generation != 5 {
+		t.Fatalf("stopping record = %+v", stopping)
+	}
+	resumedStop, err := sandboxStore.BeginStop(t.Context(), id, stopping.Generation, created.Add(7*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumedStop.Generation != stopping.Generation || !resumedStop.UpdatedAt.Equal(stopping.UpdatedAt) {
+		t.Fatalf("resumed stop changed record: before=%+v after=%+v", stopping, resumedStop)
+	}
+	stopped, err := sandboxStore.MarkStopped(t.Context(), id, stopping.Generation, types.SandboxStateStopping, created.Add(8*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarting, err := sandboxStore.BeginStart(t.Context(), id, stopped.Generation, created.Add(9*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, err := sandboxStore.MarkStartError(t.Context(), id, restarting.Generation, types.SandboxFailure{Phase: "launch VMM", Message: "exited"}, created.Add(10*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.State != types.SandboxStateError || failed.Generation != 8 || failed.Failure == nil {
+		t.Fatalf("failed start record = %+v", failed)
+	}
+	deleting, err := sandboxStore.BeginDelete(t.Context(), id, failed.Generation, created.Add(11*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleting.State != types.SandboxStateDeleting || deleting.Generation != 9 {
+		t.Fatalf("deleting record = %+v", deleting)
+	}
+	resumed, err := sandboxStore.BeginDelete(t.Context(), id, deleting.Generation, created.Add(12*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Generation != deleting.Generation || !resumed.UpdatedAt.Equal(deleting.UpdatedAt) {
+		t.Fatalf("resumed deletion changed record: before=%+v after=%+v", deleting, resumed)
+	}
+	if _, err := imageStore.Remove(t.Context(), "demo", manifest); err == nil {
+		t.Fatal("removed image before sandbox deletion finalized")
+	} else if code, _ := errdefs.CodeOf(err); code != errdefs.CodeReferenced {
+		t.Fatalf("referenced deleting image error = %v", err)
+	}
+	if err := sandboxStore.FinalizeDelete(t.Context(), id, deleting.Generation); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sandboxStore.Resolve(t.Context(), "box"); err == nil {
+		t.Fatal("resolved finalized sandbox")
+	} else if code, _ := errdefs.CodeOf(err); code != errdefs.CodeNotFound {
+		t.Fatalf("finalized sandbox error = %v", err)
+	}
+	if _, err := imageStore.Remove(t.Context(), "demo", manifest); err != nil {
+		t.Fatalf("remove image after sandbox finalization: %v", err)
+	}
+}
+
+func testDigest(t *testing.T, char byte) types.Digest {
+	t.Helper()
+	value := make([]byte, 71)
+	copy(value, "sha256:")
+	for index := 7; index < len(value); index++ {
+		value[index] = char
+	}
+	digest, err := types.ParseDigest(string(value))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest
+}

@@ -1,0 +1,14 @@
+**
+!go.mod
+!go.sum
+!agent/
+!agent/**
+!version/
+!version/**
+!cmd/
+!cmd/kumabox-agent/
+!cmd/kumabox-agent/**
+!oci-images/
+!oci-images/ubuntu/
+!oci-images/ubuntu/overlay.sh
+!oci-images/ubuntu/kumabox-agent.service
