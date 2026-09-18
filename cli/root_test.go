@@ -3,11 +3,14 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/kumabox/kumabox/errdefs"
 )
 
 func TestDoctorForwardsArgumentsAndExitCode(t *testing.T) {
@@ -83,6 +86,37 @@ func TestImageAndUsageExitCodes(t *testing.T) {
 			err := Execute(t.Context(), args, &bytes.Buffer{}, &bytes.Buffer{})
 			if got := ExitCode(err); got != test.code {
 				t.Fatalf("exit = %d, want %d, error %v", got, test.code, err)
+			}
+		})
+	}
+}
+
+func TestDomainErrorExitCodes(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		code errdefs.Code
+		want int
+	}{
+		{"not found", errdefs.CodeNotFound, 3},
+		{"name taken", errdefs.CodeNameTaken, 4},
+		{"state conflict", errdefs.CodeStateConflict, 4},
+		{"referenced", errdefs.CodeReferenced, 4},
+		{"invalid argument", errdefs.CodeInvalidArgument, 5},
+		{"host incompatible", errdefs.CodeHostIncompatible, 5},
+		{"image incompatible", errdefs.CodeImageIncompatible, 5},
+		{"digest mismatch", errdefs.CodeDigestMismatch, 5},
+		{"artifact corrupt", errdefs.CodeArtifactCorrupt, 5},
+		{"artifact unavailable", errdefs.CodeArtifactUnavailable, 6},
+		{"store busy", errdefs.CodeStoreBusy, 6},
+		{"internal", errdefs.CodeInternal, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := errdefs.Context(
+				errdefs.New(errdefs.ClassInternal, test.code, errors.New("failure")),
+				"operation", "entity", "phase", "action", false,
+			)
+			if got := errorExitCode(err); got != test.want {
+				t.Fatalf("errorExitCode(%q) = %d, want %d", test.code, got, test.want)
 			}
 		})
 	}

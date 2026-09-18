@@ -2,10 +2,7 @@
 // context across module boundaries while preserving the original error chain.
 package errdefs
 
-import (
-	"errors"
-	"fmt"
-)
+import "errors"
 
 // Code is a stable machine-readable failure code.
 type Code string
@@ -72,12 +69,14 @@ type Error struct {
 	// Committed records that durable business state changed despite this error;
 	// callers must inspect resulting state before deciding to retry.
 	Committed bool
-	// Retry is an optional producer hint that another attempt may succeed.
-	Retry bool
 	// Action suggests a recovery step for the caller.
 	Action string
-	// Cause preserves underlying failures for errors.Is and errors.As.
+	// Cause is the direct diagnostic cause rendered to users. Context may remove
+	// an older classification from this view so the stable code is printed once.
 	Cause error
+	// wrapped preserves the complete input tree for errors.Is and errors.As when
+	// Context replaces an existing classification's presentation fields.
+	wrapped error
 }
 
 // Error renders classification and available context, including the recovery action.
@@ -105,10 +104,15 @@ func (e *Error) Error() string {
 	return message
 }
 
-// Unwrap exposes the cause to standard error-chain inspection, including nil receivers.
+// Unwrap exposes the complete original error tree to standard error inspection.
+// A newly classified error unwraps directly to Cause; a recontextualized error
+// unwraps to the input tree retained by Context.
 func (e *Error) Unwrap() error {
 	if e == nil {
 		return nil
+	}
+	if e.wrapped != nil {
+		return e.wrapped
 	}
 	return e.Cause
 }
@@ -136,7 +140,8 @@ func Context(err error, operation, entity, phase, action string, committed bool)
 		copy.Phase = first(phase, copy.Phase)
 		copy.Action = first(action, copy.Action)
 		copy.Committed = committed || copy.Committed
-		copy.Cause = fmt.Errorf("%w", err)
+		copy.Cause = diagnosticCause(err, classified)
+		copy.wrapped = err
 		return &copy
 	}
 	return &Error{
@@ -144,6 +149,35 @@ func Context(err error, operation, entity, phase, action string, committed bool)
 		Entity: entity, Phase: phase, Committed: committed, Action: action,
 		Cause: err,
 	}
+}
+
+// diagnosticCause removes the classification being replaced from the rendered
+// cause while retaining independent errors from an errors.Join tree. Context
+// keeps the unmodified tree separately for errors.Is and errors.As.
+func diagnosticCause(err error, classified *Error) error {
+	if err == nil {
+		return nil
+	}
+	if err == classified {
+		return classified.Cause
+	}
+
+	type multiUnwrapper interface {
+		Unwrap() []error
+	}
+	if joined, ok := err.(multiUnwrapper); ok {
+		causes := make([]error, 0, len(joined.Unwrap()))
+		for _, cause := range joined.Unwrap() {
+			causes = append(causes, diagnosticCause(cause, classified))
+		}
+		return errors.Join(causes...)
+	}
+
+	var nested *Error
+	if errors.As(err, &nested) && nested == classified {
+		return classified.Cause
+	}
+	return err
 }
 
 // CodeOf returns the stable code in err's unwrap chain.
