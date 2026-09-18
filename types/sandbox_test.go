@@ -33,9 +33,33 @@ func TestSandboxConfigValidationMatchesCreateContract(t *testing.T) {
 		{"storage", SandboxConfig{Name: "demo", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage - 1}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if err := test.config.Validate(); err == nil {
+			err := test.config.Validate()
+			if err == nil {
 				t.Fatal("invalid spec passed validation")
 			}
+			if strings.Contains(err.Error(), "--") {
+				t.Fatalf("domain validation leaked CLI flag syntax: %v", err)
+			}
 		})
+	}
+}
+
+func TestCommandValidation(t *testing.T) {
+	command := Command{Args: []string{"sh", "-c", "echo"}, Env: map[string]string{"A": "2", "EMPTY": ""}}
+	if err := command.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []Command{
+		{},
+		{Args: []string{""}},
+		{Args: []string{"echo", "bad\x00argument"}},
+		{Args: []string{"env"}, Env: map[string]string{"": "missing-key"}},
+		{Args: []string{"env"}, Env: map[string]string{"BAD=KEY": "value"}},
+		{Args: []string{"env"}, Env: map[string]string{"BAD\x00KEY": "value"}},
+		{Args: []string{"env"}, Env: map[string]string{"KEY": "bad\x00value"}},
+	} {
+		if err := invalid.Validate(); err == nil {
+			t.Fatalf("accepted invalid command %#v", invalid)
+		}
 	}
 }

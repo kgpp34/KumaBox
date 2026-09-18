@@ -438,8 +438,8 @@ func (s *SandboxService) Console(ctx context.Context, reference string) (io.Read
 //	resolve + lock -> Running generation -> locate process -> unlock
 //	                                                        |
 //	                          vsock -> agent stream -> exit code
-func (s *SandboxService) Exec(ctx context.Context, reference string, config types.ExecConfig, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
-	if err := config.Validate(); err != nil {
+func (s *SandboxService) Exec(ctx context.Context, reference string, command types.Command, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	if err := command.Validate(); err != nil {
 		return 0, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
 	}
 	backend, process, err := s.locateRunning(ctx, reference, "execute sandbox command")
@@ -451,10 +451,7 @@ func (s *SandboxService) Exec(ctx context.Context, reference string, config type
 		return 0, errdefs.Context(err, "execute sandbox command", reference, "connect guest agent", "the guest agent may still be starting; retry shortly or inspect its service", false)
 	}
 	defer connection.Close() //nolint:errcheck // closing a completed read/write session cannot change the guest command result
-	if !config.Interactive {
-		stdin = nil
-	}
-	exitCode, err := agent.Run(ctx, connection, config.Args, config.Environment(), stdin, stdout, stderr)
+	exitCode, err := agent.Run(ctx, connection, command, stdin, stdout, stderr)
 	if err != nil {
 		return 0, errdefs.Context(err, "execute sandbox command", reference, "run guest command", "inspect the guest agent and retry", false)
 	}

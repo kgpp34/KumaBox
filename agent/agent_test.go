@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kumabox/kumabox/types"
 )
 
 func TestProtocolEncodingIsStable(t *testing.T) {
@@ -57,8 +59,11 @@ func TestRunStreamsInputOutputAndExitStatus(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code, err := Run(
 		t.Context(), client,
-		[]string{"sh", "-c", `printf '%s:' "$KUMABOX_TEST"; cat; printf 'warning' >&2; exit 7`},
-		map[string]string{"KUMABOX_TEST": "value"}, strings.NewReader("input\n"), &stdout, &stderr,
+		types.Command{
+			Args: []string{"sh", "-c", `printf '%s:' "$KUMABOX_TEST"; cat; printf 'warning' >&2; exit 7`},
+			Env:  map[string]string{"KUMABOX_TEST": "value"},
+		},
+		strings.NewReader("input\n"), &stdout, &stderr,
 	)
 	if err != nil {
 		t.Fatal(err)

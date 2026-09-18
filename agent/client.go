@@ -6,15 +6,18 @@ import (
 	"fmt"
 	"io"
 	"sync/atomic"
+
+	"github.com/kumabox/kumabox/types"
 )
 
 var errMissingExit = errors.New("agent connection closed before an exit frame")
 
-// Run executes argv over an already connected transport. Nil stdin closes the
-// guest process input immediately; nil output writers discard their streams.
-func Run(ctx context.Context, connection io.ReadWriteCloser, argv []string, environment map[string]string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
-	if len(argv) == 0 || argv[0] == "" {
-		return 0, errors.New("agent command is empty")
+// Run executes a command over an already connected transport. Nil stdin
+// closes the guest process input immediately; nil output writers discard their
+// streams.
+func Run(ctx context.Context, connection io.ReadWriteCloser, command types.Command, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	if err := command.Validate(); err != nil {
+		return 0, fmt.Errorf("validate agent command: %w", err)
 	}
 	sessionCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -22,7 +25,7 @@ func Run(ctx context.Context, connection io.ReadWriteCloser, argv []string, envi
 
 	encoder := NewEncoder(connection)
 	decoder := NewDecoder(connection)
-	if err := encoder.Encode(Message{Type: MessageExec, Argv: argv, Env: environment}); err != nil {
+	if err := encoder.Encode(Message{Type: MessageExec, Argv: command.Args, Env: command.Env}); err != nil {
 		return 0, fmt.Errorf("send exec frame: %w", err)
 	}
 

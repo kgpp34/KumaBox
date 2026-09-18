@@ -32,13 +32,22 @@ func NewCreateCommand(configuration configProvider) *cobra.Command {
 		Short: "create a sandbox without starting it",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
+			if cpus == 0 || cpus > types.MaxSandboxCPUs {
+				return invalidFlag("cpus", fmt.Errorf("must be between 1 and %d", types.MaxSandboxCPUs))
+			}
 			memoryBytes, err := parseBytes(memory)
 			if err != nil {
 				return invalidFlag("memory", err)
 			}
+			if memoryBytes < types.MinSandboxMemory {
+				return invalidFlag("memory", fmt.Errorf("must be at least %d bytes", types.MinSandboxMemory))
+			}
 			storageBytes, err := parseBytes(storageSize)
 			if err != nil {
 				return invalidFlag("storage", err)
+			}
+			if storageBytes < types.MinSandboxStorage {
+				return invalidFlag("storage", fmt.Errorf("must be at least %d bytes", types.MinSandboxStorage))
 			}
 			sandboxConfig := types.SandboxConfig{Name: name, CPUs: cpus, Memory: memoryBytes, Storage: storageBytes}
 			if err := sandboxConfig.Validate(); err != nil {

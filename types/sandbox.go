@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/kumabox/kumabox/errdefs"
@@ -139,13 +140,47 @@ func (c SandboxConfig) Validate() error {
 		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("sandbox name %q must match %s", c.Name, validSandboxName))
 	}
 	if c.CPUs == 0 || c.CPUs > MaxSandboxCPUs {
-		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("--cpus must be between 1 and %d", MaxSandboxCPUs))
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("CPU count must be between 1 and %d", MaxSandboxCPUs))
 	}
 	if c.Memory < MinSandboxMemory {
-		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("--memory must be at least %d bytes", MinSandboxMemory))
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("memory must be at least %d bytes", MinSandboxMemory))
 	}
 	if c.Storage < MinSandboxStorage {
-		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("--storage must be at least %d bytes", MinSandboxStorage))
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("storage must be at least %d bytes", MinSandboxStorage))
+	}
+	return nil
+}
+
+// Command describes one process invocation inside a running sandbox. It is a
+// shared value object rather than a guest-agent frame or CLI input model.
+type Command struct {
+	// Args contains the executable followed by its arguments. KumaBox never
+	// inserts a shell between this list and the guest process.
+	Args []string
+	// Env contains caller-provided environment overrides by variable name.
+	Env map[string]string
+}
+
+// Validate rejects malformed commands before a guest-agent connection opens.
+func (c Command) Validate() error {
+	if len(c.Args) == 0 || c.Args[0] == "" {
+		return errors.New("COMMAND must not be empty")
+	}
+	for _, argument := range c.Args {
+		if strings.IndexByte(argument, 0) >= 0 {
+			return errors.New("command arguments must not contain NUL bytes")
+		}
+	}
+	for key, value := range c.Env {
+		if key == "" {
+			return errors.New("environment variable name must not be empty")
+		}
+		if strings.ContainsAny(key, "=\x00") {
+			return fmt.Errorf("environment variable name %q must not contain '=' or NUL bytes", key)
+		}
+		if strings.IndexByte(value, 0) >= 0 {
+			return fmt.Errorf("environment variable %q must not contain NUL bytes", key)
+		}
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -33,8 +34,12 @@ func NewExecCommand(configuration configProvider) *cobra.Command {
 		Short: "run a command inside a running sandbox",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
-			config := types.ExecConfig{Args: append([]string(nil), args[1:]...), Env: environment, Interactive: interactive}
-			if err := config.Validate(); err != nil {
+			environmentMap, err := parseEnvironment(environment)
+			if err != nil {
+				return invalidFlag("env", err)
+			}
+			invocation := types.Command{Args: append([]string(nil), args[1:]...), Env: environmentMap}
+			if err := invocation.Validate(); err != nil {
 				return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
 			}
 			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
@@ -48,7 +53,7 @@ func NewExecCommand(configuration configProvider) *cobra.Command {
 			if interactive {
 				input = command.InOrStdin()
 			}
-			exitCode, err := service.Exec(command.Context(), args[0], config, input, command.OutOrStdout(), command.ErrOrStderr())
+			exitCode, err := service.Exec(command.Context(), args[0], invocation, input, command.OutOrStdout(), command.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -61,4 +66,25 @@ func NewExecCommand(configuration configProvider) *cobra.Command {
 	command.Flags().StringArrayVarP(&environment, "env", "e", nil, "set a guest environment variable in KEY=VALUE form (repeatable)")
 	command.Flags().BoolVarP(&interactive, "interactive", "i", false, "attach stdin to the guest command")
 	return command
+}
+
+// parseEnvironment converts repeatable CLI values at the presentation
+// boundary. Later occurrences replace earlier ones, matching common CLI flag
+// behavior without leaking KEY=VALUE syntax into core or the guest client.
+func parseEnvironment(entries []string) (map[string]string, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	environment := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok || key == "" {
+			return nil, fmt.Errorf("%q must be KEY=VALUE", entry)
+		}
+		if strings.IndexByte(entry, 0) >= 0 {
+			return nil, fmt.Errorf("%q must not contain NUL bytes", entry)
+		}
+		environment[key] = value
+	}
+	return environment, nil
 }

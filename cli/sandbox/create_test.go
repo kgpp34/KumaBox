@@ -14,6 +14,7 @@ import (
 
 	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
 	sandboxfs "github.com/kumabox/kumabox/sandbox"
 	"github.com/kumabox/kumabox/storage"
@@ -39,6 +40,34 @@ func TestParseBytes(t *testing.T) {
 		if _, err := parseBytes(input); err == nil {
 			t.Fatalf("parseBytes(%q) succeeded", input)
 		}
+	}
+}
+
+func TestCreateCommandMapsResourceValidationToFlags(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		flag string
+	}{
+		{name: "CPUs", args: []string{"demo", "--name", "box", "--cpus", "0"}, flag: "--cpus"},
+		{name: "memory", args: []string{"demo", "--name", "box", "--memory", "1MiB"}, flag: "--memory"},
+		{name: "storage", args: []string{"demo", "--name", "box", "--storage", "1GiB"}, flag: "--storage"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command := NewCreateCommand(func() config.Config {
+				t.Fatal("resource validation opened the sandbox service")
+				return config.Config{}
+			})
+			command.SetArgs(test.args)
+			err := command.ExecuteContext(t.Context())
+			if err == nil || !strings.Contains(err.Error(), test.flag) {
+				t.Fatalf("create error = %v, want flag %s", err, test.flag)
+			}
+			if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeInvalidArgument {
+				t.Fatalf("create error code = %q, %v", code, ok)
+			}
+		})
 	}
 }
 

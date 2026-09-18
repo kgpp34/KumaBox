@@ -358,7 +358,7 @@ func TestExecUsesExactRunningGenerationAndStreamsResult(t *testing.T) {
 	}()
 	*steps = nil
 	var stdout, stderr bytes.Buffer
-	code, err := service.Exec(t.Context(), "box", types.ExecConfig{Args: []string{"demo"}}, nil, &stdout, &stderr)
+	code, err := service.Exec(t.Context(), "box", types.Command{Args: []string{"demo"}}, nil, &stdout, &stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
