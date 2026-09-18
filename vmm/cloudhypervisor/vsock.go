@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 
 	"github.com/kumabox/kumabox/errdefs"
@@ -54,9 +55,9 @@ func (d *Driver) DialVsock(ctx context.Context, process vmm.Process, port uint32
 		}
 		return nil, fmt.Errorf("read hybrid vsock reply: %w", err)
 	}
-	if strings.TrimSpace(reply) != fmt.Sprintf("OK %d", port) {
+	if err := validateHybridVsockReply(reply); err != nil {
 		_ = connection.Close()
-		return nil, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, fmt.Errorf("connect guest vsock port %d: %s", port, strings.TrimSpace(reply)))
+		return nil, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, fmt.Errorf("connect guest vsock port %d: %w", port, err))
 	}
 	alive, err = verifyProcess(process)
 	if err != nil || !alive {
@@ -67,6 +68,20 @@ func (d *Driver) DialVsock(ctx context.Context, process vmm.Process, port uint32
 		return nil, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, errors.New("cloud-hypervisor exited while opening guest vsock"))
 	}
 	return connection, nil
+}
+
+// validateHybridVsockReply accepts the connection identifier allocated by the
+// VMM. The numeric value is not an echo of the requested guest port.
+func validateHybridVsockReply(reply string) error {
+	fields := strings.Fields(reply)
+	if len(fields) != 2 || fields[0] != "OK" {
+		return fmt.Errorf("unexpected hybrid vsock reply %q", strings.TrimSpace(reply))
+	}
+	assignedPort, err := strconv.ParseUint(fields[1], 10, 32)
+	if err != nil || assignedPort == 0 {
+		return fmt.Errorf("invalid hybrid vsock connection port %q", fields[1])
+	}
+	return nil
 }
 
 // readHybridVsockReply deliberately avoids buffered readers, which could

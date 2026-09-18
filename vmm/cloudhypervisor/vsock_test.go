@@ -20,3 +20,14 @@ func TestReadHybridVsockReplyIsBounded(t *testing.T) {
 		t.Fatal("accepted an unbounded handshake reply")
 	}
 }
+
+func TestValidateHybridVsockReplyAcceptsAllocatedPort(t *testing.T) {
+	if err := validateHybridVsockReply("OK 1073741824\n"); err != nil {
+		t.Fatal(err)
+	}
+	for _, reply := range []string{"ERR 1024\n", "OK 0\n", "OK invalid\n", "OK 1 extra\n"} {
+		if err := validateHybridVsockReply(reply); err == nil {
+			t.Fatalf("accepted invalid reply %q", reply)
+		}
+	}
+}
