@@ -25,7 +25,7 @@ func (e *commandExitError) ExitCode() int { return e.code }
 func (e *commandExitError) Silent() bool  { return true }
 
 // NewExecCommand builds the streaming guest exec command.
-func NewExecCommand(roots rootsProvider) *cobra.Command {
+func NewExecCommand(configuration configProvider) *cobra.Command {
 	var environment []string
 	var interactive bool
 	command := &cobra.Command{
@@ -37,7 +37,7 @@ func NewExecCommand(roots rootsProvider) *cobra.Command {
 			if err := config.Validate(); err != nil {
 				return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
 			}
-			service, err := core.OpenSandbox(command.Context(), roots(), nil)
+			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}

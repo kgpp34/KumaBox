@@ -7,7 +7,24 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/kumabox/kumabox/images"
 )
+
+func TestNewUsesConfiguredBinaryAndLimits(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "custom-erofs")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf 'mkfs.erofs 1.8.10\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	limits := images.DefaultLimits()
+	converter, err := New(t.Context(), "amd64", Options{Binary: binary, Limits: limits})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if converter.binary != binary || converter.limits != limits {
+		t.Fatalf("converter options = binary %q, limits %+v", converter.binary, converter.limits)
+	}
+}
 
 func bootTar(t *testing.T, headers []*tar.Header) []byte {
 	t.Helper()

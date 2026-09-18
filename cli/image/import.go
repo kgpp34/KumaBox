@@ -10,7 +10,7 @@ import (
 
 // newPullCommand validates a registry reference and runs the shared image importer.
 // Progress finishes after the store closes so cleanup failures affect the final status.
-func newPullCommand(roots rootsProvider) *cobra.Command {
+func newPullCommand(configuration configProvider) *cobra.Command {
 	platform := defaultPlatform()
 	command := &cobra.Command{
 		Use:   "pull REF",
@@ -30,7 +30,7 @@ func newPullCommand(roots rootsProvider) *cobra.Command {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
-			state, err := core.OpenImages(command.Context(), roots())
+			state, err := core.OpenImages(command.Context(), configuration())
 			if err != nil {
 				return err
 			}
@@ -59,7 +59,7 @@ func newPullCommand(roots rootsProvider) *cobra.Command {
 //	validate --> open store --> stage source --> import --> write result
 //	                                                     |
 //	final progress <-- close store <-- clean source <----+
-func newImportCommand(roots rootsProvider) *cobra.Command {
+func newImportCommand(configuration configProvider) *cobra.Command {
 	platform := defaultPlatform()
 	format := "auto"
 	sourceTag := ""
@@ -86,7 +86,7 @@ func newImportCommand(roots rootsProvider) *cobra.Command {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
-			state, err := core.OpenImages(command.Context(), roots())
+			state, err := core.OpenImages(command.Context(), configuration())
 			if err != nil {
 				return err
 			}

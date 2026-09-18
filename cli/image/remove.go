@@ -15,7 +15,7 @@ import (
 // newRemoveCommand removes references in argument order and counts completed removals.
 // Reporting errors after a successful removal carry committed state so callers know
 // that a failed command does not imply that the image is still present.
-func newRemoveCommand(roots rootsProvider) *cobra.Command {
+func newRemoveCommand(configuration configProvider) *cobra.Command {
 	return &cobra.Command{
 		Use:     "remove IMAGE...",
 		Aliases: []string{"rm"},
@@ -27,7 +27,7 @@ func newRemoveCommand(roots rootsProvider) *cobra.Command {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
-			state, err := core.OpenImages(command.Context(), roots())
+			state, err := core.OpenImages(command.Context(), configuration())
 			if err != nil {
 				return err
 			}

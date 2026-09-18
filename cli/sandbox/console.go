@@ -20,7 +20,7 @@ import (
 const defaultConsoleEscape = "^]"
 
 // NewConsoleCommand builds the interactive direct-boot console command.
-func NewConsoleCommand(roots rootsProvider) *cobra.Command {
+func NewConsoleCommand(configuration configProvider) *cobra.Command {
 	escapeText := defaultConsoleEscape
 	command := &cobra.Command{
 		Use:   "console SANDBOX",
@@ -37,7 +37,7 @@ func NewConsoleCommand(roots rootsProvider) *cobra.Command {
 			}
 
 			reference := args[0]
-			service, err := core.OpenSandbox(command.Context(), roots(), nil)
+			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}

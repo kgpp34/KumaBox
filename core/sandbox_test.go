@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/agent"
+	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
 	"github.com/kumabox/kumabox/sandbox"
@@ -322,10 +323,43 @@ func newTestSandboxService(t *testing.T, diskError error) (*SandboxService, *[]s
 		Boot:   types.Boot{Profile: types.BootProfileOverlayV1, KernelLayer: digest, InitrdLayer: digest, KernelFile: "vmlinuz", InitrdFile: "initrd.img"},
 	}
 	runtimeAdapter := &fakeRuntime{steps: &steps, observation: vmm.Observation{State: vmm.ProcessAbsent}}
-	service := newSandboxService(paths, imagePaths, fakeGuard{image: image, steps: &steps}, catalog, catalog, catalog, catalog, fakeDisk{steps: &steps, prepare: diskError}, vmmBackends{runtimeAdapter.Type(): runtimeAdapter}, fakeReporter{steps: &steps})
+	runtimes, err := vmm.NewRegistry(runtimeAdapter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := newSandboxService(
+		paths, imagePaths, fakeGuard{image: image, steps: &steps}, catalog, catalog,
+		catalog, catalog, fakeDisk{steps: &steps, prepare: diskError}, runtimes,
+		types.VMMCloudHypervisor, 10*time.Second, fakeReporter{steps: &steps},
+	)
 	service.newID = func() (types.SandboxID, error) { return fixedID, nil }
 	service.now = func() time.Time { return time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC) }
 	return service, &steps
+}
+
+func testRuntime(t *testing.T, service *SandboxService) *fakeRuntime {
+	t.Helper()
+	backend, err := service.runtimes.Backend(types.VMMCloudHypervisor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeAdapter, ok := backend.(*fakeRuntime)
+	if !ok {
+		t.Fatalf("runtime backend = %T, want *fakeRuntime", backend)
+	}
+	return runtimeAdapter
+}
+
+func TestOpenVMMRegistryUsesConfiguredCgroupParent(t *testing.T) {
+	configuration := config.Default()
+	base := t.TempDir()
+	configuration.Paths = storage.Roots{
+		Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log"),
+	}
+	configuration.VMM.CgroupParent = filepath.Join(base, "outside-cgroup")
+	if _, err := openVMMRegistry(configuration); err == nil {
+		t.Fatal("openVMMRegistry() ignored the configured cgroup parent")
+	}
 }
 
 func TestCreateCommitsCreatedAfterDiskPreparation(t *testing.T) {
@@ -351,7 +385,11 @@ func TestCreateCommitsCreatedAfterDiskPreparation(t *testing.T) {
 func TestSandboxLifecycleRoutesToPersistedVMM(t *testing.T) {
 	service, steps := newTestSandboxService(t, nil)
 	firecracker := &fakeRuntime{typ: types.VMMFirecracker, steps: steps, observation: vmm.Observation{State: vmm.ProcessAbsent}}
-	service.runtimes[types.VMMFirecracker] = firecracker
+	runtimes, err := vmm.NewRegistry(testRuntime(t, service), firecracker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.runtimes = runtimes
 	record, err := service.Create(t.Context(), CreateSandboxRequest{
 		ImageReference: "demo",
 		Config:         types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
@@ -508,7 +546,7 @@ func TestStartCommitsRunningOnlyAfterLaunchReadiness(t *testing.T) {
 	if record.State != types.SandboxStateRunning || record.Generation != 4 {
 		t.Fatalf("running record = %+v", record)
 	}
-	runtimeAdapter := service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime)
+	runtimeAdapter := testRuntime(t, service)
 	if runtimeAdapter.plan.Generation != 3 || len(runtimeAdapter.plan.Disks) != 2 || runtimeAdapter.plan.Disks[0].Serial != "kumabox-layer0" || runtimeAdapter.plan.Disks[1].Serial != vmm.COWSerial {
 		t.Fatalf("launch plan = %+v", runtimeAdapter.plan)
 	}
@@ -532,7 +570,7 @@ func TestStartRecoversRunningProcessFromStartingState(t *testing.T) {
 	}
 	catalog := service.lifecycle.(*fakeCatalog)
 	catalog.record.State, catalog.record.Generation = types.SandboxStateStarting, 3
-	runtimeAdapter := service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime)
+	runtimeAdapter := testRuntime(t, service)
 	runtimeAdapter.observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42}}
 	*steps = nil
 	record, err := service.Start(t.Context(), "box")
@@ -555,7 +593,7 @@ func TestStartFailureAbortsProcessAndRetainsError(t *testing.T) {
 		t.Fatal(err)
 	}
 	failure := errors.New("VMM exited")
-	service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime).launchErr = failure
+	testRuntime(t, service).launchErr = failure
 	*steps = nil
 	if _, err := service.Start(t.Context(), "box"); !errors.Is(err, failure) {
 		t.Fatalf("Start error = %v", err)
@@ -585,7 +623,7 @@ func TestStartRetryDoesNotLeaveStartingAfterPreflightFailure(t *testing.T) {
 	catalog := service.lifecycle.(*fakeCatalog)
 	catalog.record.State, catalog.record.Generation = types.SandboxStateStarting, 3
 	failure := errors.New("KVM unavailable")
-	service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime).preflightErr = failure
+	testRuntime(t, service).preflightErr = failure
 	*steps = nil
 	if _, err := service.Start(t.Context(), "box"); !errors.Is(err, failure) {
 		t.Fatalf("Start error = %v", err)
@@ -607,7 +645,7 @@ func TestStopRecordsIntentBeforeTerminatingRunningVMM(t *testing.T) {
 	}
 	catalog := service.lifecycle.(*fakeCatalog)
 	catalog.record.State, catalog.record.Generation = types.SandboxStateRunning, 4
-	service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime).observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42}}
+	testRuntime(t, service).observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42}}
 	*steps = nil
 	record, err := service.Stop(t.Context(), "box")
 	if err != nil {
@@ -646,7 +684,7 @@ func TestStopResumesStoppingAndRecoversStarting(t *testing.T) {
 			}
 			catalog := service.lifecycle.(*fakeCatalog)
 			catalog.record.State, catalog.record.Generation = test.state, test.generation
-			service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime).observation = vmm.Observation{State: vmm.ProcessStarting, Process: vmm.Process{PID: 42}}
+			testRuntime(t, service).observation = vmm.Observation{State: vmm.ProcessStarting, Process: vmm.Process{PID: 42}}
 			*steps = nil
 			record, err := service.Stop(t.Context(), "box")
 			if err != nil {
@@ -694,7 +732,7 @@ func TestStopFailureRetainsRetryableStoppingState(t *testing.T) {
 	catalog := service.lifecycle.(*fakeCatalog)
 	catalog.record.State, catalog.record.Generation = types.SandboxStateRunning, 4
 	failure := errors.New("signal failed")
-	runtimeAdapter := service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime)
+	runtimeAdapter := testRuntime(t, service)
 	runtimeAdapter.observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42}}
 	runtimeAdapter.stopErr = failure
 	*steps = nil
@@ -739,7 +777,7 @@ func TestConsoleOpensExactRunningGenerationWithoutHoldingOperationLock(t *testin
 	}
 	catalog := service.lifecycle.(*fakeCatalog)
 	catalog.record.State, catalog.record.Generation = types.SandboxStateRunning, 4
-	runtimeAdapter := service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime)
+	runtimeAdapter := testRuntime(t, service)
 	runtimeAdapter.observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42, Generation: 3}}
 	*steps = nil
 
@@ -786,7 +824,7 @@ func TestExecUsesExactRunningGenerationAndStreamsResult(t *testing.T) {
 	}
 	catalog := service.lifecycle.(*fakeCatalog)
 	catalog.record.State, catalog.record.Generation = types.SandboxStateRunning, 4
-	runtimeAdapter := service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime)
+	runtimeAdapter := testRuntime(t, service)
 	runtimeAdapter.observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42, Generation: 3}}
 	host, guest := net.Pipe()
 	runtimeAdapter.vsock = host

@@ -30,8 +30,6 @@ const (
 	defaultStartupTimeout = 10 * time.Second
 	probeInterval         = 50 * time.Millisecond
 	probeTimeout          = 500 * time.Millisecond
-	abortGrace            = 3 * time.Second
-	stopGrace             = 5 * time.Second
 	maxAPIResponse        = 1 << 20
 )
 
@@ -48,6 +46,10 @@ type Options struct {
 	Binary string
 	// StartupTimeout bounds process/API readiness; zero selects ten seconds.
 	StartupTimeout time.Duration
+	// StopGrace bounds the identity-checked SIGTERM to SIGKILL window.
+	StopGrace time.Duration
+	// AbortGrace bounds termination after a failed launch.
+	AbortGrace time.Duration
 }
 
 // Driver launches and observes Cloud Hypervisor processes.
@@ -60,6 +62,10 @@ type Driver struct {
 	binary string
 	// startupTimeout bounds API readiness for new and recovered starts.
 	startupTimeout time.Duration
+	// stopGrace bounds normal stop escalation after the advisory API request.
+	stopGrace time.Duration
+	// abortGrace bounds cleanup of a launch that never committed Running.
+	abortGrace time.Duration
 }
 
 var _ vmm.Backend = (*Driver)(nil)
@@ -75,10 +81,19 @@ func New(paths vmm.Paths, scopes *cgroup.Manager, options Options) (*Driver, err
 	if options.StartupTimeout == 0 {
 		options.StartupTimeout = defaultStartupTimeout
 	}
-	if options.StartupTimeout < probeInterval {
-		return nil, errors.New("cloud hypervisor startup timeout is too short")
+	if options.StopGrace == 0 {
+		options.StopGrace = 5 * time.Second
 	}
-	return &Driver{paths: paths, scopes: scopes, binary: options.Binary, startupTimeout: options.StartupTimeout}, nil
+	if options.AbortGrace == 0 {
+		options.AbortGrace = 3 * time.Second
+	}
+	if options.StartupTimeout < probeInterval || options.StopGrace <= 0 || options.AbortGrace <= 0 {
+		return nil, errors.New("cloud hypervisor lifecycle timeouts must be positive and startup must cover one probe interval")
+	}
+	return &Driver{
+		paths: paths, scopes: scopes, binary: options.Binary,
+		startupTimeout: options.StartupTimeout, stopGrace: options.StopGrace, abortGrace: options.AbortGrace,
+	}, nil
 }
 
 // Type returns the durable backend identity stored with every owned sandbox.
@@ -123,7 +138,7 @@ func (d *Driver) Launch(ctx context.Context, plan vmm.LaunchPlan) (result vmm.Pr
 		if returnErr == nil {
 			return
 		}
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), abortGrace+time.Second)
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), d.abortGrace+time.Second)
 		defer cancel()
 		switch {
 		case result.PID > 0:
@@ -264,7 +279,7 @@ func (d *Driver) Abort(ctx context.Context, process vmm.Process) error {
 	if err := process.Validate(); err != nil {
 		return err
 	}
-	if err := terminateProcess(ctx, process, abortGrace); err != nil {
+	if err := terminateProcess(ctx, process, d.abortGrace); err != nil {
 		return err
 	}
 	return d.Cleanup(ctx, process.SandboxID)
@@ -284,7 +299,7 @@ func (d *Driver) Stop(ctx context.Context, process vmm.Process) error {
 		return nil
 	}
 	_ = d.requestShutdown(ctx, process.APISocket)
-	return terminateProcess(ctx, process, stopGrace)
+	return terminateProcess(ctx, process, d.stopGrace)
 }
 
 // Console opens the direct-boot PTY reported by the exact live VMM. The caller

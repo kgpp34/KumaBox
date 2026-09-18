@@ -3,7 +3,7 @@
 //
 // Image command assembly:
 //
-//	storage.Roots --> images.Paths -----------+
+//	config.Paths --> images.Paths ------------+
 //	                    |                    |
 //	                    +--> SQLite --> catalog --> ImageStore
 //	                                           |
@@ -12,7 +12,9 @@ package core
 
 import (
 	"context"
+	"time"
 
+	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/images"
 	"github.com/kumabox/kumabox/images/catalog"
 	"github.com/kumabox/kumabox/images/erofs"
@@ -20,7 +22,6 @@ import (
 	"github.com/kumabox/kumabox/metadata"
 	"github.com/kumabox/kumabox/metadata/sqlite"
 	sandboxcatalog "github.com/kumabox/kumabox/sandbox/catalog"
-	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/types"
 )
 
@@ -31,26 +32,34 @@ type ImageStore struct {
 	Paths images.Paths
 	// Catalog exposes image metadata operations backed by the owned store.
 	Catalog images.Catalog
+	// options is the validated image policy used by lazily created adapters.
+	options config.Images
 	// store owns the database connection released by Close.
 	store metadata.Store
 }
 
 // OpenImages ensures managed directories and opens the image metadata catalog.
 // It does not probe conversion tools, so metadata queries do not require EROFS.
-func OpenImages(ctx context.Context, roots storage.Roots) (*ImageStore, error) {
-	paths, err := images.NewPaths(roots)
+func OpenImages(ctx context.Context, configuration config.Config) (*ImageStore, error) {
+	if err := configuration.Validate(); err != nil {
+		return nil, err
+	}
+	paths, err := images.NewPaths(configuration.Paths)
 	if err != nil {
 		return nil, err
 	}
 	if err := paths.Ensure(); err != nil {
 		return nil, err
 	}
-	store, err := sqlite.Open(ctx, paths.MetadataDB(), metadataCollections(), sqlite.DefaultOptions())
+	store, err := sqlite.Open(ctx, paths.MetadataDB(), metadataCollections(), sqlite.Options{
+		BusyTimeout: configuration.Metadata.BusyTimeout,
+		RetryLimit:  configuration.Metadata.RetryLimit,
+	})
 	if err != nil {
 		return nil, err
 	}
 	imageCatalog := catalog.New(store, catalog.WithImageUsage(sandboxcatalog.Usage{}))
-	return &ImageStore{Paths: paths, Catalog: imageCatalog, store: store}, nil
+	return &ImageStore{Paths: paths, Catalog: imageCatalog, options: configuration.Images, store: store}, nil
 }
 
 // Close releases the metadata store after all catalog operations have finished.
@@ -58,8 +67,11 @@ func (s *ImageStore) Close() error { return s.store.Close() }
 
 // NewImageImporter adds a converter only when an operation needs to import layers.
 func NewImageImporter(ctx context.Context, store *ImageStore, reporter images.Reporter, platform types.Platform) (*images.Importer, error) {
-	options := images.DefaultOptions()
-	converter, err := erofs.New(ctx, platform.Architecture, options.Limits)
+	options := images.Options{Limits: imageLimits(store.options), Parallelism: store.options.Parallelism, Now: time.Now}
+	converter, err := erofs.New(ctx, platform.Architecture, erofs.Options{
+		Binary: store.options.EROFSBinary,
+		Limits: options.Limits,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -89,8 +101,17 @@ func (s *ImageStore) OpenLocalSource(ctx context.Context, path string, options L
 		return nil, nil, err
 	}
 	return source.OpenLocal(ctx, path, s.Paths.StagingDir(), source.LocalOptions{
-		Format: format, SourceTag: options.SourceTag, Limits: images.DefaultLimits(),
+		Format: format, SourceTag: options.SourceTag, Limits: imageLimits(s.options),
 	})
+}
+
+// imageLimits translates application configuration into the image module's
+// immutable stream and artifact bounds.
+func imageLimits(options config.Images) images.Limits {
+	return images.Limits{
+		LayerSize: options.LayerSize, UnpackedSize: options.UnpackedSize,
+		BootSize: options.BootSize, ArchiveSize: options.ArchiveSize,
+	}
 }
 
 // NewRegistrySource selects the registry adapter and returns the normalized local name.

@@ -11,7 +11,7 @@ import (
 )
 
 // newListCommand renders catalog entries as an aligned table or detailed JSON.
-func newListCommand(roots rootsProvider) *cobra.Command {
+func newListCommand(configuration configProvider) *cobra.Command {
 	asJSON := false
 	command := &cobra.Command{
 		Use:     "list",
@@ -19,7 +19,7 @@ func newListCommand(roots rootsProvider) *cobra.Command {
 		Short:   "list imported images",
 		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) (returnErr error) {
-			state, err := core.OpenImages(command.Context(), roots())
+			state, err := core.OpenImages(command.Context(), configuration())
 			if err != nil {
 				return err
 			}
@@ -43,13 +43,13 @@ func newListCommand(roots rootsProvider) *cobra.Command {
 }
 
 // newInspectCommand resolves a name or digest and preserves full metadata in JSON.
-func newInspectCommand(roots rootsProvider) *cobra.Command {
+func newInspectCommand(configuration configProvider) *cobra.Command {
 	return &cobra.Command{
 		Use:   "inspect IMAGE",
 		Short: "inspect an imported image",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
-			state, err := core.OpenImages(command.Context(), roots())
+			state, err := core.OpenImages(command.Context(), configuration())
 			if err != nil {
 				return err
 			}
@@ -65,7 +65,7 @@ func newInspectCommand(roots rootsProvider) *cobra.Command {
 
 // newVerifyCommand checks persisted artifacts and reports waiting on stderr.
 // Store cleanup completes before the progress reporter emits its final status.
-func newVerifyCommand(roots rootsProvider) *cobra.Command {
+func newVerifyCommand(configuration configProvider) *cobra.Command {
 	return &cobra.Command{
 		Use:   "verify IMAGE",
 		Short: "verify image artifacts",
@@ -79,7 +79,7 @@ func newVerifyCommand(roots rootsProvider) *cobra.Command {
 			if err := progress.Status("checking image artifacts"); err != nil {
 				return err
 			}
-			state, err := core.OpenImages(command.Context(), roots())
+			state, err := core.OpenImages(command.Context(), configuration())
 			if err != nil {
 				return err
 			}

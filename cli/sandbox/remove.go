@@ -10,7 +10,7 @@ import (
 )
 
 // NewRemoveCommand builds the top-level sandbox removal command.
-func NewRemoveCommand(roots rootsProvider) *cobra.Command {
+func NewRemoveCommand(configuration configProvider) *cobra.Command {
 	asJSON := false
 	command := &cobra.Command{
 		Use:   "rm SANDBOX",
@@ -23,7 +23,7 @@ func NewRemoveCommand(roots rootsProvider) *cobra.Command {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
-			service, err := core.OpenSandbox(command.Context(), roots(), progress)
+			service, err := core.OpenSandbox(command.Context(), configuration(), progress)
 			if err != nil {
 				return err
 			}

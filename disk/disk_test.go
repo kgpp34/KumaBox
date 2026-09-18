@@ -31,7 +31,13 @@ func TestExt4PreparesFinalSparsePathAndRemovesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := types.SandboxID("123e4567-e89b-42d3-a456-426614174000")
-	preparer := &Ext4{paths: paths, mkfs: formatter}
+	preparer, err := NewExt4(paths, formatter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preparer.mkfs != formatter {
+		t.Fatalf("formatter = %q, want %q", preparer.mkfs, formatter)
+	}
 	if err := preparer.Prepare(t.Context(), id, types.MinSandboxStorage); err != nil {
 		t.Fatal(err)
 	}
@@ -54,5 +60,11 @@ func TestExt4PreparesFinalSparsePathAndRemovesIt(t *testing.T) {
 	}
 	if _, err := os.Stat(cow); !os.IsNotExist(err) {
 		t.Fatalf("COW remains after Remove: %v", err)
+	}
+}
+
+func TestNewExt4RejectsMissingFormatter(t *testing.T) {
+	if _, err := NewExt4(sandbox.Paths{}, ""); err == nil {
+		t.Fatal("NewExt4() accepted an empty formatter")
 	}
 }

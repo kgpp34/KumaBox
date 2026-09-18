@@ -11,13 +11,13 @@ import (
 
 // NewInspectCommand builds the read-only detailed sandbox query. Inspect always
 // writes JSON so its complete output remains stable for people and scripts.
-func NewInspectCommand(roots rootsProvider) *cobra.Command {
+func NewInspectCommand(configuration configProvider) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "inspect SANDBOX",
 		Short: "show detailed sandbox information as JSON",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
-			service, err := core.OpenSandbox(command.Context(), roots(), nil)
+			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}
@@ -35,7 +35,7 @@ func NewInspectCommand(roots rootsProvider) *cobra.Command {
 }
 
 // NewListCommand builds the top-level Docker-style sandbox process listing.
-func NewListCommand(roots rootsProvider) *cobra.Command {
+func NewListCommand(configuration configProvider) *cobra.Command {
 	var includeAll, asJSON, quiet bool
 	command := &cobra.Command{
 		Use:   "ps",
@@ -45,7 +45,7 @@ func NewListCommand(roots rootsProvider) *cobra.Command {
 			if asJSON && quiet {
 				return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("--json and --quiet cannot be used together"))
 			}
-			service, err := core.OpenSandbox(command.Context(), roots(), nil)
+			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}

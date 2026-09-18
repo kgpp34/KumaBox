@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/core"
 	"github.com/kumabox/kumabox/images"
 	sandboxfs "github.com/kumabox/kumabox/sandbox"
@@ -91,7 +92,7 @@ func TestCreateCommandPersistsCreatedSandboxAndFinalCOW(t *testing.T) {
 	}
 	seedImage(t, roots)
 	installFakeMKFS(t, base)
-	command := NewCreateCommand(func() storage.Roots { return roots })
+	command := NewCreateCommand(func() config.Config { return sandboxTestConfig(roots) })
 	command.SetArgs([]string{"demo", "--name", "box", "--cpus", "1", "--json"})
 	var stdout, stderr bytes.Buffer
 	command.SetOut(&stdout)
@@ -131,7 +132,7 @@ func TestCreateCommandPersistsCreatedSandboxAndFinalCOW(t *testing.T) {
 
 func seedImage(t *testing.T, roots storage.Roots) {
 	t.Helper()
-	state, err := core.OpenImages(t.Context(), roots)
+	state, err := core.OpenImages(t.Context(), sandboxTestConfig(roots))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,6 +179,13 @@ func seedImage(t *testing.T, roots storage.Roots) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// sandboxTestConfig returns production defaults scoped to one test directory.
+func sandboxTestConfig(roots storage.Roots) config.Config {
+	configuration := config.Default()
+	configuration.Paths = roots
+	return configuration
 }
 
 func digestOf(t *testing.T, data []byte) types.Digest {

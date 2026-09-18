@@ -10,7 +10,7 @@ import (
 )
 
 // NewStopCommand builds the top-level sandbox stop command.
-func NewStopCommand(roots rootsProvider) *cobra.Command {
+func NewStopCommand(configuration configProvider) *cobra.Command {
 	asJSON := false
 	command := &cobra.Command{
 		Use:   "stop SANDBOX",
@@ -23,7 +23,7 @@ func NewStopCommand(roots rootsProvider) *cobra.Command {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
-			service, err := core.OpenSandbox(command.Context(), roots(), progress)
+			service, err := core.OpenSandbox(command.Context(), configuration(), progress)
 			if err != nil {
 				return err
 			}

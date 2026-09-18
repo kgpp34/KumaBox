@@ -1,5 +1,5 @@
 // Package cli builds the kumabox command tree and maps command failures to exit statuses.
-// Commands receive explicit streams and storage roots for independent invocations.
+// Commands receive explicit streams and immutable configuration for independent invocations.
 package cli
 
 import (
@@ -13,8 +13,8 @@ import (
 	doctorcmd "github.com/kumabox/kumabox/cli/doctor"
 	imagecmd "github.com/kumabox/kumabox/cli/image"
 	sandboxcmd "github.com/kumabox/kumabox/cli/sandbox"
+	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/errdefs"
-	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/version"
 )
 
@@ -54,7 +54,10 @@ const exitUsage = 2
 // It returns errors without printing them; the process entry point prints diagnostics
 // unless Silent reports that a command already handled them.
 func Execute(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	root := newRootCommand()
+	root, err := newRootCommand()
+	if err != nil {
+		return err
+	}
 	root.SetArgs(args)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
@@ -63,7 +66,7 @@ func Execute(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	if _, _, err := root.Find(args); err != nil {
 		return &codedError{err: err, code: exitUsage}
 	}
-	err := root.ExecuteContext(ctx)
+	err = root.ExecuteContext(ctx)
 	if err == nil {
 		return nil
 	}
@@ -92,10 +95,12 @@ func Silent(err error) bool {
 	return errors.As(err, &silent) && silent.Silent()
 }
 
-// newRootCommand creates invocation-local flags and registers the command modules.
-// The roots callback observes values after Cobra has parsed persistent flags.
-func newRootCommand() *cobra.Command {
-	roots := storage.DefaultRoots()
+// newRootCommand creates invocation-local flags, configuration loading, and
+// command modules. The provider observes the snapshot resolved after flag parsing.
+func newRootCommand() (*cobra.Command, error) {
+	loader := config.NewLoader()
+	configuration := config.Default()
+	configFile := ""
 	root := &cobra.Command{
 		Use:           "kumabox",
 		Args:          cobra.NoArgs,
@@ -103,27 +108,45 @@ func newRootCommand() *cobra.Command {
 		Short:         "microVM sandboxes for AI agents",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+			resolved, err := loader.Load(configFile)
+			if err != nil {
+				return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+			}
+			configuration = resolved
+			return nil
+		},
 	}
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return &codedError{err: err, code: exitUsage}
 	})
-	root.PersistentFlags().StringVar(&roots.Data, "root-dir", roots.Data, "persistent data directory")
-	root.PersistentFlags().StringVar(&roots.Run, "run-dir", roots.Run, "runtime state directory")
-	root.PersistentFlags().StringVar(&roots.Log, "log-dir", roots.Log, "log directory")
+	flags := root.PersistentFlags()
+	flags.StringVar(&configFile, "config", "", "explicit configuration file")
+	flags.String("root-dir", configuration.Paths.Data, "persistent data directory")
+	flags.String("run-dir", configuration.Paths.Run, "runtime state directory")
+	flags.String("log-dir", configuration.Paths.Log, "log directory")
+	for key, name := range map[string]string{
+		"paths.data": "root-dir", "paths.run": "run-dir", "paths.log": "log-dir",
+	} {
+		if err := loader.BindFlag(key, flags.Lookup(name)); err != nil {
+			return nil, fmt.Errorf("bind --%s: %w", name, err)
+		}
+	}
+	provideConfig := func() config.Config { return configuration }
 
 	root.AddCommand(doctorcmd.NewCommand())
-	root.AddCommand(imagecmd.NewCommand(func() storage.Roots { return roots }))
-	root.AddCommand(sandboxcmd.NewConsoleCommand(func() storage.Roots { return roots }))
-	root.AddCommand(sandboxcmd.NewCreateCommand(func() storage.Roots { return roots }))
-	root.AddCommand(sandboxcmd.NewExecCommand(func() storage.Roots { return roots }))
-	root.AddCommand(sandboxcmd.NewInspectCommand(func() storage.Roots { return roots }))
-	root.AddCommand(sandboxcmd.NewListCommand(func() storage.Roots { return roots }))
-	root.AddCommand(sandboxcmd.NewRemoveCommand(func() storage.Roots { return roots }))
-	root.AddCommand(sandboxcmd.NewStartCommand(func() storage.Roots { return roots }))
-	root.AddCommand(sandboxcmd.NewStopCommand(func() storage.Roots { return roots }))
+	root.AddCommand(imagecmd.NewCommand(provideConfig))
+	root.AddCommand(sandboxcmd.NewConsoleCommand(provideConfig))
+	root.AddCommand(sandboxcmd.NewCreateCommand(provideConfig))
+	root.AddCommand(sandboxcmd.NewExecCommand(provideConfig))
+	root.AddCommand(sandboxcmd.NewInspectCommand(provideConfig))
+	root.AddCommand(sandboxcmd.NewListCommand(provideConfig))
+	root.AddCommand(sandboxcmd.NewRemoveCommand(provideConfig))
+	root.AddCommand(sandboxcmd.NewStartCommand(provideConfig))
+	root.AddCommand(sandboxcmd.NewStopCommand(provideConfig))
 	root.AddCommand(newVersionCommand())
 	classifyArguments(root)
-	return root
+	return root, nil
 }
 
 // usageArgs classifies positional validation failures as usage errors.

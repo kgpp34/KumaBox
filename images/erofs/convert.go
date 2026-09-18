@@ -33,6 +33,8 @@ const (
 // Converter implements images.Converter using mkfs.erofs with fixed output options.
 // Its immutable configuration permits concurrent conversion into distinct work directories.
 type Converter struct {
+	// binary is the configured mkfs.erofs executable name or absolute path.
+	binary string
 	// architecture selects whether an extracted arm64 gzip kernel is decompressed.
 	architecture string
 	// limits bounds extracted boot files; source adapters bound the layer streams.
@@ -41,20 +43,28 @@ type Converter struct {
 
 var _ images.Converter = (*Converter)(nil)
 
+// Options contains operator-controlled converter dependencies and bounds.
+type Options struct {
+	// Binary is the mkfs.erofs executable name or absolute path.
+	Binary string
+	// Limits bounds source streams and extracted boot files.
+	Limits images.Limits
+}
+
 // New validates the target architecture and limits and requires mkfs.erofs >= 1.8.
 // The target architecture can differ from the host running the conversion.
-func New(ctx context.Context, architecture string, limits images.Limits) (*Converter, error) {
-	if !limits.Valid() || (architecture != "amd64" && architecture != "arm64") {
+func New(ctx context.Context, architecture string, options Options) (*Converter, error) {
+	if options.Binary == "" || !options.Limits.Valid() || (architecture != "amd64" && architecture != "arm64") {
 		return nil, invalidLayer("invalid converter architecture or size limits")
 	}
-	output, err := exec.CommandContext(ctx, "mkfs.erofs", "--version").CombinedOutput()
+	output, err := exec.CommandContext(ctx, options.Binary, "--version").CombinedOutput() //nolint:gosec // the operator supplies a fixed executable; no shell is involved
 	if err != nil {
 		return nil, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeHostIncompatible, fmt.Errorf("probe mkfs.erofs: %w (%s)", errors.Join(err, ctx.Err()), bytes.TrimSpace(output)))
 	}
 	if err := requireEROFSVersion(string(output)); err != nil {
 		return nil, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, err)
 	}
-	return &Converter{architecture: architecture, limits: limits}, nil
+	return &Converter{binary: options.Binary, architecture: architecture, limits: options.Limits}, nil
 }
 
 // Convert streams a decompressed tar to mkfs.erofs while extracting boot files
@@ -75,7 +85,7 @@ func (c *Converter) Convert(ctx context.Context, descriptor types.Descriptor, so
 	outputPath := filepath.Join(workDir, descriptor.Digest.Hex()+".erofs")
 	command := exec.CommandContext( //nolint:gosec // binary is fixed and every argument is derived from validated managed paths and digests
 		ctx,
-		"mkfs.erofs",
+		c.binary,
 		"--tar=f",
 		"-zlz4hc",
 		fmt.Sprintf("-C%d", erofsBlockSize),

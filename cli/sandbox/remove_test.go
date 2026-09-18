@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/core"
 	"github.com/kumabox/kumabox/images"
 	sandboxfs "github.com/kumabox/kumabox/sandbox"
@@ -24,7 +25,7 @@ func TestRemoveCommandClosesCreateAndImageReferenceLifecycle(t *testing.T) {
 	installFakeMKFS(t, base)
 
 	firstID := executeCreate(t, roots, "box")
-	remove := NewRemoveCommand(func() storage.Roots { return roots })
+	remove := NewRemoveCommand(func() config.Config { return sandboxTestConfig(roots) })
 	remove.SetArgs([]string{"box", "--json"})
 	var stdout, stderr bytes.Buffer
 	remove.SetOut(&stdout)
@@ -58,7 +59,7 @@ func TestRemoveCommandClosesCreateAndImageReferenceLifecycle(t *testing.T) {
 	if secondID == firstID {
 		t.Fatal("recreated sandbox reused immutable ID")
 	}
-	remove = NewRemoveCommand(func() storage.Roots { return roots })
+	remove = NewRemoveCommand(func() config.Config { return sandboxTestConfig(roots) })
 	remove.SetArgs([]string{secondID.String()})
 	stdout.Reset()
 	stderr.Reset()
@@ -71,7 +72,7 @@ func TestRemoveCommandClosesCreateAndImageReferenceLifecycle(t *testing.T) {
 		t.Fatalf("text remove output = %q", stdout.String())
 	}
 
-	state, err := core.OpenImages(t.Context(), roots)
+	state, err := core.OpenImages(t.Context(), sandboxTestConfig(roots))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +88,7 @@ func TestRemoveCommandClosesCreateAndImageReferenceLifecycle(t *testing.T) {
 
 func executeCreate(t *testing.T, roots storage.Roots, name string) types.SandboxID {
 	t.Helper()
-	command := NewCreateCommand(func() storage.Roots { return roots })
+	command := NewCreateCommand(func() config.Config { return sandboxTestConfig(roots) })
 	command.SetArgs([]string{"demo", "--name", name, "--cpus", "1"})
 	var stdout, stderr bytes.Buffer
 	command.SetOut(&stdout)

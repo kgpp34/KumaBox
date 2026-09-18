@@ -45,9 +45,12 @@ type Ext4 struct {
 
 var _ Backend = (*Ext4)(nil)
 
-// NewExt4 creates the production disk preparer using mkfs.ext4 from PATH.
-func NewExt4(paths sandbox.Paths) *Ext4 {
-	return &Ext4{paths: paths, mkfs: "mkfs.ext4"}
+// NewExt4 creates a disk preparer using the configured mkfs.ext4 executable.
+func NewExt4(paths sandbox.Paths, binary string) (*Ext4, error) {
+	if strings.TrimSpace(binary) == "" {
+		return nil, errors.New("ext4 formatter binary is required")
+	}
+	return &Ext4{paths: paths, mkfs: binary}, nil
 }
 
 // Prepare creates and formats the final COW path. The preceding Creating record

@@ -16,6 +16,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
+	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
 	"github.com/kumabox/kumabox/storage"
@@ -34,7 +35,7 @@ func newImageTestExecutor(t *testing.T) (storage.Roots, func(...string) (string,
 	t.Setenv("PATH", base+string(os.PathListSeparator)+os.Getenv("PATH"))
 	roots := storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")}
 	execute := func(args ...string) (string, error) {
-		command := NewCommand(func() storage.Roots { return roots })
+		command := NewCommand(func() config.Config { return imageTestConfig(roots) })
 		var out, stderr bytes.Buffer
 		command.SetOut(&out)
 		command.SetErr(&stderr)
@@ -43,6 +44,13 @@ func newImageTestExecutor(t *testing.T) (storage.Roots, func(...string) (string,
 		return out.String(), err
 	}
 	return roots, execute
+}
+
+// imageTestConfig returns production defaults scoped to one test directory.
+func imageTestConfig(roots storage.Roots) config.Config {
+	configuration := config.Default()
+	configuration.Paths = roots
+	return configuration
 }
 
 func TestImageCommandsFromLayoutAndArchive(t *testing.T) {
@@ -256,7 +264,7 @@ func TestImageCommandsFromDockerArchive(t *testing.T) {
 func TestImportRejectsUnknownFormatBeforeOpeningStore(t *testing.T) {
 	base := t.TempDir()
 	roots := storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")}
-	command := NewCommand(func() storage.Roots { return roots })
+	command := NewCommand(func() config.Config { return imageTestConfig(roots) })
 	command.SetOut(&bytes.Buffer{})
 	command.SetErr(&bytes.Buffer{})
 	command.SetArgs([]string{"import", "demo", "missing.tar", "--format", "tar"})

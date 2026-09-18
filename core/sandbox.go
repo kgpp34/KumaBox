@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/agent"
+	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/disk"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
@@ -18,12 +19,9 @@ import (
 	"github.com/kumabox/kumabox/metadata/sqlite"
 	"github.com/kumabox/kumabox/sandbox"
 	sandboxcatalog "github.com/kumabox/kumabox/sandbox/catalog"
-	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/types"
 	"github.com/kumabox/kumabox/vmm"
 )
-
-const cleanupTimeout = 10 * time.Second
 
 // CreateSandboxRequest contains user intent before image aliases are resolved.
 type CreateSandboxRequest struct {
@@ -94,7 +92,11 @@ type SandboxService struct {
 	// imagePaths derives immutable artifacts after the image guard verifies them.
 	imagePaths images.Paths
 	// runtimes route persisted VMM identities to process adapters.
-	runtimes vmmBackends
+	runtimes *vmm.Registry
+	// defaultVMM selects the runtime when create does not specify one.
+	defaultVMM types.VMMType
+	// cleanupTimeout bounds compensation that outlives caller cancellation.
+	cleanupTimeout time.Duration
 	// reporter emits progress independently of command results.
 	reporter SandboxReporter
 	// newID and now are replaceable in same-package tests.
@@ -105,13 +107,14 @@ type SandboxService struct {
 }
 
 // newSandboxService connects the explicit capabilities needed by sandbox commands.
-func newSandboxService(paths sandbox.Paths, imagePaths images.Paths, images imageGuard, creator sandboxCreator, reader sandboxReader, remover sandboxRemover, lifecycle sandboxLifecycle, disks disk.Backend, runtimes vmmBackends, reporter SandboxReporter) *SandboxService {
+func newSandboxService(paths sandbox.Paths, imagePaths images.Paths, images imageGuard, creator sandboxCreator, reader sandboxReader, remover sandboxRemover, lifecycle sandboxLifecycle, disks disk.Backend, runtimes *vmm.Registry, defaultVMM types.VMMType, cleanupTimeout time.Duration, reporter SandboxReporter) *SandboxService {
 	if reporter == nil {
 		reporter = discardReporter{}
 	}
 	return &SandboxService{
 		paths: paths, imagePaths: imagePaths, images: images, creator: creator, reader: reader,
-		remover: remover, lifecycle: lifecycle, disks: disks, runtimes: runtimes, reporter: reporter,
+		remover: remover, lifecycle: lifecycle, disks: disks, runtimes: runtimes,
+		defaultVMM: defaultVMM, cleanupTimeout: cleanupTimeout, reporter: reporter,
 		newID: types.NewSandboxID, now: time.Now,
 	}
 }
@@ -122,31 +125,46 @@ func newSandboxService(paths sandbox.Paths, imagePaths images.Paths, images imag
 //	shared SQLite -> image catalog <---- transaction reader ---- sandbox catalog
 //	       |              ^                                      |
 //	       +---- usage ---+---- image guard + ext4 COW ----------> service
-func OpenSandbox(ctx context.Context, roots storage.Roots, reporter SandboxReporter) (*SandboxService, error) {
-	imagePaths, err := images.NewPaths(roots)
+func OpenSandbox(ctx context.Context, configuration config.Config, reporter SandboxReporter) (*SandboxService, error) {
+	if err := configuration.Validate(); err != nil {
+		return nil, err
+	}
+	imagePaths, err := images.NewPaths(configuration.Paths)
 	if err != nil {
 		return nil, err
 	}
-	sandboxPaths, err := sandbox.NewPaths(roots)
+	sandboxPaths, err := sandbox.NewPaths(configuration.Paths)
+	if err != nil {
+		return nil, err
+	}
+	runtimes, err := openVMMRegistry(configuration)
+	if err != nil {
+		return nil, err
+	}
+	defaultVMM := configuration.VMM.Default
+	if _, err := runtimes.Backend(defaultVMM); err != nil {
+		return nil, err
+	}
+	disks, err := disk.NewExt4(sandboxPaths, configuration.Sandbox.Ext4Binary)
 	if err != nil {
 		return nil, err
 	}
 	if err := errors.Join(imagePaths.Ensure(), sandboxPaths.Ensure()); err != nil {
 		return nil, err
 	}
-	store, err := sqlite.Open(ctx, imagePaths.MetadataDB(), metadataCollections(), sqlite.DefaultOptions())
+	store, err := sqlite.Open(ctx, imagePaths.MetadataDB(), metadataCollections(), sqlite.Options{
+		BusyTimeout: configuration.Metadata.BusyTimeout,
+		RetryLimit:  configuration.Metadata.RetryLimit,
+	})
 	if err != nil {
 		return nil, err
 	}
 	imageCatalog := imagecatalog.New(store, imagecatalog.WithImageUsage(sandboxcatalog.Usage{}))
 	sandboxCatalog := sandboxcatalog.New(store, imagecatalog.Reader{})
-	runtimes, err := openVMMBackends(roots)
-	if err != nil {
-		return nil, errors.Join(err, store.Close())
-	}
 	service := newSandboxService(
 		sandboxPaths, imagePaths, images.NewGuard(imagePaths, imageCatalog), sandboxCatalog,
-		sandboxCatalog, sandboxCatalog, sandboxCatalog, disk.NewExt4(sandboxPaths), runtimes, reporter,
+		sandboxCatalog, sandboxCatalog, sandboxCatalog, disks, runtimes, defaultVMM,
+		configuration.Sandbox.CleanupTimeout, reporter,
 	)
 	service.store = store
 	return service, nil
@@ -167,7 +185,7 @@ func (s *SandboxService) Close() error {
 //	                            |                         |
 //	                            +---- failure cleanup <---+
 func (s *SandboxService) Create(ctx context.Context, request CreateSandboxRequest) (result types.Sandbox, returnErr error) {
-	if s == nil || s.images == nil || s.creator == nil || s.disks == nil || len(s.runtimes) == 0 || s.reporter == nil || s.newID == nil || s.now == nil {
+	if s == nil || s.images == nil || s.creator == nil || s.disks == nil || s.runtimes.Len() == 0 || s.reporter == nil || s.newID == nil || s.now == nil || s.cleanupTimeout <= 0 {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")
 	}
 	if request.ImageReference == "" {
@@ -177,9 +195,9 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 		return types.Sandbox{}, err
 	}
 	if request.VMM == "" {
-		request.VMM = types.VMMCloudHypervisor
+		request.VMM = s.defaultVMM
 	}
-	if _, err := s.runtimes.backend(request.VMM); err != nil {
+	if _, err := s.runtimes.Backend(request.VMM); err != nil {
 		return types.Sandbox{}, err
 	}
 	if int(request.Config.CPUs) > runtime.NumCPU() { //nolint:gosec // Config validation bounds CPUs to a small positive value
@@ -294,7 +312,7 @@ func (s *SandboxService) Inspect(ctx context.Context, reference string) (types.S
 //	                                        |
 //	                              abort + retained Error
 func (s *SandboxService) Start(ctx context.Context, reference string) (result types.Sandbox, returnErr error) {
-	if s == nil || s.reader == nil || s.lifecycle == nil || s.images == nil || s.disks == nil || len(s.runtimes) == 0 || s.reporter == nil || s.now == nil {
+	if s == nil || s.reader == nil || s.lifecycle == nil || s.images == nil || s.disks == nil || s.runtimes.Len() == 0 || s.reporter == nil || s.now == nil {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")
 	}
 	if reference == "" {
@@ -330,7 +348,7 @@ func (s *SandboxService) Start(ctx context.Context, reference string) (result ty
 	if err != nil {
 		return types.Sandbox{}, err
 	}
-	backend, err := s.runtimes.backend(record.VMM)
+	backend, err := s.runtimes.Backend(record.VMM)
 	if err != nil {
 		return record, err
 	}
@@ -526,7 +544,7 @@ func (s *SandboxService) launchPlan(record types.Sandbox, image types.Image) (vm
 // failStart cleans only the exact process identity (when available) and retains
 // an Error record so the next start or removal has an explicit owner.
 func (s *SandboxService) failStart(ctx context.Context, backend vmm.Backend, starting types.Sandbox, phase string, cause error, process vmm.Process) error {
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cleanupTimeout)
 	defer cancel()
 	var cleanupErr error
 	if process.PID > 0 {
@@ -547,7 +565,7 @@ func (s *SandboxService) failStart(ctx context.Context, backend vmm.Backend, sta
 //	Starting/Stopping  ----- retry resumes the owned process generation -----^
 //	Running + no VMM  --------------------- cleanup ------------------------^
 func (s *SandboxService) Stop(ctx context.Context, reference string) (result types.Sandbox, returnErr error) {
-	if s == nil || s.reader == nil || s.lifecycle == nil || len(s.runtimes) == 0 || s.reporter == nil || s.now == nil {
+	if s == nil || s.reader == nil || s.lifecycle == nil || s.runtimes.Len() == 0 || s.reporter == nil || s.now == nil {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")
 	}
 	if reference == "" {
@@ -583,7 +601,7 @@ func (s *SandboxService) Stop(ctx context.Context, reference string) (result typ
 	if err != nil {
 		return types.Sandbox{}, err
 	}
-	backend, err := s.runtimes.backend(record.VMM)
+	backend, err := s.runtimes.Backend(record.VMM)
 	if err != nil {
 		return record, err
 	}
@@ -735,7 +753,7 @@ func (s *SandboxService) Exec(ctx context.Context, reference string, config type
 // locateRunning returns an identity-checked VMM generation. It holds the
 // sandbox operation lock only while persistent and process facts are resolved.
 func (s *SandboxService) locateRunning(ctx context.Context, reference, operation string) (backend vmm.Backend, process vmm.Process, returnErr error) {
-	if s == nil || s.reader == nil || len(s.runtimes) == 0 {
+	if s == nil || s.reader == nil || s.runtimes.Len() == 0 {
 		return nil, vmm.Process{}, errors.New("sandbox service is not configured")
 	}
 	if reference == "" {
@@ -771,7 +789,7 @@ func (s *SandboxService) locateRunning(ctx context.Context, reference, operation
 	if record.Generation < 2 {
 		return nil, vmm.Process{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("running sandbox has no Starting generation"))
 	}
-	backend, err = s.runtimes.backend(record.VMM)
+	backend, err = s.runtimes.Backend(record.VMM)
 	if err != nil {
 		return nil, vmm.Process{}, err
 	}
@@ -853,7 +871,7 @@ func (s *SandboxService) Remove(ctx context.Context, reference string) (result t
 // compensate removes the owned disk before forgetting the Creating reservation.
 // If cleanup cannot be proven complete, Error retains the resource owner and image pin.
 func (s *SandboxService) compensate(ctx context.Context, record types.Sandbox, phase string, cause error) error {
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cleanupTimeout)
 	defer cancel()
 	removeErr := s.disks.Remove(cleanupCtx, record.ID)
 	if removeErr == nil {

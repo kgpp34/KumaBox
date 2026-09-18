@@ -9,24 +9,24 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/errdefs"
-	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/types"
 )
 
-// rootsProvider defers reading storage roots until command flags have been parsed.
-type rootsProvider func() storage.Roots
+// configProvider defers reading immutable configuration until flags are parsed.
+type configProvider func() config.Config
 
-// NewCommand registers the image command tree using invocation-local storage roots.
-func NewCommand(roots rootsProvider) *cobra.Command {
+// NewCommand registers the image command tree using invocation-local configuration.
+func NewCommand(configuration configProvider) *cobra.Command {
 	command := &cobra.Command{Use: "image", Short: "manage OCI/docker images", Args: cobra.NoArgs, RunE: func(command *cobra.Command, _ []string) error { return command.Help() }}
 	command.AddCommand(
-		newPullCommand(roots),
-		newImportCommand(roots),
-		newListCommand(roots),
-		newInspectCommand(roots),
-		newVerifyCommand(roots),
-		newRemoveCommand(roots),
+		newPullCommand(configuration),
+		newImportCommand(configuration),
+		newListCommand(configuration),
+		newInspectCommand(configuration),
+		newVerifyCommand(configuration),
+		newRemoveCommand(configuration),
 	)
 	return command
 }

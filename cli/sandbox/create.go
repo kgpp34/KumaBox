@@ -11,17 +11,17 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/core"
 	"github.com/kumabox/kumabox/errdefs"
-	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/types"
 )
 
-// rootsProvider reads persistent flags only after Cobra has parsed them.
-type rootsProvider func() storage.Roots
+// configProvider reads immutable configuration only after Cobra parses flags.
+type configProvider func() config.Config
 
 // NewCreateCommand builds the top-level create command.
-func NewCreateCommand(roots rootsProvider) *cobra.Command {
+func NewCreateCommand(configuration configProvider) *cobra.Command {
 	name := ""
 	cpus := types.DefaultSandboxCPUs
 	memory := "1GiB"
@@ -40,8 +40,8 @@ func NewCreateCommand(roots rootsProvider) *cobra.Command {
 			if err != nil {
 				return invalidFlag("storage", err)
 			}
-			config := types.SandboxConfig{Name: name, CPUs: cpus, Memory: memoryBytes, Storage: storageBytes}
-			if err := config.Validate(); err != nil {
+			sandboxConfig := types.SandboxConfig{Name: name, CPUs: cpus, Memory: memoryBytes, Storage: storageBytes}
+			if err := sandboxConfig.Validate(); err != nil {
 				return err
 			}
 			progress, err := startCreateProgress(command, name)
@@ -49,7 +49,7 @@ func NewCreateCommand(roots rootsProvider) *cobra.Command {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
-			service, err := core.OpenSandbox(command.Context(), roots(), progress)
+			service, err := core.OpenSandbox(command.Context(), configuration(), progress)
 			if err != nil {
 				return err
 			}
@@ -58,7 +58,7 @@ func NewCreateCommand(roots rootsProvider) *cobra.Command {
 				closeErr := service.Close()
 				returnErr = errors.Join(returnErr, errdefs.Context(closeErr, "create sandbox", name, "close metadata", "inspect the sandbox before retrying", committed))
 			}()
-			record, err := service.Create(command.Context(), core.CreateSandboxRequest{ImageReference: args[0], Config: config})
+			record, err := service.Create(command.Context(), core.CreateSandboxRequest{ImageReference: args[0], Config: sandboxConfig})
 			if err != nil {
 				return err
 			}

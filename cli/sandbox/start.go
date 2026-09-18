@@ -10,7 +10,7 @@ import (
 )
 
 // NewStartCommand builds the top-level sandbox start command.
-func NewStartCommand(roots rootsProvider) *cobra.Command {
+func NewStartCommand(configuration configProvider) *cobra.Command {
 	asJSON := false
 	command := &cobra.Command{
 		Use:   "start SANDBOX",
@@ -23,7 +23,7 @@ func NewStartCommand(roots rootsProvider) *cobra.Command {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
-			service, err := core.OpenSandbox(command.Context(), roots(), progress)
+			service, err := core.OpenSandbox(command.Context(), configuration(), progress)
 			if err != nil {
 				return err
 			}

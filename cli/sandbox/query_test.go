@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/types"
@@ -127,7 +128,7 @@ func TestListCommandShowsCreatedOnlyWithAllAndTracksRemoval(t *testing.T) {
 		t.Fatalf("ps --all table = %q", output)
 	}
 
-	remove := NewRemoveCommand(func() storage.Roots { return roots })
+	remove := NewRemoveCommand(func() config.Config { return sandboxTestConfig(roots) })
 	remove.SetArgs([]string{id.String()})
 	remove.SetOut(&bytes.Buffer{})
 	remove.SetErr(&bytes.Buffer{})
@@ -144,7 +145,7 @@ func TestListCommandRejectsJSONWithQuiet(t *testing.T) {
 	roots := storage.Roots{
 		Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log"),
 	}
-	command := NewListCommand(func() storage.Roots { return roots })
+	command := NewListCommand(func() config.Config { return sandboxTestConfig(roots) })
 	command.SetArgs([]string{"--json", "--quiet"})
 	if err := command.ExecuteContext(t.Context()); err == nil {
 		t.Fatal("ps accepted --json with --quiet")
@@ -177,7 +178,7 @@ func TestSandboxListOutputPreservesWriteErrors(t *testing.T) {
 
 func executeInspect(t *testing.T, roots storage.Roots, reference string) string {
 	t.Helper()
-	command := NewInspectCommand(func() storage.Roots { return roots })
+	command := NewInspectCommand(func() config.Config { return sandboxTestConfig(roots) })
 	command.SetArgs([]string{reference})
 	var output bytes.Buffer
 	command.SetOut(&output)
@@ -190,7 +191,7 @@ func executeInspect(t *testing.T, roots storage.Roots, reference string) string 
 
 func executeList(t *testing.T, roots storage.Roots, args ...string) string {
 	t.Helper()
-	command := NewListCommand(func() storage.Roots { return roots })
+	command := NewListCommand(func() config.Config { return sandboxTestConfig(roots) })
 	command.SetArgs(args)
 	var output bytes.Buffer
 	command.SetOut(&output)
