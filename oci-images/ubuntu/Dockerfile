@@ -1,15 +1,31 @@
 # syntax=docker/dockerfile:1.7
 
+ARG UBUNTU_IMAGE=ubuntu:24.04
+FROM --platform=$BUILDPLATFORM golang:1.24.4-bookworm AS agent-builder
+
+ARG TARGETARCH
+ARG GOPROXY=https://proxy.golang.org,direct
+WORKDIR /src
+COPY go.mod go.sum ./
+COPY agent ./agent
+COPY version ./version
+COPY cmd/kumabox-agent ./cmd/kumabox-agent
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" GOPROXY="$GOPROXY" \
+    go build -mod=readonly -trimpath -ldflags='-s -w' -o /out/kumabox-agent ./cmd/kumabox-agent
+
 # Pin UBUNTU_IMAGE to a digest in release automation. Keeping it configurable
 # also makes local architecture-specific acceptance builds straightforward.
-ARG UBUNTU_IMAGE=ubuntu:24.04
 FROM ${UBUNTU_IMAGE}
 
 LABEL io.kumabox.boot.profile="overlay-v1"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-COPY overlay.sh /usr/local/lib/kumabox/initramfs/kumabox-overlay
+COPY --from=agent-builder /out/kumabox-agent /usr/local/bin/kumabox-agent
+COPY oci-images/ubuntu/overlay.sh /usr/local/lib/kumabox/initramfs/kumabox-overlay
+COPY oci-images/ubuntu/kumabox-agent.service /etc/systemd/system/kumabox-agent.service
 
 RUN set -eu; \
     apt-get update \
@@ -52,12 +68,14 @@ RUN set -eu; \
     done \
     && truncate -s 0 /etc/fstab \
     && systemctl mask systemd-fsck-root.service systemd-remount-fs.service systemd-fsck@.service \
-    && systemctl enable systemd-networkd systemd-resolved systemd-timesyncd \
+    && systemctl enable systemd-networkd systemd-resolved systemd-timesyncd kumabox-agent.service \
     && install -d -m 0755 /etc/systemd/network \
     && printf '%s\n' \
         '[Match]' 'Name=en* eth*' '' '[Network]' 'DHCP=ipv4' '' \
         '[DHCPv4]' 'ClientIdentifier=mac' \
         > /etc/systemd/network/20-kumabox.network \
+    && test -x /usr/local/bin/kumabox-agent \
+    && test -L /etc/systemd/system/multi-user.target.wants/kumabox-agent.service \
     && rm -rf /var/lib/apt/lists/* /usr/local/lib/kumabox
 
 CMD ["/sbin/init"]

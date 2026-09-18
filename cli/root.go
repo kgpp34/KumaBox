@@ -115,6 +115,7 @@ func newRootCommand() *cobra.Command {
 	root.AddCommand(imagecmd.NewCommand(func() storage.Roots { return roots }))
 	root.AddCommand(sandboxcmd.NewConsoleCommand(func() storage.Roots { return roots }))
 	root.AddCommand(sandboxcmd.NewCreateCommand(func() storage.Roots { return roots }))
+	root.AddCommand(sandboxcmd.NewExecCommand(func() storage.Roots { return roots }))
 	root.AddCommand(sandboxcmd.NewInspectCommand(func() storage.Roots { return roots }))
 	root.AddCommand(sandboxcmd.NewListCommand(func() storage.Roots { return roots }))
 	root.AddCommand(sandboxcmd.NewRemoveCommand(func() storage.Roots { return roots }))

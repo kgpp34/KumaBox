@@ -145,7 +145,7 @@ func relayConsoleResize(localFD, remoteFD uintptr) func() {
 	}
 }
 
-// parseEscapeChar accepts Cocoon-compatible caret notation or one ASCII byte.
+// parseEscapeChar accepts caret notation or one ASCII byte.
 func parseEscapeChar(value string) (byte, error) {
 	if len(value) == 2 && value[0] == '^' {
 		char := value[1]

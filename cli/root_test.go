@@ -62,6 +62,7 @@ func TestImageAndUsageExitCodes(t *testing.T) {
 		{"missing image argument", []string{"image", "inspect"}, 2},
 		{"missing create image", []string{"create", "--name", "box"}, 2},
 		{"missing console sandbox", []string{"console"}, 2},
+		{"missing exec command", []string{"exec", "box"}, 2},
 		{"missing inspect sandbox", []string{"inspect"}, 2},
 		{"missing remove sandbox", []string{"rm"}, 2},
 		{"missing start sandbox", []string{"start"}, 2},

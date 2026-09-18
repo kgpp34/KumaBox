@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/kumabox/kumabox/agent"
 	"github.com/kumabox/kumabox/disk"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
@@ -68,13 +69,6 @@ type sandboxLifecycle interface {
 	MarkStopped(context.Context, types.SandboxID, uint64, types.SandboxState, time.Time) (types.Sandbox, error)
 }
 
-// cowStore is the private writable-disk capability consumed by sandbox creation.
-type cowStore interface {
-	Prepare(context.Context, types.SandboxID, int64) error
-	Check(context.Context, types.SandboxID, int64) error
-	Remove(context.Context, types.SandboxID) error
-}
-
 // SandboxReporter receives user-visible stages without controlling workflows.
 type SandboxReporter interface {
 	Status(string) error
@@ -95,8 +89,8 @@ type SandboxService struct {
 	remover sandboxRemover
 	// lifecycle commits generation-fenced start, stop, and recovery transitions.
 	lifecycle sandboxLifecycle
-	// cows prepares and cleans the sandbox-owned writable disk.
-	cows cowStore
+	// disks prepares and cleans sandbox-owned writable disks.
+	disks disk.Backend
 	// imagePaths derives immutable artifacts after the image guard verifies them.
 	imagePaths images.Paths
 	// runtimes route persisted VMM identities to process adapters.
@@ -111,13 +105,13 @@ type SandboxService struct {
 }
 
 // newSandboxService connects the explicit capabilities needed by sandbox commands.
-func newSandboxService(paths sandbox.Paths, imagePaths images.Paths, images imageGuard, creator sandboxCreator, reader sandboxReader, remover sandboxRemover, lifecycle sandboxLifecycle, cows cowStore, runtimes vmmBackends, reporter SandboxReporter) *SandboxService {
+func newSandboxService(paths sandbox.Paths, imagePaths images.Paths, images imageGuard, creator sandboxCreator, reader sandboxReader, remover sandboxRemover, lifecycle sandboxLifecycle, disks disk.Backend, runtimes vmmBackends, reporter SandboxReporter) *SandboxService {
 	if reporter == nil {
 		reporter = discardReporter{}
 	}
 	return &SandboxService{
 		paths: paths, imagePaths: imagePaths, images: images, creator: creator, reader: reader,
-		remover: remover, lifecycle: lifecycle, cows: cows, runtimes: runtimes, reporter: reporter,
+		remover: remover, lifecycle: lifecycle, disks: disks, runtimes: runtimes, reporter: reporter,
 		newID: types.NewSandboxID, now: time.Now,
 	}
 }
@@ -173,7 +167,7 @@ func (s *SandboxService) Close() error {
 //	                            |                         |
 //	                            +---- failure cleanup <---+
 func (s *SandboxService) Create(ctx context.Context, request CreateSandboxRequest) (result types.Sandbox, returnErr error) {
-	if s == nil || s.images == nil || s.creator == nil || s.cows == nil || len(s.runtimes) == 0 || s.reporter == nil || s.newID == nil || s.now == nil {
+	if s == nil || s.images == nil || s.creator == nil || s.disks == nil || len(s.runtimes) == 0 || s.reporter == nil || s.newID == nil || s.now == nil {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")
 	}
 	if request.ImageReference == "" {
@@ -239,7 +233,7 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 	if err := s.reporter.Status("creating sparse ext4 disk"); err != nil {
 		return types.Sandbox{}, s.compensate(ctx, record, "report", err)
 	}
-	if err := s.cows.Prepare(ctx, id, request.Config.Storage); err != nil {
+	if err := s.disks.Prepare(ctx, id, request.Config.Storage); err != nil {
 		return types.Sandbox{}, s.compensate(ctx, record, "disk", err)
 	}
 	if err := s.reporter.Status("committing created state"); err != nil {
@@ -300,7 +294,7 @@ func (s *SandboxService) Inspect(ctx context.Context, reference string) (types.S
 //	                                        |
 //	                              abort + retained Error
 func (s *SandboxService) Start(ctx context.Context, reference string) (result types.Sandbox, returnErr error) {
-	if s == nil || s.reader == nil || s.lifecycle == nil || s.images == nil || s.cows == nil || len(s.runtimes) == 0 || s.reporter == nil || s.now == nil {
+	if s == nil || s.reader == nil || s.lifecycle == nil || s.images == nil || s.disks == nil || len(s.runtimes) == 0 || s.reporter == nil || s.now == nil {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")
 	}
 	if reference == "" {
@@ -380,7 +374,7 @@ func (s *SandboxService) Start(ctx context.Context, reference string) (result ty
 		if buildErr != nil {
 			return buildErr
 		}
-		return s.cows.Check(ctx, record.ID, record.Config.Storage)
+		return s.disks.Check(ctx, record.ID, record.Config.Storage)
 	})
 	if err != nil {
 		return record, failBeforeLaunch("validate artifacts", err)
@@ -510,7 +504,7 @@ func (s *SandboxService) launchPlan(record types.Sandbox, image types.Image) (vm
 	if err != nil {
 		return vmm.LaunchPlan{}, err
 	}
-	cmdline, err := vmm.OverlayV1Cmdline(len(image.Layers))
+	cmdline, err := vmm.OverlayV1Cmdline(vmm.OverlayV1Config{LayerCount: len(image.Layers), Hostname: record.Config.Name})
 	if err != nil {
 		return vmm.LaunchPlan{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeImageIncompatible, err)
 	}
@@ -691,67 +685,104 @@ func stopProcessGeneration(record types.Sandbox) (uint64, error) {
 }
 
 // Console opens the current direct-boot PTY after proving the sandbox record
-// and VMM process refer to the same Running generation. The operation lock is
-// released before the caller relays bytes so stop remains available.
+// and VMM process refer to the same Running generation.
 //
-//	resolve -> lock -> reread Running -> locate exact process -> open PTY -> unlock
+//	resolve -> lock -> reread Running -> locate exact process -> unlock -> open PTY
 //	                                                                      |
 //	                                             caller owns console session
-func (s *SandboxService) Console(ctx context.Context, reference string) (connection io.ReadWriteCloser, returnErr error) {
+func (s *SandboxService) Console(ctx context.Context, reference string) (io.ReadWriteCloser, error) {
+	backend, process, err := s.locateRunning(ctx, reference, "open sandbox console")
+	if err != nil {
+		return nil, err
+	}
+	connection, err := backend.Console(ctx, process)
+	if err != nil {
+		return nil, errdefs.Context(err, "open sandbox console", reference, "open PTY", "inspect the VMM log and retry", false)
+	}
+	return connection, nil
+}
+
+// Exec runs one command through the guest agent after resolving an exact live
+// VMM process. The operation lock is released before network I/O and command
+// execution so stop can always make progress.
+//
+//	resolve + lock -> Running generation -> locate process -> unlock
+//	                                                        |
+//	                          vsock -> agent stream -> exit code
+func (s *SandboxService) Exec(ctx context.Context, reference string, config types.ExecConfig, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	if err := config.Validate(); err != nil {
+		return 0, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+	}
+	backend, process, err := s.locateRunning(ctx, reference, "execute sandbox command")
+	if err != nil {
+		return 0, err
+	}
+	connection, err := backend.DialVsock(ctx, process, agent.Port)
+	if err != nil {
+		return 0, errdefs.Context(err, "execute sandbox command", reference, "connect guest agent", "the guest agent may still be starting; retry shortly or inspect its service", false)
+	}
+	defer connection.Close() //nolint:errcheck // closing a completed read/write session cannot change the guest command result
+	if !config.Interactive {
+		stdin = nil
+	}
+	exitCode, err := agent.Run(ctx, connection, config.Args, config.Environment(), stdin, stdout, stderr)
+	if err != nil {
+		return 0, errdefs.Context(err, "execute sandbox command", reference, "run guest command", "inspect the guest agent and retry", false)
+	}
+	return exitCode, nil
+}
+
+// locateRunning returns an identity-checked VMM generation. It holds the
+// sandbox operation lock only while persistent and process facts are resolved.
+func (s *SandboxService) locateRunning(ctx context.Context, reference, operation string) (backend vmm.Backend, process vmm.Process, returnErr error) {
 	if s == nil || s.reader == nil || len(s.runtimes) == 0 {
-		return nil, errors.New("sandbox service is not configured")
+		return nil, vmm.Process{}, errors.New("sandbox service is not configured")
 	}
 	if reference == "" {
-		return nil, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("SANDBOX must not be empty"))
+		return nil, vmm.Process{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("SANDBOX must not be empty"))
 	}
 	record, err := s.reader.Resolve(ctx, reference)
 	if err != nil {
-		return nil, err
+		return nil, vmm.Process{}, err
 	}
 	lockPath, err := s.paths.Lock(record.ID)
 	if err != nil {
-		return nil, err
+		return nil, vmm.Process{}, err
 	}
 	lock := filelock.New(lockPath)
 	if err := lock.Lock(ctx); err != nil {
-		return nil, errdefs.Context(err, "open sandbox console", reference, "lock", "retry the console connection", false)
+		return nil, vmm.Process{}, errdefs.Context(err, operation, reference, "lock", "retry the operation", false)
 	}
 	defer func() {
 		if unlockErr := lock.Unlock(context.WithoutCancel(ctx)); unlockErr != nil {
-			if connection != nil {
-				unlockErr = errors.Join(unlockErr, connection.Close())
-				connection = nil
-			}
-			returnErr = errdefs.Context(errors.Join(returnErr, unlockErr), "open sandbox console", reference, "unlock", "retry the console connection", false)
+			backend = nil
+			process = vmm.Process{}
+			returnErr = errdefs.Context(errors.Join(returnErr, unlockErr), operation, reference, "unlock", "retry the operation", false)
 		}
 	}()
 
 	record, err = s.reader.Resolve(ctx, record.ID.String())
 	if err != nil {
-		return nil, err
+		return nil, vmm.Process{}, err
 	}
 	if record.State != types.SandboxStateRunning {
-		return nil, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s is %s, not running", record.ID, record.State))
+		return nil, vmm.Process{}, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s is %s, not running", record.ID, record.State))
 	}
 	if record.Generation < 2 {
-		return nil, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("running sandbox has no Starting generation"))
+		return nil, vmm.Process{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("running sandbox has no Starting generation"))
 	}
-	backend, err := s.runtimes.backend(record.VMM)
+	backend, err = s.runtimes.backend(record.VMM)
 	if err != nil {
-		return nil, err
+		return nil, vmm.Process{}, err
 	}
 	process, exists, err := backend.Locate(ctx, record.ID, record.Generation-1)
 	if err != nil {
-		return nil, errdefs.Context(err, "open sandbox console", reference, "locate VMM", "inspect the sandbox runtime", false)
+		return nil, vmm.Process{}, errdefs.Context(err, operation, reference, "locate VMM", "inspect the sandbox runtime", false)
 	}
 	if !exists {
-		return nil, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, errors.New("sandbox state is running but its VMM process is absent"))
+		return nil, vmm.Process{}, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, errors.New("sandbox state is running but its VMM process is absent"))
 	}
-	connection, err = backend.Console(ctx, process)
-	if err != nil {
-		return nil, errdefs.Context(err, "open sandbox console", reference, "open PTY", "inspect the VMM log and retry", false)
-	}
-	return connection, nil
+	return backend, process, nil
 }
 
 // Remove records cleanup intent before deleting the COW directory and releases
@@ -761,7 +792,7 @@ func (s *SandboxService) Console(ctx context.Context, reference string) (connect
 //	                              |                            |
 //	                              +---- retry resumes here <---+
 func (s *SandboxService) Remove(ctx context.Context, reference string) (result types.Sandbox, returnErr error) {
-	if s == nil || s.reader == nil || s.remover == nil || s.cows == nil || s.reporter == nil || s.now == nil {
+	if s == nil || s.reader == nil || s.remover == nil || s.disks == nil || s.reporter == nil || s.now == nil {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")
 	}
 	if reference == "" {
@@ -804,7 +835,7 @@ func (s *SandboxService) Remove(ctx context.Context, reference string) (result t
 	if err := s.reporter.Status("removing sandbox disk"); err != nil {
 		return deleting, errdefs.Context(err, "remove sandbox", reference, "report", "retry removal to finish cleanup", true)
 	}
-	if err := s.cows.Remove(ctx, deleting.ID); err != nil {
+	if err := s.disks.Remove(ctx, deleting.ID); err != nil {
 		return deleting, errdefs.Context(err, "remove sandbox", reference, "disk cleanup", "retry removal to finish cleanup", true)
 	}
 	if err := s.reporter.Status("releasing metadata and image reference"); err != nil {
@@ -824,7 +855,7 @@ func (s *SandboxService) Remove(ctx context.Context, reference string) (result t
 func (s *SandboxService) compensate(ctx context.Context, record types.Sandbox, phase string, cause error) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 	defer cancel()
-	removeErr := s.cows.Remove(cleanupCtx, record.ID)
+	removeErr := s.disks.Remove(cleanupCtx, record.ID)
 	if removeErr == nil {
 		forgetErr := s.creator.Forget(cleanupCtx, record.ID, record.Generation)
 		if forgetErr == nil {

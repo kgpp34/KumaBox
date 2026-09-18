@@ -1,4 +1,4 @@
-.PHONY: all build install test doctor-check race verify lint vet fmt fmt-check deps clean coverage cloc help
+.PHONY: all build agent install test doctor-check race verify lint vet fmt fmt-check deps clean coverage cloc help
 
 REPO_PATH := github.com/kumabox/kumabox
 
@@ -64,6 +64,9 @@ build: | $(LOCALBIN) ## Build kumabox and kumabox-check
 	CGO_ENABLED=0 go build -ldflags "$(GO_LDFLAGS)" -o $(LOCALBIN)/kumabox ./cmd/kumabox
 	cp scripts/kumabox-check.sh $(LOCALBIN)/kumabox-check
 	chmod 0755 $(LOCALBIN)/kumabox-check
+
+agent: | $(LOCALBIN) ## Build the Linux guest agent for the selected GOARCH
+	CGO_ENABLED=0 GOOS=linux GOARCH=$${GOARCH:-$$(go env GOARCH)} go build -trimpath -ldflags "$(GO_LDFLAGS)" -o $(LOCALBIN)/kumabox-agent ./cmd/kumabox-agent
 
 install: build ## Install kumabox and kumabox-check
 	install -d "$(DESTDIR)$(PREFIX)/bin"

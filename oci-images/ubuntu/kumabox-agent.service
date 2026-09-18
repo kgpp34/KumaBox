@@ -1,0 +1,20 @@
+[Unit]
+Description=KumaBox guest agent
+Documentation=https://github.com/kumabox/kumabox
+After=systemd-modules-load.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStartPre=-/sbin/modprobe vmw_vsock_virtio_transport
+ExecStart=/usr/local/bin/kumabox-agent serve
+Restart=always
+RestartSec=2s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kumabox-agent
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

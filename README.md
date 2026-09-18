@@ -226,6 +226,21 @@ kumabox console 123e4567-e89b-42d3-a456-426614174000 --escape-char '^A'
 Console requires terminal stdin. A concurrent `stop` closes the PTY session;
 the console command does not hold the sandbox operation lock while relaying I/O.
 
+Run a command inside a running sandbox with `exec`. Arguments are sent directly
+to the guest without an implicit shell. Standard output and standard error are
+streamed independently, and the guest command status becomes the local process
+status. Standard input is closed by default; use `-i` to attach it.
+
+```bash
+kumabox exec NAME -- uname -a
+kumabox exec -e FOO=bar NAME -- sh -c 'echo "$FOO"'
+echo hello | kumabox exec -i NAME -- cat
+```
+
+The official Ubuntu image starts `kumabox-agent` on vsock port 1024. Early
+userspace also applies the sandbox name as the guest hostname, so the serial
+console and `hostname` report the same identity.
+
 List active sandboxes with `ps`, or include created, stopped, failed, and
 deleting records with `-a`:
 

@@ -84,18 +84,30 @@ func (p LaunchPlan) Validate() error {
 	return nil
 }
 
+// OverlayV1Config contains values rendered into the overlay-v1 guest boot
+// contract. Grouping them keeps future boot parameters explicit.
+type OverlayV1Config struct {
+	// LayerCount is the number of immutable image disks.
+	LayerCount int
+	// Hostname is the validated sandbox name applied by early userspace.
+	Hostname string
+}
+
 // OverlayV1Cmdline renders the public KumaBox boot ABI. Layer disks attach in
 // base-to-top order, while OverlayFS lowerdirs must be listed top-to-base.
-func OverlayV1Cmdline(layerCount int) (string, error) {
-	if layerCount <= 0 {
+func OverlayV1Cmdline(config OverlayV1Config) (string, error) {
+	if config.LayerCount <= 0 {
 		return "", errors.New("overlay-v1 requires at least one image layer")
 	}
-	serials := make([]string, 0, layerCount)
-	for position := layerCount - 1; position >= 0; position-- {
+	if config.Hostname == "" || strings.ContainsAny(config.Hostname, " \t\r\n\x00") {
+		return "", errors.New("overlay-v1 requires a hostname without whitespace")
+	}
+	serials := make([]string, 0, config.LayerCount)
+	for position := config.LayerCount - 1; position >= 0; position-- {
 		serials = append(serials, fmt.Sprintf("%s%d", LayerSerialPrefix, position))
 	}
 	return "console=hvc0 loglevel=3 boot=kumabox-overlay kumabox.layers=" + strings.Join(serials, ",") +
-		" kumabox.cow=" + COWSerial + " clocksource=kvm-clock rw", nil
+		" kumabox.cow=" + COWSerial + " kumabox.hostname=" + config.Hostname + " clocksource=kvm-clock rw", nil
 }
 
 // Process identifies one Linux process generation independently of PID reuse.

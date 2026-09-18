@@ -20,5 +20,6 @@ type Backend interface {
 	Abort(context.Context, Process) error
 	Stop(context.Context, Process) error
 	Console(context.Context, Process) (io.ReadWriteCloser, error)
+	DialVsock(context.Context, Process, uint32) (io.ReadWriteCloser, error)
 	Cleanup(context.Context, types.SandboxID) error
 }

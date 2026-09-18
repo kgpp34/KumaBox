@@ -1,9 +1,11 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"net"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -11,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kumabox/kumabox/agent"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
 	"github.com/kumabox/kumabox/sandbox"
@@ -210,6 +213,7 @@ type fakeRuntime struct {
 	stopErr      error
 	plan         vmm.LaunchPlan
 	console      io.ReadWriteCloser
+	vsock        io.ReadWriteCloser
 }
 
 func (f *fakeRuntime) Type() types.VMMType {
@@ -265,6 +269,14 @@ func (f *fakeRuntime) Console(context.Context, vmm.Process) (io.ReadWriteCloser,
 		f.console = &fakeConsole{}
 	}
 	return f.console, nil
+}
+
+func (f *fakeRuntime) DialVsock(context.Context, vmm.Process, uint32) (io.ReadWriteCloser, error) {
+	*f.steps = append(*f.steps, "vsock")
+	if f.vsock == nil {
+		return nil, errors.New("fake vsock is not configured")
+	}
+	return f.vsock, nil
 }
 
 func (f *fakeRuntime) Cleanup(context.Context, types.SandboxID) error {
@@ -416,9 +428,9 @@ func TestCreateRetainsErrorOwnerWhenDiskCleanupFails(t *testing.T) {
 	prepareFailure := errors.New("mkfs failed")
 	removeFailure := errors.New("disk cleanup failed")
 	service, steps := newTestSandboxService(t, prepareFailure)
-	disks := service.cows.(fakeDisk)
+	disks := service.disks.(fakeDisk)
 	disks.remove = removeFailure
-	service.cows = disks
+	service.disks = disks
 	if _, err := service.Create(t.Context(), CreateSandboxRequest{
 		ImageReference: "demo", Config: types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
 	}); !errors.Is(err, prepareFailure) || !errors.Is(err, removeFailure) {
@@ -764,6 +776,48 @@ func TestConsoleRejectsNonRunningSandboxBeforeRuntimeAccess(t *testing.T) {
 	}
 }
 
+func TestExecUsesExactRunningGenerationAndStreamsResult(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config:         types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	catalog := service.lifecycle.(*fakeCatalog)
+	catalog.record.State, catalog.record.Generation = types.SandboxStateRunning, 4
+	runtimeAdapter := service.runtimes[types.VMMCloudHypervisor].(*fakeRuntime)
+	runtimeAdapter.observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42, Generation: 3}}
+	host, guest := net.Pipe()
+	runtimeAdapter.vsock = host
+	t.Cleanup(func() { _ = guest.Close() })
+	go func() {
+		decoder := agent.NewDecoder(guest)
+		encoder := agent.NewEncoder(guest)
+		request, err := decoder.Decode()
+		if err != nil || request.Type != agent.MessageExec {
+			return
+		}
+		_, _ = decoder.Decode()
+		_ = encoder.Encode(agent.Message{Type: agent.MessageStarted, PID: 100})
+		_ = encoder.Encode(agent.Message{Type: agent.MessageStdout, Data: []byte("out")})
+		_ = encoder.Encode(agent.Message{Type: agent.MessageStderr, Data: []byte("err")})
+		_ = encoder.Encode(agent.Message{Type: agent.MessageExit, ExitCode: 17})
+	}()
+	*steps = nil
+	var stdout, stderr bytes.Buffer
+	code, err := service.Exec(t.Context(), "box", types.ExecConfig{Args: []string{"demo"}}, nil, &stdout, &stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 17 || stdout.String() != "out" || stderr.String() != "err" {
+		t.Fatalf("result: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if got := strings.Join(*steps, ","); got != "resolve,resolve,locate,vsock" {
+		t.Fatalf("exec steps = %q", got)
+	}
+}
+
 func TestRemoveMarksDeletingBeforeDiskAndFinalizesAfterCleanup(t *testing.T) {
 	service, steps := newTestSandboxService(t, nil)
 	if _, err := service.Create(t.Context(), CreateSandboxRequest{
@@ -797,9 +851,9 @@ func TestRemoveFailureRetainsDeletingAndRetryFinishes(t *testing.T) {
 		t.Fatal(err)
 	}
 	failure := errors.New("disk cleanup failed")
-	disks := service.cows.(fakeDisk)
+	disks := service.disks.(fakeDisk)
 	disks.remove = failure
-	service.cows = disks
+	service.disks = disks
 	*steps = nil
 	if _, err := service.Remove(t.Context(), "box"); !errors.Is(err, failure) {
 		t.Fatalf("Remove error = %v", err)
@@ -814,7 +868,7 @@ func TestRemoveFailureRetainsDeletingAndRetryFinishes(t *testing.T) {
 		t.Fatalf("retained delete record = %+v, deleted=%v", catalog.record, catalog.deleted)
 	}
 	disks.remove = nil
-	service.cows = disks
+	service.disks = disks
 	*steps = nil
 	if _, err := service.Remove(t.Context(), "box"); err != nil {
 		t.Fatalf("retry Remove: %v", err)

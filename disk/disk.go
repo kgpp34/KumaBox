@@ -26,6 +26,15 @@ const (
 	ext4Magic uint16 = 0xef53
 )
 
+// Backend is the storage capability required by sandbox lifecycle workflows.
+// Implementations own disk creation, integrity checks, and idempotent cleanup;
+// they never mutate sandbox metadata.
+type Backend interface {
+	Prepare(context.Context, types.SandboxID, int64) error
+	Check(context.Context, types.SandboxID, int64) error
+	Remove(context.Context, types.SandboxID) error
+}
+
 // Ext4 prepares one sparse, private COW disk directly at its sandbox-owned path.
 type Ext4 struct {
 	// paths derives the final path from a validated sandbox ID.
@@ -33,6 +42,8 @@ type Ext4 struct {
 	// mkfs is the executable name or test path invoked without a shell.
 	mkfs string
 }
+
+var _ Backend = (*Ext4)(nil)
 
 // NewExt4 creates the production disk preparer using mkfs.ext4 from PATH.
 func NewExt4(paths sandbox.Paths) *Ext4 {

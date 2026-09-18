@@ -1,4 +1,4 @@
-// Package doctor exposes the Cocoon-compatible host checker through kumabox.
+// Package doctor exposes host prerequisite checks through kumabox.
 package doctor
 
 import (

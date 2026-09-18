@@ -8,11 +8,11 @@ import (
 )
 
 func TestOverlayV1CmdlineListsLayersTopToBase(t *testing.T) {
-	cmdline, err := OverlayV1Cmdline(3)
+	cmdline, err := OverlayV1Cmdline(OverlayV1Config{LayerCount: 3, Hostname: "demo"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(cmdline, "boot=kumabox-overlay") || !strings.Contains(cmdline, "kumabox.layers=kumabox-layer2,kumabox-layer1,kumabox-layer0") || !strings.Contains(cmdline, "kumabox.cow=kumabox-cow") {
+	if !strings.Contains(cmdline, "boot=kumabox-overlay") || !strings.Contains(cmdline, "kumabox.layers=kumabox-layer2,kumabox-layer1,kumabox-layer0") || !strings.Contains(cmdline, "kumabox.cow=kumabox-cow") || !strings.Contains(cmdline, "kumabox.hostname=demo") {
 		t.Fatalf("cmdline = %q", cmdline)
 	}
 }

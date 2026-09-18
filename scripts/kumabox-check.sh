@@ -238,7 +238,7 @@ check_dir() {
 check_dir "$KUMABOX_ROOT_DIR"
 
 # SQLite WAL needs coherent shared memory. KumaBox has one metadata engine and
-# does not probe or preserve Cocoon's per-backend JSON stores.
+# does not probe or preserve metadata owned by other runtimes.
 meta_fstype=$(stat -f -c %T "$KUMABOX_ROOT_DIR" 2>/dev/null || echo unknown)
 case "$meta_fstype" in
     nfs*|cifs|smb*|fuse*)

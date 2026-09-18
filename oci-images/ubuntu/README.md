@@ -13,17 +13,26 @@ Build a local architecture image with BuildKit:
 
 ```sh
 docker buildx build --load --platform linux/amd64 \
-  -t kumabox/ubuntu:24.04 oci-images/ubuntu
+  -f oci-images/ubuntu/Dockerfile \
+  -t kumabox/ubuntu:24.04 .
 ```
+
+Use `--build-arg GOPROXY=<proxy>,direct` when the default Go module proxy is
+not reachable from the BuildKit worker.
 
 Release builds must set `UBUNTU_IMAGE` to an immutable Ubuntu manifest digest:
 
 ```sh
 docker buildx build --platform linux/amd64,linux/arm64 \
   --build-arg UBUNTU_IMAGE=ubuntu@sha256:<manifest-digest> \
-  -t ghcr.io/kgpp34/kumabox/ubuntu:24.04 --push oci-images/ubuntu
+  -f oci-images/ubuntu/Dockerfile \
+  -t ghcr.io/kgpp34/kumabox/ubuntu:24.04 --push .
 ```
 
 The Dockerfile fails its build unless the initrd contains the overlay provider
 and every required filesystem, virtio, and vsock capability is either built
 into the kernel or present in the generated initrd.
+
+The same build compiles `kumabox-agent` from the checked-out source, installs
+it in the guest, and enables `kumabox-agent.service`. No prebuilt agent binary
+is required in the build context.

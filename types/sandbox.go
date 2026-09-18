@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	// DefaultSandboxCPUs matches the initial Cocoon-compatible sandbox shape.
+	// DefaultSandboxCPUs is the default virtual CPU count.
 	DefaultSandboxCPUs uint32 = 2
 	// DefaultSandboxMemory is one gibibyte.
 	DefaultSandboxMemory int64 = 1 << 30
@@ -23,7 +23,7 @@ const (
 	DefaultSandboxStorage int64 = 10 << 30
 	// MinSandboxMemory rejects guests too small for the supported boot path.
 	MinSandboxMemory int64 = 512 << 20
-	// MinSandboxStorage matches the minimum COW capacity accepted by Cocoon.
+	// MinSandboxStorage is the minimum supported COW capacity.
 	MinSandboxStorage int64 = 10 << 30
 	// MaxSandboxCPUs bounds conversion to host-native integer APIs and unreasonable shapes.
 	MaxSandboxCPUs uint32 = 1024

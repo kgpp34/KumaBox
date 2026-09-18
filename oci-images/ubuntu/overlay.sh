@@ -45,11 +45,13 @@ kumabox_device() {
 mountroot() {
 	KUMABOX_LAYERS=
 	KUMABOX_COW=
+	KUMABOX_HOSTNAME=
 	KUMABOX_DEVICE_TIMEOUT=10
 	for argument in $(cat /proc/cmdline); do
 		case "$argument" in
 			kumabox.layers=*) KUMABOX_LAYERS=${argument#kumabox.layers=} ;;
 			kumabox.cow=*) KUMABOX_COW=${argument#kumabox.cow=} ;;
+			kumabox.hostname=*) KUMABOX_HOSTNAME=${argument#kumabox.hostname=} ;;
 			kumabox.timeout=*) KUMABOX_DEVICE_TIMEOUT=${argument#kumabox.timeout=} ;;
 		esac
 	done
@@ -60,11 +62,15 @@ mountroot() {
 	[ "$KUMABOX_DEVICE_TIMEOUT" -gt 0 ] || panic "kumabox.timeout must be positive"
 	[ -n "$KUMABOX_LAYERS" ] || panic "kumabox.layers is required"
 	[ -n "$KUMABOX_COW" ] || panic "kumabox.cow is required"
+	[ -n "$KUMABOX_HOSTNAME" ] || panic "kumabox.hostname is required"
 	case "$KUMABOX_LAYERS" in
 		,*|*,|*,,*) panic "kumabox.layers contains an empty serial" ;;
 	esac
 	case "$KUMABOX_COW" in
 		*[!A-Za-z0-9_.-]*) panic "kumabox.cow contains an invalid serial" ;;
+	esac
+	case "$KUMABOX_HOSTNAME" in
+		*[!A-Za-z0-9_.-]*) panic "kumabox.hostname contains an invalid character" ;;
 	esac
 
 	modprobe erofs 2>/dev/null || true
@@ -103,5 +109,6 @@ mountroot() {
 	mkdir -p "$rootmnt/dev" "$rootmnt/proc" "$rootmnt/sys" "$rootmnt/run" "$rootmnt/etc"
 	rm -f "$rootmnt/etc/machine-id"
 	: >"$rootmnt/etc/machine-id"
+	printf '%s\n' "$KUMABOX_HOSTNAME" >"$rootmnt/etc/hostname"
 	log_success_msg "KumaBox overlay-v1 root is ready"
 }
