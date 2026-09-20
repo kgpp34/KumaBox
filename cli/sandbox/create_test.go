@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -242,13 +243,7 @@ func installFakeMKFS(t *testing.T, base string) {
 }
 
 func newTestProgress(writer *bytes.Buffer) (*sandboxProgress, error) {
-	progress := &sandboxProgress{
-		writer: writer, operation: "create sandbox", label: `Create "box"`, status: "preparing sandbox", recovery: "inspect the sandbox state",
-		stop: make(chan struct{}), done: make(chan struct{}),
-	}
-	if err := progress.render(); err != nil {
-		return nil, err
-	}
-	close(progress.done)
-	return progress, nil
+	return newSandboxProgress(
+		context.Background(), writer, "create sandbox", `Create "box"`, "preparing sandbox", "inspect the sandbox state",
+	)
 }

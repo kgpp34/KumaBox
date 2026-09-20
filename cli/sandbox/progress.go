@@ -5,47 +5,33 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"sync"
-	"time"
 
-	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
+	cliprogress "github.com/kumabox/kumabox/cli/progress"
 	"github.com/kumabox/kumabox/core"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
 )
 
-// sandboxProgress serializes terminal animation, stage callbacks, and result output.
-// Redirected stderr receives plain stage lines and stdout remains command data only.
+// sandboxProgress adapts SandboxService stages and commit events to the shared
+// renderer while retaining operation-specific recovery context.
 type sandboxProgress struct {
-	// mu serializes ticker, callback, and result output writes.
+	// mu protects stage and commit state across reporter and final callbacks.
 	mu sync.Mutex
-	// writer receives progress independently of stdout command results.
-	writer io.Writer
-	// operation supplies error context such as create sandbox or remove sandbox.
+	// renderer owns terminal detection, serialization, animation, and shutdown.
+	renderer *cliprogress.Renderer
+	// operation supplies structured error context.
 	operation string
-	// label identifies the operation and quoted user-facing reference.
+	// label identifies the operation and quoted sandbox reference.
 	label string
 	// status is the current application workflow stage.
 	status string
-	// recovery tells callers how to handle a progress rendering failure.
+	// recovery describes how to inspect or retry a reporting failure.
 	recovery string
-	// animated selects terminal redraws instead of plain log lines.
-	animated bool
-	// committed records that durable state changed despite a later failure.
+	// committed records durable state changed before a later error.
 	committed bool
-	// frame indexes the next spinner glyph.
-	frame int
-	// err retains the first rendering failure.
-	err error
-	// stopOnce makes Finish safe if cleanup calls it more than once.
-	stopOnce sync.Once
-	// stop requests ticker shutdown.
-	stop chan struct{}
-	// done is closed after the ticker goroutine exits.
-	done chan struct{}
 }
 
 var _ core.SandboxReporter = (*sandboxProgress)(nil)
@@ -70,140 +56,68 @@ func startStopProgress(command *cobra.Command, reference string) (*sandboxProgre
 	return startProgress(command, "stop sandbox", fmt.Sprintf("Stop %q", reference), "preparing stop", "retry the stop or inspect the sandbox runtime")
 }
 
-// startProgress writes an initial stage before starting its ticker.
 func startProgress(command *cobra.Command, operation, label, status, recovery string) (*sandboxProgress, error) {
-	writer := command.ErrOrStderr()
-	file, isFile := writer.(*os.File)
-	progress := &sandboxProgress{
-		writer: writer, operation: operation, label: label, status: status, recovery: recovery,
-		animated: isFile && isatty.IsTerminal(file.Fd()), stop: make(chan struct{}), done: make(chan struct{}),
-	}
-	if err := progress.render(); err != nil {
+	return newSandboxProgress(command.Context(), command.ErrOrStderr(), operation, label, status, recovery)
+}
+
+// newSandboxProgress builds the domain adapter and writes its initial status.
+func newSandboxProgress(ctx context.Context, writer io.Writer, operation, label, status, recovery string) (*sandboxProgress, error) {
+	renderer, err := cliprogress.New(ctx, writer, label+" · "+status)
+	if err != nil {
 		return nil, err
 	}
-	if progress.animated {
-		go progress.animate(command.Context())
-	} else {
-		close(progress.done)
-	}
-	return progress, nil
+	return &sandboxProgress{
+		renderer: renderer, operation: operation, label: label, status: status, recovery: recovery,
+	}, nil
 }
 
-// animate redraws until command cleanup finishes, cancellation occurs, or output fails.
-func (p *sandboxProgress) animate(ctx context.Context) {
-	defer close(p.done)
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-p.stop:
-			return
-		case <-ticker.C:
-			p.mu.Lock()
-			if p.err == nil {
-				p.err = p.render()
-			}
-			failed := p.err != nil
-			p.mu.Unlock()
-			if failed {
-				return
-			}
-		}
-	}
-}
-
-// Status updates the current workflow stage.
+// Status updates the current sandbox workflow stage.
 func (p *sandboxProgress) Status(status string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.err != nil {
-		return p.err
-	}
 	p.status = status
-	p.err = p.render()
-	return p.err
+	return p.renderer.Update(p.label + " · " + status)
 }
 
-// Committed records that durable application state changed before reporting finished.
+// Committed records a durable sandbox state change before cleanup completes.
 func (p *sandboxProgress) Committed(types.Sandbox) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.committed = true
 	p.status = "finishing"
-	return p.err
+	if p.renderer.Animated() {
+		return p.renderer.Update(p.label + " · " + p.status)
+	}
+	return p.renderer.Err()
 }
 
-// Output coordinates stdout writes with terminal redraws.
+// Output coordinates command results with a live terminal frame.
 func (p *sandboxProgress) Output(writer io.Writer) io.Writer {
-	return progressWriter{progress: p, writer: writer}
+	return p.renderer.Output(writer)
 }
 
-// progressWriter prevents a live animation from visually mixing with command output.
-type progressWriter struct {
-	// progress owns output serialization and animation state.
-	progress *sandboxProgress
-	// writer receives the unchanged command result.
-	writer io.Writer
-}
-
-func (w progressWriter) Write(data []byte) (int, error) {
-	p := w.progress
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.err != nil {
-		return 0, p.err
-	}
-	if p.animated {
-		if _, err := fmt.Fprint(p.writer, "\r\x1b[2K"); err != nil {
-			p.err = err
-			return 0, err
-		}
-	}
-	n, writeErr := w.writer.Write(data)
-	if p.animated {
-		p.err = p.render()
-	}
-	return n, errors.Join(writeErr, p.err)
-}
-
-// Finish joins the ticker and emits one unambiguous final status line.
+// Finish maps sandbox commit and cancellation facts to a generic final outcome.
 func (p *sandboxProgress) Finish(operationErr error) error {
-	p.stopOnce.Do(func() { close(p.stop); <-p.done })
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	var classified *errdefs.Error
 	if errors.As(operationErr, &classified) && classified.Committed {
 		p.committed = true
 	}
-	resultText, symbol := "complete", "✓"
-	if operationErr != nil || p.err != nil {
-		resultText, symbol = "failed", "✗"
-		if p.committed {
-			resultText = "committed with errors"
-		} else if errors.Is(operationErr, context.Canceled) {
-			resultText = "canceled"
+	renderErr := p.renderer.Err()
+	outcome := cliprogress.Succeeded
+	if operationErr != nil || renderErr != nil {
+		switch {
+		case p.committed:
+			outcome = cliprogress.CommittedWithErrors
+		case errors.Is(operationErr, context.Canceled):
+			outcome = cliprogress.Canceled
+		default:
+			outcome = cliprogress.Failed
 		}
 	}
-	message := fmt.Sprintf("%s %s", p.label, resultText)
-	if p.animated {
-		message = "\r\x1b[2K" + symbol + " " + message
-	}
-	_, err := fmt.Fprintln(p.writer, message)
-	return errdefs.Context(errors.Join(p.err, err), p.operation, p.label, "report", p.recovery, p.committed)
-}
+	committed, operation, label, recovery := p.committed, p.operation, p.label, p.recovery
+	p.mu.Unlock()
 
-// render writes one spinner frame or one plain stage line. The caller holds mu
-// after animation starts.
-func (p *sandboxProgress) render() error {
-	message := p.label + " · " + p.status
-	if p.animated {
-		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-		_, err := fmt.Fprintf(p.writer, "\r\x1b[2K%s %s", frames[p.frame%len(frames)], message)
-		p.frame++
-		return err
-	}
-	_, err := fmt.Fprintln(p.writer, message)
-	return err
+	reportErr := p.renderer.Finish(label, outcome, "")
+	return errdefs.Context(reportErr, operation, label, "report", recovery, committed)
 }
