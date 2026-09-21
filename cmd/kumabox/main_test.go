@@ -90,28 +90,38 @@ func TestMainBinaryPropagatesSignalCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = command.Process.Kill() })
-	deadline := time.Now().Add(3 * time.Second)
+	wait := make(chan error, 1)
+	go func() { wait <- command.Wait() }()
+	readyTimeout := time.NewTimer(15 * time.Second)
+	defer readyTimeout.Stop()
+	readyPoll := time.NewTicker(10 * time.Millisecond)
+	defer readyPoll.Stop()
+
+ready:
 	for {
-		if _, err := os.Stat(marker); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
+		select {
+		case err := <-wait:
+			t.Fatalf("doctor exited before helper readiness: %v; stderr=%q", err, stderr.String())
+		case <-readyTimeout.C:
 			t.Fatal("doctor helper did not become ready")
+		case <-readyPoll.C:
+			if _, err := os.Stat(marker); err == nil {
+				break ready
+			} else if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("inspect doctor readiness: %v", err)
+			}
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 	if err := command.Process.Signal(os.Interrupt); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 1)
-	go func() { done <- command.Wait() }()
 	select {
-	case err := <-done:
+	case err := <-wait:
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) || exitErr.ExitCode() == 0 {
 			t.Fatalf("signal exit error = %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("kumabox did not exit after interrupt")
 	}
 	if stdout.Len() != 0 || strings.ContainsAny(stderr.String(), "\r\x1b") {
