@@ -35,10 +35,13 @@ jobs:
       - name: Race detector
         run: make race
 
+      - name: Lint
+        run: make lint
+
       - name: Check module files
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
 
-      - name: Reject tracked local documentation
-        run: test -z "$(git ls-files docs)"
+      - name: Check documentation links
+        run: make docs-check

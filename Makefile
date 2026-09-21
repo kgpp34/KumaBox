@@ -1,4 +1,4 @@
-.PHONY: all build agent install test doctor-check race verify lint vet fmt fmt-check deps clean coverage cloc help
+.PHONY: all build agent install test doctor-check docs-check race verify lint vet fmt fmt-check deps clean coverage cloc help
 
 REPO_PATH := github.com/kumabox/kumabox
 
@@ -82,10 +82,13 @@ doctor-check: ## Check host and guest shell script syntax
 	bash -n scripts/kumabox-check.sh
 	sh -n oci-images/ubuntu/overlay.sh
 
+docs-check: ## Check relative Markdown links
+	bash scripts/check-doc-links.sh
+
 race: ## Run all Go tests with race detection
 	go test -race ./...
 
-verify: fmt-check vet doctor-check test build ## Verify formatting, tests and build
+verify: fmt-check vet doctor-check docs-check test build ## Verify formatting, docs, tests and build
 
 coverage: test ## Generate and display coverage report
 	go tool cover -func=coverage.out
