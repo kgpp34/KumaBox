@@ -19,7 +19,7 @@ kumabox create|start|stop|ps|inspect|logs|console|exec|rm
 kumabox version
 ```
 
-Image import and sandbox lifecycle are implemented locally. Real Cloud Hypervisor, cgroup, vsock, ext4, and EROFS behavior requires Linux and is covered by the checked-in runbooks. Networking, `run`, snapshots, clone, and Firecracker remain planned work; see [the roadmap](docs/ROADMAP.md).
+Image import and sandbox lifecycle are implemented locally. Real Cloud Hypervisor, cgroup, vsock, ext4, and EROFS behavior requires Linux acceptance testing. Networking, `run`, snapshots, clone, and Firecracker remain planned work.
 
 ## Build and test
 
@@ -40,7 +40,7 @@ sudo make install
 kumabox doctor
 ```
 
-The host checker reports Linux, KVM, cgroup v2, Cloud Hypervisor, `mkfs.erofs`, `mkfs.ext4`, and other runtime prerequisites. See [host requirements](docs/HOST.md).
+The host checker reports Linux, KVM, cgroup v2, Cloud Hypervisor, `mkfs.erofs`, `mkfs.ext4`, and other runtime prerequisites.
 
 ## Image workflow
 
@@ -82,7 +82,7 @@ Configuration precedence is:
 explicit flag > environment > explicit --config file > default
 ```
 
-KumaBox never searches for an implicit configuration file. Root paths can be set with `--root-dir`, `--run-dir`, and `--log-dir`. All settings and environment variable names are documented in [configuration](docs/CONFIGURATION.md).
+KumaBox never searches for an implicit configuration file. Root paths can be set with `--root-dir`, `--run-dir`, and `--log-dir`.
 
 ## Architecture
 
@@ -101,15 +101,11 @@ The repository uses root-level modules instead of `internal` or a generic `pkg` 
 | `metadata` | Transaction contracts and SQLite implementation |
 | `cgroup`, `storage`, `lock/flock` | Host resource adapters |
 
-The full ownership and dependency rules are in [architecture](docs/ARCHITECTURE.md). User-visible contracts are in [behavior](docs/BEHAVIOR.md).
-
-## Documentation
-
-Start with [docs/README.md](docs/README.md). Normative design documents, accepted decisions, runbooks, and the active roadmap are tracked in Git and reviewed with code.
+Local design notes and Linux runbooks live under the ignored `docs/` directory. They are working material and are never committed.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Changes to command behavior, architecture, persistent data, or guest protocols must update the corresponding normative document in the same commit.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

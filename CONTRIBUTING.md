@@ -26,18 +26,8 @@ make verify
 make lint
 ```
 
-Run the relevant Linux acceptance runbook for changes involving KVM, Cloud Hypervisor, cgroup v2, CNI, EROFS, ext4, or vsock. Record the host versions and result in the pull request.
+Run the relevant local Linux acceptance procedure for changes involving KVM, Cloud Hypervisor, cgroup v2, CNI, EROFS, ext4, or vsock. Record the host versions and result in the pull request.
 
-## Compatibility and documentation
+## Compatibility
 
-Cocoon commit `27ae1e0b2a65c9082c7a1b33c5245bfe43a4854d` is the feature and behavior reference. A change may intentionally differ when KumaBox has a stronger safety or modularity guarantee, but the difference must be documented in [docs/COCOON-MAP.md](docs/COCOON-MAP.md).
-
-Update documentation in the same commit when a change affects:
-
-- commands, flags, output, exit codes, or lifecycle behavior;
-- package ownership or dependency direction;
-- persisted metadata, managed paths, or recovery rules;
-- host requirements, configuration, or guest protocols;
-- roadmap status or Linux acceptance steps.
-
-Use `make docs-check` to validate relative Markdown links.
+Cocoon commit `27ae1e0b2a65c9082c7a1b33c5245bfe43a4854d` is the feature and behavior reference. A change may intentionally differ when KumaBox has a stronger safety or modularity guarantee; explain material behavior differences in the pull request. Design notes under `docs/` are local working material and must not be committed.
