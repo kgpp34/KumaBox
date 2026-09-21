@@ -36,3 +36,35 @@ func TestLaunchPlanRequiresBaseToTopReadOnlyLayersAndFinalCOW(t *testing.T) {
 		t.Fatal("accepted a writable shared image layer")
 	}
 }
+
+func TestProcessValidationRequiresCompleteIdentity(t *testing.T) {
+	valid := Process{
+		PID: 42, StartTicks: 100, BootID: "host-boot",
+		SandboxID: "123e4567-e89b-42d3-a456-426614174000", Generation: 3,
+		Binary: "cloud-hypervisor", APISocket: "/run/kumabox/api.sock",
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*Process)
+	}{
+		{name: "PID", mutate: func(process *Process) { process.PID = 0 }},
+		{name: "start time", mutate: func(process *Process) { process.StartTicks = 0 }},
+		{name: "boot ID", mutate: func(process *Process) { process.BootID = "" }},
+		{name: "sandbox ID", mutate: func(process *Process) { process.SandboxID = types.SandboxID("broken") }},
+		{name: "generation", mutate: func(process *Process) { process.Generation = 0 }},
+		{name: "binary", mutate: func(process *Process) { process.Binary = "" }},
+		{name: "API socket", mutate: func(process *Process) { process.APISocket = "relative.sock" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := valid
+			test.mutate(&candidate)
+			if err := candidate.Validate(); err == nil {
+				t.Fatalf("accepted incomplete process identity: %+v", candidate)
+			}
+		})
+	}
+}

@@ -245,12 +245,24 @@ func (d *Driver) Observe(ctx context.Context, id types.SandboxID, generation uin
 
 // WaitReady waits for the exact process identity to expose a Running VM.
 func (d *Driver) WaitReady(ctx context.Context, process vmm.Process) error {
-	deadline := time.NewTimer(d.startupTimeout)
+	return waitReady(ctx, process, d.startupTimeout, d.Observe)
+}
+
+// waitReady owns readiness policy independently of process and HTTP adapters,
+// making early exit, identity changes, cancellation, and timeout directly
+// testable at the policy boundary.
+func waitReady(
+	ctx context.Context,
+	process vmm.Process,
+	timeout time.Duration,
+	observe func(context.Context, types.SandboxID, uint64) (vmm.Observation, error),
+) error {
+	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(probeInterval)
 	defer ticker.Stop()
 	for {
-		observation, err := d.Observe(ctx, process.SandboxID, process.Generation)
+		observation, err := observe(ctx, process.SandboxID, process.Generation)
 		if err != nil {
 			return err
 		}

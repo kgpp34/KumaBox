@@ -62,12 +62,7 @@ func (m *Manager) Prepare(_ context.Context, id types.SandboxID, cpus uint32) (*
 	if err := os.Mkdir(directory, 0o750); err != nil && !errors.Is(err, fs.ErrExist) {
 		return nil, fmt.Errorf("create cgroup scope: %w", err)
 	}
-	weight := min(int(cpus), 10_000)
-	if err := writeControl(directory, "cpu.weight", strconv.Itoa(weight)); err != nil {
-		return nil, err
-	}
-	quota := int64(cpus) * cpuPeriodMicros
-	if err := writeControl(directory, "cpu.max", fmt.Sprintf("%d %d", quota, cpuPeriodMicros)); err != nil {
+	if err := writeCPULimits(directory, cpus); err != nil {
 		return nil, err
 	}
 	scope, err := os.Open(directory) //nolint:gosec // directory derives from fixed parent and validated UUID
@@ -75,6 +70,19 @@ func (m *Manager) Prepare(_ context.Context, id types.SandboxID, cpus uint32) (*
 		return nil, fmt.Errorf("open cgroup scope: %w", err)
 	}
 	return scope, nil
+}
+
+// writeCPULimits converges retryable scope controls before process placement.
+func writeCPULimits(directory string, cpus uint32) error {
+	weight := min(int(cpus), 10_000)
+	if err := writeControl(directory, "cpu.weight", strconv.Itoa(weight)); err != nil {
+		return err
+	}
+	quota := int64(cpus) * cpuPeriodMicros
+	if err := writeControl(directory, "cpu.max", fmt.Sprintf("%d %d", quota, cpuPeriodMicros)); err != nil {
+		return err
+	}
+	return nil
 }
 
 // PIDs returns every positive process currently owned by a sandbox scope.

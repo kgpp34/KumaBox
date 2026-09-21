@@ -2,12 +2,13 @@ package cloudhypervisor
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -96,7 +97,7 @@ func TestOpenConsolePTYRejectsUnmanagedOrRegularPaths(t *testing.T) {
 	}
 }
 
-func TestBuildArgsPreservesDiskOrderAndAccessMode(t *testing.T) {
+func TestBuildArgsMatchesDirectBootContract(t *testing.T) {
 	plan := vmm.LaunchPlan{
 		SandboxID: "123e4567-e89b-42d3-a456-426614174000", Generation: 3,
 		CPUs: 2, Memory: 1 << 30, BootProfile: types.BootProfileOverlayV1,
@@ -108,17 +109,25 @@ func TestBuildArgsPreservesDiskOrderAndAccessMode(t *testing.T) {
 		},
 	}
 	args := buildArgs(plan, "/run/api.sock", "/run/vsock.uds")
-	diskIndex := slices.Index(args, "--disk")
-	if diskIndex < 0 || diskIndex+3 >= len(args) {
-		t.Fatalf("disk arguments missing: %v", args)
+	want := []string{
+		"--api-socket", "/run/api.sock",
+		"--cpus", fmt.Sprintf("boot=2,max=%d", max(runtime.NumCPU(), 2)),
+		"--memory", "size=1073741824",
+		"--disk",
+		"path=/layers/0.erofs,image_type=raw,num_queues=2,queue_size=512,serial=kumabox-layer0,readonly=on",
+		"path=/layers/1.erofs,image_type=raw,num_queues=2,queue_size=512,serial=kumabox-layer1,readonly=on",
+		"path=/sandbox/cow.raw,image_type=raw,num_queues=2,queue_size=512,serial=kumabox-cow,direct=on,sparse=on",
+		"--kernel", "/boot/vmlinuz",
+		"--initramfs", "/boot/initrd.img",
+		"--cmdline", "boot=kumabox-overlay",
+		"--rng", "src=/dev/urandom",
+		"--watchdog",
+		"--balloon", "size=268435456,deflate_on_oom=on,free_page_reporting=on",
+		"--vsock", "cid=3,socket=/run/vsock.uds",
+		"--serial", "off",
+		"--console", "pty",
 	}
-	disks := args[diskIndex+1 : diskIndex+4]
-	if !strings.Contains(disks[0], "serial=kumabox-layer0") || !strings.Contains(disks[0], "readonly=on") ||
-		!strings.Contains(disks[1], "serial=kumabox-layer1") || !strings.Contains(disks[1], "readonly=on") ||
-		!strings.Contains(disks[2], "serial=kumabox-cow") || !strings.Contains(disks[2], "direct=on") || !strings.Contains(disks[2], "sparse=on") {
-		t.Fatalf("disk arguments = %v", disks)
-	}
-	if slices.Index(args, "--kernel") < diskIndex+4 || slices.Index(args, "--initramfs") < 0 || slices.Index(args, "--vsock") < 0 {
-		t.Fatalf("boot arguments = %v", args)
+	if !slices.Equal(args, want) {
+		t.Fatalf("buildArgs() =\n%q\nwant\n%q", args, want)
 	}
 }

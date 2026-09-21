@@ -57,6 +57,16 @@ func TestRegistryRoutesAndRejectsInvalidSets(t *testing.T) {
 	if _, err := NewRegistry(nilBackend); err == nil {
 		t.Fatal("NewRegistry() accepted a typed nil backend")
 	}
+	other, err := NewRegistry(registryBackend{typ: types.VMMFirecracker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.Backend(types.VMMCloudHypervisor); err == nil {
+		t.Fatal("independent registry leaked another instance's backend")
+	}
+	if got, err := registry.Backend(types.VMMCloudHypervisor); err != nil || got != backend {
+		t.Fatalf("original registry changed after constructing another instance: %#v, %v", got, err)
+	}
 }
 
 func TestRegistryClassifiesLookupFailures(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -134,6 +135,143 @@ func TestServerRejectsUnexpectedInputFrame(t *testing.T) {
 		t.Fatalf("protocol response = %#v", message)
 	}
 	_ = client.Close()
+}
+
+func TestServerReportsExitWhenCommandFinishesBeforeStdin(t *testing.T) {
+	client, guest := net.Pipe()
+	server := &Server{logger: log.New(io.Discard, "", 0), connections: make(map[net.Conn]struct{})}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		server.handle(t.Context(), guest)
+	}()
+
+	encoder := NewEncoder(client)
+	decoder := NewDecoder(client)
+	if err := encoder.Encode(Message{Type: MessageExec, Argv: []string{"sh", "-c", "exit 19"}}); err != nil {
+		t.Fatal(err)
+	}
+	if message, err := decoder.Decode(); err != nil || message.Type != MessageStarted {
+		t.Fatalf("started response = %#v, %v", message, err)
+	}
+	message, err := decoder.Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.Type != MessageExit || message.ExitCode != 19 {
+		t.Fatalf("exit response = %#v", message)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stdin receiver survived command exit")
+	}
+}
+
+type queueListener struct {
+	connections chan net.Conn
+	accepted    chan struct{}
+	closed      chan struct{}
+	closeOnce   sync.Once
+}
+
+func newQueueListener(capacity int) *queueListener {
+	return &queueListener{
+		connections: make(chan net.Conn, capacity),
+		accepted:    make(chan struct{}, capacity),
+		closed:      make(chan struct{}),
+	}
+}
+
+func (l *queueListener) Accept() (net.Conn, error) {
+	select {
+	case connection := <-l.connections:
+		l.accepted <- struct{}{}
+		return connection, nil
+	case <-l.closed:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *queueListener) Close() error {
+	l.closeOnce.Do(func() { close(l.closed) })
+	return nil
+}
+
+func (*queueListener) Addr() net.Addr { return testAddress("agent") }
+
+type testAddress string
+
+func (a testAddress) Network() string { return "test" }
+func (a testAddress) String() string  { return string(a) }
+
+func TestServerShutdownClosesIdleConnectionsAndWaits(t *testing.T) {
+	const connectionCount = 3
+	listener := newQueueListener(connectionCount)
+	server, err := NewServer(listener, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- server.Serve(ctx) }()
+
+	clients := make([]net.Conn, 0, connectionCount)
+	for range connectionCount {
+		client, guest := net.Pipe()
+		if err := client.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		clients = append(clients, client)
+		listener.connections <- guest
+	}
+	for range connectionCount {
+		select {
+		case <-listener.accepted:
+		case <-time.After(time.Second):
+			t.Fatal("server did not accept every connection")
+		}
+	}
+	cancel()
+	select {
+	case err := <-serveDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not wait for idle handlers to exit")
+	}
+	for index, client := range clients {
+		if _, err := client.Read(make([]byte, 1)); err == nil {
+			t.Fatalf("connection %d remained open after shutdown", index)
+		}
+		_ = client.Close()
+	}
+}
+
+type failingListener struct {
+	err    error
+	closed bool
+}
+
+func (l *failingListener) Accept() (net.Conn, error) { return nil, l.err }
+func (l *failingListener) Close() error {
+	l.closed = true
+	return nil
+}
+func (*failingListener) Addr() net.Addr { return testAddress("failing") }
+
+func TestServerReturnsPermanentAcceptError(t *testing.T) {
+	failure := errors.New("accept failed permanently")
+	listener := &failingListener{err: failure}
+	server, err := NewServer(listener, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = server.Serve(t.Context())
+	if !errors.Is(err, failure) || !listener.closed {
+		t.Fatalf("Serve error = %v, listener closed = %v", err, listener.closed)
+	}
 }
 
 func TestMergeEnvironmentReplacesInheritedValues(t *testing.T) {
