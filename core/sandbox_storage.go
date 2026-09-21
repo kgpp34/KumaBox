@@ -108,7 +108,7 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 //	                              |                            |
 //	                              +---- retry resumes here <---+
 func (s *SandboxService) Remove(ctx context.Context, reference string) (result types.Sandbox, returnErr error) {
-	if s == nil || s.dependencies.catalog == nil || s.dependencies.disks == nil || s.dependencies.reporter == nil || s.dependencies.now == nil {
+	if s == nil || s.dependencies.catalog == nil || s.dependencies.disks == nil || s.dependencies.runtimes.Len() == 0 || s.dependencies.reporter == nil || s.dependencies.now == nil {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")
 	}
 	if reference == "" {
@@ -139,6 +139,16 @@ func (s *SandboxService) Remove(ctx context.Context, reference string) (result t
 			returnErr = errdefs.Context(errors.Join(returnErr, unlockErr), "remove sandbox", reference, "unlock", "inspect the sandbox removal state before retrying", committed)
 		}
 	}()
+	// The first resolve selects the lock; this second resolve supplies the
+	// authoritative generation and persisted backend for cleanup.
+	record, err = s.dependencies.catalog.Resolve(ctx, record.ID.String())
+	if err != nil {
+		return types.Sandbox{}, err
+	}
+	backend, err := s.dependencies.runtimes.Backend(record.VMM)
+	if err != nil {
+		return record, err
+	}
 	if err := s.dependencies.reporter.Status("marking sandbox for deletion"); err != nil {
 		return types.Sandbox{}, err
 	}
@@ -153,6 +163,12 @@ func (s *SandboxService) Remove(ctx context.Context, reference string) (result t
 	}
 	if err := s.dependencies.disks.Remove(ctx, deleting.ID); err != nil {
 		return deleting, errdefs.Context(err, "remove sandbox", reference, "disk cleanup", "retry removal to finish cleanup", true)
+	}
+	if err := s.dependencies.reporter.Status("removing VMM logs"); err != nil {
+		return deleting, errdefs.Context(err, "remove sandbox", reference, "report", "retry removal to finish cleanup", true)
+	}
+	if err := backend.RemoveLogs(ctx, deleting.ID); err != nil {
+		return deleting, errdefs.Context(err, "remove sandbox", reference, "log cleanup", "retry removal to finish cleanup", true)
 	}
 	if err := s.dependencies.reporter.Status("releasing metadata and image reference"); err != nil {
 		return deleting, errdefs.Context(err, "remove sandbox", reference, "report", "retry removal to finish cleanup", true)

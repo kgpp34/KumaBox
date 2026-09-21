@@ -34,6 +34,32 @@ func NewInspectCommand(configuration configProvider) *cobra.Command {
 	return command
 }
 
+// NewLogsCommand builds the persistent VMM log reader. Follow mode writes only
+// log bytes to stdout, leaving cancellation and diagnostics to the CLI shell.
+func NewLogsCommand(configuration configProvider) *cobra.Command {
+	var follow bool
+	var tail int
+	command := &cobra.Command{
+		Use:   "logs [flags] SANDBOX",
+		Short: "show sandbox VMM logs",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) (returnErr error) {
+			reference := args[0]
+			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "read sandbox logs", reference, "close metadata", "retry the log stream", false))
+			}()
+			return service.Logs(command.Context(), reference, core.SandboxLogOptions{Tail: tail, Follow: follow}, command.OutOrStdout())
+		},
+	}
+	command.Flags().BoolVarP(&follow, "follow", "f", false, "follow appended log output")
+	command.Flags().IntVar(&tail, "tail", 0, "show only the last N lines (0 = all)")
+	return command
+}
+
 // NewListCommand builds the top-level Docker-style sandbox process listing.
 func NewListCommand(configuration configProvider) *cobra.Command {
 	var includeAll, asJSON, quiet bool

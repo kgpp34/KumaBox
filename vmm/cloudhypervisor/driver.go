@@ -351,12 +351,22 @@ func (d *Driver) Console(ctx context.Context, process vmm.Process) (io.ReadWrite
 	return console, nil
 }
 
+// Logs streams the persistent process output owned by this backend.
+func (d *Driver) Logs(ctx context.Context, id types.SandboxID, options vmm.LogOptions, output io.Writer) error {
+	return d.paths.Logs(ctx, id, options, output)
+}
+
 // Cleanup removes runtime state and an empty cgroup after absence is proven.
 func (d *Driver) Cleanup(ctx context.Context, id types.SandboxID) error {
 	if err := d.scopes.Remove(ctx, id); err != nil {
 		return err
 	}
 	return d.paths.Clear(id)
+}
+
+// RemoveLogs releases persistent diagnostics only during sandbox removal.
+func (d *Driver) RemoveLogs(ctx context.Context, id types.SandboxID) error {
+	return d.paths.RemoveLogs(ctx, id)
 }
 
 // recoverProcess inspects only the sandbox's cgroup and refuses unknown members.

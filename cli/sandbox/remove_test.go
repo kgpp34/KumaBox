@@ -14,6 +14,7 @@ import (
 	sandboxfs "github.com/kumabox/kumabox/sandbox"
 	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/types"
+	"github.com/kumabox/kumabox/vmm"
 )
 
 func TestRemoveCommandClosesCreateAndImageReferenceLifecycle(t *testing.T) {
@@ -25,6 +26,24 @@ func TestRemoveCommandClosesCreateAndImageReferenceLifecycle(t *testing.T) {
 	installFakeMKFS(t, base)
 
 	firstID := executeCreate(t, roots, "box")
+	vmmPaths, err := vmm.NewPaths(roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logDir, err := vmmPaths.LogDir(firstID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.EnsureDir(logDir); err != nil {
+		t.Fatal(err)
+	}
+	logFile, err := vmmPaths.LogFile(firstID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logFile, []byte("persistent VMM output\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	remove := NewRemoveCommand(func() config.Config { return sandboxTestConfig(roots) })
 	remove.SetArgs([]string{"box", "--json"})
 	var stdout, stderr bytes.Buffer
@@ -53,6 +72,9 @@ func TestRemoveCommandClosesCreateAndImageReferenceLifecycle(t *testing.T) {
 	}
 	if _, err := os.Stat(firstDir); !os.IsNotExist(err) {
 		t.Fatalf("removed sandbox directory still exists: %v", err)
+	}
+	if _, err := os.Stat(logDir); !os.IsNotExist(err) {
+		t.Fatalf("removed sandbox log directory still exists: %v", err)
 	}
 
 	secondID := executeCreate(t, roots, "box")

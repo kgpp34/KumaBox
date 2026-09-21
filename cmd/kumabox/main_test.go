@@ -38,6 +38,8 @@ func TestMainBinaryStreamsAndExitCodes(t *testing.T) {
 		{name: "ps output validation", args: append(append([]string(nil), global...), "ps", "--json", "--quiet"), wantCode: 5, stderrContains: "INVALID_ARGUMENT"},
 		{name: "inspect missing", args: append(append([]string(nil), global...), "inspect", "missing"), wantCode: 3, stderrContains: "NOT_FOUND"},
 		{name: "inspect flag validation", args: append(append([]string(nil), global...), "inspect", "missing", "--json"), wantCode: 2, stderrContains: "unknown flag"},
+		{name: "logs missing", args: append(append([]string(nil), global...), "logs", "missing"), wantCode: 3, stderrContains: "NOT_FOUND"},
+		{name: "logs usage", args: append(append([]string(nil), global...), "logs"), wantCode: 2, stderrContains: "kumabox:"},
 		{name: "start missing", args: append(append([]string(nil), global...), "start", "missing"), wantCode: 3, stderrContains: `Start "missing" failed`},
 		{name: "start usage", args: append(append([]string(nil), global...), "start", "one", "two"), wantCode: 2, stderrContains: "kumabox:"},
 		{name: "stop missing", args: append(append([]string(nil), global...), "stop", "missing"), wantCode: 3, stderrContains: `Stop "missing" failed`},

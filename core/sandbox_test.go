@@ -202,15 +202,19 @@ func (f fakeReporter) Committed(types.Sandbox) error {
 }
 
 type fakeRuntime struct {
-	typ          types.VMMType
-	steps        *[]string
-	observation  vmm.Observation
-	preflightErr error
-	launchErr    error
-	stopErr      error
-	plan         vmm.LaunchPlan
-	console      io.ReadWriteCloser
-	vsock        io.ReadWriteCloser
+	typ           types.VMMType
+	steps         *[]string
+	observation   vmm.Observation
+	preflightErr  error
+	launchErr     error
+	stopErr       error
+	plan          vmm.LaunchPlan
+	console       io.ReadWriteCloser
+	vsock         io.ReadWriteCloser
+	logs          string
+	logsErr       error
+	removeLogsErr error
+	logOptions    vmm.LogOptions
 }
 
 func (f *fakeRuntime) Type() types.VMMType {
@@ -276,9 +280,24 @@ func (f *fakeRuntime) DialVsock(context.Context, vmm.Process, uint32) (io.ReadWr
 	return f.vsock, nil
 }
 
+func (f *fakeRuntime) Logs(_ context.Context, _ types.SandboxID, options vmm.LogOptions, output io.Writer) error {
+	*f.steps = append(*f.steps, "logs")
+	f.logOptions = options
+	if f.logsErr != nil {
+		return f.logsErr
+	}
+	_, err := io.WriteString(output, f.logs)
+	return err
+}
+
 func (f *fakeRuntime) Cleanup(context.Context, types.SandboxID) error {
 	*f.steps = append(*f.steps, "cleanup")
 	return nil
+}
+
+func (f *fakeRuntime) RemoveLogs(context.Context, types.SandboxID) error {
+	*f.steps = append(*f.steps, "remove-logs")
+	return f.removeLogsErr
 }
 
 type fakeConsole struct{ closed bool }

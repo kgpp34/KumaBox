@@ -47,7 +47,7 @@ defaults → explicit config file → environment → flags → Validate
 SQLite 是资源事实源。文件系统保存大文件和运行产物，不替代 metadata 状态。
 
 - image digest 锁串行化同一内容的发布和删除。
-- sandbox 实体锁串行化 create/start/stop/rm。
+- sandbox 实体锁串行化 create/start/stop/rm；logs follow 不持锁。
 - generation compare-and-swap 拒绝陈旧状态提交。
 - 慢 I/O 不放在 SQLite 写事务中。
 - 发布顺序为“持久意图 → 慢操作 → 验证宿主事实 → 短事务提交”。
@@ -85,6 +85,8 @@ created/stopped/error ── rm ──► deleting ── cleanup ──► remo
 进程身份至少包含 PID、`/proc` starttime、host boot ID、sandbox ID、generation、binary 和 API socket。观察、信号和清理必须验证完整身份。Linux 信号路径使用 pidfd 固定目标。
 
 Cloud Hypervisor readiness 需要同时满足：进程身份仍一致、API 可连接、`vm.info` 为 `Running`。socket 文件存在不等于成功。
+
+VMM backend 同时拥有持久进程日志的读取和删除能力。`core` 只按 sandbox 中持久化的 VMM 类型路由，CLI 不拼宿主路径。stop 只清理可重建 runtime/cgroup 并保留日志；rm 按 COW → backend logs → metadata finalize 的顺序回收，任何失败保留 `deleting`。
 
 ## 7. Guest agent
 

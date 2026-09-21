@@ -15,11 +15,11 @@ Available commands:
 ```text
 kumabox doctor
 kumabox image pull|import|list|inspect|verify|remove
-kumabox create|start|stop|ps|inspect|console|exec|rm
+kumabox create|start|stop|ps|inspect|logs|console|exec|rm
 kumabox version
 ```
 
-Image import and sandbox lifecycle are implemented locally. Real Cloud Hypervisor, cgroup, vsock, ext4, and EROFS behavior requires Linux and is covered by the checked-in runbooks. Networking, `run`, log streaming, snapshots, clone, and Firecracker remain planned work; see [the roadmap](docs/ROADMAP.md).
+Image import and sandbox lifecycle are implemented locally. Real Cloud Hypervisor, cgroup, vsock, ext4, and EROFS behavior requires Linux and is covered by the checked-in runbooks. Networking, `run`, snapshots, clone, and Firecracker remain planned work; see [the roadmap](docs/ROADMAP.md).
 
 ## Build and test
 
@@ -63,12 +63,14 @@ Local import auto-detects OCI layouts, OCI archives, and `docker save` archives.
 kumabox create demo --name box --cpus 2 --memory 1GiB --storage 10GiB
 kumabox start box
 kumabox exec box -- uname -a
+kumabox logs --tail 50 box
+kumabox logs -f box
 kumabox console box
 kumabox stop box
 kumabox rm box
 ```
 
-`create` prepares a sparse ext4 COW disk but does not start the VMM. `start` uses direct kernel boot, records a PID-reuse-safe process identity, and commits `running` only after the Cloud Hypervisor API reports readiness. `stop` requests shutdown, then uses an identity-checked TERM-to-KILL fallback. `exec` uses the guest agent over private hybrid-vsock transport.
+`create` prepares a sparse ext4 COW disk but does not start the VMM. `start` uses direct kernel boot, records a PID-reuse-safe process identity, and commits `running` only after the Cloud Hypervisor API reports readiness. `stop` requests shutdown, then uses an identity-checked TERM-to-KILL fallback. `exec` uses the guest agent over private hybrid-vsock transport. `logs` reads persistent backend output with tail and follow support, including after stop.
 
 `ps` prints a table with headers. `inspect` and every `--json` mode emit indented JSON. Progress goes to stderr; command results go to stdout.
 

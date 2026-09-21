@@ -107,11 +107,15 @@ lock → CAS starting → prepare runtime/cgroup → launch
 
 参数直接交给 guest，不隐式插入 shell。`-e/--env KEY=VALUE` 可重复；`-i/--interactive` 才连接 stdin，否则立即发送 `stdin_close`。stdout/stderr 独立透传，guest exit code 原样返回。
 
+### `logs [--tail N] [-f] SANDBOX`
+
+按 name 或完整 ID 解析 sandbox，并由其持久 VMM backend 提供日志。默认 `--tail 0` 输出完整日志；正数从最后 N 行开始。`-f/--follow` 继续读取追加内容，VMM 重启导致文件截断或替换时从新文件头继续；取消 follow 正常退出。
+
+日志内容只写 stdout。sandbox 从未启动、尚无日志时返回 `ARTIFACT_UNAVAILABLE`。stop 后日志保留并可继续读取；命令不要求 sandbox 处于 running，也不会在 follow 期间持有实体锁。
+
 ### `rm SANDBOX`
 
-拒绝删除活动状态；VMM runtime 和 cgroup 必须先由 `stop` 收敛。命令提交 `deleting`，清理 COW，最后在一个事务中删除 record/name 并释放 image pin。任一步失败都保留 `deleting` 供相同命令重试。
-
-当前版本不会删除持久 `vmm.log` 目录。这是下一条 `logs` 切片必须修复的资源归属缺口：日志在 stop 后可读，但 rm 成功前必须进入可重试清理，不能永久成为孤儿。
+拒绝删除活动状态；VMM runtime 和 cgroup 必须先由 `stop` 收敛。命令提交 `deleting`，依次清理 COW 和 backend 拥有的持久日志，最后在一个事务中删除 record/name 并释放 image pin。任一步失败都保留 `deleting` 供相同命令重试；只有 metadata finalize 成功后 name 和 image pin 才释放。
 
 ## 5. 受管路径
 

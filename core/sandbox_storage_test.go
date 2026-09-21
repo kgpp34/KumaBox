@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/kumabox/kumabox/errdefs"
@@ -117,7 +118,9 @@ func TestRemoveMarksDeletingBeforeDiskAndFinalizesAfterCleanup(t *testing.T) {
 	}
 	want := []string{
 		"status:resolving sandbox", "resolve", "status:waiting for sandbox operation lock",
+		"resolve",
 		"status:marking sandbox for deletion", "deleting", "status:removing sandbox disk", "remove",
+		"status:removing VMM logs", "remove-logs",
 		"status:releasing metadata and image reference", "finalize", "report",
 	}
 	if !reflect.DeepEqual(*steps, want) {
@@ -160,10 +163,47 @@ func TestRemoveFailureRetainsDeletingAndRetryFinishes(t *testing.T) {
 	}
 	if got := *steps; !reflect.DeepEqual(got, []string{
 		"status:resolving sandbox", "resolve", "status:waiting for sandbox operation lock",
+		"resolve",
 		"status:marking sandbox for deletion", "deleting", "status:removing sandbox disk", "remove",
+		"status:removing VMM logs", "remove-logs",
 		"status:releasing metadata and image reference", "finalize", "report",
 	}) {
 		t.Fatalf("retry steps = %v", got)
+	}
+}
+
+func TestRemoveLogFailureRetainsDeletingUntilRetry(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo", Config: types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("log cleanup failed")
+	runtimeAdapter := testRuntime(t, service)
+	runtimeAdapter.removeLogsErr = failure
+	*steps = nil
+	if _, err := service.Remove(t.Context(), "box"); !errors.Is(err, failure) {
+		t.Fatalf("Remove error = %v", err)
+	}
+	catalog := service.dependencies.catalog.(*fakeCatalog)
+	if catalog.record.State != types.SandboxStateDeleting || catalog.deleted {
+		t.Fatalf("retained delete record = %+v, deleted=%v", catalog.record, catalog.deleted)
+	}
+	if got := strings.Join(*steps, ","); strings.Contains(got, "finalize") || !strings.Contains(got, "remove,status:removing VMM logs,remove-logs") {
+		t.Fatalf("log cleanup ordering = %v", *steps)
+	}
+
+	runtimeAdapter.removeLogsErr = nil
+	*steps = nil
+	if _, err := service.Remove(t.Context(), "box"); err != nil {
+		t.Fatal(err)
+	}
+	if !catalog.deleted {
+		t.Fatal("retry did not finalize metadata")
+	}
+	if got := strings.Join(*steps, ","); !strings.Contains(got, "remove,status:removing VMM logs,remove-logs") || !strings.Contains(got, "finalize") {
+		t.Fatalf("retry did not repeat idempotent cleanup: %v", *steps)
 	}
 }
 

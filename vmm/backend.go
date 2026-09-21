@@ -25,7 +25,9 @@ type Backend interface {
 	Stop(context.Context, Process) error
 	Console(context.Context, Process) (io.ReadWriteCloser, error)
 	DialVsock(context.Context, Process, uint32) (io.ReadWriteCloser, error)
+	Logs(context.Context, types.SandboxID, LogOptions, io.Writer) error
 	Cleanup(context.Context, types.SandboxID) error
+	RemoveLogs(context.Context, types.SandboxID) error
 }
 
 // Registry is an immutable routing table from durable VMM identities to their

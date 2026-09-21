@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/types"
+	"github.com/kumabox/kumabox/vmm"
 )
 
 func TestSandboxTableHasHeadersAndActionableID(t *testing.T) {
@@ -151,6 +153,54 @@ func TestListCommandRejectsJSONWithQuiet(t *testing.T) {
 		t.Fatal("ps accepted --json with --quiet")
 	} else if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeInvalidArgument {
 		t.Fatalf("ps error code = %q, %v", code, err)
+	}
+}
+
+func TestLogsCommandStreamsTailByName(t *testing.T) {
+	base := t.TempDir()
+	roots := storage.Roots{
+		Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log"),
+	}
+	seedImage(t, roots)
+	installFakeMKFS(t, base)
+	id := executeCreate(t, roots, "box")
+	paths, err := vmm.NewPaths(roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logDir, err := paths.LogDir(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.EnsureDir(logDir); err != nil {
+		t.Fatal(err)
+	}
+	logFile, err := paths.LogFile(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logFile, []byte("first\nsecond\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	command := NewLogsCommand(func() config.Config { return sandboxTestConfig(roots) })
+	command.SetArgs([]string{"--tail", "1", "box"})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&bytes.Buffer{})
+	if err := command.ExecuteContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "second\n" {
+		t.Fatalf("logs output = %q", output.String())
+	}
+
+	command = NewLogsCommand(func() config.Config { return sandboxTestConfig(roots) })
+	command.SetArgs([]string{"box", "--tail", "-1"})
+	if err := command.ExecuteContext(t.Context()); err == nil {
+		t.Fatal("logs accepted negative --tail")
+	} else if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeInvalidArgument {
+		t.Fatalf("logs error = %v", err)
 	}
 }
 

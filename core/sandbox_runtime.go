@@ -431,6 +431,45 @@ func (s *SandboxService) Console(ctx context.Context, reference string) (io.Read
 	return connection, nil
 }
 
+// SandboxLogOptions contains application-level log selection without exposing
+// a concrete backend's filesystem layout to the CLI.
+type SandboxLogOptions struct {
+	// Tail starts output at the last N lines. Zero selects the complete log.
+	Tail int
+	// Follow keeps the stream open for appended output until cancellation.
+	Follow bool
+}
+
+// Logs streams persistent VMM output for any retained sandbox state. It does
+// not hold the entity lock while following, so start, stop, and rm can progress.
+func (s *SandboxService) Logs(ctx context.Context, reference string, options SandboxLogOptions, output io.Writer) error {
+	if s == nil || s.dependencies.catalog == nil || s.dependencies.runtimes.Len() == 0 {
+		return errors.New("sandbox service is not configured")
+	}
+	if reference == "" {
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("SANDBOX must not be empty"))
+	}
+	backendOptions := vmm.LogOptions{Tail: options.Tail, Follow: options.Follow}
+	if err := backendOptions.Validate(); err != nil {
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+	}
+	if output == nil {
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("log output is required"))
+	}
+	record, err := s.dependencies.catalog.Resolve(ctx, reference)
+	if err != nil {
+		return err
+	}
+	backend, err := s.dependencies.runtimes.Backend(record.VMM)
+	if err != nil {
+		return err
+	}
+	if err := backend.Logs(ctx, record.ID, backendOptions, output); err != nil {
+		return errdefs.Context(err, "read sandbox logs", reference, "stream VMM log", "start the sandbox if it has no log, or retry the stream", false)
+	}
+	return nil
+}
+
 // Exec runs one command through the guest agent after resolving an exact live
 // VMM process. The operation lock is released before network I/O and command
 // execution so stop can always make progress.

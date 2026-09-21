@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"errors"
+	"io"
 	"net"
 	"reflect"
 	"strings"
@@ -325,6 +326,42 @@ func TestConsoleRejectsNonRunningSandboxBeforeRuntimeAccess(t *testing.T) {
 	}
 	if got := strings.Join(*steps, ","); got != "resolve,resolve" {
 		t.Fatalf("non-running console touched runtime: %q", got)
+	}
+}
+
+func TestLogsRoutesPersistedBackendForInactiveSandbox(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo", Config: types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtimeAdapter := testRuntime(t, service)
+	runtimeAdapter.logs = "boot output\n"
+	*steps = nil
+	var output bytes.Buffer
+	options := SandboxLogOptions{Tail: 12, Follow: true}
+	if err := service.Logs(t.Context(), "box", options, &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != runtimeAdapter.logs || runtimeAdapter.logOptions != (vmm.LogOptions{Tail: 12, Follow: true}) {
+		t.Fatalf("log output/options = %q, %+v", output.String(), runtimeAdapter.logOptions)
+	}
+	if got := strings.Join(*steps, ","); got != "resolve,logs" {
+		t.Fatalf("logs steps = %q", got)
+	}
+}
+
+func TestLogsRejectsNegativeTailBeforeResolvingSandbox(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	*steps = nil
+	if err := service.Logs(t.Context(), "box", SandboxLogOptions{Tail: -1}, io.Discard); err == nil {
+		t.Fatal("Logs accepted a negative tail")
+	} else if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeInvalidArgument {
+		t.Fatalf("Logs error = %v", err)
+	}
+	if len(*steps) != 0 {
+		t.Fatalf("invalid logs request touched adapters: %v", *steps)
 	}
 }
 

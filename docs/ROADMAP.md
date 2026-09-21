@@ -25,34 +25,16 @@
 
 - `create`、`ps`、`inspect`、`rm`；
 - `start`、`stop`、`console`、`exec`；
+- `logs` 全量/tail/follow、truncate/reopen 恢复和删除时日志清理；
 - sparse ext4 COW、cgroup v2、Cloud Hypervisor direct boot；
 - PID/starttime/boot ID/binary/socket identity；
 - guest agent NDJSON exec 子集。
 
 这些功能已完成代码和跨平台门禁。Linux/KVM 行为仍必须在发布前按 runbook 重验。
 
-## 下一步：`logs`
+## 下一步：网络基础
 
-这是下一条命令。Cloud Hypervisor 已把 stdout/stderr 写入每个 sandbox 的持久 `vmm.log`，缺少的是受控读取接口。
-
-目标与 Cocoon 对齐：
-
-```text
-kumabox logs SANDBOX
-kumabox logs --tail N SANDBOX
-kumabox logs -f SANDBOX
-```
-
-- 按 name/ID 解析 sandbox，再由 VMM backend 提供日志来源，不让 CLI 拼路径。
-- `--tail 0` 输出全部；正数输出最后 N 行。
-- `-f` 支持取消、文件增长和 VMM 重启后的 truncate/reopen。
-- 从未启动时返回明确错误；停止后日志仍可读。
-- stdout 只写日志内容，诊断写 stderr。
-- 日志归 VMM backend 所有；`rm` 在 metadata finalize 前可重试地删除 log dir，失败保留 `deleting`。这补齐当前 rm 只清理 COW、未回收持久日志的缺口。
-
-## 随后：网络基础
-
-网络在 `logs` 后、`run` 前实现。原因是 Cocoon 的网络身份在 sandbox reserve 之后、VMM create/start 之前建立，并贯穿 start/stop/rm；先做无网络 `run` 会重复修改命令、metadata 和补偿流程。
+网络在 `run` 前实现。原因是 Cocoon 的网络身份在 sandbox reserve 之后、VMM create/start 之前建立，并贯穿 start/stop/rm；先做无网络 `run` 会重复修改命令、metadata 和补偿流程。
 
 第一版范围：
 

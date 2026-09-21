@@ -35,7 +35,12 @@ func (registryBackend) Console(context.Context, Process) (io.ReadWriteCloser, er
 func (registryBackend) DialVsock(context.Context, Process, uint32) (io.ReadWriteCloser, error) {
 	return nil, nil
 }
-func (registryBackend) Cleanup(context.Context, types.SandboxID) error { return nil }
+
+func (registryBackend) Logs(context.Context, types.SandboxID, LogOptions, io.Writer) error {
+	return nil
+}
+func (registryBackend) Cleanup(context.Context, types.SandboxID) error    { return nil }
+func (registryBackend) RemoveLogs(context.Context, types.SandboxID) error { return nil }
 
 func TestRegistryRoutesAndRejectsInvalidSets(t *testing.T) {
 	backend := registryBackend{typ: types.VMMCloudHypervisor}

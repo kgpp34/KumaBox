@@ -1,6 +1,6 @@
 # S3 Sandbox 主线
 
-> 状态：基础生命周期已实现；下一条命令为 `logs`，随后进入网络切片。
+> 状态：基础生命周期与 `logs` 已实现；下一阶段进入网络切片。
 
 ## 已实现闭环
 
@@ -13,7 +13,7 @@ import image
   → restart or rm
 ```
 
-已实现命令：`create`、`start`、`stop`、`ps`、`inspect`、`console`、`exec`、`rm`。
+已实现命令：`create`、`start`、`stop`、`ps`、`inspect`、`console`、`exec`、`logs`、`rm`。
 
 已实现核心合同：
 
@@ -24,7 +24,7 @@ import image
 - guest exec 使用 bounded NDJSON frame，不把断线冒充 exit 0；
 - stdout/stderr、JSON 和 CLI exit code 有真实 binary 测试。
 
-## `logs` 切片
+## 已完成的 `logs` 切片
 
 Cloud Hypervisor adapter 已在 `/var/log/kumabox/sandboxes/<id>/vmm.log` 持久化 stdout/stderr。新增命令只公开受控读取能力：
 
@@ -44,7 +44,7 @@ CLI resolve name/ID
 - CLI 不拼接 log path，`core` 不实现 tail 算法，VMM 模块拥有其日志。
 - `rm` 在最终释放 metadata/name/image pin 前删除 backend 拥有的 log dir；失败保留 `deleting` 并允许相同命令重试。
 
-当前 `rm` 只删除 COW 并释放 metadata，持久 `vmm.log` 会留下。该缺口必须在本切片一起修复，行为才与 Cocoon 的 delete cleanup 对齐。
+实现使用同步轮询跟随受管文件，不创建 watcher goroutine。文件 inode 替换时重新打开；同一 inode 被截断时通过 size 和稳定头部签名回到 offset 0。`rm` 已在 metadata finalize 前执行 backend log cleanup，失败保留 `deleting`。
 
 ## 为什么网络在 `run` 之前
 
@@ -56,7 +56,7 @@ CLI resolve name/ID
 - start rollback、stop quiesce、rm cleanup；
 - JSON 输出和 runbook。
 
-因此 `logs` 完成后直接进入网络；网络闭环验收后实现 `run`。
+因此当前直接进入网络；网络闭环验收后实现 `run`。
 
 ## 网络第一版边界
 
