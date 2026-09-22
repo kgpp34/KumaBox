@@ -28,7 +28,7 @@ const (
 	// applicationID distinguishes KumaBox metadata from unrelated SQLite files.
 	applicationID = 0x4B554D41
 	// schemaVersion identifies the current application collection contract.
-	schemaVersion = 3
+	schemaVersion = 4
 	// firstSchemaVersion is the oldest metadata version with an in-place migration.
 	firstSchemaVersion = 1
 	// initLockName serializes schema initialization across processes in this directory.
@@ -231,7 +231,7 @@ func initialize(ctx context.Context, path string, collections []metadata.Collect
 		switch version {
 		case schemaVersion:
 			return nil
-		case 1, 2:
+		case 1, 2, 3:
 			return migrateCollections(ctx, db, collections, version)
 		default:
 			return errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, fmt.Errorf("metadata schema version %d is unsupported; this binary supports versions %d through %d", version, firstSchemaVersion, schemaVersion))

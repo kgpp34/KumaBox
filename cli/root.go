@@ -13,6 +13,7 @@ import (
 	doctorcmd "github.com/kumabox/kumabox/cli/doctor"
 	imagecmd "github.com/kumabox/kumabox/cli/image"
 	sandboxcmd "github.com/kumabox/kumabox/cli/sandbox"
+	snapshotcmd "github.com/kumabox/kumabox/cli/snapshot"
 	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/version"
@@ -150,6 +151,7 @@ func newRootCommand() (*cobra.Command, error) {
 	root.AddCommand(sandboxcmd.NewRunCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewStartCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewStopCommand(provideConfig))
+	root.AddCommand(snapshotcmd.NewCommand(provideConfig))
 	root.AddCommand(newVersionCommand())
 	classifyArguments(root)
 	return root, nil

@@ -219,6 +219,44 @@ func TestStoreMigratesVersionTwoAndPreservesSandboxRecords(t *testing.T) {
 	}
 }
 
+func TestStoreMigratesVersionThreeAndAddsSnapshotCollections(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "meta.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statements := []string{
+		"CREATE TABLE collections (name TEXT NOT NULL PRIMARY KEY)",
+		"CREATE TABLE records (collection TEXT NOT NULL, id TEXT NOT NULL, data BLOB NOT NULL, PRIMARY KEY(collection, id), FOREIGN KEY(collection) REFERENCES collections(name))",
+		fmt.Sprintf("PRAGMA application_id = %d", applicationID),
+		"PRAGMA user_version = 3",
+		"INSERT INTO collections(name) VALUES ('sandboxes')",
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			_ = db.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(t.Context(), path, []metadata.Collection{"sandboxes", "snapshots", "snapshot_names"}, DefaultOptions())
+	if err != nil {
+		t.Fatalf("Open migrated v3 database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := store.Update(t.Context(), func(writer metadata.Writer) error {
+		return writer.Put(t.Context(), "snapshots", "snapshot-id", []byte("snapshot"))
+	}); err != nil {
+		t.Fatalf("write migrated snapshot collection: %v", err)
+	}
+}
+
 func TestStoreMigrationFailureRollsBackVersionAndCollections(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "meta.db")
 	writeVersionOneDatabase(t, path, "CREATE TABLE collections (name TEXT NOT NULL PRIMARY KEY CHECK(name <> 'sandboxes'))")

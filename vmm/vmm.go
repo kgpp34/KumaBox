@@ -214,3 +214,24 @@ type Observation struct {
 	// Process is populated for starting and running observations.
 	Process Process
 }
+
+// Validate rejects capture plans that could write outside their prepared
+// directory or alias a source and destination.
+func (p SnapshotPlan) Validate() error {
+	if err := p.Process.Validate(); err != nil {
+		return err
+	}
+	if !filepath.IsAbs(p.Destination) || len(p.WritableFiles) == 0 {
+		return errors.New("snapshot plan requires an absolute destination and writable files")
+	}
+	for _, file := range p.WritableFiles {
+		if !filepath.IsAbs(file.Source) || !filepath.IsAbs(file.Destination) || file.Source == file.Destination {
+			return errors.New("snapshot writable file paths must be distinct and absolute")
+		}
+		relative, err := filepath.Rel(p.Destination, file.Destination)
+		if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return errors.New("snapshot writable destination escapes capture directory")
+		}
+	}
+	return nil
+}

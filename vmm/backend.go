@@ -30,6 +30,30 @@ type Backend interface {
 	RemoveLogs(context.Context, types.SandboxID) error
 }
 
+// SnapshotFile describes one writable disk copied inside the VMM pause window.
+type SnapshotFile struct {
+	// Source is the current sandbox-owned writable disk.
+	Source string
+	// Destination is an absent path inside the private capture directory.
+	Destination string
+}
+
+// SnapshotPlan contains all inputs required for one consistent live capture.
+type SnapshotPlan struct {
+	// Process is the exact VMM generation being captured.
+	Process Process
+	// Destination receives native VMM memory and device-state files.
+	Destination string
+	// WritableFiles are copied while the guest remains paused.
+	WritableFiles []SnapshotFile
+}
+
+// Snapshotter is the optional live-capture capability implemented by VMMs that
+// can pause, save native state, copy writable disks, and resume safely.
+type Snapshotter interface {
+	Snapshot(context.Context, SnapshotPlan) error
+}
+
 // Registry is an immutable routing table from durable VMM identities to their
 // process adapters. Construction validates the complete backend set so runtime
 // lookup cannot depend on package initialization or registration order.

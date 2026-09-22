@@ -23,6 +23,7 @@ import (
 	"github.com/kumabox/kumabox/metadata/sqlite"
 	networkcni "github.com/kumabox/kumabox/network/cni"
 	sandboxcatalog "github.com/kumabox/kumabox/sandbox/catalog"
+	snapshotcatalog "github.com/kumabox/kumabox/snapshot/catalog"
 	"github.com/kumabox/kumabox/types"
 )
 
@@ -126,5 +127,6 @@ func NewRegistrySource(reference string) (images.Source, string, error) {
 func metadataCollections() []metadata.Collection {
 	result := catalog.Collections()
 	result = append(result, sandboxcatalog.Collections()...)
-	return append(result, networkcni.Collections()...)
+	result = append(result, networkcni.Collections()...)
+	return append(result, snapshotcatalog.Collections()...)
 }

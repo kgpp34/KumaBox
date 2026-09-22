@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -291,6 +292,25 @@ type fakeRuntime struct {
 	logsErr       error
 	removeLogsErr error
 	logOptions    vmm.LogOptions
+	snapshotPlan  vmm.SnapshotPlan
+	snapshotErr   error
+}
+
+func (f *fakeRuntime) Snapshot(_ context.Context, plan vmm.SnapshotPlan) error {
+	*f.steps = append(*f.steps, "snapshot")
+	f.snapshotPlan = plan
+	if f.snapshotErr != nil {
+		return f.snapshotErr
+	}
+	if err := os.WriteFile(filepath.Join(plan.Destination, "config.json"), []byte("{}"), 0o600); err != nil {
+		return err
+	}
+	for _, file := range plan.WritableFiles {
+		if err := os.WriteFile(file.Destination, []byte("cow"), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (f *fakeRuntime) Type() types.VMMType {
