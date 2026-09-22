@@ -60,6 +60,53 @@ func TestResolveRejectsDanglingNameBinding(t *testing.T) {
 	}
 }
 
+func TestMarkCreatedAtomicallyPublishesResolvedNetwork(t *testing.T) {
+	store, err := metadata.NewMemory(Collections())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := types.SandboxID("123e4567-e89b-42d3-a456-426614174000")
+	created := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
+	record := types.Sandbox{
+		ID: id,
+		Config: types.SandboxConfig{
+			Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory,
+			Storage: types.DefaultSandboxStorage, NICs: 1,
+		},
+		ImageDigest: testDigest(t, 'a'), VMM: types.VMMCloudHypervisor,
+		State: types.SandboxStateCreating, Generation: 1, CreatedAt: created, UpdatedAt: created,
+	}
+	if err := store.Update(t.Context(), func(writer metadata.Writer) error {
+		return putJSON(t.Context(), writer, CollectionSandboxes, id.String(), encode(record))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	setup := types.NetworkSetup{
+		Backend: types.NetworkBackendCNI, Namespace: "/var/run/netns/kumabox-test",
+		Interfaces: []types.NetworkInterface{{
+			Index: 0, Name: "eth0", TAP: "tap0", MAC: "02:00:00:00:00:01",
+			Queues: 4, QueueSize: 512, Network: "bridge",
+			IPv4: &types.IPv4Config{Address: "10.42.0.2", Gateway: "10.42.0.1", Prefix: 24},
+		}},
+	}
+	createdRecord, err := New(store, nil).MarkCreated(t.Context(), id, 1, setup, created.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createdRecord.State != types.SandboxStateCreated || createdRecord.Generation != 2 ||
+		createdRecord.Config.NetworkName != "bridge" || createdRecord.Network.Namespace != setup.Namespace ||
+		len(createdRecord.Network.Interfaces) != 1 || createdRecord.Network.Interfaces[0].IPv4 == nil {
+		t.Fatalf("created network record = %+v", createdRecord)
+	}
+	resolved, err := New(store, nil).Resolve(t.Context(), id.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Config.NetworkName != "bridge" || resolved.Network.Interfaces[0].IPv4.Address != "10.42.0.2" {
+		t.Fatalf("persisted network record = %+v", resolved)
+	}
+}
+
 func TestListReturnsValidatedRecordsNewestFirst(t *testing.T) {
 	store, err := metadata.NewMemory(Collections())
 	if err != nil {
@@ -158,14 +205,14 @@ func TestReservationPinsImageInsideRemovalTransaction(t *testing.T) {
 	if _, err := imageStore.Resolve(t.Context(), "demo"); err != nil {
 		t.Fatalf("referenced image removal did not roll back: %v", err)
 	}
-	createdRecord, err := sandboxStore.MarkCreated(t.Context(), id, 1, created.Add(time.Second))
+	createdRecord, err := sandboxStore.MarkCreated(t.Context(), id, 1, types.NetworkSetup{}, created.Add(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if createdRecord.State != types.SandboxStateCreated || createdRecord.Generation != 2 {
 		t.Fatalf("created record = %+v", createdRecord)
 	}
-	if _, err := sandboxStore.MarkCreated(t.Context(), id, 1, created.Add(2*time.Second)); err == nil {
+	if _, err := sandboxStore.MarkCreated(t.Context(), id, 1, types.NetworkSetup{}, created.Add(2*time.Second)); err == nil {
 		t.Fatal("stale generation transition succeeded")
 	} else if code, _ := errdefs.CodeOf(err); code != errdefs.CodeStateConflict {
 		t.Fatalf("stale transition error = %v", err)

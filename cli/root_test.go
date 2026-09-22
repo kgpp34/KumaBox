@@ -112,6 +112,19 @@ func TestInvalidConfigurationUsesDomainExitCode(t *testing.T) {
 	}
 }
 
+func TestNetworkFlagsAreBoundIntoConfiguration(t *testing.T) {
+	for _, args := range [][]string{
+		{"--cni-conf-dir", "relative", "version"},
+		{"--cni-bin-dir", "relative", "version"},
+		{"--dns", "not-an-ip", "version"},
+	} {
+		err := Execute(t.Context(), args, &bytes.Buffer{}, &bytes.Buffer{})
+		if got := ExitCode(err); got != 5 {
+			t.Fatalf("Execute(%v) exit = %d, want 5; error = %v", args, got, err)
+		}
+	}
+}
+
 func TestImageAndUsageExitCodes(t *testing.T) {
 	base := t.TempDir()
 	flags := []string{"--root-dir", filepath.Join(base, "data"), "--run-dir", filepath.Join(base, "run"), "--log-dir", filepath.Join(base, "log")}

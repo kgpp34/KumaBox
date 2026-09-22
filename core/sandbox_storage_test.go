@@ -30,6 +30,83 @@ func TestCreateCommitsCreatedAfterDiskPreparation(t *testing.T) {
 	}
 }
 
+func TestCreatePublishesResolvedNetworkWithCreatedState(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	record, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config: types.SandboxConfig{
+			Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory,
+			Storage: types.DefaultSandboxStorage, NICs: 2,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State != types.SandboxStateCreated || record.Config.NetworkName != "default" ||
+		record.Network.Backend != types.NetworkBackendCNI || len(record.Network.Interfaces) != 2 {
+		t.Fatalf("created network record = %+v", record)
+	}
+	networks := service.dependencies.networks.(*fakeNetwork)
+	if len(networks.specs) != 2 || networks.specs[0].Queues != 4 || networks.specs[1].Queues != 4 {
+		t.Fatalf("network specs = %+v", networks.specs)
+	}
+	want := []string{
+		"status:resolving and checking image", "verify", "reserve",
+		"status:preparing sandbox network", "network-prepare",
+		"status:allocating sandbox network interfaces", "network-add",
+		"status:creating sparse ext4 disk", "disk",
+		"status:committing created state", "created", "report",
+	}
+	if !reflect.DeepEqual(*steps, want) {
+		t.Fatalf("steps = %v, want %v", *steps, want)
+	}
+}
+
+func TestCreateNetworkFailureCleansResourcesBeforeForgettingReservation(t *testing.T) {
+	failure := errors.New("CNI add failed")
+	service, steps := newTestSandboxService(t, nil)
+	networks := service.dependencies.networks.(*fakeNetwork)
+	networks.addErr = failure
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config: types.SandboxConfig{
+			Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory,
+			Storage: types.DefaultSandboxStorage, NICs: 1,
+		},
+	}); !errors.Is(err, failure) {
+		t.Fatalf("Create error = %v", err)
+	}
+	wantTail := []string{"network-add", "remove", "network-delete", "forget"}
+	if got := (*steps)[len(*steps)-len(wantTail):]; !reflect.DeepEqual(got, wantTail) {
+		t.Fatalf("cleanup steps = %v, want %v", got, wantTail)
+	}
+}
+
+func TestCreateRetainsNetworkOwnerWhenCleanupFails(t *testing.T) {
+	addFailure := errors.New("CNI add failed")
+	deleteFailure := errors.New("CNI delete failed")
+	service, steps := newTestSandboxService(t, nil)
+	networks := service.dependencies.networks.(*fakeNetwork)
+	networks.addErr, networks.deleteErr = addFailure, deleteFailure
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config: types.SandboxConfig{
+			Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory,
+			Storage: types.DefaultSandboxStorage, NICs: 1,
+		},
+	}); !errors.Is(err, addFailure) || !errors.Is(err, deleteFailure) {
+		t.Fatalf("Create error = %v", err)
+	}
+	catalog := service.dependencies.catalog.(*fakeCatalog)
+	if catalog.record.State != types.SandboxStateError || catalog.record.Failure == nil || catalog.record.Failure.Phase != "network add" {
+		t.Fatalf("retained record = %+v", catalog.record)
+	}
+	wantTail := []string{"network-add", "remove", "network-delete", "error"}
+	if got := (*steps)[len(*steps)-len(wantTail):]; !reflect.DeepEqual(got, wantTail) {
+		t.Fatalf("cleanup steps = %v, want %v", got, wantTail)
+	}
+}
+
 func TestCreateRejectsUnavailableVMMBeforeReservation(t *testing.T) {
 	service, steps := newTestSandboxService(t, nil)
 	_, err := service.Create(t.Context(), CreateSandboxRequest{
@@ -169,6 +246,45 @@ func TestRemoveFailureRetainsDeletingAndRetryFinishes(t *testing.T) {
 		"status:releasing metadata and image reference", "finalize", "report",
 	}) {
 		t.Fatalf("retry steps = %v", got)
+	}
+}
+
+func TestRemoveNetworkFailureRetainsDeletingUntilRetry(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config: types.SandboxConfig{
+			Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory,
+			Storage: types.DefaultSandboxStorage, NICs: 1,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("network cleanup failed")
+	networks := service.dependencies.networks.(*fakeNetwork)
+	networks.deleteErr = failure
+	*steps = nil
+	if _, err := service.Remove(t.Context(), "box"); !errors.Is(err, failure) {
+		t.Fatalf("Remove error = %v", err)
+	}
+	catalog := service.dependencies.catalog.(*fakeCatalog)
+	if catalog.record.State != types.SandboxStateDeleting || catalog.deleted {
+		t.Fatalf("retained delete record = %+v, deleted=%v", catalog.record, catalog.deleted)
+	}
+	if got := strings.Join(*steps, ","); !strings.Contains(got, "remove,status:removing sandbox network,network-delete") || strings.Contains(got, "finalize") {
+		t.Fatalf("network cleanup ordering = %v", *steps)
+	}
+
+	networks.deleteErr = nil
+	*steps = nil
+	if _, err := service.Remove(t.Context(), "box"); err != nil {
+		t.Fatal(err)
+	}
+	if !catalog.deleted {
+		t.Fatal("retry did not finalize metadata")
+	}
+	if got := strings.Join(*steps, ","); !strings.Contains(got, "remove,status:removing sandbox network,network-delete") || !strings.Contains(got, "finalize") {
+		t.Fatalf("retry did not repeat idempotent cleanup: %v", *steps)
 	}
 }
 

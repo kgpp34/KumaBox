@@ -59,6 +59,13 @@ func (s *SandboxService) Start(ctx context.Context, reference string) (result ty
 	if err != nil {
 		return types.Sandbox{}, err
 	}
+	if record.Config.NICs > 0 || record.Network.Backend != "" {
+		return record, errdefs.New(
+			errdefs.ClassInvalid,
+			errdefs.CodeHostIncompatible,
+			errors.New("starting a networked sandbox is not supported until VMM network attachment is available"),
+		)
+	}
 	backend, err := s.dependencies.runtimes.Backend(record.VMM)
 	if err != nil {
 		return record, err

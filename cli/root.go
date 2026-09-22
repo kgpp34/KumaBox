@@ -125,8 +125,12 @@ func newRootCommand() (*cobra.Command, error) {
 	flags.String("root-dir", configuration.Paths.Data, "persistent data directory")
 	flags.String("run-dir", configuration.Paths.Run, "runtime state directory")
 	flags.String("log-dir", configuration.Paths.Log, "log directory")
+	flags.String("cni-conf-dir", configuration.Network.CNI.ConfDir, "CNI .conflist directory")
+	flags.String("cni-bin-dir", configuration.Network.CNI.BinDir, "CNI plugin binary directory")
+	flags.String("dns", configuration.Network.DNS, "comma-separated guest DNS servers")
 	for key, name := range map[string]string{
 		"paths.data": "root-dir", "paths.run": "run-dir", "paths.log": "log-dir",
+		"network.cni.conf_dir": "cni-conf-dir", "network.cni.bin_dir": "cni-bin-dir", "network.dns": "dns",
 	} {
 		if err := loader.BindFlag(key, flags.Lookup(name)); err != nil {
 			return nil, fmt.Errorf("bind --%s: %w", name, err)

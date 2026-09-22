@@ -8,17 +8,19 @@ import (
 
 	"github.com/kumabox/kumabox/errdefs"
 	filelock "github.com/kumabox/kumabox/lock/flock"
+	"github.com/kumabox/kumabox/network"
 	"github.com/kumabox/kumabox/types"
 )
 
-// Create reserves identity and image usage before preparing the private disk.
-// Only the final generation-fenced transition makes the disk startable.
+// Create reserves identity and image usage before preparing private host
+// resources. Only the final generation-fenced transition publishes the
+// resolved network handoff and makes the disk startable.
 //
-//	validate -> ID lock -> image locks + reservation -> sparse ext4 COW -> Created
-//	                            |                         |
-//	                            +---- failure cleanup <---+
+//	validate -> reserve -> CNI namespace + NICs -> sparse ext4 COW -> Created
+//	                 |               |                         |
+//	                 +<------ detached failure cleanup <-------+
 func (s *SandboxService) Create(ctx context.Context, request CreateSandboxRequest) (result types.Sandbox, returnErr error) {
-	if s == nil || s.dependencies.images == nil || s.dependencies.catalog == nil || s.dependencies.disks == nil || s.dependencies.runtimes.Len() == 0 || s.dependencies.reporter == nil || s.dependencies.newID == nil || s.dependencies.now == nil || s.dependencies.cleanupTimeout <= 0 {
+	if s == nil || s.dependencies.images == nil || s.dependencies.catalog == nil || s.dependencies.disks == nil || s.dependencies.networks == nil || s.dependencies.runtimes.Len() == 0 || s.dependencies.reporter == nil || s.dependencies.newID == nil || s.dependencies.now == nil || s.dependencies.cleanupTimeout <= 0 {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")
 	}
 	if request.ImageReference == "" {
@@ -81,6 +83,37 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 		}
 		return types.Sandbox{}, errdefs.Context(err, "create sandbox", request.Config.Name, "reserve", "check the image and sandbox name", false)
 	}
+	setup := types.NetworkSetup{}
+	if request.Config.NICs > 0 {
+		if err := s.dependencies.reporter.Status("preparing sandbox network"); err != nil {
+			return types.Sandbox{}, s.compensate(ctx, record, "report", err)
+		}
+		namespace, err := s.dependencies.networks.Prepare(ctx, id)
+		if err != nil {
+			return types.Sandbox{}, s.compensate(ctx, record, "network prepare", err)
+		}
+		if err := s.dependencies.reporter.Status("allocating sandbox network interfaces"); err != nil {
+			return types.Sandbox{}, s.compensate(ctx, record, "report", err)
+		}
+		specs := network.AddRange(0, request.Config.NICs)
+		queues := network.QueueCount(request.Config.CPUs)
+		for index := range specs {
+			specs[index].Queues = queues
+		}
+		interfaces, err := s.dependencies.networks.Add(ctx, id, request.Config.NetworkName, specs...)
+		if err != nil {
+			return types.Sandbox{}, s.compensate(ctx, record, "network add", err)
+		}
+		setup = types.NetworkSetup{Backend: s.dependencies.networks.Type(), Namespace: namespace, Interfaces: interfaces}
+		if err := setup.Validate(); err != nil {
+			return types.Sandbox{}, s.compensate(ctx, record, "network result", err)
+		}
+		if len(interfaces) != request.Config.NICs {
+			return types.Sandbox{}, s.compensate(ctx, record, "network result", fmt.Errorf("network provider returned %d interfaces, expected %d", len(interfaces), request.Config.NICs))
+		}
+		record.Network = setup
+		record.Config.NetworkName = interfaces[0].Network
+	}
 	if err := s.dependencies.reporter.Status("creating sparse ext4 disk"); err != nil {
 		return types.Sandbox{}, s.compensate(ctx, record, "report", err)
 	}
@@ -90,7 +123,7 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 	if err := s.dependencies.reporter.Status("committing created state"); err != nil {
 		return types.Sandbox{}, s.compensate(ctx, record, "report", err)
 	}
-	created, err := s.dependencies.catalog.MarkCreated(ctx, id, record.Generation, s.dependencies.now().UTC())
+	created, err := s.dependencies.catalog.MarkCreated(ctx, id, record.Generation, setup, s.dependencies.now().UTC())
 	if err != nil {
 		return types.Sandbox{}, s.compensate(ctx, record, "commit", err)
 	}
@@ -101,14 +134,14 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 	return created, nil
 }
 
-// Remove records cleanup intent before deleting the COW directory and releases
-// the name and image reference only after filesystem cleanup succeeds.
+// Remove records cleanup intent before deleting every owned host resource and
+// releases the name and image reference only after cleanup succeeds.
 //
-//	resolve -> sandbox lock -> Deleting -> remove files -> forget record + name
-//	                              |                            |
-//	                              +---- retry resumes here <---+
+//	resolve -> sandbox lock -> Deleting -> disk -> network -> logs -> finalize
+//	                              |                                |
+//	                              +-------- retry resumes ---------+
 func (s *SandboxService) Remove(ctx context.Context, reference string) (result types.Sandbox, returnErr error) {
-	if s == nil || s.dependencies.catalog == nil || s.dependencies.disks == nil || s.dependencies.runtimes.Len() == 0 || s.dependencies.reporter == nil || s.dependencies.now == nil {
+	if s == nil || s.dependencies.catalog == nil || s.dependencies.disks == nil || s.dependencies.networks == nil || s.dependencies.runtimes.Len() == 0 || s.dependencies.reporter == nil || s.dependencies.now == nil {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")
 	}
 	if reference == "" {
@@ -164,6 +197,14 @@ func (s *SandboxService) Remove(ctx context.Context, reference string) (result t
 	if err := s.dependencies.disks.Remove(ctx, deleting.ID); err != nil {
 		return deleting, errdefs.Context(err, "remove sandbox", reference, "disk cleanup", "retry removal to finish cleanup", true)
 	}
+	if deleting.Config.NICs > 0 || deleting.Network.Backend != "" {
+		if err := s.dependencies.reporter.Status("removing sandbox network"); err != nil {
+			return deleting, errdefs.Context(err, "remove sandbox", reference, "report", "retry removal to finish cleanup", true)
+		}
+		if err := s.dependencies.networks.Delete(ctx, deleting.ID); err != nil {
+			return deleting, errdefs.Context(err, "remove sandbox", reference, "network cleanup", "retry removal to finish cleanup", true)
+		}
+	}
 	if err := s.dependencies.reporter.Status("removing VMM logs"); err != nil {
 		return deleting, errdefs.Context(err, "remove sandbox", reference, "report", "retry removal to finish cleanup", true)
 	}
@@ -182,20 +223,24 @@ func (s *SandboxService) Remove(ctx context.Context, reference string) (result t
 	return deleting, nil
 }
 
-// compensate removes the owned disk before forgetting the Creating reservation.
-// If cleanup cannot be proven complete, Error retains the resource owner and image pin.
+// compensate removes every potentially owned resource before forgetting the
+// Creating reservation. If cleanup cannot be proven complete, Error retains
+// the resource owner and image pin.
 func (s *SandboxService) compensate(ctx context.Context, record types.Sandbox, phase string, cause error) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.dependencies.cleanupTimeout)
 	defer cancel()
-	removeErr := s.dependencies.disks.Remove(cleanupCtx, record.ID)
-	if removeErr == nil {
+	cleanupErr := s.dependencies.disks.Remove(cleanupCtx, record.ID)
+	if record.Config.NICs > 0 || record.Network.Backend != "" {
+		cleanupErr = errors.Join(cleanupErr, s.dependencies.networks.Delete(cleanupCtx, record.ID))
+	}
+	if cleanupErr == nil {
 		forgetErr := s.dependencies.catalog.Forget(cleanupCtx, record.ID, record.Generation)
 		if forgetErr == nil {
 			return errdefs.Context(cause, "create sandbox", record.Config.Name, phase, "fix the failure and retry", false)
 		}
-		removeErr = forgetErr
+		cleanupErr = forgetErr
 	}
-	failure := types.SandboxFailure{Phase: phase, Message: errors.Join(cause, removeErr).Error()}
+	failure := types.SandboxFailure{Phase: phase, Message: errors.Join(cause, cleanupErr).Error()}
 	_, markErr := s.dependencies.catalog.MarkError(cleanupCtx, record.ID, record.Generation, failure, s.dependencies.now().UTC())
-	return errdefs.Context(errors.Join(cause, removeErr, markErr), "create sandbox", record.Config.Name, phase, "inspect or remove the retained error sandbox", false)
+	return errdefs.Context(errors.Join(cause, cleanupErr, markErr), "create sandbox", record.Config.Name, phase, "inspect or remove the retained error sandbox", false)
 }

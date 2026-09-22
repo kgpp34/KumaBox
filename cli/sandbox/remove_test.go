@@ -111,7 +111,7 @@ func TestRemoveCommandClosesCreateAndImageReferenceLifecycle(t *testing.T) {
 func executeCreate(t *testing.T, roots storage.Roots, name string) types.SandboxID {
 	t.Helper()
 	command := NewCreateCommand(func() config.Config { return sandboxTestConfig(roots) })
-	command.SetArgs([]string{"demo", "--name", name, "--cpus", "1"})
+	command.SetArgs([]string{"demo", "--name", name, "--cpus", "1", "--nics", "0"})
 	var stdout, stderr bytes.Buffer
 	command.SetOut(&stdout)
 	command.SetErr(&stderr)

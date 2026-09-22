@@ -12,8 +12,11 @@ import (
 	imagecatalog "github.com/kumabox/kumabox/images/catalog"
 	"github.com/kumabox/kumabox/metadata"
 	"github.com/kumabox/kumabox/metadata/sqlite"
+	"github.com/kumabox/kumabox/network"
+	"github.com/kumabox/kumabox/network/cni"
 	"github.com/kumabox/kumabox/sandbox"
 	sandboxcatalog "github.com/kumabox/kumabox/sandbox/catalog"
+	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/types"
 	"github.com/kumabox/kumabox/vmm"
 )
@@ -38,7 +41,7 @@ type imageGuard interface {
 // so the service receives it once instead of under several role aliases.
 type sandboxCatalog interface {
 	Reserve(context.Context, string, types.Digest, types.Sandbox) error
-	MarkCreated(context.Context, types.SandboxID, uint64, time.Time) (types.Sandbox, error)
+	MarkCreated(context.Context, types.SandboxID, uint64, types.NetworkSetup, time.Time) (types.Sandbox, error)
 	MarkError(context.Context, types.SandboxID, uint64, types.SandboxFailure, time.Time) (types.Sandbox, error)
 	Forget(context.Context, types.SandboxID, uint64) error
 	Resolve(context.Context, string) (types.Sandbox, error)
@@ -74,6 +77,8 @@ type sandboxDependencies struct {
 	catalog sandboxCatalog
 	// disks prepares and cleans sandbox-owned writable disks.
 	disks disk.Backend
+	// networks owns sandbox network namespaces, CNI allocations, and TAP devices.
+	networks network.Provider
 	// imagePaths derives immutable artifacts after the image guard verifies them.
 	imagePaths images.Paths
 	// runtimes route persisted VMM identities to process adapters.
@@ -99,7 +104,7 @@ type SandboxService struct {
 // newSandboxService validates and records the explicit capabilities needed by
 // sandbox commands. Defaults are limited to deterministic process-local seams.
 func newSandboxService(dependencies sandboxDependencies) (*SandboxService, error) {
-	if dependencies.images == nil || dependencies.catalog == nil || dependencies.disks == nil || dependencies.runtimes.Len() == 0 {
+	if dependencies.images == nil || dependencies.catalog == nil || dependencies.disks == nil || dependencies.networks == nil || dependencies.runtimes.Len() == 0 {
 		return nil, errors.New("sandbox service adapters are incomplete")
 	}
 	if dependencies.cleanupTimeout <= 0 {
@@ -160,12 +165,27 @@ func OpenSandbox(ctx context.Context, configuration config.Config, reporter Sand
 	if err != nil {
 		return nil, err
 	}
+	cacheDir, err := storage.Join(configuration.Paths.Data, "cni", "cache")
+	if err != nil {
+		return nil, errors.Join(err, store.Close())
+	}
+	networks, err := cni.New(cni.Options{
+		ConfDir:         configuration.Network.CNI.ConfDir,
+		BinDir:          configuration.Network.CNI.BinDir,
+		CacheDir:        cacheDir,
+		NamespacePrefix: configuration.Network.NamespacePrefix(),
+		CleanupTimeout:  configuration.Network.CleanupTimeout,
+	}, store)
+	if err != nil {
+		return nil, errors.Join(err, store.Close())
+	}
 	imageCatalog := imagecatalog.New(store, imagecatalog.WithImageUsage(sandboxcatalog.Usage{}))
 	sandboxCatalog := sandboxcatalog.New(store, imagecatalog.Reader{})
 	service, err := newSandboxService(sandboxDependencies{
 		paths: sandboxPaths, imagePaths: imagePaths, images: images.NewGuard(imagePaths, imageCatalog),
-		catalog: sandboxCatalog, disks: disks, runtimes: runtimes, reporter: reporter,
-		store: store, defaultVMM: defaultVMM, cleanupTimeout: configuration.Sandbox.CleanupTimeout,
+		catalog: sandboxCatalog, disks: disks, networks: networks, runtimes: runtimes, reporter: reporter,
+		store: store, defaultVMM: defaultVMM,
+		cleanupTimeout: max(configuration.Sandbox.CleanupTimeout, configuration.Network.CleanupTimeout),
 	})
 	if err != nil {
 		return nil, errors.Join(err, store.Close())

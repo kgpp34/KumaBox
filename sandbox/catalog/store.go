@@ -61,6 +61,12 @@ type recordData struct {
 	Memory int64 `json:"memory"`
 	// Storage is logical COW capacity in bytes.
 	Storage int64 `json:"storage"`
+	// NICs is the immutable requested network interface count.
+	NICs int `json:"nics,omitempty"`
+	// NetworkName is the resolved CNI conflist name.
+	NetworkName string `json:"network_name,omitempty"`
+	// Network is the resolved provider-to-VMM handoff.
+	Network *networkData `json:"network,omitempty"`
 	// ImageDigest pins the canonical manifest record.
 	ImageDigest string `json:"image_digest"`
 	// VMM identifies the backend that owns runtime artifacts. Empty legacy
@@ -84,6 +90,33 @@ type failureData struct {
 	Phase string `json:"phase"`
 	// Message preserves operator diagnostics without becoming a stable code.
 	Message string `json:"message"`
+}
+
+// networkData is the stable persisted form of one resolved network setup.
+type networkData struct {
+	Backend    string                 `json:"backend"`
+	Namespace  string                 `json:"namespace"`
+	Interfaces []networkInterfaceData `json:"interfaces"`
+}
+
+// networkInterfaceData stores one NIC without exposing adapter encoding tags
+// through the shared types package.
+type networkInterfaceData struct {
+	Index     int       `json:"index"`
+	Name      string    `json:"name"`
+	TAP       string    `json:"tap"`
+	MAC       string    `json:"mac"`
+	Queues    int       `json:"queues"`
+	QueueSize int       `json:"queue_size"`
+	Network   string    `json:"network"`
+	IPv4      *ipv4Data `json:"ipv4,omitempty"`
+}
+
+// ipv4Data stores the optional guest-visible IPv4 assignment.
+type ipv4Data struct {
+	Address string `json:"address"`
+	Gateway string `json:"gateway,omitempty"`
+	Prefix  int    `json:"prefix"`
 }
 
 // nameData is deliberately small so names can be checked without decoding aggregates.
@@ -134,9 +167,49 @@ func (c *Store) Reserve(ctx context.Context, imageReference string, expected typ
 	return errdefs.Context(err, "reserve sandbox", record.Config.Name, "metadata", "choose another name or retry", false)
 }
 
-// MarkCreated performs the create commit only when state and generation still match.
-func (c *Store) MarkCreated(ctx context.Context, id types.SandboxID, expected uint64, updated time.Time) (types.Sandbox, error) {
-	return c.transition(ctx, id, expected, types.SandboxStateCreating, types.SandboxStateCreated, nil, updated)
+// MarkCreated atomically publishes resolved network state and the Created
+// transition only when state and generation still match.
+func (c *Store) MarkCreated(ctx context.Context, id types.SandboxID, expected uint64, setup types.NetworkSetup, updated time.Time) (types.Sandbox, error) {
+	if err := setup.Validate(); err != nil {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+	}
+	var result types.Sandbox
+	err := c.store.Update(ctx, func(writer metadata.Writer) error {
+		record, err := load(ctx, writer, id)
+		if err != nil {
+			return err
+		}
+		if record.Generation != expected || record.State != types.SandboxStateCreating {
+			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s changed from expected Creating generation %d", id, expected))
+		}
+		if record.Config.NICs == 0 {
+			if setup.Backend != "" {
+				return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("sandbox without NICs cannot commit network setup"))
+			}
+		} else {
+			if setup.Backend == "" || len(setup.Interfaces) != record.Config.NICs {
+				return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("networked sandbox requires one resolved interface per requested NIC"))
+			}
+			resolved := setup.Interfaces[0].Network
+			if record.Config.NetworkName != "" && record.Config.NetworkName != resolved {
+				return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("resolved network differs from the requested network"))
+			}
+			record.Config.NetworkName = resolved
+		}
+		record.Network = setup
+		record.State = types.SandboxStateCreated
+		record.Generation++
+		record.UpdatedAt = updated
+		if err := record.Validate(); err != nil {
+			return corrupt("sandbox create transition", err)
+		}
+		if err := putJSON(ctx, writer, CollectionSandboxes, id.String(), encode(record)); err != nil {
+			return err
+		}
+		result = record
+		return nil
+	})
+	return result, errdefs.Context(err, "create sandbox", id.String(), "mark created", "inspect the sandbox state before retrying", false)
 }
 
 // MarkError retains ownership and diagnostics when create cleanup cannot finish.
@@ -478,9 +551,13 @@ func deleteRecord(ctx context.Context, writer metadata.Writer, record types.Sand
 func encode(record types.Sandbox) recordData {
 	data := recordData{
 		ID: record.ID.String(), Name: record.Config.Name, CPUs: record.Config.CPUs,
-		Memory: record.Config.Memory, Storage: record.Config.Storage,
+		Memory: record.Config.Memory, Storage: record.Config.Storage, NICs: record.Config.NICs,
+		NetworkName: record.Config.NetworkName,
 		ImageDigest: record.ImageDigest.String(), VMM: string(record.VMM), State: string(record.State),
 		Generation: record.Generation, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
+	}
+	if record.Network.Backend != "" {
+		data.Network = encodeNetwork(record.Network)
 	}
 	if record.Failure != nil {
 		data.Failure = &failureData{Phase: record.Failure.Phase, Message: record.Failure.Message}
@@ -506,9 +583,15 @@ func decode(raw []byte) (types.Sandbox, error) {
 		data.VMM = string(types.VMMCloudHypervisor)
 	}
 	record := types.Sandbox{
-		ID: id, Config: types.SandboxConfig{Name: data.Name, CPUs: data.CPUs, Memory: data.Memory, Storage: data.Storage},
+		ID: id, Config: types.SandboxConfig{
+			Name: data.Name, CPUs: data.CPUs, Memory: data.Memory, Storage: data.Storage,
+			NICs: data.NICs, NetworkName: data.NetworkName,
+		},
 		ImageDigest: digest, VMM: types.VMMType(data.VMM), State: types.SandboxState(data.State), Generation: data.Generation,
 		CreatedAt: data.CreatedAt, UpdatedAt: data.UpdatedAt,
+	}
+	if data.Network != nil {
+		record.Network = decodeNetwork(*data.Network)
 	}
 	if data.Failure != nil {
 		record.Failure = &types.SandboxFailure{Phase: data.Failure.Phase, Message: data.Failure.Message}
@@ -517,6 +600,48 @@ func decode(raw []byte) (types.Sandbox, error) {
 		return types.Sandbox{}, corrupt("sandbox", err)
 	}
 	return record, nil
+}
+
+func encodeNetwork(setup types.NetworkSetup) *networkData {
+	result := &networkData{
+		Backend: string(setup.Backend), Namespace: setup.Namespace,
+		Interfaces: make([]networkInterfaceData, 0, len(setup.Interfaces)),
+	}
+	for _, networkInterface := range setup.Interfaces {
+		data := networkInterfaceData{
+			Index: networkInterface.Index, Name: networkInterface.Name, TAP: networkInterface.TAP,
+			MAC: networkInterface.MAC, Queues: networkInterface.Queues, QueueSize: networkInterface.QueueSize,
+			Network: networkInterface.Network,
+		}
+		if networkInterface.IPv4 != nil {
+			data.IPv4 = &ipv4Data{
+				Address: networkInterface.IPv4.Address, Gateway: networkInterface.IPv4.Gateway,
+				Prefix: networkInterface.IPv4.Prefix,
+			}
+		}
+		result.Interfaces = append(result.Interfaces, data)
+	}
+	return result
+}
+
+func decodeNetwork(data networkData) types.NetworkSetup {
+	result := types.NetworkSetup{
+		Backend: types.NetworkBackend(data.Backend), Namespace: data.Namespace,
+		Interfaces: make([]types.NetworkInterface, 0, len(data.Interfaces)),
+	}
+	for _, item := range data.Interfaces {
+		networkInterface := types.NetworkInterface{
+			Index: item.Index, Name: item.Name, TAP: item.TAP, MAC: item.MAC,
+			Queues: item.Queues, QueueSize: item.QueueSize, Network: item.Network,
+		}
+		if item.IPv4 != nil {
+			networkInterface.IPv4 = &types.IPv4Config{
+				Address: item.IPv4.Address, Gateway: item.IPv4.Gateway, Prefix: item.IPv4.Prefix,
+			}
+		}
+		result.Interfaces = append(result.Interfaces, networkInterface)
+	}
+	return result
 }
 
 // putJSON keeps all record writes consistently encoded.

@@ -76,6 +76,30 @@ func TestStartCommitsRunningOnlyAfterLaunchReadiness(t *testing.T) {
 	}
 }
 
+func TestStartRejectsNetworkedSandboxBeforeRuntimeRecovery(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config: types.SandboxConfig{
+			Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory,
+			Storage: types.DefaultSandboxStorage, NICs: 1,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	*steps = nil
+	if _, err := service.Start(t.Context(), "box"); err == nil {
+		t.Fatal("Start accepted a networked sandbox before VMM network attachment exists")
+	} else if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeHostIncompatible {
+		t.Fatalf("Start error code = %q, %v; want %q", code, err, errdefs.CodeHostIncompatible)
+	}
+	if got := *steps; !reflect.DeepEqual(got, []string{
+		"status:resolving sandbox", "resolve", "status:waiting for sandbox operation lock", "resolve",
+	}) {
+		t.Fatalf("Start touched runtime state before rejection: %v", got)
+	}
+}
+
 func TestStartRecoversRunningProcessFromStartingState(t *testing.T) {
 	service, steps := newTestSandboxService(t, nil)
 	if _, err := service.Create(t.Context(), CreateSandboxRequest{

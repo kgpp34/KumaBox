@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"path/filepath"
 	"runtime"
@@ -13,6 +14,7 @@ import (
 	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
+	"github.com/kumabox/kumabox/network"
 	"github.com/kumabox/kumabox/sandbox"
 	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/types"
@@ -47,10 +49,14 @@ func (f *fakeCatalog) Reserve(_ context.Context, _ string, _ types.Digest, recor
 	return nil
 }
 
-func (f *fakeCatalog) MarkCreated(_ context.Context, _ types.SandboxID, expected uint64, updated time.Time) (types.Sandbox, error) {
+func (f *fakeCatalog) MarkCreated(_ context.Context, _ types.SandboxID, expected uint64, setup types.NetworkSetup, updated time.Time) (types.Sandbox, error) {
 	*f.steps = append(*f.steps, "created")
 	if expected != f.record.Generation {
 		return types.Sandbox{}, errors.New("wrong generation")
+	}
+	f.record.Network = setup
+	if len(setup.Interfaces) > 0 {
+		f.record.Config.NetworkName = setup.Interfaces[0].Network
 	}
 	f.record.State, f.record.Generation, f.record.UpdatedAt = types.SandboxStateCreated, expected+1, updated
 	return f.record, nil
@@ -172,6 +178,62 @@ type fakeDisk struct {
 	steps   *[]string
 	prepare error
 	remove  error
+}
+
+type fakeNetwork struct {
+	steps      *[]string
+	prepareErr error
+	addErr     error
+	deleteErr  error
+	namespace  string
+	interfaces []types.NetworkInterface
+	specs      []network.AddSpec
+}
+
+func (*fakeNetwork) Type() types.NetworkBackend { return types.NetworkBackendCNI }
+
+func (f *fakeNetwork) Prepare(context.Context, types.SandboxID) (string, error) {
+	*f.steps = append(*f.steps, "network-prepare")
+	return f.namespace, f.prepareErr
+}
+
+func (f *fakeNetwork) Add(_ context.Context, _ types.SandboxID, networkName string, specs ...network.AddSpec) ([]types.NetworkInterface, error) {
+	*f.steps = append(*f.steps, "network-add")
+	f.specs = append([]network.AddSpec(nil), specs...)
+	if f.addErr != nil {
+		return nil, f.addErr
+	}
+	if len(f.interfaces) > 0 {
+		return append([]types.NetworkInterface(nil), f.interfaces...), nil
+	}
+	if networkName == "" {
+		networkName = "default"
+	}
+	result := make([]types.NetworkInterface, 0, len(specs))
+	for _, spec := range specs {
+		result = append(result, types.NetworkInterface{
+			Index: spec.Index, Name: fmt.Sprintf("eth%d", spec.Index), TAP: fmt.Sprintf("tap%d", spec.Index),
+			MAC: fmt.Sprintf("02:00:00:00:00:%02x", spec.Index+1), Queues: spec.Queues,
+			QueueSize: network.DefaultQueueSize, Network: networkName,
+		})
+	}
+	return result, nil
+}
+
+func (*fakeNetwork) Verify(context.Context, types.SandboxID, []types.NetworkInterface) error {
+	return nil
+}
+
+func (*fakeNetwork) Recover(context.Context, types.SandboxID, string, []types.NetworkInterface) ([]types.NetworkInterface, error) {
+	return nil, nil
+}
+
+func (*fakeNetwork) Quiesce(context.Context, types.SandboxID) error   { return nil }
+func (*fakeNetwork) Unquiesce(context.Context, types.SandboxID) error { return nil }
+
+func (f *fakeNetwork) Delete(context.Context, types.SandboxID) error {
+	*f.steps = append(*f.steps, "network-delete")
+	return f.deleteErr
 }
 
 func (f fakeDisk) Prepare(context.Context, types.SandboxID, int64) error {
@@ -344,7 +406,8 @@ func newTestSandboxService(t *testing.T, diskError error) (*SandboxService, *[]s
 	}
 	service, err := newSandboxService(sandboxDependencies{
 		paths: paths, imagePaths: imagePaths, images: fakeGuard{image: image, steps: &steps},
-		catalog: catalog, disks: fakeDisk{steps: &steps, prepare: diskError}, runtimes: runtimes,
+		catalog: catalog, disks: fakeDisk{steps: &steps, prepare: diskError},
+		networks: &fakeNetwork{steps: &steps, namespace: "/var/run/netns/kumabox-test"}, runtimes: runtimes,
 		defaultVMM: types.VMMCloudHypervisor, cleanupTimeout: 10 * time.Second,
 		reporter: fakeReporter{steps: &steps},
 		newID:    func() (types.SandboxID, error) { return fixedID, nil },
@@ -391,6 +454,7 @@ func TestNewSandboxServiceValidatesNamedDependencies(t *testing.T) {
 		{name: "image guard", mutate: func(dependencies *sandboxDependencies) { dependencies.images = nil }},
 		{name: "catalog", mutate: func(dependencies *sandboxDependencies) { dependencies.catalog = nil }},
 		{name: "disk backend", mutate: func(dependencies *sandboxDependencies) { dependencies.disks = nil }},
+		{name: "network provider", mutate: func(dependencies *sandboxDependencies) { dependencies.networks = nil }},
 		{name: "VMM registry", mutate: func(dependencies *sandboxDependencies) { dependencies.runtimes = nil }},
 		{name: "cleanup timeout", mutate: func(dependencies *sandboxDependencies) { dependencies.cleanupTimeout = 0 }},
 		{name: "default VMM", mutate: func(dependencies *sandboxDependencies) { dependencies.defaultVMM = types.VMMFirecracker }},

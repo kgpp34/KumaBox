@@ -28,9 +28,14 @@ const (
 	MinSandboxStorage int64 = 10 << 30
 	// MaxSandboxCPUs bounds conversion to host-native integer APIs and unreasonable shapes.
 	MaxSandboxCPUs uint32 = 1024
+	// MaxSandboxNICs bounds host resource allocation from one create request.
+	MaxSandboxNICs = 64
 )
 
-var validSandboxName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
+var (
+	validSandboxName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
+	validNetworkName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
+)
 
 // VMMType identifies the virtual machine monitor that owns a sandbox's
 // runtime. It is persisted so every later lifecycle operation selects the same
@@ -132,6 +137,11 @@ type SandboxConfig struct {
 	Memory int64
 	// Storage is the logical size of the sparse ext4 COW disk in bytes.
 	Storage int64
+	// NICs is the requested network interface count; zero disables networking.
+	NICs int
+	// NetworkName selects one CNI conflist. Empty selects the provider default
+	// and is replaced by the resolved name when creation commits.
+	NetworkName string
 }
 
 // Validate enforces the resource and naming contract before any persistent change.
@@ -147,6 +157,15 @@ func (c SandboxConfig) Validate() error {
 	}
 	if c.Storage < MinSandboxStorage {
 		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("storage must be at least %d bytes", MinSandboxStorage))
+	}
+	if c.NICs < 0 || c.NICs > MaxSandboxNICs {
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("NIC count must be between 0 and %d", MaxSandboxNICs))
+	}
+	if c.NICs == 0 && c.NetworkName != "" {
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("network name requires at least one NIC"))
+	}
+	if c.NetworkName != "" && !validNetworkName.MatchString(c.NetworkName) {
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("network name %q must match %s", c.NetworkName, validNetworkName))
 	}
 	return nil
 }
@@ -203,6 +222,9 @@ type Sandbox struct {
 	ImageDigest Digest
 	// VMM selects the backend that owns this sandbox's runtime artifacts.
 	VMM VMMType
+	// Network is the resolved provider-to-VMM handoff. It remains empty while a
+	// networked sandbox is still Creating and cleanup may be incomplete.
+	Network NetworkSetup
 	// State controls which operations may consume owned resources.
 	State SandboxState
 	// Generation increments on every state transition and fences stale operations.
@@ -228,6 +250,28 @@ func (s Sandbox) Validate() error {
 	}
 	if err := s.VMM.Validate(); err != nil {
 		return err
+	}
+	if err := s.Network.Validate(); err != nil {
+		return err
+	}
+	if s.Config.NICs == 0 && s.Network.Backend != "" {
+		return errors.New("sandbox without NICs must not contain network setup")
+	}
+	if s.Network.Backend != "" {
+		if len(s.Network.Interfaces) != s.Config.NICs {
+			return fmt.Errorf("sandbox has %d network interfaces, expected %d", len(s.Network.Interfaces), s.Config.NICs)
+		}
+		for _, networkInterface := range s.Network.Interfaces {
+			if networkInterface.Network != s.Config.NetworkName {
+				return errors.New("sandbox network interface differs from the resolved network name")
+			}
+		}
+	} else if s.Config.NICs > 0 {
+		switch s.State {
+		case SandboxStateCreating, SandboxStateError, SandboxStateDeleting:
+		default:
+			return errors.New("networked sandbox state requires resolved network setup")
+		}
 	}
 	switch s.State {
 	case SandboxStateCreating, SandboxStateCreated, SandboxStateStarting, SandboxStateRunning,

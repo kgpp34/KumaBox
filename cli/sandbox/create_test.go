@@ -53,6 +53,8 @@ func TestCreateCommandMapsResourceValidationToFlags(t *testing.T) {
 		{name: "CPUs", args: []string{"demo", "--name", "box", "--cpus", "0"}, flag: "--cpus"},
 		{name: "memory", args: []string{"demo", "--name", "box", "--memory", "1MiB"}, flag: "--memory"},
 		{name: "storage", args: []string{"demo", "--name", "box", "--storage", "1GiB"}, flag: "--storage"},
+		{name: "NICs", args: []string{"demo", "--name", "box", "--nics", "-1"}, flag: "--nics"},
+		{name: "network without NIC", args: []string{"demo", "--name", "box", "--nics", "0", "--network", "bridge"}, flag: "--network"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -78,10 +80,21 @@ func TestWriteResultUsesFullIDAndIndentedJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	record := types.Sandbox{
-		ID:          types.SandboxID("123e4567-e89b-42d3-a456-426614174000"),
-		Config:      types.SandboxConfig{Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+		ID: types.SandboxID("123e4567-e89b-42d3-a456-426614174000"),
+		Config: types.SandboxConfig{
+			Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory,
+			Storage: types.DefaultSandboxStorage, NICs: 1, NetworkName: "bridge",
+		},
 		ImageDigest: digest, VMM: types.VMMCloudHypervisor, State: types.SandboxStateCreated, Generation: 2,
 		CreatedAt: time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 9, 15, 10, 0, 1, 0, time.UTC),
+		Network: types.NetworkSetup{
+			Backend: types.NetworkBackendCNI, Namespace: "/var/run/netns/kumabox-test",
+			Interfaces: []types.NetworkInterface{{
+				Index: 0, Name: "eth0", TAP: "tap0", MAC: "02:00:00:00:00:01",
+				Queues: 4, QueueSize: 512, Network: "bridge",
+				IPv4: &types.IPv4Config{Address: "10.42.0.2", Gateway: "10.42.0.1", Prefix: 24},
+			}},
+		},
 	}
 	var text bytes.Buffer
 	if err := writeSandboxResult(&text, record, false); err != nil {
@@ -96,6 +109,22 @@ func TestWriteResultUsesFullIDAndIndentedJSON(t *testing.T) {
 	}
 	if !strings.Contains(jsonOut.String(), "\n  \"id\":") || !strings.Contains(jsonOut.String(), "\"state\": \"created\"") || !strings.HasSuffix(jsonOut.String(), "\n") {
 		t.Fatalf("JSON result = %q", jsonOut.String())
+	}
+	var output sandboxOutput
+	if err := json.Unmarshal(jsonOut.Bytes(), &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.NICs != 1 || output.NetworkName != "bridge" || output.Network == nil ||
+		len(output.Network.Interfaces) != 1 || output.Network.Interfaces[0].IPv4 == nil {
+		t.Fatalf("network JSON output = %+v", output)
+	}
+}
+
+func TestCreateCommandDefaultsToOneNIC(t *testing.T) {
+	command := NewCreateCommand(func() config.Config { return config.Config{} })
+	flag := command.Flags().Lookup("nics")
+	if flag == nil || flag.DefValue != "1" {
+		t.Fatalf("--nics default = %+v, want 1", flag)
 	}
 }
 
@@ -123,7 +152,7 @@ func TestCreateCommandPersistsCreatedSandboxAndFinalCOW(t *testing.T) {
 	seedImage(t, roots)
 	installFakeMKFS(t, base)
 	command := NewCreateCommand(func() config.Config { return sandboxTestConfig(roots) })
-	command.SetArgs([]string{"demo", "--name", "box", "--cpus", "1", "--json"})
+	command.SetArgs([]string{"demo", "--name", "box", "--cpus", "1", "--nics", "0", "--json"})
 	var stdout, stderr bytes.Buffer
 	command.SetOut(&stdout)
 	command.SetErr(&stderr)

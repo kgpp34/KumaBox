@@ -26,6 +26,8 @@ func NewCreateCommand(configuration configProvider) *cobra.Command {
 	cpus := types.DefaultSandboxCPUs
 	memory := "1GiB"
 	storageSize := "10GiB"
+	nics := 1
+	networkName := ""
 	asJSON := false
 	command := &cobra.Command{
 		Use:   "create IMAGE",
@@ -49,7 +51,16 @@ func NewCreateCommand(configuration configProvider) *cobra.Command {
 			if storageBytes < types.MinSandboxStorage {
 				return invalidFlag("storage", fmt.Errorf("must be at least %d bytes", types.MinSandboxStorage))
 			}
-			sandboxConfig := types.SandboxConfig{Name: name, CPUs: cpus, Memory: memoryBytes, Storage: storageBytes}
+			if nics < 0 || nics > types.MaxSandboxNICs {
+				return invalidFlag("nics", fmt.Errorf("must be between 0 and %d", types.MaxSandboxNICs))
+			}
+			if nics == 0 && networkName != "" {
+				return invalidFlag("network", errors.New("requires at least one NIC"))
+			}
+			sandboxConfig := types.SandboxConfig{
+				Name: name, CPUs: cpus, Memory: memoryBytes, Storage: storageBytes,
+				NICs: nics, NetworkName: networkName,
+			}
 			if err := sandboxConfig.Validate(); err != nil {
 				return err
 			}
@@ -82,6 +93,8 @@ func NewCreateCommand(configuration configProvider) *cobra.Command {
 	command.Flags().Uint32Var(&cpus, "cpus", cpus, "number of virtual CPUs")
 	command.Flags().StringVar(&memory, "memory", memory, "guest memory (for example 1GiB)")
 	command.Flags().StringVar(&storageSize, "storage", storageSize, "logical sparse COW size (minimum 10GiB)")
+	command.Flags().IntVar(&nics, "nics", nics, "number of network interfaces (0 disables networking)")
+	command.Flags().StringVar(&networkName, "network", networkName, "CNI network name (empty selects the default)")
 	command.Flags().BoolVar(&asJSON, "json", false, "print the created sandbox as indented JSON")
 	return command
 }

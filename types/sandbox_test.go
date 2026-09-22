@@ -31,6 +31,9 @@ func TestSandboxConfigValidationMatchesCreateContract(t *testing.T) {
 		{"cpus", SandboxConfig{Name: "demo", Memory: MinSandboxMemory, Storage: MinSandboxStorage}},
 		{"memory", SandboxConfig{Name: "demo", CPUs: 1, Memory: MinSandboxMemory - 1, Storage: MinSandboxStorage}},
 		{"storage", SandboxConfig{Name: "demo", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage - 1}},
+		{"NIC count", SandboxConfig{Name: "demo", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage, NICs: MaxSandboxNICs + 1}},
+		{"network without NIC", SandboxConfig{Name: "demo", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage, NetworkName: "default"}},
+		{"network name", SandboxConfig{Name: "demo", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage, NICs: 1, NetworkName: "bad/name"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			err := test.config.Validate()
