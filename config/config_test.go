@@ -117,3 +117,28 @@ func TestValidateRejectsOverlappingRoots(t *testing.T) {
 		t.Fatal("Validate() accepted overlapping roots")
 	}
 }
+
+func TestNetworkConfigParsesDNSAndScope(t *testing.T) {
+	config := Default()
+	config.Network.DNS = "10.0.0.2; 2001:4860:4860::8888"
+	config.Network.Scope = "k1"
+	if err := config.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	servers, err := config.Network.DNSServers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 2 || servers[0] != "10.0.0.2" || config.Network.NamespacePrefix() != "k1-" {
+		t.Fatalf("servers=%v prefix=%q", servers, config.Network.NamespacePrefix())
+	}
+	config.Network.Scope = "unsafe/"
+	if err := config.Validate(); err == nil {
+		t.Fatal("invalid network scope was accepted")
+	}
+	config = Default()
+	config.Network.DNS = "not-an-address"
+	if err := config.Validate(); err == nil {
+		t.Fatal("invalid DNS server was accepted")
+	}
+}

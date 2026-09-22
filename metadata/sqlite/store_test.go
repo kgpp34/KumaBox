@@ -167,6 +167,58 @@ func TestStoreMigratesVersionOneAndPreservesRecords(t *testing.T) {
 	}
 }
 
+func TestStoreMigratesVersionTwoAndPreservesSandboxRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "meta.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statements := []string{
+		"CREATE TABLE collections (name TEXT NOT NULL PRIMARY KEY)",
+		"CREATE TABLE records (collection TEXT NOT NULL, id TEXT NOT NULL, data BLOB NOT NULL, PRIMARY KEY(collection, id), FOREIGN KEY(collection) REFERENCES collections(name))",
+		fmt.Sprintf("PRAGMA application_id = %d", applicationID),
+		"PRAGMA user_version = 2",
+		"INSERT INTO collections(name) VALUES ('sandboxes')",
+		"INSERT INTO records(collection,id,data) VALUES ('sandboxes','sandbox-id',x'6b656570')",
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			_ = db.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(t.Context(), path, []metadata.Collection{"sandboxes", "network_records"}, DefaultOptions())
+	if err != nil {
+		t.Fatalf("Open migrated v2 database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := store.View(t.Context(), func(reader metadata.Reader) error {
+		value, exists, err := reader.Get(t.Context(), "sandboxes", "sandbox-id")
+		if err != nil {
+			return err
+		}
+		if !exists || string(value) != "keep" {
+			return fmt.Errorf("sandbox record = %q, %t", value, exists)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(t.Context(), func(writer metadata.Writer) error {
+		return writer.Put(t.Context(), "network_records", "network-id", []byte("network"))
+	}); err != nil {
+		t.Fatalf("write migrated network collection: %v", err)
+	}
+}
+
 func TestStoreMigrationFailureRollsBackVersionAndCollections(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "meta.db")
 	writeVersionOneDatabase(t, path, "CREATE TABLE collections (name TEXT NOT NULL PRIMARY KEY CHECK(name <> 'sandboxes'))")

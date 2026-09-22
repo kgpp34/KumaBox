@@ -28,7 +28,7 @@ const (
 	// applicationID distinguishes KumaBox metadata from unrelated SQLite files.
 	applicationID = 0x4B554D41
 	// schemaVersion identifies the current application collection contract.
-	schemaVersion = 2
+	schemaVersion = 3
 	// firstSchemaVersion is the oldest metadata version with an in-place migration.
 	firstSchemaVersion = 1
 	// initLockName serializes schema initialization across processes in this directory.
@@ -231,8 +231,8 @@ func initialize(ctx context.Context, path string, collections []metadata.Collect
 		switch version {
 		case schemaVersion:
 			return nil
-		case firstSchemaVersion:
-			return migrateVersionOne(ctx, db, collections)
+		case 1, 2:
+			return migrateCollections(ctx, db, collections, version)
 		default:
 			return errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, fmt.Errorf("metadata schema version %d is unsupported; this binary supports versions %d through %d", version, firstSchemaVersion, schemaVersion))
 		}
@@ -268,14 +268,17 @@ func initialize(ctx context.Context, path string, collections []metadata.Collect
 	return commit(ctx, tx)
 }
 
-// migrateVersionOne adds the collections introduced with sandbox management
-// and publishes version 2 only after every declaration is durable. Version 1
-// already uses the same collections and records tables, so record payloads and
-// image artifacts remain unchanged.
+// migrateCollections adds collections introduced after the stored version and
+// publishes the current version only after every declaration is durable. All
+// supported versions use the same collections and records tables, so existing
+// module payloads remain unchanged.
 //
-//	BEGIN IMMEDIATE -> register missing collections -> user_version=2 -> COMMIT
+//	BEGIN IMMEDIATE -> register missing collections -> publish version -> COMMIT
 //	       \---------------- any failure: ROLLBACK -----------------/
-func migrateVersionOne(ctx context.Context, db *sql.DB, collections []metadata.Collection) (returnErr error) {
+func migrateCollections(ctx context.Context, db *sql.DB, collections []metadata.Collection, from int) (returnErr error) {
+	if from < firstSchemaVersion || from >= schemaVersion {
+		return errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, fmt.Errorf("cannot migrate metadata schema version %d", from))
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return mapError(err)

@@ -21,6 +21,7 @@ import (
 	"github.com/kumabox/kumabox/images/source"
 	"github.com/kumabox/kumabox/metadata"
 	"github.com/kumabox/kumabox/metadata/sqlite"
+	networkcni "github.com/kumabox/kumabox/network/cni"
 	sandboxcatalog "github.com/kumabox/kumabox/sandbox/catalog"
 	"github.com/kumabox/kumabox/types"
 )
@@ -124,5 +125,6 @@ func NewRegistrySource(reference string) (images.Source, string, error) {
 // the database shape without an explicit migration.
 func metadataCollections() []metadata.Collection {
 	result := catalog.Collections()
-	return append(result, sandboxcatalog.Collections()...)
+	result = append(result, sandboxcatalog.Collections()...)
+	return append(result, networkcni.Collections()...)
 }

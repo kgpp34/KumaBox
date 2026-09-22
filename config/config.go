@@ -6,6 +6,8 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -29,6 +31,8 @@ type Config struct {
 	Metadata Metadata `mapstructure:"metadata"`
 	// Sandbox controls writable disk preparation and compensation.
 	Sandbox Sandbox `mapstructure:"sandbox"`
+	// Network controls host CNI discovery and lifecycle recovery.
+	Network Network `mapstructure:"network"`
 	// VMM selects and configures process backends.
 	VMM VMM `mapstructure:"vmm"`
 }
@@ -65,6 +69,57 @@ type Sandbox struct {
 	CleanupTimeout time.Duration `mapstructure:"cleanup_timeout"`
 }
 
+// Network contains host networking policy shared by provider implementations.
+type Network struct {
+	// CNI locates network configuration and plugin executables installed by the
+	// host administrator.
+	CNI CNI `mapstructure:"cni"`
+	// DNS is a comma- or semicolon-separated list injected into guest network
+	// configuration by the boot protocol.
+	DNS string `mapstructure:"dns"`
+	// Scope is an optional two-character installation identifier used in host
+	// network namespace names.
+	Scope string `mapstructure:"scope"`
+	// CleanupTimeout bounds detached compensation after caller cancellation.
+	CleanupTimeout time.Duration `mapstructure:"cleanup_timeout"`
+}
+
+// CNI contains host-owned CNI discovery paths.
+type CNI struct {
+	// ConfDir contains .conflist network definitions.
+	ConfDir string `mapstructure:"conf_dir"`
+	// BinDir contains CNI plugin executables.
+	BinDir string `mapstructure:"bin_dir"`
+}
+
+// DNSServers parses and validates the configured guest DNS server list.
+func (n Network) DNSServers() ([]string, error) {
+	if strings.TrimSpace(n.DNS) == "" {
+		return nil, nil
+	}
+	var result []string
+	for value := range strings.SplitSeq(strings.ReplaceAll(n.DNS, ";", ","), ",") {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if net.ParseIP(value) == nil {
+			return nil, fmt.Errorf("invalid DNS server %q", value)
+		}
+		result = append(result, value)
+	}
+	return result, nil
+}
+
+// NamespacePrefix returns the installation-specific prefix for named network
+// namespaces. An empty scope preserves the readable product default.
+func (n Network) NamespacePrefix() string {
+	if n.Scope == "" {
+		return "kumabox-"
+	}
+	return n.Scope + "-"
+}
+
 // VMM contains backend selection and host process policy.
 type VMM struct {
 	// Default selects the backend for newly created sandboxes.
@@ -98,6 +153,10 @@ func Default() Config {
 		},
 		Metadata: Metadata{BusyTimeout: 50 * time.Millisecond, RetryLimit: 5 * time.Second},
 		Sandbox:  Sandbox{Ext4Binary: "mkfs.ext4", CleanupTimeout: 10 * time.Second},
+		Network: Network{
+			CNI: CNI{ConfDir: "/etc/cni/net.d", BinDir: "/opt/cni/bin"},
+			DNS: "8.8.8.8,1.1.1.1", CleanupTimeout: 30 * time.Second,
+		},
 		VMM: VMM{
 			Default: types.VMMCloudHypervisor, CgroupParent: "/sys/fs/cgroup/kumabox.slice",
 			CloudHypervisor: CloudHypervisor{
@@ -129,6 +188,25 @@ func (c *Config) Validate() error {
 	}
 	if strings.TrimSpace(c.Sandbox.Ext4Binary) == "" || c.Sandbox.CleanupTimeout <= 0 {
 		return errors.New("sandbox requires an ext4 binary and positive cleanup timeout")
+	}
+	if !filepath.IsAbs(c.Network.CNI.ConfDir) || !filepath.IsAbs(c.Network.CNI.BinDir) {
+		return errors.New("network CNI configuration and binary directories must be absolute")
+	}
+	if c.Network.CleanupTimeout <= 0 {
+		return errors.New("network cleanup timeout must be positive")
+	}
+	if _, err := c.Network.DNSServers(); err != nil {
+		return fmt.Errorf("network DNS: %w", err)
+	}
+	if c.Network.Scope != "" {
+		if len(c.Network.Scope) != 2 {
+			return errors.New("network scope must contain exactly two ASCII letters or digits")
+		}
+		for _, character := range c.Network.Scope {
+			if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') && (character < '0' || character > '9') {
+				return errors.New("network scope must contain exactly two ASCII letters or digits")
+			}
+		}
 	}
 	if err := c.VMM.Default.Validate(); err != nil {
 		return fmt.Errorf("vmm default: %w", err)
@@ -167,7 +245,10 @@ func NewLoader() *Loader {
 		"images.boot_size": defaults.Images.BootSize, "images.archive_size": defaults.Images.ArchiveSize,
 		"metadata.busy_timeout": defaults.Metadata.BusyTimeout, "metadata.retry_limit": defaults.Metadata.RetryLimit,
 		"sandbox.ext4_binary": defaults.Sandbox.Ext4Binary, "sandbox.cleanup_timeout": defaults.Sandbox.CleanupTimeout,
-		"vmm.default": defaults.VMM.Default, "vmm.cgroup_parent": defaults.VMM.CgroupParent,
+		"network.cni.conf_dir": defaults.Network.CNI.ConfDir, "network.cni.bin_dir": defaults.Network.CNI.BinDir,
+		"network.dns": defaults.Network.DNS, "network.scope": defaults.Network.Scope,
+		"network.cleanup_timeout": defaults.Network.CleanupTimeout,
+		"vmm.default":             defaults.VMM.Default, "vmm.cgroup_parent": defaults.VMM.CgroupParent,
 		"vmm.cloud_hypervisor.binary":          defaults.VMM.CloudHypervisor.Binary,
 		"vmm.cloud_hypervisor.startup_timeout": defaults.VMM.CloudHypervisor.StartupTimeout,
 		"vmm.cloud_hypervisor.stop_grace":      defaults.VMM.CloudHypervisor.StopGrace,
