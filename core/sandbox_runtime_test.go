@@ -15,6 +15,69 @@ import (
 	"github.com/kumabox/kumabox/vmm"
 )
 
+func TestRunCreatesAndStartsSandbox(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	record, err := service.Run(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config: types.SandboxConfig{
+			Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory,
+			Storage: types.DefaultSandboxStorage,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State != types.SandboxStateRunning || record.Generation != 4 {
+		t.Fatalf("running record = %+v", record)
+	}
+	want := []string{
+		"status:resolving and checking image", "verify", "reserve",
+		"status:creating sparse ext4 disk", "disk",
+		"status:committing created state", "created", "report",
+		"status:resolving sandbox", "resolve",
+		"status:waiting for sandbox operation lock", "resolve",
+		"status:checking existing runtime", "observe", "cleanup",
+		"status:checking host runtime", "preflight",
+		"status:verifying image and sandbox disk", "verify", "check",
+		"status:committing starting state", "starting",
+		"status:launching cloud-hypervisor", "launch",
+		"status:committing running state", "running", "report",
+	}
+	if !reflect.DeepEqual(*steps, want) {
+		t.Fatalf("steps = %v, want %v", *steps, want)
+	}
+}
+
+func TestRunRetainsSandboxWhenStartFails(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	failure := errors.New("VMM exited")
+	testRuntime(t, service).launchErr = failure
+	_, err := service.Run(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config: types.SandboxConfig{
+			Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory,
+			Storage: types.DefaultSandboxStorage,
+		},
+	})
+	if !errors.Is(err, failure) {
+		t.Fatalf("Run error = %v", err)
+	}
+	var classified *errdefs.Error
+	if !errors.As(err, &classified) || !classified.Committed || classified.Operation != "run sandbox" {
+		t.Fatalf("Run did not report retained state: %v", err)
+	}
+	record := service.dependencies.catalog.(*fakeCatalog).record
+	if record.State != types.SandboxStateError || record.Failure == nil || record.Failure.Phase != "launch VMM" {
+		t.Fatalf("retained record = %+v", record)
+	}
+	joined := strings.Join(*steps, ",")
+	if !strings.Contains(joined, "created,report,status:resolving sandbox") ||
+		!strings.Contains(joined, "launch,abort,start-error") ||
+		strings.Contains(joined, "forget") {
+		t.Fatalf("Run failure steps = %v", *steps)
+	}
+}
+
 func TestSandboxLifecycleRoutesToPersistedVMM(t *testing.T) {
 	service, steps := newTestSandboxService(t, nil)
 	firecracker := &fakeRuntime{typ: types.VMMFirecracker, steps: steps, observation: vmm.Observation{State: vmm.ProcessAbsent}}

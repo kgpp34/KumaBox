@@ -128,6 +128,38 @@ func TestCreateCommandDefaultsToOneNIC(t *testing.T) {
 	}
 }
 
+func TestRunCommandUsesCreateResourceContract(t *testing.T) {
+	createCommand := NewCreateCommand(func() config.Config { return config.Config{} })
+	runCommand := NewRunCommand(func() config.Config { return config.Config{} })
+	for _, name := range []string{"name", "cpus", "memory", "storage", "nics", "network"} {
+		createFlag, runFlag := createCommand.Flags().Lookup(name), runCommand.Flags().Lookup(name)
+		if createFlag == nil || runFlag == nil {
+			t.Fatalf("shared flag --%s is missing", name)
+		}
+		if runFlag.DefValue != createFlag.DefValue {
+			t.Fatalf("run --%s default = %q, want create default %q", name, runFlag.DefValue, createFlag.DefValue)
+		}
+	}
+	if flag := runCommand.Flags().Lookup("json"); flag == nil {
+		t.Fatal("run --json is missing")
+	}
+}
+
+func TestRunCommandValidatesResourcesBeforeOpeningService(t *testing.T) {
+	command := NewRunCommand(func() config.Config {
+		t.Fatal("resource validation opened the sandbox service")
+		return config.Config{}
+	})
+	command.SetArgs([]string{"demo", "--name", "box", "--memory", "1MiB"})
+	err := command.ExecuteContext(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "--memory") {
+		t.Fatalf("run error = %v, want --memory", err)
+	}
+	if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeInvalidArgument {
+		t.Fatalf("run error code = %q, %v", code, ok)
+	}
+}
+
 func TestCreateProgressReportsCommittedOutputFailure(t *testing.T) {
 	var stderr bytes.Buffer
 	progress, err := newTestProgress(&stderr)

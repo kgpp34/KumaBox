@@ -41,6 +41,11 @@ func startCreateProgress(command *cobra.Command, name string) (*sandboxProgress,
 	return startProgress(command, "create sandbox", fmt.Sprintf("Create %q", name), "preparing sandbox", "inspect the sandbox state")
 }
 
+// startRunProgress starts progress for one create-and-launch operation.
+func startRunProgress(command *cobra.Command, name string) (*sandboxProgress, error) {
+	return startProgress(command, "run sandbox", fmt.Sprintf("Run %q", name), "preparing sandbox", "inspect the sandbox state and VMM log")
+}
+
 // startRemoveProgress starts progress for one remove operation.
 func startRemoveProgress(command *cobra.Command, reference string) (*sandboxProgress, error) {
 	return startProgress(command, "remove sandbox", fmt.Sprintf("Remove %q", reference), "preparing removal", "retry removal or inspect retained state")

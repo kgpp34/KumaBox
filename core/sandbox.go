@@ -232,6 +232,28 @@ func (s *SandboxService) networkProvider(record types.Sandbox) (network.Provider
 	return provider, true, err
 }
 
+// Run creates and starts one sandbox as a single application use case. Create
+// owns compensation until Created is durable; after that point a failed start
+// retains the sandbox and its failure state for inspection and retry.
+//
+//	image + config -> Create -> Created -> Start -> Running
+//	                              |          |
+//	                              +----------+-> retained on start failure
+func (s *SandboxService) Run(ctx context.Context, request CreateSandboxRequest) (types.Sandbox, error) {
+	created, err := s.Create(ctx, request)
+	if err != nil {
+		return types.Sandbox{}, err
+	}
+	running, err := s.Start(ctx, created.ID.String())
+	if err != nil {
+		return created, errdefs.Context(
+			err, "run sandbox", request.Config.Name, "start",
+			"inspect the retained sandbox and VMM log before retrying", true,
+		)
+	}
+	return running, nil
+}
+
 // List returns a consistent sandbox snapshot. Unless includeAll is true, only
 // states associated with an active VMM operation are returned.
 func (s *SandboxService) List(ctx context.Context, includeAll bool) ([]types.Sandbox, error) {
