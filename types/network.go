@@ -135,7 +135,7 @@ func (s NetworkSetup) Validate() error {
 	}
 	seen := make(map[int]struct{}, len(s.Interfaces))
 	previous := -1
-	for _, networkInterface := range s.Interfaces {
+	for position, networkInterface := range s.Interfaces {
 		if err := networkInterface.Validate(); err != nil {
 			return fmt.Errorf("network interface %d: %w", networkInterface.Index, err)
 		}
@@ -144,6 +144,9 @@ func (s NetworkSetup) Validate() error {
 		}
 		if networkInterface.Index <= previous {
 			return errors.New("network interfaces must be ordered by increasing index")
+		}
+		if networkInterface.Index != position {
+			return errors.New("network interface indices must be contiguous from zero")
 		}
 		seen[networkInterface.Index] = struct{}{}
 		previous = networkInterface.Index

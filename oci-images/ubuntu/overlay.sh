@@ -46,6 +46,7 @@ mountroot() {
 	KUMABOX_LAYERS=
 	KUMABOX_COW=
 	KUMABOX_HOSTNAME=
+	KUMABOX_NETWORK=false
 	KUMABOX_DEVICE_TIMEOUT=10
 	for argument in $(cat /proc/cmdline); do
 		case "$argument" in
@@ -53,6 +54,7 @@ mountroot() {
 			kumabox.cow=*) KUMABOX_COW=${argument#kumabox.cow=} ;;
 			kumabox.hostname=*) KUMABOX_HOSTNAME=${argument#kumabox.hostname=} ;;
 			kumabox.timeout=*) KUMABOX_DEVICE_TIMEOUT=${argument#kumabox.timeout=} ;;
+			ip=*) KUMABOX_NETWORK=true ;;
 		esac
 	done
 
@@ -72,6 +74,12 @@ mountroot() {
 	case "$KUMABOX_HOSTNAME" in
 		*[!A-Za-z0-9_.-]*) panic "kumabox.hostname contains an invalid character" ;;
 	esac
+
+	# configure_networking parses every static ip= entry into /run/net-*.conf.
+	# Skipping it for a zero-NIC sandbox avoids the initramfs DHCP wait.
+	if [ "$KUMABOX_NETWORK" = true ] && ! ls /run/net-*.conf >/dev/null 2>&1; then
+		configure_networking
+	fi
 
 	modprobe erofs 2>/dev/null || true
 	modprobe overlay 2>/dev/null || true

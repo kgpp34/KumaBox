@@ -76,7 +76,7 @@ func TestStartCommitsRunningOnlyAfterLaunchReadiness(t *testing.T) {
 	}
 }
 
-func TestStartRejectsNetworkedSandboxBeforeRuntimeRecovery(t *testing.T) {
+func TestStartRecoversNetworkBeforeLaunchingInItsNamespace(t *testing.T) {
 	service, steps := newTestSandboxService(t, nil)
 	if _, err := service.Create(t.Context(), CreateSandboxRequest{
 		ImageReference: "demo",
@@ -88,15 +88,76 @@ func TestStartRejectsNetworkedSandboxBeforeRuntimeRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	*steps = nil
-	if _, err := service.Start(t.Context(), "box"); err == nil {
-		t.Fatal("Start accepted a networked sandbox before VMM network attachment exists")
-	} else if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeHostIncompatible {
-		t.Fatalf("Start error code = %q, %v; want %q", code, err, errdefs.CodeHostIncompatible)
+	record, err := service.Start(t.Context(), "box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State != types.SandboxStateRunning {
+		t.Fatalf("started record = %+v", record)
+	}
+	plan := testRuntime(t, service).plan
+	if plan.Network.Namespace != "/var/run/netns/kumabox-test" || len(plan.Network.Interfaces) != 1 {
+		t.Fatalf("launch network = %+v", plan.Network)
 	}
 	if got := *steps; !reflect.DeepEqual(got, []string{
 		"status:resolving sandbox", "resolve", "status:waiting for sandbox operation lock", "resolve",
+		"status:checking existing runtime", "observe", "cleanup",
+		"status:checking host runtime", "preflight",
+		"status:verifying image and sandbox disk", "verify", "check",
+		"status:committing starting state", "starting",
+		"status:recovering sandbox network", "network-recover",
+		"status:launching cloud-hypervisor", "launch",
+		"status:committing running state", "running", "report",
 	}) {
-		t.Fatalf("Start touched runtime state before rejection: %v", got)
+		t.Fatalf("Start steps = %v", got)
+	}
+}
+
+func TestStartNetworkRecoveryFailureRetainsErrorAndQuiesces(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config: types.SandboxConfig{
+			Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory,
+			Storage: types.DefaultSandboxStorage, NICs: 1,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("network recovery failed")
+	testNetwork(t, service).recoverErr = failure
+	*steps = nil
+	if _, err := service.Start(t.Context(), "box"); !errors.Is(err, failure) {
+		t.Fatalf("Start error = %v", err)
+	}
+	record := service.dependencies.catalog.(*fakeCatalog).record
+	if record.State != types.SandboxStateError || record.Failure == nil || record.Failure.Phase != "recover network" {
+		t.Fatalf("failed start record = %+v", record)
+	}
+	if got := strings.Join(*steps, ","); !strings.Contains(got,
+		"starting,status:recovering sandbox network,network-recover,cleanup,status:quiescing sandbox network,network-quiesce,start-error") {
+		t.Fatalf("recovery compensation steps = %v", *steps)
+	}
+}
+
+func TestStartRejectsRecoveredNetworkIdentityDrift(t *testing.T) {
+	service, _ := newTestSandboxService(t, nil)
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config: types.SandboxConfig{
+			Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory,
+			Storage: types.DefaultSandboxStorage, NICs: 1,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	networkAdapter := testNetwork(t, service)
+	networkAdapter.recovered = append([]types.NetworkInterface(nil), service.dependencies.catalog.(*fakeCatalog).record.Network.Interfaces...)
+	networkAdapter.recovered[0].MAC = "02:00:00:00:00:fe"
+	if _, err := service.Start(t.Context(), "box"); err == nil {
+		t.Fatal("Start accepted a recovered network with changed guest identity")
+	} else if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeArtifactCorrupt {
+		t.Fatalf("Start error = %v, want %s", err, errdefs.CodeArtifactCorrupt)
 	}
 }
 
@@ -201,6 +262,73 @@ func TestStopRecordsIntentBeforeTerminatingRunningVMM(t *testing.T) {
 	}
 	if !reflect.DeepEqual(*steps, want) {
 		t.Fatalf("steps = %v, want %v", *steps, want)
+	}
+}
+
+func TestStopQuiescesNetworkAfterRuntimeCleanup(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config: types.SandboxConfig{
+			Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory,
+			Storage: types.DefaultSandboxStorage, NICs: 1,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	catalog := service.dependencies.catalog.(*fakeCatalog)
+	catalog.record.State, catalog.record.Generation = types.SandboxStateRunning, 4
+	runtimeAdapter := testRuntime(t, service)
+	runtimeAdapter.observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42}}
+	*steps = nil
+	if _, err := service.Stop(t.Context(), "box"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(*steps, ","); !strings.Contains(got,
+		"stop,status:cleaning runtime state,cleanup,status:quiescing sandbox network,network-quiesce,status:committing stopped state,stopped") {
+		t.Fatalf("network stop ordering = %v", *steps)
+	}
+}
+
+func TestStopRetriesNetworkQuiesceFromStoppingState(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	if _, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config: types.SandboxConfig{
+			Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory,
+			Storage: types.DefaultSandboxStorage, NICs: 1,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	catalog := service.dependencies.catalog.(*fakeCatalog)
+	catalog.record.State, catalog.record.Generation = types.SandboxStateRunning, 4
+	runtimeAdapter := testRuntime(t, service)
+	runtimeAdapter.observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42}}
+	networkAdapter := testNetwork(t, service)
+	failure := errors.New("link state failed")
+	networkAdapter.quiesceErr = failure
+	*steps = nil
+	if _, err := service.Stop(t.Context(), "box"); !errors.Is(err, failure) {
+		t.Fatalf("Stop error = %v", err)
+	}
+	if catalog.record.State != types.SandboxStateStopping || catalog.record.Generation != 5 {
+		t.Fatalf("retained record = %+v", catalog.record)
+	}
+
+	networkAdapter.quiesceErr = nil
+	runtimeAdapter.observation = vmm.Observation{State: vmm.ProcessAbsent}
+	*steps = nil
+	record, err := service.Stop(t.Context(), "box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State != types.SandboxStateStopped || record.Generation != 6 {
+		t.Fatalf("retried stop record = %+v", record)
+	}
+	if got := strings.Join(*steps, ","); strings.Contains(got, ",stop,") || !strings.Contains(got,
+		"cleanup,status:quiescing sandbox network,network-quiesce,status:committing stopped state,stopped") {
+		t.Fatalf("retried stop steps = %v", *steps)
 	}
 }
 

@@ -46,7 +46,7 @@ func TestCreatePublishesResolvedNetworkWithCreatedState(t *testing.T) {
 		record.Network.Backend != types.NetworkBackendCNI || len(record.Network.Interfaces) != 2 {
 		t.Fatalf("created network record = %+v", record)
 	}
-	networks := service.dependencies.networks.(*fakeNetwork)
+	networks := testNetwork(t, service)
 	if len(networks.specs) != 2 || networks.specs[0].Queues != 4 || networks.specs[1].Queues != 4 {
 		t.Fatalf("network specs = %+v", networks.specs)
 	}
@@ -54,6 +54,7 @@ func TestCreatePublishesResolvedNetworkWithCreatedState(t *testing.T) {
 		"status:resolving and checking image", "verify", "reserve",
 		"status:preparing sandbox network", "network-prepare",
 		"status:allocating sandbox network interfaces", "network-add",
+		"status:quiescing sandbox network", "network-quiesce",
 		"status:creating sparse ext4 disk", "disk",
 		"status:committing created state", "created", "report",
 	}
@@ -65,7 +66,7 @@ func TestCreatePublishesResolvedNetworkWithCreatedState(t *testing.T) {
 func TestCreateNetworkFailureCleansResourcesBeforeForgettingReservation(t *testing.T) {
 	failure := errors.New("CNI add failed")
 	service, steps := newTestSandboxService(t, nil)
-	networks := service.dependencies.networks.(*fakeNetwork)
+	networks := testNetwork(t, service)
 	networks.addErr = failure
 	if _, err := service.Create(t.Context(), CreateSandboxRequest{
 		ImageReference: "demo",
@@ -86,7 +87,7 @@ func TestCreateRetainsNetworkOwnerWhenCleanupFails(t *testing.T) {
 	addFailure := errors.New("CNI add failed")
 	deleteFailure := errors.New("CNI delete failed")
 	service, steps := newTestSandboxService(t, nil)
-	networks := service.dependencies.networks.(*fakeNetwork)
+	networks := testNetwork(t, service)
 	networks.addErr, networks.deleteErr = addFailure, deleteFailure
 	if _, err := service.Create(t.Context(), CreateSandboxRequest{
 		ImageReference: "demo",
@@ -261,7 +262,7 @@ func TestRemoveNetworkFailureRetainsDeletingUntilRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	failure := errors.New("network cleanup failed")
-	networks := service.dependencies.networks.(*fakeNetwork)
+	networks := testNetwork(t, service)
 	networks.deleteErr = failure
 	*steps = nil
 	if _, err := service.Remove(t.Context(), "box"); !errors.Is(err, failure) {

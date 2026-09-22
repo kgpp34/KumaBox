@@ -184,9 +184,12 @@ type fakeNetwork struct {
 	steps      *[]string
 	prepareErr error
 	addErr     error
+	recoverErr error
+	quiesceErr error
 	deleteErr  error
 	namespace  string
 	interfaces []types.NetworkInterface
+	recovered  []types.NetworkInterface
 	specs      []network.AddSpec
 }
 
@@ -224,12 +227,23 @@ func (*fakeNetwork) Verify(context.Context, types.SandboxID, []types.NetworkInte
 	return nil
 }
 
-func (*fakeNetwork) Recover(context.Context, types.SandboxID, string, []types.NetworkInterface) ([]types.NetworkInterface, error) {
-	return nil, nil
+func (f *fakeNetwork) Recover(_ context.Context, _ types.SandboxID, _ string, expected []types.NetworkInterface) ([]types.NetworkInterface, error) {
+	*f.steps = append(*f.steps, "network-recover")
+	if f.recovered != nil {
+		return append([]types.NetworkInterface(nil), f.recovered...), f.recoverErr
+	}
+	return append([]types.NetworkInterface(nil), expected...), f.recoverErr
 }
 
-func (*fakeNetwork) Quiesce(context.Context, types.SandboxID) error   { return nil }
-func (*fakeNetwork) Unquiesce(context.Context, types.SandboxID) error { return nil }
+func (f *fakeNetwork) Quiesce(context.Context, types.SandboxID) error {
+	*f.steps = append(*f.steps, "network-quiesce")
+	return f.quiesceErr
+}
+
+func (f *fakeNetwork) Unquiesce(context.Context, types.SandboxID) error {
+	*f.steps = append(*f.steps, "network-unquiesce")
+	return nil
+}
 
 func (f *fakeNetwork) Delete(context.Context, types.SandboxID) error {
 	*f.steps = append(*f.steps, "network-delete")
@@ -404,19 +418,38 @@ func newTestSandboxService(t *testing.T, diskError error) (*SandboxService, *[]s
 	if err != nil {
 		t.Fatal(err)
 	}
+	networkAdapter := &fakeNetwork{steps: &steps, namespace: "/var/run/netns/kumabox-test"}
+	networks, err := network.NewRegistry(networkAdapter)
+	if err != nil {
+		t.Fatal(err)
+	}
 	service, err := newSandboxService(sandboxDependencies{
 		paths: paths, imagePaths: imagePaths, images: fakeGuard{image: image, steps: &steps},
 		catalog: catalog, disks: fakeDisk{steps: &steps, prepare: diskError},
-		networks: &fakeNetwork{steps: &steps, namespace: "/var/run/netns/kumabox-test"}, runtimes: runtimes,
+		networks: networks, runtimes: runtimes,
 		defaultVMM: types.VMMCloudHypervisor, cleanupTimeout: 10 * time.Second,
-		reporter: fakeReporter{steps: &steps},
-		newID:    func() (types.SandboxID, error) { return fixedID, nil },
-		now:      func() time.Time { return time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC) },
+		defaultNetwork: types.NetworkBackendCNI,
+		reporter:       fakeReporter{steps: &steps},
+		newID:          func() (types.SandboxID, error) { return fixedID, nil },
+		now:            func() time.Time { return time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC) },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return service, &steps
+}
+
+func testNetwork(t *testing.T, service *SandboxService) *fakeNetwork {
+	t.Helper()
+	provider, err := service.dependencies.networks.Provider(types.NetworkBackendCNI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	networkAdapter, ok := provider.(*fakeNetwork)
+	if !ok {
+		t.Fatalf("network provider = %T, want *fakeNetwork", provider)
+	}
+	return networkAdapter
 }
 
 func testRuntime(t *testing.T, service *SandboxService) *fakeRuntime {
@@ -458,6 +491,7 @@ func TestNewSandboxServiceValidatesNamedDependencies(t *testing.T) {
 		{name: "VMM registry", mutate: func(dependencies *sandboxDependencies) { dependencies.runtimes = nil }},
 		{name: "cleanup timeout", mutate: func(dependencies *sandboxDependencies) { dependencies.cleanupTimeout = 0 }},
 		{name: "default VMM", mutate: func(dependencies *sandboxDependencies) { dependencies.defaultVMM = types.VMMFirecracker }},
+		{name: "default network", mutate: func(dependencies *sandboxDependencies) { dependencies.defaultNetwork = "missing" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dependencies := valid

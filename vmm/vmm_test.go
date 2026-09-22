@@ -17,6 +17,26 @@ func TestOverlayV1CmdlineListsLayersTopToBase(t *testing.T) {
 	}
 }
 
+func TestOverlayV1CmdlineRendersStaticNetworkAndDNS(t *testing.T) {
+	cmdline, err := OverlayV1Cmdline(OverlayV1Config{
+		LayerCount: 1,
+		Hostname:   "demo",
+		Interfaces: []types.NetworkInterface{{
+			Index: 0, Name: "eth0", TAP: "tap12345678-0", MAC: "02:00:00:00:00:01",
+			Queues: 4, QueueSize: 512, Network: "bridge",
+			IPv4: &types.IPv4Config{Address: "10.42.0.7", Gateway: "10.42.0.1", Prefix: 24},
+		}},
+		DNSServers: []string{"8.8.8.8", "1.1.1.1", "9.9.9.9"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := " net.ifnames=0 ip=10.42.0.7::10.42.0.1:255.255.255.0:demo:eth0:off:8.8.8.8:1.1.1.1"
+	if !strings.Contains(cmdline, want) {
+		t.Fatalf("cmdline = %q, want suffix %q", cmdline, want)
+	}
+}
+
 func TestLaunchPlanRequiresBaseToTopReadOnlyLayersAndFinalCOW(t *testing.T) {
 	plan := LaunchPlan{
 		SandboxID: "123e4567-e89b-42d3-a456-426614174000", Generation: 3,

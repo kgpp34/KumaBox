@@ -35,6 +35,20 @@ func buildArgs(plan vmm.LaunchPlan, apiSocket, vsock string) []string {
 		}
 		args = append(args, strings.Join(parts, ","))
 	}
+	if len(plan.Network.Interfaces) > 0 {
+		args = append(args, "--net")
+		for _, networkInterface := range plan.Network.Interfaces {
+			args = append(args, strings.Join([]string{
+				"tap=" + networkInterface.TAP,
+				"mac=" + networkInterface.MAC,
+				fmt.Sprintf("num_queues=%d", networkInterface.Queues),
+				fmt.Sprintf("queue_size=%d", networkInterface.QueueSize),
+				"offload_tso=on",
+				"offload_ufo=on",
+				"offload_csum=on",
+			}, ","))
+		}
+	}
 	args = append(args,
 		"--kernel", plan.Kernel,
 		"--initramfs", plan.Initrd,

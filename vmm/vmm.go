@@ -6,6 +6,7 @@ package vmm
 import (
 	"errors"
 	"fmt"
+	"net"
 	"path/filepath"
 	"strings"
 
@@ -51,6 +52,9 @@ type LaunchPlan struct {
 	Cmdline string
 	// Disks are attached base-to-top followed by the private COW disk.
 	Disks []Disk
+	// Network is the validated host-to-VMM handoff. Its zero value disables
+	// network attachment and namespace entry.
+	Network types.NetworkSetup
 }
 
 // Validate rejects incomplete plans before an adapter creates runtime state.
@@ -81,6 +85,9 @@ func (p LaunchPlan) Validate() error {
 			return errors.New("image disks must be read-only and serialed by manifest position")
 		}
 	}
+	if err := p.Network.Validate(); err != nil {
+		return fmt.Errorf("launch network: %w", err)
+	}
 	return nil
 }
 
@@ -91,6 +98,10 @@ type OverlayV1Config struct {
 	LayerCount int
 	// Hostname is the validated sandbox name applied by early userspace.
 	Hostname string
+	// Interfaces contains persisted guest identities in eth index order.
+	Interfaces []types.NetworkInterface
+	// DNSServers supplies up to two IPv4 resolvers to static kernel IP entries.
+	DNSServers []string
 }
 
 // OverlayV1Cmdline renders the public KumaBox boot ABI. Layer disks attach in
@@ -106,8 +117,53 @@ func OverlayV1Cmdline(config OverlayV1Config) (string, error) {
 	for position := config.LayerCount - 1; position >= 0; position-- {
 		serials = append(serials, fmt.Sprintf("%s%d", LayerSerialPrefix, position))
 	}
-	return "console=hvc0 loglevel=3 boot=kumabox-overlay kumabox.layers=" + strings.Join(serials, ",") +
-		" kumabox.cow=" + COWSerial + " kumabox.hostname=" + config.Hostname + " clocksource=kvm-clock rw", nil
+	var commandLine strings.Builder
+	commandLine.WriteString("console=hvc0 loglevel=3 boot=kumabox-overlay kumabox.layers=")
+	commandLine.WriteString(strings.Join(serials, ","))
+	commandLine.WriteString(" kumabox.cow=" + COWSerial + " kumabox.hostname=" + config.Hostname + " clocksource=kvm-clock rw")
+	if len(config.Interfaces) == 0 {
+		return commandLine.String(), nil
+	}
+	commandLine.WriteString(" net.ifnames=0")
+	dns, err := ipv4DNSServers(config.DNSServers)
+	if err != nil {
+		return "", err
+	}
+	for _, networkInterface := range config.Interfaces {
+		if err := networkInterface.Validate(); err != nil {
+			return "", err
+		}
+		if networkInterface.IPv4 == nil {
+			continue
+		}
+		mask := net.IP(net.CIDRMask(networkInterface.IPv4.Prefix, 32)).String()
+		parameter := fmt.Sprintf(" ip=%s::%s:%s:%s:%s:off",
+			networkInterface.IPv4.Address, networkInterface.IPv4.Gateway,
+			mask, config.Hostname, networkInterface.Name,
+		)
+		if len(dns) > 0 {
+			parameter += ":" + dns[0]
+			if len(dns) > 1 {
+				parameter += ":" + dns[1]
+			}
+		}
+		commandLine.WriteString(parameter)
+	}
+	return commandLine.String(), nil
+}
+
+func ipv4DNSServers(configured []string) ([]string, error) {
+	result := make([]string, 0, min(2, len(configured)))
+	for _, server := range configured {
+		address := net.ParseIP(server)
+		if address == nil || address.To4() == nil {
+			return nil, fmt.Errorf("overlay-v1 DNS server %q is not IPv4", server)
+		}
+		if len(result) < 2 {
+			result = append(result, server)
+		}
+	}
+	return result, nil
 }
 
 // Process identifies one Linux process generation independently of PID reuse.

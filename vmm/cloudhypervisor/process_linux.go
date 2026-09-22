@@ -9,10 +9,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/vishvananda/netns"
 
 	"github.com/kumabox/kumabox/types"
 	"github.com/kumabox/kumabox/vmm"
@@ -35,6 +38,39 @@ func configureProcess(command *exec.Cmd, scope *os.File) {
 		UseCgroupFD: true,
 		CgroupFD:    int(scope.Fd()),
 	}
+}
+
+// startProcess starts the child in the requested network namespace. setns is
+// thread-local, so the caller thread is pinned until the original namespace is
+// restored after fork and exec.
+func startProcess(command *exec.Cmd, namespacePath string) (returnErr error) {
+	if namespacePath == "" {
+		return command.Start()
+	}
+	if !filepath.IsAbs(namespacePath) {
+		return errors.New("VMM network namespace path must be absolute")
+	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	original, err := netns.Get()
+	if err != nil {
+		return fmt.Errorf("get current network namespace: %w", err)
+	}
+	defer func() { returnErr = errors.Join(returnErr, original.Close()) }()
+	target, err := netns.GetFromPath(namespacePath)
+	if err != nil {
+		return fmt.Errorf("open VMM network namespace %s: %w", namespacePath, err)
+	}
+	defer func() { returnErr = errors.Join(returnErr, target.Close()) }()
+	if err := netns.Set(target); err != nil {
+		return fmt.Errorf("enter VMM network namespace %s: %w", namespacePath, err)
+	}
+	defer func() {
+		if err := netns.Set(original); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("restore host network namespace: %w", err))
+		}
+	}()
+	return command.Start()
 }
 
 func captureProcess(pid int, id types.SandboxID, generation uint64, binary, apiSocket string) (vmm.Process, error) {

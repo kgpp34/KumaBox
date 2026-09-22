@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"runtime"
 
 	"github.com/kumabox/kumabox/agent"
@@ -23,7 +24,7 @@ import (
 //	                                        |
 //	                              abort + retained Error
 func (s *SandboxService) Start(ctx context.Context, reference string) (result types.Sandbox, returnErr error) {
-	if s == nil || s.dependencies.catalog == nil || s.dependencies.images == nil || s.dependencies.disks == nil || s.dependencies.runtimes.Len() == 0 || s.dependencies.reporter == nil || s.dependencies.now == nil {
+	if s == nil || s.dependencies.catalog == nil || s.dependencies.images == nil || s.dependencies.disks == nil || s.dependencies.networks == nil || s.dependencies.runtimes.Len() == 0 || s.dependencies.reporter == nil || s.dependencies.now == nil {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")
 	}
 	if reference == "" {
@@ -58,13 +59,6 @@ func (s *SandboxService) Start(ctx context.Context, reference string) (result ty
 	record, err = s.dependencies.catalog.Resolve(ctx, record.ID.String())
 	if err != nil {
 		return types.Sandbox{}, err
-	}
-	if record.Config.NICs > 0 || record.Network.Backend != "" {
-		return record, errdefs.New(
-			errdefs.ClassInvalid,
-			errdefs.CodeHostIncompatible,
-			errors.New("starting a networked sandbox is not supported until VMM network attachment is available"),
-		)
 	}
 	backend, err := s.dependencies.runtimes.Backend(record.VMM)
 	if err != nil {
@@ -115,7 +109,6 @@ func (s *SandboxService) Start(ctx context.Context, reference string) (result ty
 	if err != nil {
 		return record, failBeforeLaunch("validate artifacts", err)
 	}
-
 	if err := s.dependencies.reporter.Status("committing starting state"); err != nil {
 		return record, failBeforeLaunch("report", err)
 	}
@@ -128,6 +121,9 @@ func (s *SandboxService) Start(ctx context.Context, reference string) (result ty
 	plan.Generation = starting.Generation
 	if err := plan.Validate(); err != nil {
 		return starting, s.failStart(ctx, backend, starting, "build launch plan", err, vmm.Process{})
+	}
+	if err := s.recoverNetwork(ctx, starting); err != nil {
+		return starting, s.failStart(ctx, backend, starting, "recover network", err, vmm.Process{})
 	}
 	if err := s.dependencies.reporter.Status("launching " + string(backend.Type())); err != nil {
 		return starting, s.failStart(ctx, backend, starting, "report", err, vmm.Process{})
@@ -185,6 +181,9 @@ func (s *SandboxService) recoverStart(ctx context.Context, backend vmm.Backend, 
 			if err := backend.Cleanup(ctx, record.ID); err != nil {
 				return record, false, err
 			}
+			if err := s.quiesceNetwork(ctx, record); err != nil {
+				return record, false, err
+			}
 			stopped, err := s.dependencies.catalog.MarkStopped(ctx, record.ID, record.Generation, types.SandboxStateRunning, s.dependencies.now().UTC())
 			return stopped, false, err
 		}
@@ -240,7 +239,10 @@ func (s *SandboxService) launchPlan(record types.Sandbox, image types.Image) (vm
 	if err != nil {
 		return vmm.LaunchPlan{}, err
 	}
-	cmdline, err := vmm.OverlayV1Cmdline(vmm.OverlayV1Config{LayerCount: len(image.Layers), Hostname: record.Config.Name})
+	cmdline, err := vmm.OverlayV1Cmdline(vmm.OverlayV1Config{
+		LayerCount: len(image.Layers), Hostname: record.Config.Name,
+		Interfaces: record.Network.Interfaces, DNSServers: s.dependencies.dnsServers,
+	})
 	if err != nil {
 		return vmm.LaunchPlan{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeImageIncompatible, err)
 	}
@@ -256,7 +258,44 @@ func (s *SandboxService) launchPlan(record types.Sandbox, image types.Image) (vm
 	return vmm.LaunchPlan{
 		SandboxID: record.ID, CPUs: record.Config.CPUs, Memory: record.Config.Memory,
 		BootProfile: image.Boot.Profile, Kernel: kernel, Initrd: initrd, Cmdline: cmdline, Disks: disks,
+		Network: record.Network,
 	}, nil
+}
+
+// recoverNetwork verifies retained host plumbing or rebuilds it with the
+// persisted guest MAC and IP identity before the VMM opens any TAP.
+func (s *SandboxService) recoverNetwork(ctx context.Context, record types.Sandbox) error {
+	provider, hasNetwork, err := s.networkProvider(record)
+	if err != nil || !hasNetwork {
+		return err
+	}
+	if record.Network.Backend == "" {
+		return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("sandbox network creation is incomplete"))
+	}
+	if err := s.dependencies.reporter.Status("recovering sandbox network"); err != nil {
+		return err
+	}
+	recovered, err := provider.Recover(ctx, record.ID, record.Config.NetworkName, record.Network.Interfaces)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(recovered, record.Network.Interfaces) {
+		return errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("recovered network identity differs from persisted sandbox state"))
+	}
+	return nil
+}
+
+// quiesceNetwork lowers retained CNI-side links after process absence. Keeping
+// this inside the sandbox operation lock prevents a queued start from racing
+// with a late link-down operation.
+func (s *SandboxService) quiesceNetwork(ctx context.Context, record types.Sandbox) error {
+	provider, hasNetwork, err := s.networkProvider(record)
+	if err != nil || !hasNetwork || record.Network.Backend == "" {
+		return err
+	}
+	reportErr := s.dependencies.reporter.Status("quiescing sandbox network")
+	// Presentation failure must not leave an otherwise stoppable host link up.
+	return errors.Join(reportErr, provider.Quiesce(ctx, record.ID))
 }
 
 // failStart cleans only the exact process identity (when available) and retains
@@ -270,6 +309,7 @@ func (s *SandboxService) failStart(ctx context.Context, backend vmm.Backend, sta
 	} else {
 		cleanupErr = backend.Cleanup(cleanupCtx, starting.ID)
 	}
+	cleanupErr = errors.Join(cleanupErr, s.quiesceNetwork(cleanupCtx, starting))
 	failureCause := errors.Join(cause, cleanupErr)
 	failure := types.SandboxFailure{Phase: phase, Message: failureCause.Error()}
 	_, markErr := s.dependencies.catalog.MarkStartError(cleanupCtx, starting.ID, starting.Generation, failure, s.dependencies.now().UTC())
@@ -283,7 +323,7 @@ func (s *SandboxService) failStart(ctx context.Context, backend vmm.Backend, sta
 //	Starting/Stopping  ----- retry resumes the owned process generation -----^
 //	Running + no VMM  --------------------- cleanup ------------------------^
 func (s *SandboxService) Stop(ctx context.Context, reference string) (result types.Sandbox, returnErr error) {
-	if s == nil || s.dependencies.catalog == nil || s.dependencies.runtimes.Len() == 0 || s.dependencies.reporter == nil || s.dependencies.now == nil {
+	if s == nil || s.dependencies.catalog == nil || s.dependencies.networks == nil || s.dependencies.runtimes.Len() == 0 || s.dependencies.reporter == nil || s.dependencies.now == nil {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")
 	}
 	if reference == "" {
@@ -334,6 +374,9 @@ func (s *SandboxService) Stop(ctx context.Context, reference string) (result typ
 		if err := backend.Cleanup(ctx, record.ID); err != nil {
 			return record, errdefs.Context(err, "stop sandbox", reference, "cleanup runtime", "inspect the runtime scope before retrying", false)
 		}
+		if err := s.quiesceNetwork(ctx, record); err != nil {
+			return record, errdefs.Context(err, "stop sandbox", reference, "quiesce network", "retry the stop to finish network cleanup", false)
+		}
 		if err := s.dependencies.reporter.Committed(record); err != nil {
 			return record, errdefs.Context(err, "stop sandbox", reference, "report", "sandbox is not running", false)
 		}
@@ -376,6 +419,9 @@ func (s *SandboxService) Stop(ctx context.Context, reference string) (result typ
 	}
 	if err := backend.Cleanup(ctx, record.ID); err != nil {
 		return record, errdefs.Context(err, "stop sandbox", reference, "cleanup runtime", "retry the stop to finish cleanup", committed)
+	}
+	if err := s.quiesceNetwork(ctx, record); err != nil {
+		return record, errdefs.Context(err, "stop sandbox", reference, "quiesce network", "retry the stop to finish network cleanup", committed)
 	}
 
 	// Error retains the original start/create diagnostic after any residual VMM

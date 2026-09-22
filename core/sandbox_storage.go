@@ -35,6 +35,14 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 	if _, err := s.dependencies.runtimes.Backend(request.VMM); err != nil {
 		return types.Sandbox{}, err
 	}
+	var networkProvider network.Provider
+	if request.Config.NICs > 0 {
+		var providerErr error
+		networkProvider, providerErr = s.dependencies.networks.Provider(s.dependencies.defaultNetwork)
+		if providerErr != nil {
+			return types.Sandbox{}, providerErr
+		}
+	}
 	if int(request.Config.CPUs) > runtime.NumCPU() { //nolint:gosec // Config validation bounds CPUs to a small positive value
 		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, fmt.Errorf("requested %d vCPUs exceeds available host CPUs (%d)", request.Config.CPUs, runtime.NumCPU()))
 	}
@@ -88,7 +96,7 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 		if err := s.dependencies.reporter.Status("preparing sandbox network"); err != nil {
 			return types.Sandbox{}, s.compensate(ctx, record, "report", err)
 		}
-		namespace, err := s.dependencies.networks.Prepare(ctx, id)
+		namespace, err := networkProvider.Prepare(ctx, id)
 		if err != nil {
 			return types.Sandbox{}, s.compensate(ctx, record, "network prepare", err)
 		}
@@ -100,11 +108,11 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 		for index := range specs {
 			specs[index].Queues = queues
 		}
-		interfaces, err := s.dependencies.networks.Add(ctx, id, request.Config.NetworkName, specs...)
+		interfaces, err := networkProvider.Add(ctx, id, request.Config.NetworkName, specs...)
 		if err != nil {
 			return types.Sandbox{}, s.compensate(ctx, record, "network add", err)
 		}
-		setup = types.NetworkSetup{Backend: s.dependencies.networks.Type(), Namespace: namespace, Interfaces: interfaces}
+		setup = types.NetworkSetup{Backend: networkProvider.Type(), Namespace: namespace, Interfaces: interfaces}
 		if err := setup.Validate(); err != nil {
 			return types.Sandbox{}, s.compensate(ctx, record, "network result", err)
 		}
@@ -113,6 +121,12 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 		}
 		record.Network = setup
 		record.Config.NetworkName = interfaces[0].Network
+		if err := s.dependencies.reporter.Status("quiescing sandbox network"); err != nil {
+			return types.Sandbox{}, s.compensate(ctx, record, "report", err)
+		}
+		if err := networkProvider.Quiesce(ctx, id); err != nil {
+			return types.Sandbox{}, s.compensate(ctx, record, "network quiesce", err)
+		}
 	}
 	if err := s.dependencies.reporter.Status("creating sparse ext4 disk"); err != nil {
 		return types.Sandbox{}, s.compensate(ctx, record, "report", err)
@@ -182,6 +196,10 @@ func (s *SandboxService) Remove(ctx context.Context, reference string) (result t
 	if err != nil {
 		return record, err
 	}
+	networkProvider, hasNetwork, err := s.networkProvider(record)
+	if err != nil {
+		return record, err
+	}
 	if err := s.dependencies.reporter.Status("marking sandbox for deletion"); err != nil {
 		return types.Sandbox{}, err
 	}
@@ -197,11 +215,11 @@ func (s *SandboxService) Remove(ctx context.Context, reference string) (result t
 	if err := s.dependencies.disks.Remove(ctx, deleting.ID); err != nil {
 		return deleting, errdefs.Context(err, "remove sandbox", reference, "disk cleanup", "retry removal to finish cleanup", true)
 	}
-	if deleting.Config.NICs > 0 || deleting.Network.Backend != "" {
+	if hasNetwork {
 		if err := s.dependencies.reporter.Status("removing sandbox network"); err != nil {
 			return deleting, errdefs.Context(err, "remove sandbox", reference, "report", "retry removal to finish cleanup", true)
 		}
-		if err := s.dependencies.networks.Delete(ctx, deleting.ID); err != nil {
+		if err := networkProvider.Delete(ctx, deleting.ID); err != nil {
 			return deleting, errdefs.Context(err, "remove sandbox", reference, "network cleanup", "retry removal to finish cleanup", true)
 		}
 	}
@@ -230,8 +248,10 @@ func (s *SandboxService) compensate(ctx context.Context, record types.Sandbox, p
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.dependencies.cleanupTimeout)
 	defer cancel()
 	cleanupErr := s.dependencies.disks.Remove(cleanupCtx, record.ID)
-	if record.Config.NICs > 0 || record.Network.Backend != "" {
-		cleanupErr = errors.Join(cleanupErr, s.dependencies.networks.Delete(cleanupCtx, record.ID))
+	if provider, hasNetwork, providerErr := s.networkProvider(record); providerErr != nil {
+		cleanupErr = errors.Join(cleanupErr, providerErr)
+	} else if hasNetwork {
+		cleanupErr = errors.Join(cleanupErr, provider.Delete(cleanupCtx, record.ID))
 	}
 	if cleanupErr == nil {
 		forgetErr := s.dependencies.catalog.Forget(cleanupCtx, record.ID, record.Generation)

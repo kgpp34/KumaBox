@@ -29,3 +29,17 @@ func TestNetworkSetupZeroValueDisablesNetworking(t *testing.T) {
 		t.Fatal("namespace without backend was accepted")
 	}
 }
+
+func TestNetworkSetupRejectsNonContiguousInterfaceIndices(t *testing.T) {
+	setup := NetworkSetup{
+		Backend:   NetworkBackendCNI,
+		Namespace: "/var/run/netns/kb-sandbox",
+		Interfaces: []NetworkInterface{{
+			Index: 1, Name: "eth1", TAP: "tap12345678-1", MAC: "02:00:00:00:00:02",
+			Queues: 2, QueueSize: 512, Network: "bridge",
+		}},
+	}
+	if err := setup.Validate(); err == nil {
+		t.Fatal("NetworkSetup accepted an interface sequence that does not begin at zero")
+	}
+}

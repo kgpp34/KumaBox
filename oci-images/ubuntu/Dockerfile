@@ -25,6 +25,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 COPY --from=agent-builder /out/kumabox-agent /usr/local/bin/kumabox-agent
 COPY oci-images/ubuntu/overlay.sh /usr/local/lib/kumabox/initramfs/kumabox-overlay
+COPY oci-images/ubuntu/network.sh /usr/local/lib/kumabox/initramfs/kumabox-network
 COPY oci-images/ubuntu/kumabox-agent.service /etc/systemd/system/kumabox-agent.service
 
 RUN set -eu; \
@@ -32,15 +33,20 @@ RUN set -eu; \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         initramfs-tools \
+        iproute2 \
+        iputils-ping \
         kmod \
         linux-image-virtual \
         systemd \
         systemd-sysv \
         systemd-timesyncd \
         systemd-resolved \
+        curl \
         udev \
     && install -m 0755 /usr/local/lib/kumabox/initramfs/kumabox-overlay \
         /etc/initramfs-tools/scripts/kumabox-overlay \
+    && install -m 0755 /usr/local/lib/kumabox/initramfs/kumabox-network \
+        /etc/initramfs-tools/scripts/init-bottom/kumabox-network \
     && printf '%s\n' \
         erofs overlay ext4 virtio_blk virtio_pci virtio_ring virtio_net \
         vsock vmw_vsock_virtio_transport \
@@ -57,6 +63,7 @@ RUN set -eu; \
         test -s "$initrd"; \
         lsinitramfs "$initrd" > "$contents"; \
         grep -qx 'scripts/kumabox-overlay' "$contents"; \
+        grep -qx 'scripts/init-bottom/kumabox-network' "$contents"; \
         for module in erofs overlay ext4 virtio_blk virtio_pci virtio_net vsock vmw_vsock_virtio_transport; do \
             filename=$(modinfo -k "$kernel" -F filename "$module"); \
             if [ "$filename" != '(builtin)' ]; then \

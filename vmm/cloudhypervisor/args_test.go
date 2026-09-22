@@ -107,6 +107,13 @@ func TestBuildArgsMatchesDirectBootContract(t *testing.T) {
 			{Path: "/layers/1.erofs", Serial: "kumabox-layer1", ReadOnly: true},
 			{Path: "/sandbox/cow.raw", Serial: vmm.COWSerial},
 		},
+		Network: types.NetworkSetup{
+			Backend: types.NetworkBackendCNI, Namespace: "/var/run/netns/kumabox-test",
+			Interfaces: []types.NetworkInterface{{
+				Index: 0, Name: "eth0", TAP: "tap12345678-0", MAC: "02:00:00:00:00:01",
+				Queues: 4, QueueSize: 512, Network: "bridge",
+			}},
+		},
 	}
 	args := buildArgs(plan, "/run/api.sock", "/run/vsock.uds")
 	want := []string{
@@ -117,6 +124,8 @@ func TestBuildArgsMatchesDirectBootContract(t *testing.T) {
 		"path=/layers/0.erofs,image_type=raw,num_queues=2,queue_size=512,serial=kumabox-layer0,readonly=on",
 		"path=/layers/1.erofs,image_type=raw,num_queues=2,queue_size=512,serial=kumabox-layer1,readonly=on",
 		"path=/sandbox/cow.raw,image_type=raw,num_queues=2,queue_size=512,serial=kumabox-cow,direct=on,sparse=on",
+		"--net",
+		"tap=tap12345678-0,mac=02:00:00:00:00:01,num_queues=4,queue_size=512,offload_tso=on,offload_ufo=on,offload_csum=on",
 		"--kernel", "/boot/vmlinuz",
 		"--initramfs", "/boot/initrd.img",
 		"--cmdline", "boot=kumabox-overlay",

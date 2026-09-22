@@ -19,6 +19,8 @@ func platformPreflight() error { return errLinuxRequired }
 
 func configureProcess(*exec.Cmd, *os.File) {}
 
+func startProcess(*exec.Cmd, string) error { return errLinuxRequired }
+
 func captureProcess(int, types.SandboxID, uint64, string, string) (vmm.Process, error) {
 	return vmm.Process{}, errLinuxRequired
 }

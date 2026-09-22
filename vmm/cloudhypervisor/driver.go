@@ -173,7 +173,7 @@ func (d *Driver) Launch(ctx context.Context, plan vmm.LaunchPlan) (result vmm.Pr
 	command.Stdout, command.Stderr = logFile, logFile
 	configureProcess(command, scope)
 
-	if err := command.Start(); err != nil {
+	if err := startProcess(command, plan.Network.Namespace); err != nil {
 		return vmm.Process{}, fmt.Errorf("exec cloud-hypervisor: %w", err)
 	}
 	result, err = captureProcess(command.Process.Pid, plan.SandboxID, plan.Generation, filepath.Base(d.binary), apiSocket)

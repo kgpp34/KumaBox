@@ -77,8 +77,10 @@ type sandboxDependencies struct {
 	catalog sandboxCatalog
 	// disks prepares and cleans sandbox-owned writable disks.
 	disks disk.Backend
-	// networks owns sandbox network namespaces, CNI allocations, and TAP devices.
-	networks network.Provider
+	// networks routes persisted network identities to provider adapters.
+	networks *network.Registry
+	// defaultNetwork selects the provider for newly created networked sandboxes.
+	defaultNetwork types.NetworkBackend
 	// imagePaths derives immutable artifacts after the image guard verifies them.
 	imagePaths images.Paths
 	// runtimes route persisted VMM identities to process adapters.
@@ -87,6 +89,8 @@ type sandboxDependencies struct {
 	defaultVMM types.VMMType
 	// cleanupTimeout bounds compensation that outlives caller cancellation.
 	cleanupTimeout time.Duration
+	// dnsServers are rendered into static guest boot network parameters.
+	dnsServers []string
 	// reporter emits progress independently of command results.
 	reporter SandboxReporter
 	// newID and now are replaceable in same-package tests.
@@ -113,6 +117,9 @@ func newSandboxService(dependencies sandboxDependencies) (*SandboxService, error
 	if _, err := dependencies.runtimes.Backend(dependencies.defaultVMM); err != nil {
 		return nil, err
 	}
+	if _, err := dependencies.networks.Provider(dependencies.defaultNetwork); err != nil {
+		return nil, err
+	}
 	if dependencies.reporter == nil {
 		dependencies.reporter = discardReporter{}
 	}
@@ -133,6 +140,10 @@ func newSandboxService(dependencies sandboxDependencies) (*SandboxService, error
 //	       +---- usage ---+---- image guard + ext4 COW ----------> service
 func OpenSandbox(ctx context.Context, configuration config.Config, reporter SandboxReporter) (*SandboxService, error) {
 	if err := configuration.Validate(); err != nil {
+		return nil, err
+	}
+	dnsServers, err := configuration.Network.DNSServers()
+	if err != nil {
 		return nil, err
 	}
 	imagePaths, err := images.NewPaths(configuration.Paths)
@@ -169,7 +180,7 @@ func OpenSandbox(ctx context.Context, configuration config.Config, reporter Sand
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
-	networks, err := cni.New(cni.Options{
+	cniProvider, err := cni.New(cni.Options{
 		ConfDir:         configuration.Network.CNI.ConfDir,
 		BinDir:          configuration.Network.CNI.BinDir,
 		CacheDir:        cacheDir,
@@ -179,13 +190,18 @@ func OpenSandbox(ctx context.Context, configuration config.Config, reporter Sand
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
+	networks, err := network.NewRegistry(cniProvider)
+	if err != nil {
+		return nil, errors.Join(err, store.Close())
+	}
 	imageCatalog := imagecatalog.New(store, imagecatalog.WithImageUsage(sandboxcatalog.Usage{}))
 	sandboxCatalog := sandboxcatalog.New(store, imagecatalog.Reader{})
 	service, err := newSandboxService(sandboxDependencies{
 		paths: sandboxPaths, imagePaths: imagePaths, images: images.NewGuard(imagePaths, imageCatalog),
 		catalog: sandboxCatalog, disks: disks, networks: networks, runtimes: runtimes, reporter: reporter,
-		store: store, defaultVMM: defaultVMM,
+		store: store, defaultVMM: defaultVMM, defaultNetwork: types.NetworkBackendCNI,
 		cleanupTimeout: max(configuration.Sandbox.CleanupTimeout, configuration.Network.CleanupTimeout),
+		dnsServers:     dnsServers,
 	})
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
@@ -199,6 +215,21 @@ func (s *SandboxService) Close() error {
 		return nil
 	}
 	return s.dependencies.store.Close()
+}
+
+// networkProvider resolves the provider that owns a sandbox's durable network
+// state. Creating or retained-error records without a published setup fall
+// back to the configured creation backend so cleanup can still resume.
+func (s *SandboxService) networkProvider(record types.Sandbox) (network.Provider, bool, error) {
+	if record.Config.NICs == 0 && record.Network.Backend == "" {
+		return nil, false, nil
+	}
+	backend := record.Network.Backend
+	if backend == "" {
+		backend = s.dependencies.defaultNetwork
+	}
+	provider, err := s.dependencies.networks.Provider(backend)
+	return provider, true, err
 }
 
 // List returns a consistent sandbox snapshot. Unless includeAll is true, only
