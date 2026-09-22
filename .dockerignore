@@ -3,6 +3,10 @@
 !go.sum
 !agent/
 !agent/**
+!errdefs/
+!errdefs/**
+!types/
+!types/**
 !version/
 !version/**
 !cmd/
@@ -11,4 +15,5 @@
 !oci-images/
 !oci-images/ubuntu/
 !oci-images/ubuntu/overlay.sh
+!oci-images/ubuntu/network.sh
 !oci-images/ubuntu/kumabox-agent.service
