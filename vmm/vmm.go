@@ -235,3 +235,14 @@ func (p SnapshotPlan) Validate() error {
 	}
 	return nil
 }
+
+// Validate rejects incomplete restore ownership before a process is launched.
+func (p RestorePlan) Validate() error {
+	if _, err := types.ParseSandboxID(p.SandboxID.String()); err != nil {
+		return err
+	}
+	if p.Generation == 0 || p.CPUs == 0 || !filepath.IsAbs(p.SnapshotDir) {
+		return errors.New("restore plan requires generation, CPUs, and an absolute snapshot directory")
+	}
+	return p.Network.Validate()
+}

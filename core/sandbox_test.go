@@ -294,6 +294,8 @@ type fakeRuntime struct {
 	logOptions    vmm.LogOptions
 	snapshotPlan  vmm.SnapshotPlan
 	snapshotErr   error
+	restorePlan   vmm.RestorePlan
+	restoreErr    error
 }
 
 func (f *fakeRuntime) Snapshot(_ context.Context, plan vmm.SnapshotPlan) error {
@@ -311,6 +313,16 @@ func (f *fakeRuntime) Snapshot(_ context.Context, plan vmm.SnapshotPlan) error {
 		}
 	}
 	return nil
+}
+
+func (f *fakeRuntime) Restore(_ context.Context, plan vmm.RestorePlan) (vmm.Process, error) {
+	*f.steps = append(*f.steps, "restore")
+	f.restorePlan = plan
+	process := vmm.Process{
+		PID: 43, StartTicks: 11, BootID: "boot", SandboxID: plan.SandboxID,
+		Generation: plan.Generation, Binary: "cloud-hypervisor", APISocket: "/run/kumabox/restore.sock",
+	}
+	return process, f.restoreErr
 }
 
 func (f *fakeRuntime) Type() types.VMMType {

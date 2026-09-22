@@ -88,3 +88,19 @@ func TestProcessValidationRequiresCompleteIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestRestorePlanRequiresOwnedAbsoluteSnapshot(t *testing.T) {
+	plan := RestorePlan{
+		SandboxID:   "123e4567-e89b-42d3-a456-426614174000",
+		Generation:  7,
+		CPUs:        2,
+		SnapshotDir: "/var/lib/kumabox/snapshots/example",
+	}
+	if err := plan.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	plan.SnapshotDir = "relative/snapshot"
+	if err := plan.Validate(); err == nil {
+		t.Fatal("RestorePlan accepted a relative snapshot directory")
+	}
+}

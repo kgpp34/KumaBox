@@ -81,6 +81,18 @@ func (p Paths) StageCOW(id types.SnapshotID) (string, error) {
 	return storage.Join(dir, cowName)
 }
 
+// RestoreCOW returns a private scratch file used to prepare one sandbox's
+// writable disk while its current VMM can continue running.
+func (p Paths) RestoreCOW(snapshotID types.SnapshotID, sandboxID types.SandboxID) (string, error) {
+	if _, err := types.ParseSnapshotID(snapshotID.String()); err != nil {
+		return "", err
+	}
+	if _, err := types.ParseSandboxID(sandboxID.String()); err != nil {
+		return "", err
+	}
+	return storage.Join(p.StagingDir(), snapshotID.String()+"-restore-"+sandboxID.String()+".raw")
+}
+
 // PrepareStage creates an empty private capture directory.
 func (p Paths) PrepareStage(id types.SnapshotID) error {
 	dir, err := p.Stage(id)

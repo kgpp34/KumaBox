@@ -51,6 +51,20 @@ func newTestSnapshotService(t *testing.T) (*SnapshotService, *SandboxService, *[
 			Generation: 3, Binary: "cloud-hypervisor", APISocket: "/run/kumabox/api.sock",
 		},
 	}
+	sandboxDir, err := sandboxService.dependencies.paths.Dir(fixedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.EnsureDir(sandboxDir); err != nil {
+		t.Fatal(err)
+	}
+	cow, err := sandboxService.dependencies.paths.COW(fixedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cow, []byte("live-cow"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	roots := storage.Roots{
 		Data: filepath.Join(t.TempDir(), "data"), Run: filepath.Join(t.TempDir(), "run"), Log: filepath.Join(t.TempDir(), "log"),
 	}
@@ -70,8 +84,115 @@ func newTestSnapshotService(t *testing.T) (*SnapshotService, *SandboxService, *[
 		sandboxes: catalog, snapshots: snapshotcatalog.New(memory), runtimes: sandboxService.dependencies.runtimes,
 		reporter: fakeSnapshotReporter{steps: steps}, newID: func() (types.SnapshotID, error) { return fixedSnapshotID, nil },
 		now: func() time.Time { return time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC) }, store: memory,
+		lifecycle: sandboxService,
 	}
 	return service, sandboxService, steps
+}
+
+func TestRestoreStopsRunningSandboxAndResumesSnapshot(t *testing.T) {
+	service, sandboxService, steps := newTestSnapshotService(t)
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "checkpoint"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	*steps = nil
+	record, err := service.Restore(t.Context(), "box", capture.ID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State != types.SandboxStateRunning || record.Generation != 8 {
+		t.Fatalf("restored sandbox = %+v", record)
+	}
+	plan := testRuntime(t, sandboxService).restorePlan
+	if plan.SandboxID != fixedID || plan.Generation != 7 || plan.SnapshotDir == "" {
+		t.Fatalf("restore plan = %+v", plan)
+	}
+	wantSequence := []string{"stopping", "stop", "stopped", "starting", "restore", "running"}
+	position := 0
+	for _, step := range *steps {
+		if position < len(wantSequence) && step == wantSequence[position] {
+			position++
+		}
+	}
+	if position != len(wantSequence) {
+		t.Fatalf("restore steps = %v, missing sequence %v", *steps, wantSequence)
+	}
+}
+
+func TestRestoreFailureRetainsErrorSandbox(t *testing.T) {
+	service, sandboxService, _ := newTestSnapshotService(t)
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("restore failed")
+	testRuntime(t, sandboxService).restoreErr = failure
+	if _, err := service.Restore(t.Context(), "box", capture.ID.String()); !errors.Is(err, failure) {
+		t.Fatalf("Restore error = %v", err)
+	}
+	record := sandboxService.dependencies.catalog.(*fakeCatalog).record
+	if record.State != types.SandboxStateError || record.Failure == nil || record.Failure.Phase != "restore VMM" {
+		t.Fatalf("retained sandbox = %+v", record)
+	}
+}
+
+func TestRestoreRejectsMissingCOWBeforeStoppingSandbox(t *testing.T) {
+	service, sandboxService, steps := newTestSnapshotService(t)
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotCOW, err := service.paths.COW(capture.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(snapshotCOW); err != nil {
+		t.Fatal(err)
+	}
+	*steps = nil
+	if _, err := service.Restore(t.Context(), "box", capture.ID.String()); err == nil {
+		t.Fatal("Restore accepted a snapshot without its writable disk")
+	}
+	record := sandboxService.dependencies.catalog.(*fakeCatalog).record
+	if record.State != types.SandboxStateRunning || record.Generation != 4 {
+		t.Fatalf("sandbox changed before snapshot validation: %+v", record)
+	}
+	for _, step := range *steps {
+		if step == "stopping" || step == "stop" {
+			t.Fatalf("restore stopped the sandbox before validation: %v", *steps)
+		}
+	}
+}
+
+func TestRestoreRecoversRetainedErrorSandbox(t *testing.T) {
+	service, sandboxService, steps := newTestSnapshotService(t)
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := sandboxService.dependencies.catalog.(*fakeCatalog)
+	catalog.record.State = types.SandboxStateError
+	catalog.record.Generation = 5
+	catalog.record.Failure = &types.SandboxFailure{Phase: "previous start", Message: "failed"}
+	testRuntime(t, sandboxService).observation = vmm.Observation{State: vmm.ProcessAbsent}
+	*steps = nil
+	record, err := service.Restore(t.Context(), "box", capture.ID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State != types.SandboxStateRunning || record.Generation != 7 || record.Failure != nil {
+		t.Fatalf("restored sandbox = %+v", record)
+	}
+	wantSequence := []string{"cleanup", "starting", "restore", "running"}
+	position := 0
+	for _, step := range *steps {
+		if position < len(wantSequence) && step == wantSequence[position] {
+			position++
+		}
+	}
+	if position != len(wantSequence) {
+		t.Fatalf("restore steps = %v, missing sequence %v", *steps, wantSequence)
+	}
 }
 
 func TestSaveSnapshotPublishesCompleteCapture(t *testing.T) {

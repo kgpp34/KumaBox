@@ -61,6 +61,27 @@ func startStopProgress(command *cobra.Command, reference string) (*sandboxProgre
 	return startProgress(command, "stop sandbox", fmt.Sprintf("Stop %q", reference), "preparing stop", "retry the stop or inspect the sandbox runtime")
 }
 
+// snapshotStatusProgress adapts snapshot-service status callbacks while using
+// the sandbox renderer for restore output and failure semantics.
+type snapshotStatusProgress struct{ *sandboxProgress }
+
+// Committed records a saved snapshot if a shared snapshot workflow emits one.
+func (p *snapshotStatusProgress) Committed(types.Snapshot) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.committed = true
+	return p.renderer.Err()
+}
+
+// startRestoreProgress starts progress for one native snapshot restore.
+func startRestoreProgress(command *cobra.Command, reference string) (*snapshotStatusProgress, error) {
+	progress, err := startProgress(command, "restore sandbox", fmt.Sprintf("Restore %q", reference), "preparing restore", "inspect the sandbox state and VMM log")
+	if err != nil {
+		return nil, err
+	}
+	return &snapshotStatusProgress{sandboxProgress: progress}, nil
+}
+
 func startProgress(command *cobra.Command, operation, label, status, recovery string) (*sandboxProgress, error) {
 	return newSandboxProgress(command.Context(), command.ErrOrStderr(), operation, label, status, recovery)
 }

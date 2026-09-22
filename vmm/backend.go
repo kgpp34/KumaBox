@@ -54,6 +54,33 @@ type Snapshotter interface {
 	Snapshot(context.Context, SnapshotPlan) error
 }
 
+// RestorePlan contains the immutable ownership and native capture inputs for a
+// VMM restore launch.
+type RestorePlan struct {
+	// SandboxID owns the restored process and runtime files.
+	SandboxID types.SandboxID
+	// Generation is the durable Starting generation for this launch.
+	Generation uint64
+	// CPUs sizes the process cgroup consistently with a normal launch.
+	CPUs uint32
+	// SnapshotDir contains native VMM state with already restored writable disks.
+	SnapshotDir string
+	// Network supplies the recovered namespace and stable TAP identities.
+	Network types.NetworkSetup
+}
+
+// Restorer is the optional native-state restore capability implemented by VMMs
+// whose snapshot format can resume a stopped process.
+type Restorer interface {
+	Restore(context.Context, RestorePlan) (Process, error)
+}
+
+// RestoreValidator optionally validates native snapshot files before a running
+// sandbox is stopped for restore.
+type RestoreValidator interface {
+	ValidateRestore(context.Context, string) error
+}
+
 // Registry is an immutable routing table from durable VMM identities to their
 // process adapters. Construction validates the complete backend set so runtime
 // lookup cannot depend on package initialization or registration order.
