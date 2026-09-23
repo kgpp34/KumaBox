@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 780" width="1200" height="780" role="img" aria-label="KumaBox architecture: a short-lived CLI control plane driving Cloud Hypervisor microVMs">
+<title>KumaBox architecture: a short-lived CLI control plane driving Cloud Hypervisor microVMs</title>
+<defs>
+  <pattern id="iso" width="40" height="23.094" patternUnits="userSpaceOnUse">
+    <path d="M0 0 L40 23.094 M40 0 L0 23.094" stroke="#ffffff" stroke-opacity="0.028" stroke-width="1"/>
+  </pattern>
+  <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#F5B83D" stop-opacity="0.35"/>
+    <stop offset="100%" stop-color="#F5B83D" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="vignette" cx="30%" cy="20%" r="90%">
+    <stop offset="0%" stop-color="#22324A"/>
+    <stop offset="100%" stop-color="#172233"/>
+  </radialGradient>
+  <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="#6F8FAF"/>
+  </marker>
+  <marker id="arrH" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="#F5B83D"/>
+  </marker>
+</defs>
+<style>
+  text { font-family: 'Inter','Segoe UI','SF Pro Text',-apple-system,'Helvetica Neue',Arial,sans-serif; }
+  .mono { font-family: 'JetBrains Mono','SFMono-Regular',Menlo,Consolas,'DejaVu Sans Mono',monospace; }
+  .flow { stroke-dasharray: 6 8; animation: flow 1.6s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -28; } }
+  
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+<rect x="0" y="0" width="1200" height="780" rx="20" fill="url(#vignette)"/>
+<rect x="0" y="0" width="1200" height="780" rx="20" fill="url(#iso)"/>
+<rect x="0.5" y="0.5" width="1199" height="779" rx="20" fill="none" stroke="#34485F"/>
+<text x="48" y="58" font-size="26" fill="#E8EEF5" font-weight="700" text-anchor="start" >How KumaBox works</text>
+<text x="48" y="88" font-size="16" fill="#98AABF" font-weight="400" text-anchor="start" >Each command is a short-lived process. Only the microVMs keep running.</text>
+<rect x="48" y="116" width="472" height="56" rx="12" fill="#243449" stroke="#34485F" stroke-width="1.2" />
+<text x="284.0" y="150" font-size="17" fill="#E8EEF5" font-weight="600" text-anchor="middle" >Your agent, script or CI job</text>
+<line x1="284.0" y1="172" x2="284.0" y2="214" stroke="#6F8FAF" stroke-width="2" stroke-linecap="round" marker-end="url(#arr)"/>
+<text x="298.0" y="199" font-size="13" fill="#98AABF" font-weight="400" text-anchor="start" class="mono" >kumabox run | exec | clone --json</text>
+<rect x="48" y="220" width="472" height="236" rx="12" fill="#1F2D40" stroke="#4E6E8E" stroke-width="1.6" />
+<text x="72" y="256" font-size="20" fill="#E8EEF5" font-weight="700" text-anchor="start" class="mono" >kumabox</text>
+<text x="178" y="256" font-size="14" fill="#98AABF" font-weight="400" text-anchor="start" >one process per command</text>
+<rect x="72.0" y="276" width="205.0" height="54" rx="10" fill="#243449" stroke="#34485F" stroke-width="1.2" />
+<text x="86.0" y="299" font-size="15" fill="#E8EEF5" font-weight="600" text-anchor="start" >Resource locks</text>
+<text x="86.0" y="319" font-size="12.5" fill="#98AABF" font-weight="400" text-anchor="start" >safe concurrent commands</text>
+<rect x="291.0" y="276" width="205.0" height="54" rx="10" fill="#243449" stroke="#34485F" stroke-width="1.2" />
+<text x="305.0" y="299" font-size="15" fill="#E8EEF5" font-weight="600" text-anchor="start" >Operation journal</text>
+<text x="305.0" y="319" font-size="12.5" fill="#98AABF" font-weight="400" text-anchor="start" >resumes interrupted work</text>
+<rect x="72.0" y="342" width="205.0" height="54" rx="10" fill="#243449" stroke="#34485F" stroke-width="1.2" />
+<text x="86.0" y="365" font-size="15" fill="#E8EEF5" font-weight="600" text-anchor="start" >Metadata</text>
+<text x="86.0" y="385" font-size="12.5" fill="#98AABF" font-weight="400" text-anchor="start" >JSON or SQLite backend</text>
+<rect x="291.0" y="342" width="205.0" height="54" rx="10" fill="#243449" stroke="#34485F" stroke-width="1.2" />
+<text x="305.0" y="365" font-size="15" fill="#E8EEF5" font-weight="600" text-anchor="start" >Reconcile and GC</text>
+<text x="305.0" y="385" font-size="12.5" fill="#98AABF" font-weight="400" text-anchor="start" >records match reality</text>
+<circle cx="78" cy="428" r="5" fill="#F5B83D"/>
+<text x="92" y="433" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >Exits when the work is done. Nothing idles on the host.</text>
+<text x="48" y="492" font-size="14" fill="#98AABF" font-weight="600" text-anchor="start" >Subsystems each command drives</text>
+<rect x="48.0" y="506" width="228.0" height="104" rx="12" fill="#1F2D40" stroke="#34485F" stroke-width="1.2" />
+<rect x="48.0" y="524" width="4" height="26" rx="2" fill="#6F8FAF"/>
+<text x="68.0" y="543" font-size="17" fill="#E8EEF5" font-weight="700" text-anchor="start" >Images</text>
+<text x="68.0" y="570" font-size="13" fill="#98AABF" font-weight="400" text-anchor="start" >OCI to shared EROFS layers</text>
+<text x="68.0" y="590" font-size="13" fill="#98AABF" font-weight="400" text-anchor="start" >+ private copy-on-write disk</text>
+<rect x="292.0" y="506" width="228.0" height="104" rx="12" fill="#1F2D40" stroke="#34485F" stroke-width="1.2" />
+<rect x="292.0" y="524" width="4" height="26" rx="2" fill="#6F8FAF"/>
+<text x="312.0" y="543" font-size="17" fill="#E8EEF5" font-weight="700" text-anchor="start" >Network</text>
+<text x="312.0" y="570" font-size="13" fill="#98AABF" font-weight="400" text-anchor="start" >CNI netns per VM</text>
+<text x="312.0" y="590" font-size="13" fill="#98AABF" font-weight="400" text-anchor="start" >multiqueue TAP, tc redirect</text>
+<rect x="48.0" y="624" width="228.0" height="104" rx="12" fill="#1F2D40" stroke="#34485F" stroke-width="1.2" />
+<rect x="48.0" y="642" width="4" height="26" rx="2" fill="#6F8FAF"/>
+<text x="68.0" y="661" font-size="17" fill="#E8EEF5" font-weight="700" text-anchor="start" >Snapshots</text>
+<text x="68.0" y="688" font-size="13" fill="#98AABF" font-weight="400" text-anchor="start" >running or stopped, verified</text>
+<text x="68.0" y="708" font-size="13" fill="#98AABF" font-weight="400" text-anchor="start" >clone, hibernate, restore</text>
+<rect x="292.0" y="624" width="228.0" height="104" rx="12" fill="#1F2D40" stroke="#34485F" stroke-width="1.2" />
+<rect x="292.0" y="642" width="4" height="26" rx="2" fill="#6F8FAF"/>
+<text x="312.0" y="661" font-size="17" fill="#E8EEF5" font-weight="700" text-anchor="start" >Devices</text>
+<text x="312.0" y="688" font-size="13" fill="#98AABF" font-weight="400" text-anchor="start" >hotplug disks, virtio-fs</text>
+<text x="312.0" y="708" font-size="13" fill="#98AABF" font-weight="400" text-anchor="start" >VFIO PCI passthrough</text>
+<rect x="600" y="116" width="552" height="616" rx="16" fill="#1A2638" stroke="#34485F" stroke-width="1.2" stroke-dasharray="5 6" />
+<text x="624" y="148" font-size="16" fill="#E8EEF5" font-weight="700" text-anchor="start" >Linux host with KVM</text>
+<text x="1128" y="148" font-size="13" fill="#98AABF" font-weight="400" text-anchor="end" >amd64 or arm64</text>
+<rect x="624" y="168" width="504" height="304" rx="12" fill="#1F2D40" stroke="#6F8FAF" stroke-width="1.6" />
+<text x="644" y="196" font-size="15" fill="#E8EEF5" font-weight="700" text-anchor="start" class="mono" >cloud-hypervisor</text>
+<text x="804" y="196" font-size="13" fill="#98AABF" font-weight="400" text-anchor="start" >VMM process for vm-1</text>
+<rect x="644" y="212" width="464" height="244" rx="10" fill="#243449" stroke="#34485F" stroke-width="1.2" />
+<text x="662" y="238" font-size="14" fill="#E8EEF5" font-weight="700" text-anchor="start" >microVM guest</text>
+<text x="1090" y="238" font-size="12.5" fill="#98AABF" font-weight="400" text-anchor="end" >hardware boundary</text>
+<rect x="662" y="254" width="428" height="40" rx="8" fill="#2B2A22" stroke="#F5B83D" stroke-width="1.4" />
+<text x="678" y="280" font-size="13.5" fill="#F5B83D" font-weight="600" text-anchor="start" class="mono" >kumabox-agent on vsock :1024</text>
+<rect x="662" y="302" width="428" height="40" rx="8" fill="#22344A" stroke="#6F8FAF" stroke-width="1.4" />
+<text x="678" y="328" font-size="13.5" fill="#E8EEF5" font-weight="400" text-anchor="start" >your workload: shell, code, tools</text>
+<rect x="662" y="350" width="428" height="40" rx="8" fill="#1D2B3D" stroke="#34485F" stroke-width="1.4" />
+<text x="678" y="376" font-size="13.5" fill="#E8EEF5" font-weight="400" text-anchor="start" >rootfs: shared EROFS + private COW disk</text>
+<rect x="662" y="398" width="428" height="40" rx="8" fill="#18253A" stroke="#34485F" stroke-width="1.4" />
+<text x="678" y="424" font-size="13.5" fill="#E8EEF5" font-weight="400" text-anchor="start" >dedicated Linux guest kernel</text>
+<text x="624" y="506" font-size="14" fill="#98AABF" font-weight="400" text-anchor="start" >vm-2 ... vm-N, one VMM process each</text>
+<g ><polygon points="638.948,540 658,551.0 658,576.3 638.948,565.3" fill="#1F2D40" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="677.052,540 658,551.0 658,576.3 677.052,565.3" fill="#4E6E8E" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="658,529.0 677.052,540 658,551.0 638.948,540" fill="#6F8FAF" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/></g>
+<text x="658" y="598" font-size="12" fill="#98AABF" font-weight="400" text-anchor="middle" class="mono" >vm-2</text>
+<g ><polygon points="720.948,540 740,551.0 740,576.3 720.948,565.3" fill="#1F2D40" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="759.052,540 740,551.0 740,576.3 759.052,565.3" fill="#4E6E8E" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="740,529.0 759.052,540 740,551.0 720.948,540" fill="#6F8FAF" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/></g>
+<text x="740" y="598" font-size="12" fill="#98AABF" font-weight="400" text-anchor="middle" class="mono" >vm-3</text>
+<g ><polygon points="802.948,540 822,551.0 822,576.3 802.948,565.3" fill="#1F2D40" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="841.052,540 822,551.0 822,576.3 841.052,565.3" fill="#4E6E8E" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="822,529.0 841.052,540 822,551.0 802.948,540" fill="#6F8FAF" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/></g>
+<text x="822" y="598" font-size="12" fill="#98AABF" font-weight="400" text-anchor="middle" class="mono" >vm-4</text>
+<g ><polygon points="884.948,540 904,551.0 904,576.3 884.948,565.3" fill="#1F2D40" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="923.052,540 904,551.0 904,576.3 923.052,565.3" fill="#4E6E8E" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="904,529.0 923.052,540 904,551.0 884.948,540" fill="#6F8FAF" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/></g>
+<text x="904" y="598" font-size="12" fill="#98AABF" font-weight="400" text-anchor="middle" class="mono" >vm-5</text>
+<g ><polygon points="966.948,540 986,551.0 986,576.3 966.948,565.3" fill="#1F2D40" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="1005.052,540 986,551.0 986,576.3 1005.052,565.3" fill="#4E6E8E" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="986,529.0 1005.052,540 986,551.0 966.948,540" fill="#6F8FAF" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/></g>
+<text x="986" y="598" font-size="12" fill="#98AABF" font-weight="400" text-anchor="middle" class="mono" >vm-6</text>
+<text x="1068" y="560" font-size="22" fill="#98AABF" font-weight="700" text-anchor="middle" >...</text>
+<rect x="624" y="618" width="504" height="42" rx="10" fill="#1D2B3D" stroke="#34485F" stroke-width="1.2" />
+<text x="642" y="644" font-size="13.5" fill="#E8EEF5" font-weight="400" text-anchor="start" >Shared EROFS layer store: read-only, deduplicated across VMs</text>
+<rect x="624" y="670" width="504" height="42" rx="10" fill="#1D2B3D" stroke="#34485F" stroke-width="1.2" />
+<text x="642" y="696" font-size="13.5" fill="#E8EEF5" font-weight="400" text-anchor="start" >CNI network: per-VM netns and TAP, NAT to the outside</text>
+<path d="M520 300 C 570 300, 602 274, 658 274" stroke="#F5B83D" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrH)" class="flow"/>
+<text x="560" y="262" font-size="12.5" fill="#F5B83D" font-weight="600" text-anchor="middle" class="mono" >vsock</text>
+<path d="M520 392 L 620 392" stroke="#6F8FAF" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arr)"/>
+<text x="560" y="382" font-size="12.5" fill="#6F8FAF" font-weight="600" text-anchor="middle" class="mono" >VMM API</text>
+<text x="560" y="758" font-size="1" fill="#E8EEF5" font-weight="400" text-anchor="start" ></text>
+</svg>
