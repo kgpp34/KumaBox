@@ -54,6 +54,13 @@ type Snapshotter interface {
 	Snapshot(context.Context, SnapshotPlan) error
 }
 
+// Hibernator captures one paused VM, calls persist before it can run again,
+// then terminates the exact process. A persist failure resumes the VM.
+// Implementations must not resume after termination has been attempted.
+type Hibernator interface {
+	Hibernate(context.Context, SnapshotPlan, func() error) error
+}
+
 // RestorePlan contains the immutable ownership and native capture inputs for a
 // VMM restore launch.
 type RestorePlan struct {

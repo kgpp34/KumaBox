@@ -141,6 +141,7 @@ func TestImageAndUsageExitCodes(t *testing.T) {
 		{"missing exec command", []string{"exec", "box"}, 2},
 		{"missing inspect sandbox", []string{"inspect"}, 2},
 		{"missing logs sandbox", []string{"logs"}, 2},
+		{"missing hibernate sandbox", []string{"hibernate"}, 2},
 		{"missing remove sandbox", []string{"rm"}, 2},
 		{"missing restore references", []string{"restore", "box"}, 2},
 		{"missing run image", []string{"run", "--name", "box"}, 2},

@@ -104,12 +104,31 @@ func (s *SnapshotService) Close() error {
 //
 //	Running -> lock -> reserve -> stage -> pause/capture/resume -> publish -> ready
 //	                              \--- failure: clean stage + reservation ---/
-func (s *SnapshotService) Save(ctx context.Context, request SaveSnapshotRequest) (result types.Snapshot, returnErr error) {
+func (s *SnapshotService) Save(ctx context.Context, request SaveSnapshotRequest) (types.Snapshot, error) {
+	return s.capture(ctx, request, false)
+}
+
+// Hibernate captures and persists a running sandbox while it remains paused,
+// then stops its VMM before committing Stopped. Restore resumes that snapshot.
+func (s *SnapshotService) Hibernate(ctx context.Context, request SaveSnapshotRequest) (types.Snapshot, error) {
+	return s.capture(ctx, request, true)
+}
+
+// capture owns the shared reservation and publication contract. The optional
+// hibernate tail moves publication inside the VMM pause window.
+func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotRequest, hibernate bool) (result types.Snapshot, returnErr error) {
 	if s == nil || s.sandboxes == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || s.newID == nil || s.now == nil {
 		return types.Snapshot{}, errors.New("snapshot service is not configured")
 	}
+	if hibernate && s.lifecycle == nil {
+		return types.Snapshot{}, errors.New("hibernate lifecycle is not configured")
+	}
 	if request.SandboxReference == "" {
 		return types.Snapshot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("SANDBOX must not be empty"))
+	}
+	operation := "save snapshot"
+	if hibernate {
+		operation = "hibernate sandbox"
 	}
 	if err := s.reporter.Status("resolving sandbox"); err != nil {
 		return types.Snapshot{}, err
@@ -127,10 +146,10 @@ func (s *SnapshotService) Save(ctx context.Context, request SaveSnapshotRequest)
 	}
 	lock := filelock.New(lockPath)
 	if err := lock.Lock(ctx); err != nil {
-		return types.Snapshot{}, errdefs.Context(err, "save snapshot", request.SandboxReference, "lock", "retry the snapshot", false)
+		return types.Snapshot{}, errdefs.Context(err, operation, request.SandboxReference, "lock", "retry the snapshot", false)
 	}
 	defer func() {
-		returnErr = errors.Join(returnErr, errdefs.Context(lock.Unlock(context.WithoutCancel(ctx)), "save snapshot", request.SandboxReference, "unlock", "inspect the snapshot before retrying", result.ID != ""))
+		returnErr = errors.Join(returnErr, errdefs.Context(lock.Unlock(context.WithoutCancel(ctx)), operation, request.SandboxReference, "unlock", "inspect the snapshot before retrying", result.ID != ""))
 	}()
 
 	record, err = s.sandboxes.Resolve(ctx, record.ID.String())
@@ -144,8 +163,11 @@ func (s *SnapshotService) Save(ctx context.Context, request SaveSnapshotRequest)
 	if err != nil {
 		return types.Snapshot{}, err
 	}
-	snapshotter, ok := backend.(vmm.Snapshotter)
-	if !ok {
+	if hibernate {
+		if _, ok := backend.(vmm.Hibernator); !ok {
+			return types.Snapshot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, fmt.Errorf("VMM backend %q does not support hibernate", record.VMM))
+		}
+	} else if _, ok := backend.(vmm.Snapshotter); !ok {
 		return types.Snapshot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, fmt.Errorf("VMM backend %q does not support snapshots", record.VMM))
 	}
 	observation, err := backend.Observe(ctx, record.ID, record.Generation-1)
@@ -176,12 +198,18 @@ func (s *SnapshotService) Save(ctx context.Context, request SaveSnapshotRequest)
 	}
 	reserved, published := true, false
 	defer func() {
-		if returnErr == nil || !reserved || published {
+		if returnErr == nil || !reserved || result.ID != "" {
 			return
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		returnErr = errors.Join(returnErr, snapshot.IgnoreAbsence(s.paths.RemoveStage(id)), s.snapshots.Forget(cleanupCtx, id))
+		// Forget refuses ready records. Only an uncommitted reservation may
+		// release its published directory after an uncertain commit error.
+		if err := s.snapshots.Forget(cleanupCtx, id); err != nil {
+			returnErr = errors.Join(returnErr, err)
+			return
+		}
+		returnErr = errors.Join(returnErr, snapshot.IgnoreAbsence(s.paths.RemoveStage(id)), s.paths.Remove(id))
 	}()
 	if err := s.paths.PrepareStage(id); err != nil {
 		return types.Snapshot{}, err
@@ -201,37 +229,73 @@ func (s *SnapshotService) Save(ctx context.Context, request SaveSnapshotRequest)
 	if err := s.reporter.Status("capturing VMM and writable disk"); err != nil {
 		return types.Snapshot{}, err
 	}
-	if err := snapshotter.Snapshot(ctx, vmm.SnapshotPlan{
+	plan := vmm.SnapshotPlan{
 		Process: observation.Process, Destination: stage,
 		WritableFiles: []vmm.SnapshotFile{{Source: cowSource, Destination: cowDestination}},
-	}); err != nil {
-		return types.Snapshot{}, errdefs.Context(err, "save snapshot", request.SandboxReference, "capture", "inspect the running sandbox and retry", false)
 	}
-	if err := s.reporter.Status("publishing snapshot artifacts"); err != nil {
-		return types.Snapshot{}, err
-	}
-	if err := s.paths.Publish(id); err != nil {
-		final, pathErr := s.paths.Dir(id)
-		_, statErr := os.Stat(final)
-		if pathErr == nil && statErr == nil {
-			published = true
+	var stopping types.Sandbox
+	persist := func() error {
+		if err := s.reporter.Status("publishing snapshot artifacts"); err != nil {
+			return err
 		}
-		return types.Snapshot{}, errdefs.Context(errors.Join(err, pathErr), "save snapshot", request.SandboxReference, "publish", "inspect snapshot storage before retrying", published)
+		if err := s.paths.Publish(id); err != nil {
+			final, pathErr := s.paths.Dir(id)
+			if pathErr == nil {
+				_, statErr := os.Stat(final)
+				published = statErr == nil
+			}
+			return errdefs.Context(errors.Join(err, pathErr), operation, request.SandboxReference, "publish", "inspect snapshot storage before retrying", published)
+		}
+		published = true
+		size, err := s.paths.Size(id)
+		if err != nil {
+			return errdefs.Context(err, operation, request.SandboxReference, "measure", "inspect snapshot storage before retrying", true)
+		}
+		if err := s.reporter.Status("committing snapshot metadata"); err != nil {
+			return errdefs.Context(err, operation, request.SandboxReference, "report", "inspect snapshot storage before retrying", true)
+		}
+		result, err = s.snapshots.Commit(ctx, id, size)
+		if err != nil {
+			result = types.Snapshot{}
+			return err
+		}
+		if hibernate {
+			if err := s.reporter.Status("committing stopping state"); err != nil {
+				return err
+			}
+			stopping, err = s.sandboxes.BeginStop(ctx, record.ID, record.Generation, s.now().UTC())
+			if err != nil {
+				return err
+			}
+		}
+		return nil
 	}
-	published = true
-	size, err := s.paths.Size(id)
-	if err != nil {
-		return types.Snapshot{}, errdefs.Context(err, "save snapshot", request.SandboxReference, "measure", "inspect snapshot storage before retrying", true)
-	}
-	if err := s.reporter.Status("committing snapshot metadata"); err != nil {
-		return types.Snapshot{}, errdefs.Context(err, "save snapshot", request.SandboxReference, "report", "inspect snapshot storage before retrying", true)
-	}
-	result, err = s.snapshots.Commit(ctx, id, size)
-	if err != nil {
-		return types.Snapshot{}, err
+	if hibernate {
+		if err := backend.(vmm.Hibernator).Hibernate(ctx, plan, persist); err != nil {
+			return result, errdefs.Context(err, operation, request.SandboxReference, "capture or stop", "inspect the sandbox and snapshot before retrying", result.ID != "" || stopping.Generation > 0)
+		}
+		if err := s.reporter.Status("cleaning stopped runtime"); err != nil {
+			return result, errdefs.Context(err, operation, request.SandboxReference, "report", "retry stop to finish cleanup", true)
+		}
+		if err := backend.Cleanup(ctx, record.ID); err != nil {
+			return result, errdefs.Context(err, operation, request.SandboxReference, "cleanup runtime", "retry stop to finish cleanup", true)
+		}
+		if err := s.lifecycle.quiesceNetwork(ctx, stopping); err != nil {
+			return result, errdefs.Context(err, operation, request.SandboxReference, "quiesce network", "retry stop to finish cleanup", true)
+		}
+		if _, err := s.sandboxes.MarkStopped(ctx, record.ID, stopping.Generation, types.SandboxStateStopping, s.now().UTC()); err != nil {
+			return result, errdefs.Context(err, operation, request.SandboxReference, "mark stopped", "retry stop to finish cleanup", true)
+		}
+	} else {
+		if err := backend.(vmm.Snapshotter).Snapshot(ctx, plan); err != nil {
+			return types.Snapshot{}, errdefs.Context(err, operation, request.SandboxReference, "capture", "inspect the running sandbox and retry", false)
+		}
+		if err := persist(); err != nil {
+			return result, err
+		}
 	}
 	if err := s.reporter.Committed(result); err != nil {
-		return result, errdefs.Context(err, "save snapshot", request.SandboxReference, "report", "snapshot was saved; inspect it before retrying", true)
+		return result, errdefs.Context(err, operation, request.SandboxReference, "report", "snapshot was saved; inspect it before retrying", true)
 	}
 	return result, nil
 }

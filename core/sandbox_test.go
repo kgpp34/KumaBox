@@ -294,6 +294,7 @@ type fakeRuntime struct {
 	logOptions    vmm.LogOptions
 	snapshotPlan  vmm.SnapshotPlan
 	snapshotErr   error
+	hibernatePlan vmm.SnapshotPlan
 	restorePlan   vmm.RestorePlan
 	restoreErr    error
 }
@@ -313,6 +314,20 @@ func (f *fakeRuntime) Snapshot(_ context.Context, plan vmm.SnapshotPlan) error {
 		}
 	}
 	return nil
+}
+
+func (f *fakeRuntime) Hibernate(ctx context.Context, plan vmm.SnapshotPlan, persist func() error) error {
+	*f.steps = append(*f.steps, "pause")
+	f.hibernatePlan = plan
+	if err := f.Snapshot(ctx, plan); err != nil {
+		*f.steps = append(*f.steps, "resume")
+		return err
+	}
+	if err := persist(); err != nil {
+		*f.steps = append(*f.steps, "resume")
+		return err
+	}
+	return f.Stop(ctx, plan.Process)
 }
 
 func (f *fakeRuntime) Restore(_ context.Context, plan vmm.RestorePlan) (vmm.Process, error) {

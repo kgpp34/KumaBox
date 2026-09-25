@@ -21,7 +21,11 @@ type progress struct {
 }
 
 func newProgress(command *cobra.Command, reference string) (*progress, error) {
-	label := fmt.Sprintf("Snapshot %q", reference)
+	return newOperationProgress(command, "Snapshot", reference)
+}
+
+func newOperationProgress(command *cobra.Command, operation, reference string) (*progress, error) {
+	label := fmt.Sprintf("%s %q", operation, reference)
 	renderer, err := cliprogress.New(command.Context(), command.ErrOrStderr(), label+" · preparing snapshot")
 	if err != nil {
 		return nil, err

@@ -17,10 +17,17 @@ import (
 
 var fixedSnapshotID = types.SnapshotID("223e4567-e89b-42d3-a456-426614174000")
 
-type fakeSnapshotReporter struct{ steps *[]string }
+type fakeSnapshotReporter struct {
+	steps      *[]string
+	failStatus string
+	failure    error
+}
 
 func (r fakeSnapshotReporter) Status(status string) error {
 	*r.steps = append(*r.steps, "snapshot-status:"+status)
+	if status == r.failStatus {
+		return r.failure
+	}
 	return nil
 }
 
@@ -116,6 +123,115 @@ func TestRestoreStopsRunningSandboxAndResumesSnapshot(t *testing.T) {
 	}
 	if position != len(wantSequence) {
 		t.Fatalf("restore steps = %v, missing sequence %v", *steps, wantSequence)
+	}
+}
+
+func TestHibernatePersistsBeforeStoppingAndRestores(t *testing.T) {
+	service, sandboxService, steps := newTestSnapshotService(t)
+	*steps = nil
+	capture, err := service.Hibernate(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "nap"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capture.Name != "nap" || capture.SandboxID != fixedID {
+		t.Fatalf("snapshot = %+v", capture)
+	}
+	record := sandboxService.dependencies.catalog.(*fakeCatalog).record
+	if record.State != types.SandboxStateStopped || record.Generation != 6 {
+		t.Fatalf("hibernated sandbox = %+v", record)
+	}
+	wantSequence := []string{"pause", "snapshot", "stopping", "stop", "cleanup", "stopped", "snapshot-report"}
+	position := 0
+	for _, step := range *steps {
+		if position < len(wantSequence) && step == wantSequence[position] {
+			position++
+		}
+	}
+	if position != len(wantSequence) {
+		t.Fatalf("hibernate steps = %v, missing sequence %v", *steps, wantSequence)
+	}
+	listed, err := service.List(t.Context())
+	if err != nil || len(listed) != 1 || listed[0].ID != capture.ID {
+		t.Fatalf("List = %+v, %v", listed, err)
+	}
+	resumed, err := service.Restore(t.Context(), "box", "nap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.State != types.SandboxStateRunning || resumed.Generation != 8 {
+		t.Fatalf("restored sandbox = %+v", resumed)
+	}
+}
+
+func TestHibernatePersistenceFailureResumesRunningSandbox(t *testing.T) {
+	service, sandboxService, steps := newTestSnapshotService(t)
+	failure := errors.New("cannot publish capture")
+	service.reporter = fakeSnapshotReporter{steps: steps, failStatus: "publishing snapshot artifacts", failure: failure}
+	*steps = nil
+	if _, err := service.Hibernate(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "retry"}); !errors.Is(err, failure) {
+		t.Fatalf("Hibernate error = %v", err)
+	}
+	record := sandboxService.dependencies.catalog.(*fakeCatalog).record
+	if record.State != types.SandboxStateRunning || record.Generation != 4 {
+		t.Fatalf("failed hibernate changed sandbox = %+v", record)
+	}
+	if len(*steps) < 2 || (*steps)[len(*steps)-1] != "resume" {
+		t.Fatalf("failed hibernate did not resume: %v", *steps)
+	}
+	listed, err := service.List(t.Context())
+	if err != nil || len(listed) != 0 {
+		t.Fatalf("List after failure = %+v, %v", listed, err)
+	}
+}
+
+func TestHibernatePostPublishFailureReleasesSnapshotName(t *testing.T) {
+	service, sandboxService, steps := newTestSnapshotService(t)
+	failure := errors.New("metadata unavailable")
+	service.reporter = fakeSnapshotReporter{steps: steps, failStatus: "committing snapshot metadata", failure: failure}
+	if _, err := service.Hibernate(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "retry"}); !errors.Is(err, failure) {
+		t.Fatalf("Hibernate error = %v", err)
+	}
+	if record := sandboxService.dependencies.catalog.(*fakeCatalog).record; record.State != types.SandboxStateRunning {
+		t.Fatalf("failed hibernate changed sandbox = %+v", record)
+	}
+	if (*steps)[len(*steps)-1] != "resume" {
+		t.Fatalf("failed hibernate did not resume: %v", *steps)
+	}
+	if _, err := os.Stat(filepath.Join(service.paths.DataDir(), fixedSnapshotID.String())); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed hibernate left published artifacts: %v", err)
+	}
+	service.reporter = fakeSnapshotReporter{steps: steps}
+	if _, err := service.Hibernate(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "retry"}); err != nil {
+		t.Fatalf("same name could not be retried: %v", err)
+	}
+}
+
+func TestHibernateStopFailureRetainsStoppingAndSnapshot(t *testing.T) {
+	service, sandboxService, steps := newTestSnapshotService(t)
+	failure := errors.New("termination failed")
+	testRuntime(t, sandboxService).stopErr = failure
+	*steps = nil
+	capture, err := service.Hibernate(t.Context(), SaveSnapshotRequest{SandboxReference: "box"})
+	if !errors.Is(err, failure) || capture.ID != fixedSnapshotID {
+		t.Fatalf("Hibernate = %+v, %v", capture, err)
+	}
+	record := sandboxService.dependencies.catalog.(*fakeCatalog).record
+	if record.State != types.SandboxStateStopping || record.Generation != 5 {
+		t.Fatalf("failed termination state = %+v", record)
+	}
+	for _, step := range *steps {
+		if step == "resume" {
+			t.Fatalf("termination failure attempted resume: %v", *steps)
+		}
+	}
+	listed, listErr := service.List(t.Context())
+	if listErr != nil || len(listed) != 1 || listed[0].ID != capture.ID {
+		t.Fatalf("durable snapshot = %+v, %v", listed, listErr)
+	}
+	testRuntime(t, sandboxService).stopErr = nil
+	stopped, err := sandboxService.Stop(t.Context(), "box")
+	if err != nil || stopped.State != types.SandboxStateStopped {
+		t.Fatalf("retry stop = %+v, %v", stopped, err)
 	}
 }
 

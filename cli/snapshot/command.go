@@ -57,6 +57,44 @@ func newSaveCommand(configuration configProvider) *cobra.Command {
 	return command
 }
 
+// NewHibernateCommand builds the top-level atomic snapshot-and-stop command.
+func NewHibernateCommand(configuration func() config.Config) *cobra.Command {
+	var name, description string
+	var asJSON bool
+	command := &cobra.Command{
+		Use:   "hibernate SANDBOX",
+		Short: "save a snapshot and stop the sandbox at the same point",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) (returnErr error) {
+			progress, err := newOperationProgress(command, "Hibernate", args[0])
+			if err != nil {
+				return err
+			}
+			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
+			service, err := core.OpenSnapshots(command.Context(), configuration(), progress)
+			if err != nil {
+				return err
+			}
+			committed := false
+			defer func() {
+				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "hibernate sandbox", args[0], "close metadata", "inspect the sandbox and snapshot before retrying", committed))
+			}()
+			record, err := service.Hibernate(command.Context(), core.SaveSnapshotRequest{
+				SandboxReference: args[0], Name: name, Description: description,
+			})
+			if err != nil {
+				return err
+			}
+			committed = true
+			return writeResult(progress.Output(command.OutOrStdout()), record, asJSON)
+		},
+	}
+	command.Flags().StringVar(&name, "name", "", "optional unique snapshot name")
+	command.Flags().StringVar(&description, "description", "", "optional snapshot description")
+	command.Flags().BoolVar(&asJSON, "json", false, "print the saved snapshot as indented JSON")
+	return command
+}
+
 func newListCommand(configuration configProvider) *cobra.Command {
 	var asJSON bool
 	command := &cobra.Command{

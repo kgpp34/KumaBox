@@ -17,7 +17,10 @@ import (
 
 const snapshotTimeout = 10 * time.Minute
 
-var _ vmm.Snapshotter = (*Driver)(nil)
+var (
+	_ vmm.Snapshotter = (*Driver)(nil)
+	_ vmm.Hibernator  = (*Driver)(nil)
+)
 
 // Snapshot pauses the exact owned process, captures native VMM state and every
 // writable disk, then resumes the guest even when capture fails.
@@ -25,6 +28,49 @@ var _ vmm.Snapshotter = (*Driver)(nil)
 //	verify -> pause -> native state -> writable disks -> resume
 //	             \----------- any error -----------/
 func (d *Driver) Snapshot(ctx context.Context, plan vmm.SnapshotPlan) (returnErr error) {
+	if err := d.pauseForCapture(ctx, plan); err != nil {
+		return err
+	}
+	defer func() {
+		resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), d.startupTimeout)
+		defer cancel()
+		returnErr = errors.Join(returnErr, d.snapshotAction(resumeCtx, plan.Process.APISocket, "vm.resume", nil, d.startupTimeout))
+	}()
+	return d.capturePaused(ctx, plan)
+}
+
+// Hibernate keeps the VM paused until persist has made its capture durable.
+// Once termination starts, ownership stays with the caller's Stopping record.
+//
+//	pause -> capture -> persist -> stop
+//	           \--- failure: resume ---/
+func (d *Driver) Hibernate(ctx context.Context, plan vmm.SnapshotPlan, persist func() error) (returnErr error) {
+	if persist == nil {
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("hibernate requires a persistence callback"))
+	}
+	if err := d.pauseForCapture(ctx, plan); err != nil {
+		return err
+	}
+	shouldResume := true
+	defer func() {
+		if !shouldResume {
+			return
+		}
+		resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), d.startupTimeout)
+		defer cancel()
+		returnErr = errors.Join(returnErr, d.snapshotAction(resumeCtx, plan.Process.APISocket, "vm.resume", nil, d.startupTimeout))
+	}()
+	if err := d.capturePaused(ctx, plan); err != nil {
+		return err
+	}
+	if err := persist(); err != nil {
+		return err
+	}
+	shouldResume = false
+	return d.Stop(ctx, plan.Process)
+}
+
+func (d *Driver) pauseForCapture(ctx context.Context, plan vmm.SnapshotPlan) error {
 	if err := plan.Validate(); err != nil {
 		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
 	}
@@ -38,11 +84,10 @@ func (d *Driver) Snapshot(ctx context.Context, plan vmm.SnapshotPlan) (returnErr
 	if err := d.snapshotAction(ctx, plan.Process.APISocket, "vm.pause", nil, probeTimeout); err != nil {
 		return fmt.Errorf("pause cloud-hypervisor: %w", err)
 	}
-	defer func() {
-		resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), d.startupTimeout)
-		defer cancel()
-		returnErr = errors.Join(returnErr, d.snapshotAction(resumeCtx, plan.Process.APISocket, "vm.resume", nil, d.startupTimeout))
-	}()
+	return nil
+}
+
+func (d *Driver) capturePaused(ctx context.Context, plan vmm.SnapshotPlan) error {
 	payload, err := json.Marshal(map[string]string{"destination_url": "file://" + plan.Destination})
 	if err != nil {
 		return err
