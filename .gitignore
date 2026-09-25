@@ -2,8 +2,15 @@
 .DS_Store
 bin/
 dist/
+.rewrite-backup/
+.claude/
 coverage.out
 # Local design and implementation notes must never be committed.
 docs/
-oci-images/ubuntu/kumabox-agent-linux-amd64
-oci-images/ubuntu/kumabox-agent-linux-arm64
+
+# Local Go and tooling caches are generated, never source.
+.cache*/
+.gocache*/
+.gomodcache*/
+gocache*/
+gomodcache*/
