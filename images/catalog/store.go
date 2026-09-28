@@ -45,7 +45,7 @@ type Store struct {
 	usage ImageUsage
 }
 
-// ImageUsage checks sandbox references from inside the image removal transaction.
+// ImageUsage checks retained owner references inside image removal's transaction.
 // Implementations must use reader directly and must not open a nested transaction.
 type ImageUsage interface {
 	InUse(context.Context, metadata.Reader, types.Digest) (bool, error)
@@ -335,7 +335,7 @@ func (c *Store) Remove(ctx context.Context, reference string, expected types.Dig
 				return err
 			}
 			if used {
-				return errdefs.New(errdefs.ClassConflict, errdefs.CodeReferenced, fmt.Errorf("image %s is used by a sandbox", image.ManifestDigest))
+				return errdefs.New(errdefs.ClassConflict, errdefs.CodeReferenced, fmt.Errorf("image %s is used by a sandbox or snapshot", image.ManifestDigest))
 			}
 		}
 		if err := writer.Delete(ctx, CollectionImages, digest); err != nil {

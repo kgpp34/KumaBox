@@ -47,3 +47,50 @@ func TestSnapshotCatalogPublishesAndDeletesNameAtomically(t *testing.T) {
 		t.Fatal("deleted name still resolves")
 	}
 }
+
+func TestSnapshotUsagePinsImageUntilFinalDeletion(t *testing.T) {
+	memory, err := metadata.NewMemory(Collections())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := New(memory)
+	digest, err := types.ParseDigest("sha256:" + strings.Repeat("b", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := types.Snapshot{
+		ID:        types.SnapshotID("223e4567-e89b-42d3-a456-426614174000"),
+		SandboxID: types.SandboxID("123e4567-e89b-42d3-a456-426614174000"), SourceGeneration: 4,
+		ImageDigest: digest, VMM: types.VMMCloudHypervisor,
+		Config:    types.SandboxConfig{Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := store.Reserve(t.Context(), record); err != nil {
+		t.Fatal(err)
+	}
+	check := func(want bool) {
+		t.Helper()
+		if err := memory.View(t.Context(), func(reader metadata.Reader) error {
+			used, err := (Usage{}).InUse(t.Context(), reader, digest)
+			if err == nil && used != want {
+				t.Errorf("InUse = %t, want %t", used, want)
+			}
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check(true)
+	if _, err := store.Commit(t.Context(), record.ID, 42); err != nil {
+		t.Fatal(err)
+	}
+	check(true)
+	if _, err := store.BeginDelete(t.Context(), record.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+	check(true)
+	if err := store.FinalizeDelete(t.Context(), record.ID); err != nil {
+		t.Fatal(err)
+	}
+	check(false)
+}

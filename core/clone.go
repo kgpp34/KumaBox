@@ -126,6 +126,14 @@ func (s *SnapshotService) Clone(ctx context.Context, snapshotReference, name str
 	if err := s.lifecycle.recoverNetwork(ctx, starting); err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "recover network", err, vmm.Process{})
 	}
+	image, err := s.lifecycle.dependencies.images.WithAvailable(ctx, capture.ImageDigest.String(), func(types.Image) error { return nil })
+	if err != nil {
+		return starting, s.lifecycle.failStart(ctx, backend, starting, "resolve image", err, vmm.Process{})
+	}
+	launch, err := s.lifecycle.launchPlan(starting, image)
+	if err != nil {
+		return starting, s.lifecycle.failStart(ctx, backend, starting, "prepare local image layers", err, vmm.Process{})
+	}
 	liveCOW, err := s.sandboxPaths.COW(created.ID)
 	if err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "resolve disk", err, vmm.Process{})
@@ -136,7 +144,7 @@ func (s *SnapshotService) Clone(ctx context.Context, snapshotReference, name str
 	process, err := cloner.Clone(ctx, vmm.ClonePlan{RestorePlan: vmm.RestorePlan{
 		SandboxID: starting.ID, Generation: starting.Generation, CPUs: starting.Config.CPUs,
 		SnapshotDir: snapshotDir, Network: starting.Network,
-	}, WritableDisk: liveCOW})
+	}, WritableDisk: liveCOW, ImageDisks: launch.Disks[:len(launch.Disks)-1], Kernel: launch.Kernel, Initrd: launch.Initrd})
 	if err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "clone VMM", err, process)
 	}

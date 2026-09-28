@@ -16,6 +16,7 @@ func TestPatchCloneConfigRebindsOnlyPrivateDevices(t *testing.T) {
 	path := filepath.Join(directory, "config.json")
 	original := `{
 		"platform":{"firmware":"preserved"},
+		"payload":{"kernel":"/source/kernel","initramfs":"/source/initrd","cmdline":"preserved"},
 		"disks":[{"serial":"kumabox-layer0","path":"/images/base.raw","readonly":true},{"serial":"kumabox-cow","path":"/source/cow.raw","direct":true}],
 		"vsock":{"cid":3,"socket":"/source/vsock.uds"},
 		"net":[{"id":"old-nic","tap":"source-tap","mac":"02:00:00:00:00:01","num_queues":4}]
@@ -32,6 +33,9 @@ func TestPatchCloneConfigRebindsOnlyPrivateDevices(t *testing.T) {
 			}}},
 		},
 		WritableDisk: "/clone/cow.raw",
+		ImageDisks:   []vmm.Disk{{Path: "/target/images/base.raw", Serial: vmm.LayerSerialPrefix + "0", ReadOnly: true}},
+		Kernel:       "/target/kernel",
+		Initrd:       "/target/initrd",
 	}
 	old, err := patchCloneConfig(path, plan, "/clone/vsock.uds")
 	if err != nil {
@@ -46,7 +50,12 @@ func TestPatchCloneConfigRebindsOnlyPrivateDevices(t *testing.T) {
 	}
 	var config struct {
 		Platform json.RawMessage `json:"platform"`
-		Disks    []struct {
+		Payload  struct {
+			Kernel  string `json:"kernel"`
+			Initrd  string `json:"initramfs"`
+			Cmdline string `json:"cmdline"`
+		} `json:"payload"`
+		Disks []struct {
 			Path string `json:"path"`
 		} `json:"disks"`
 		Vsock struct {
@@ -61,9 +70,10 @@ func TestPatchCloneConfigRebindsOnlyPrivateDevices(t *testing.T) {
 	if err := json.Unmarshal(patched, &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.Disks[0].Path != "/images/base.raw" || config.Disks[1].Path != "/clone/cow.raw" ||
+	if config.Disks[0].Path != "/target/images/base.raw" || config.Disks[1].Path != "/clone/cow.raw" ||
 		config.Vsock.Socket != "/clone/vsock.uds" || config.Nets[0].TAP == "source-tap" ||
-		config.Nets[0].MAC != "02:00:00:00:00:01" || string(config.Platform) != `{"firmware":"preserved"}` {
+		config.Nets[0].MAC != "02:00:00:00:00:01" || string(config.Platform) != `{"firmware":"preserved"}` ||
+		config.Payload.Kernel != "/target/kernel" || config.Payload.Initrd != "/target/initrd" || config.Payload.Cmdline != "preserved" {
 		t.Fatalf("patched config = %s", patched)
 	}
 }
@@ -85,13 +95,13 @@ func TestCrossFilesystemMemoryUsesSourceLink(t *testing.T) {
 
 func TestPatchCloneConfigRejectsUnidentifiedNIC(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{"disks":[{"serial":"kumabox-cow","path":"/old"}],"vsock":{"socket":"/old"},"net":[{"tap":"old"}]}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"disks":[{"serial":"kumabox-layer0","path":"/old/layer"},{"serial":"kumabox-cow","path":"/old"}],"vsock":{"socket":"/old"},"net":[{"tap":"old"}]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	plan := vmm.ClonePlan{RestorePlan: vmm.RestorePlan{
 		SandboxID: types.SandboxID("123e4567-e89b-42d3-a456-426614174000"),
 		Network:   types.NetworkSetup{Interfaces: []types.NetworkInterface{{Index: 0}}},
-	}, WritableDisk: "/new/cow.raw"}
+	}, WritableDisk: "/new/cow.raw", ImageDisks: []vmm.Disk{{Path: "/new/layer", Serial: vmm.LayerSerialPrefix + "0", ReadOnly: true}}, Kernel: "/new/kernel", Initrd: "/new/initrd"}
 	if _, err := patchCloneConfig(path, plan, "/new/vsock.uds"); err == nil {
 		t.Fatal("patch accepted NIC without a removable device ID")
 	}

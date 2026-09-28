@@ -88,6 +88,11 @@ type ClonePlan struct {
 	RestorePlan
 	// WritableDisk is the new sandbox's COW path already populated from the capture.
 	WritableDisk string
+	// ImageDisks are read-only layers in manifest order at the target data root.
+	ImageDisks []Disk
+	// Kernel and Initrd are the target root's selected boot artifacts.
+	Kernel string
+	Initrd string
 }
 
 // Cloner is the optional native-state clone capability. It must never mutate

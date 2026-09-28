@@ -197,7 +197,7 @@ func OpenSandbox(ctx context.Context, configuration config.Config, reporter Sand
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
-	imageCatalog := imagecatalog.New(store, imagecatalog.WithImageUsage(sandboxcatalog.Usage{}))
+	imageCatalog := imagecatalog.New(store, imagecatalog.WithImageUsage(imageUsage{}))
 	sandboxCatalog := sandboxcatalog.New(store, imagecatalog.Reader{})
 	service, err := newSandboxService(sandboxDependencies{
 		paths: sandboxPaths, imagePaths: imagePaths, images: images.NewGuard(imagePaths, imageCatalog),

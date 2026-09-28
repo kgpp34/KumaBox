@@ -40,6 +40,18 @@ type ImageStore struct {
 	store metadata.Store
 }
 
+// imageUsage keeps an image alias while a sandbox or snapshot owns it.
+// Both checks use the image removal transaction's reader.
+type imageUsage struct{}
+
+func (imageUsage) InUse(ctx context.Context, reader metadata.Reader, digest types.Digest) (bool, error) {
+	used, err := (sandboxcatalog.Usage{}).InUse(ctx, reader, digest)
+	if err != nil || used {
+		return used, err
+	}
+	return (snapshotcatalog.Usage{}).InUse(ctx, reader, digest)
+}
+
 // OpenImages ensures managed directories and opens the image metadata catalog.
 // It does not probe conversion tools, so metadata queries do not require EROFS.
 func OpenImages(ctx context.Context, configuration config.Config) (*ImageStore, error) {
@@ -60,7 +72,7 @@ func OpenImages(ctx context.Context, configuration config.Config) (*ImageStore, 
 	if err != nil {
 		return nil, err
 	}
-	imageCatalog := catalog.New(store, catalog.WithImageUsage(sandboxcatalog.Usage{}))
+	imageCatalog := catalog.New(store, catalog.WithImageUsage(imageUsage{}))
 	return &ImageStore{Paths: paths, Catalog: imageCatalog, options: configuration.Images, store: store}, nil
 }
 

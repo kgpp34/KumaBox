@@ -58,6 +58,27 @@ type nameData struct {
 	ID string `json:"id"`
 }
 
+// Usage checks whether any retained snapshot still pins an image manifest.
+// It runs inside the image removal transaction, including pending imports and
+// deleting records whose artifact cleanup has not finished.
+type Usage struct{}
+
+// InUse reads the snapshot collection without opening a nested transaction.
+func (Usage) InUse(ctx context.Context, reader metadata.Reader, digest types.Digest) (bool, error) {
+	used := false
+	err := reader.Scan(ctx, CollectionSnapshots, func(_ string, raw []byte) error {
+		record, err := decode(raw)
+		if err != nil {
+			return err
+		}
+		if record.ImageDigest == digest.String() {
+			used = true
+		}
+		return nil
+	})
+	return used, err
+}
+
 // Reserve atomically holds an ID and optional name before large capture I/O.
 func (s *Store) Reserve(ctx context.Context, snapshot types.Snapshot) error {
 	if s == nil || s.store == nil {

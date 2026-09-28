@@ -16,7 +16,7 @@ type configProvider func() config.Config
 // NewCommand builds the snapshot command group.
 func NewCommand(configuration configProvider) *cobra.Command {
 	command := &cobra.Command{Use: "snapshot", Short: "manage sandbox snapshots"}
-	command.AddCommand(newSaveCommand(configuration), newListCommand(configuration), newInspectCommand(configuration), newRemoveCommand(configuration))
+	command.AddCommand(newSaveCommand(configuration), newListCommand(configuration), newInspectCommand(configuration), newRemoveCommand(configuration), newExportCommand(configuration), newImportCommand(configuration))
 	return command
 }
 

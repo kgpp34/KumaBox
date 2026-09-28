@@ -255,5 +255,16 @@ func (p ClonePlan) Validate() error {
 	if !filepath.IsAbs(p.WritableDisk) {
 		return errors.New("clone requires an absolute writable disk path")
 	}
+	if !filepath.IsAbs(p.Kernel) || !filepath.IsAbs(p.Initrd) {
+		return errors.New("clone requires local kernel and initrd paths")
+	}
+	if len(p.ImageDisks) == 0 {
+		return errors.New("clone requires local read-only image layers")
+	}
+	for position, disk := range p.ImageDisks {
+		if !filepath.IsAbs(disk.Path) || !disk.ReadOnly || disk.Serial != fmt.Sprintf("%s%d", LayerSerialPrefix, position) {
+			return errors.New("clone image layers must be read-only and ordered by manifest position")
+		}
+	}
 	return nil
 }

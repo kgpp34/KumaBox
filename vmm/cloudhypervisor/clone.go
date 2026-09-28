@@ -130,8 +130,11 @@ func patchCloneConfig(path string, plan vmm.ClonePlan, vsockSocket string) ([]cl
 	if err := json.Unmarshal(config["disks"], &disks); err != nil || len(disks) == 0 {
 		return nil, errors.Join(err, errors.New("clone config has no disks"))
 	}
+	if len(disks) != len(plan.ImageDisks)+1 {
+		return nil, fmt.Errorf("clone config has %d disks, expected %d", len(disks), len(plan.ImageDisks)+1)
+	}
 	cowCount := 0
-	for _, disk := range disks {
+	for position, disk := range disks {
 		var serial string
 		if err := json.Unmarshal(disk["serial"], &serial); err != nil {
 			return nil, fmt.Errorf("decode snapshot disk serial: %w", err)
@@ -142,6 +145,16 @@ func patchCloneConfig(path string, plan vmm.ClonePlan, vsockSocket string) ([]cl
 			if err != nil {
 				return nil, err
 			}
+			disk["readonly"] = json.RawMessage("false")
+		} else {
+			if position >= len(plan.ImageDisks) || serial != plan.ImageDisks[position].Serial {
+				return nil, fmt.Errorf("clone image disk %d has unexpected serial %q", position, serial)
+			}
+			disk["path"], err = json.Marshal(plan.ImageDisks[position].Path)
+			if err != nil {
+				return nil, err
+			}
+			disk["readonly"] = json.RawMessage("true")
 		}
 	}
 	if cowCount != 1 {
@@ -150,6 +163,21 @@ func patchCloneConfig(path string, plan vmm.ClonePlan, vsockSocket string) ([]cl
 	config["disks"], err = json.Marshal(disks)
 	if err != nil {
 		return nil, err
+	}
+	if raw, ok := config["payload"]; ok && string(raw) != "null" {
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &payload); err != nil || payload == nil {
+			return nil, errors.Join(err, errors.New("clone payload is invalid"))
+		}
+		if payload["kernel"], err = json.Marshal(plan.Kernel); err != nil {
+			return nil, err
+		}
+		if payload["initramfs"], err = json.Marshal(plan.Initrd); err != nil {
+			return nil, err
+		}
+		if config["payload"], err = json.Marshal(payload); err != nil {
+			return nil, err
+		}
 	}
 	var vsock map[string]json.RawMessage
 	if err := json.Unmarshal(config["vsock"], &vsock); err != nil || vsock == nil {

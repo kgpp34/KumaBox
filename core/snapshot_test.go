@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -14,6 +15,24 @@ import (
 	"github.com/kumabox/kumabox/types"
 	"github.com/kumabox/kumabox/vmm"
 )
+
+func TestImportRejectsCorruptStreamWithoutPublishing(t *testing.T) {
+	service, _, _ := newTestSnapshotService(t)
+	if _, err := service.Import(t.Context(), bytes.NewBufferString("not a snapshot"), "bad", ""); err == nil {
+		t.Fatal("invalid archive was accepted")
+	}
+	entries, err := os.ReadDir(service.paths.StagingDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("failed import left staging entries: %v", entries)
+	}
+	listed, err := service.List(t.Context())
+	if err != nil || len(listed) != 0 {
+		t.Fatalf("failed import published snapshots: %+v, %v", listed, err)
+	}
+}
 
 var fixedSnapshotID = types.SnapshotID("223e4567-e89b-42d3-a456-426614174000")
 
