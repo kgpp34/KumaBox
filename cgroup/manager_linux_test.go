@@ -17,6 +17,12 @@ const testID = types.SandboxID("123e4567-e89b-42d3-a456-426614174000")
 
 func TestWriteCPULimitsConvergesExistingScope(t *testing.T) {
 	directory := t.TempDir()
+	// Cgroup control files already exist in the kernel-backed scope.
+	for _, name := range []string{"cpu.weight", "cpu.max"} {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte("old"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, cpus := range []uint32{2, 20_000} {
 		if err := writeCPULimits(directory, cpus); err != nil {
 			t.Fatal(err)
