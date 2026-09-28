@@ -21,6 +21,32 @@ func (s *SnapshotService) Export(ctx context.Context, reference string, output i
 	if s == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || output == nil {
 		return types.Snapshot{}, errors.New("snapshot export service is not configured")
 	}
+	return s.withSnapshotDirectory(ctx, reference, func(record types.Snapshot, directory string) error {
+		if err := s.reporter.Status("streaming snapshot archive"); err != nil {
+			return err
+		}
+		if err := snapshot.WriteArchive(ctx, output, directory, record, compress); err != nil {
+			return errdefs.Context(err, "export snapshot", reference, "stream", "discard the incomplete output and retry", false)
+		}
+		return nil
+	})
+}
+
+// ExportDirectory reflinks a locked capture into an unpublished directory.
+// The caller is responsible for atomically publishing or removing that stage.
+func (s *SnapshotService) ExportDirectory(ctx context.Context, reference, destination string) (types.Snapshot, error) {
+	if s == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || destination == "" {
+		return types.Snapshot{}, errors.New("snapshot directory export service is not configured")
+	}
+	return s.withSnapshotDirectory(ctx, reference, func(record types.Snapshot, directory string) error {
+		if err := s.reporter.Status("copying snapshot directory"); err != nil {
+			return err
+		}
+		return snapshot.WriteDirectory(ctx, directory, destination, record)
+	})
+}
+
+func (s *SnapshotService) withSnapshotDirectory(ctx context.Context, reference string, use func(types.Snapshot, string) error) (result types.Snapshot, returnErr error) {
 	record, err := s.snapshots.Resolve(ctx, reference)
 	if err != nil {
 		return types.Snapshot{}, err
@@ -45,11 +71,8 @@ func (s *SnapshotService) Export(ctx context.Context, reference string, output i
 	if err := s.validateSnapshotArtifacts(ctx, record, directory); err != nil {
 		return types.Snapshot{}, err
 	}
-	if err := s.reporter.Status("streaming snapshot archive"); err != nil {
+	if err := use(record, directory); err != nil {
 		return types.Snapshot{}, err
-	}
-	if err := snapshot.WriteArchive(ctx, output, directory, record, compress); err != nil {
-		return types.Snapshot{}, errdefs.Context(err, "export snapshot", reference, "stream", "discard the incomplete output and retry", false)
 	}
 	return record, nil
 }

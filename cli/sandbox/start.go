@@ -1,22 +1,30 @@
 package sandbox
 
 import (
+	"context"
 	"errors"
 
 	"github.com/spf13/cobra"
 
 	"github.com/kumabox/kumabox/core"
 	"github.com/kumabox/kumabox/errdefs"
+	"github.com/kumabox/kumabox/types"
 )
 
 // NewStartCommand builds the top-level sandbox start command.
 func NewStartCommand(configuration configProvider) *cobra.Command {
 	asJSON := false
 	command := &cobra.Command{
-		Use:   "start SANDBOX",
+		Use:   "start SANDBOX...",
 		Short: "start a created or stopped sandbox",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
+			if len(args) > 1 {
+				return runSandboxBatch(command, configuration, args, "start sandbox", asJSON, false,
+					func(ctx context.Context, service *core.SandboxService, reference string) (types.Sandbox, error) {
+						return service.Start(ctx, reference)
+					})
+			}
 			reference := args[0]
 			progress, err := startStartProgress(command, reference)
 			if err != nil {

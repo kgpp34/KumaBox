@@ -197,9 +197,6 @@ func patchCloneConfig(path string, plan vmm.ClonePlan, vsockSocket string) ([]cl
 			return nil, fmt.Errorf("decode snapshot NICs: %w", err)
 		}
 	}
-	if len(nets) != len(plan.Network.Interfaces) {
-		return nil, fmt.Errorf("clone NIC count %d differs from snapshot %d", len(plan.Network.Interfaces), len(nets))
-	}
 	oldNets := make([]cloneNet, len(nets))
 	for index, device := range nets {
 		if err := json.Unmarshal(device["id"], &oldNets[index].ID); err != nil || oldNets[index].ID == "" {

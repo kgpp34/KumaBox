@@ -10,11 +10,15 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/kumabox/kumabox/snapshot"
 	"github.com/kumabox/kumabox/types"
 )
 
 func TestSnapshotArchiveImportsIntoAnotherRoot(t *testing.T) {
 	source, _, _ := newTestSnapshotService(t)
+	sourceImage := source.lifecycle.dependencies.images.(fakeGuard)
+	sourceImage.image.RegistryReference = "registry.example.test/team/guest:v1"
+	source.lifecycle.dependencies.images = sourceImage
 	record, err := source.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "warm"})
 	if err != nil {
 		t.Fatal(err)
@@ -41,6 +45,35 @@ func TestSnapshotArchiveImportsIntoAnotherRoot(t *testing.T) {
 	if archive.Len() > 1<<20 {
 		t.Fatalf("archive expanded the sparse COW to %d bytes", archive.Len())
 	}
+	exportedDir := t.TempDir()
+	if _, err := source.ExportDirectory(t.Context(), "warm", exportedDir); err != nil {
+		t.Fatal(err)
+	}
+	stagedDir := t.TempDir()
+	stagedRecord, err := snapshot.StageDirectory(t.Context(), exportedDir, stagedDir)
+	if err != nil || stagedRecord.ImageDigest != record.ImageDigest {
+		t.Fatalf("direct directory = %+v, %v", stagedRecord, err)
+	}
+	if _, err := os.Stat(filepath.Join(stagedDir, "cow.raw")); err != nil {
+		t.Fatal(err)
+	}
+	restoreTarget, _, restoreSteps := newTestSnapshotService(t)
+	if _, err := restoreTarget.RestoreWithOptions(t.Context(), "box", "", RestoreOptions{SourceDirectory: exportedDir}); err != nil {
+		t.Fatalf("restore from directory: %v", err)
+	}
+	foundClone := false
+	for _, step := range *restoreSteps {
+		if step == "clone" {
+			foundClone = true
+		}
+	}
+	if !foundClone {
+		t.Fatalf("directory restore did not rebind native state: %v", *restoreSteps)
+	}
+	remaining, err := os.ReadDir(restoreTarget.paths.StagingDir())
+	if err != nil || len(remaining) != 0 {
+		t.Fatalf("directory restore left staging files: %v, %v", remaining, err)
+	}
 	payload := bytes.Clone(archive.Bytes())
 	target, _, steps := newTestSnapshotService(t)
 	guard := target.lifecycle.dependencies.images.(fakeGuard)
@@ -56,7 +89,7 @@ func TestSnapshotArchiveImportsIntoAnotherRoot(t *testing.T) {
 			t.Fatal("snapshot import required the target image")
 		}
 	}
-	if imported.Name != "transferred" || imported.Config.Storage != types.DefaultSandboxStorage || imported.ImageDigest != record.ImageDigest {
+	if imported.Name != "transferred" || imported.Config.Storage != types.DefaultSandboxStorage || imported.ImageDigest != record.ImageDigest || imported.RegistryReference != sourceImage.image.RegistryReference {
 		t.Fatalf("imported snapshot = %+v", imported)
 	}
 	targetDir, err := target.paths.Dir(imported.ID)

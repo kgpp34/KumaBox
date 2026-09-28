@@ -12,11 +12,29 @@ import (
 // NewRestoreCommand builds the top-level native snapshot restore command.
 func NewRestoreCommand(configuration configProvider) *cobra.Command {
 	var asJSON bool
+	var fromDir string
+	var force bool
+	var pull bool
 	command := &cobra.Command{
-		Use:   "restore SANDBOX SNAPSHOT",
+		Use:   "restore SANDBOX [SNAPSHOT]",
 		Short: "restore a sandbox to a saved snapshot",
-		Args:  cobra.ExactArgs(2),
+		Args: func(command *cobra.Command, args []string) error {
+			if err := cobra.RangeArgs(1, 2)(command, args); err != nil {
+				return err
+			}
+			if (len(args) == 1) == (fromDir == "") {
+				return invalidFlag("from-dir", errors.New("provide exactly one of SNAPSHOT or --from-dir"))
+			}
+			if force && fromDir == "" {
+				return invalidFlag("force", errors.New("requires --from-dir"))
+			}
+			return nil
+		},
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
+			reference := ""
+			if len(args) == 2 {
+				reference = args[1]
+			}
 			progress, err := startRestoreProgress(command, args[0])
 			if err != nil {
 				return err
@@ -30,7 +48,7 @@ func NewRestoreCommand(configuration configProvider) *cobra.Command {
 			defer func() {
 				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "restore sandbox", args[0], "close metadata", "inspect the sandbox before retrying", committed))
 			}()
-			record, err := service.Restore(command.Context(), args[0], args[1])
+			record, err := service.RestoreWithOptions(command.Context(), args[0], reference, core.RestoreOptions{SourceDirectory: fromDir, Force: force, Pull: pull})
 			if err != nil {
 				return err
 			}
@@ -41,6 +59,9 @@ func NewRestoreCommand(configuration configProvider) *cobra.Command {
 			return nil
 		},
 	}
+	command.Flags().StringVar(&fromDir, "from-dir", "", "restore from a portable snapshot directory")
+	command.Flags().BoolVar(&force, "force", false, "allow a directory snapshot from another sandbox with a compatible image and resource shape")
+	command.Flags().BoolVar(&pull, "pull", false, "pull the snapshot's pinned registry image if absent")
 	command.Flags().BoolVar(&asJSON, "json", false, "print the restored sandbox as indented JSON")
 	return command
 }

@@ -13,6 +13,8 @@ import (
 type ImportCommit struct {
 	// Name is the local alias to create or bind to the same existing manifest.
 	Name string
+	// RegistryReference records a pull source; local imports leave it empty.
+	RegistryReference string
 	// Manifest identifies the image and defines the exact layer order.
 	Manifest types.Manifest
 	// Layers contains converted metadata in the same order as Manifest.Layers.

@@ -107,6 +107,25 @@ func TestPatchCloneConfigRejectsUnidentifiedNIC(t *testing.T) {
 	}
 }
 
+func TestPatchCloneConfigAllowsNICCountChange(t *testing.T) {
+	for _, targetCount := range []int{0, 2} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		config := `{"disks":[{"serial":"kumabox-layer0","path":"/old/layer"},{"serial":"kumabox-cow","path":"/old/cow"}],"vsock":{"socket":"/old/vsock"},"net":[{"id":"old-nic","tap":"old-tap"}]}`
+		if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		interfaces := make([]types.NetworkInterface, targetCount)
+		plan := vmm.ClonePlan{RestorePlan: vmm.RestorePlan{
+			SandboxID: types.SandboxID("123e4567-e89b-42d3-a456-426614174000"),
+			Network:   types.NetworkSetup{Interfaces: interfaces},
+		}, WritableDisk: "/new/cow.raw", ImageDisks: []vmm.Disk{{Path: "/new/layer", Serial: vmm.LayerSerialPrefix + "0", ReadOnly: true}}, Kernel: "/new/kernel", Initrd: "/new/initrd"}
+		old, err := patchCloneConfig(path, plan, "/new/vsock.uds")
+		if err != nil || len(old) != 1 || old[0].ID != "old-nic" {
+			t.Fatalf("target NICs %d: old = %+v, %v", targetCount, old, err)
+		}
+	}
+}
+
 func TestCopyNativeStateKeepsCaptureAndSkipsWritableDisk(t *testing.T) {
 	source := t.TempDir()
 	target := filepath.Join(t.TempDir(), "native")

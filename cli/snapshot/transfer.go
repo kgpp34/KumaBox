@@ -10,12 +10,14 @@ import (
 
 	"github.com/kumabox/kumabox/core"
 	"github.com/kumabox/kumabox/errdefs"
+	"github.com/kumabox/kumabox/storage"
 )
 
 // newExportCommand streams one immutable snapshot to an atomically published
 // file, or directly to stdout when --output=- is requested.
 func newExportCommand(configuration configProvider) *cobra.Command {
 	var output string
+	var toDir string
 	var compress bool
 	command := &cobra.Command{
 		Use:   "export SNAPSHOT",
@@ -32,6 +34,13 @@ func newExportCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, service.Close()) }()
+			if toDir != "" {
+				if err := exportDirectory(command, service, args[0], toDir); err != nil {
+					return err
+				}
+				_, err := fmt.Fprintln(progress.Output(command.OutOrStdout()), toDir)
+				return err
+			}
 			if output == "-" {
 				_, err := service.Export(command.Context(), args[0], command.OutOrStdout(), compress)
 				return err
@@ -54,8 +63,26 @@ func newExportCommand(configuration configProvider) *cobra.Command {
 		},
 	}
 	command.Flags().StringVarP(&output, "output", "o", "", "archive file (default: snapshot ID.tar; - writes to stdout)")
+	command.Flags().StringVar(&toDir, "to-dir", "", "export to an absent directory for direct clone or restore")
 	command.Flags().BoolVar(&compress, "gzip", false, "compress the archive with gzip")
+	command.MarkFlagsMutuallyExclusive("to-dir", "output")
+	command.MarkFlagsMutuallyExclusive("to-dir", "gzip")
 	return command
+}
+
+func exportDirectory(command *cobra.Command, service *core.SnapshotService, reference, destination string) (returnErr error) {
+	stage, err := os.MkdirTemp(filepath.Dir(destination), ".kumabox-snapshot-*")
+	if err != nil {
+		return err
+	}
+	defer func() { returnErr = errors.Join(returnErr, os.RemoveAll(stage)) }()
+	if _, err := service.ExportDirectory(command.Context(), reference, stage); err != nil {
+		return err
+	}
+	if err := storage.PublishDir(stage, destination); err != nil {
+		return err
+	}
+	return nil
 }
 
 func exportFile(command *cobra.Command, service *core.SnapshotService, reference, destination string, compress bool) (returnErr error) {

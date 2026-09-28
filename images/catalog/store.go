@@ -83,6 +83,8 @@ func (Reader) Resolve(ctx context.Context, reader metadata.Reader, reference str
 type imageRecord struct {
 	// ManifestDigest must match this record's collection key.
 	ManifestDigest string `json:"manifest_digest"`
+	// RegistryReference is a known pull source; absent for local-only imports.
+	RegistryReference string `json:"registry_reference,omitempty"`
 	// OS and Architecture select the supported source platform.
 	OS string `json:"os"`
 	// Architecture is the platform instruction set, independent of the host.
@@ -235,9 +237,11 @@ func (c *Store) CommitImport(ctx context.Context, commit images.ImportCommit) er
 				return errdefs.New(errdefs.ClassConflict, errdefs.CodeNameTaken, fmt.Errorf("image name %q already points to %s", commit.Name, current.ManifestDigest))
 			}
 		}
-		if _, exists, err := writer.Get(ctx, CollectionImages, commit.Manifest.Digest.String()); err != nil {
+		rawImage, exists, err := writer.Get(ctx, CollectionImages, commit.Manifest.Digest.String())
+		if err != nil {
 			return err
-		} else if exists {
+		}
+		if exists {
 			existing, err := loadImage(ctx, writer, commit.Manifest.Digest.String())
 			if err != nil {
 				return err
@@ -250,11 +254,22 @@ func (c *Store) CommitImport(ctx context.Context, commit images.ImportCommit) er
 					return corruptRecord("image", errors.New("manifest layers changed"))
 				}
 			}
+			if commit.RegistryReference != "" && commit.RegistryReference != existing.RegistryReference {
+				var record imageRecord
+				if err := json.Unmarshal(rawImage, &record); err != nil {
+					return corruptRecord("image", err)
+				}
+				record.RegistryReference = commit.RegistryReference
+				if err := putJSON(ctx, writer, CollectionImages, commit.Manifest.Digest.String(), record); err != nil {
+					return err
+				}
+			}
 			return putJSON(ctx, writer, CollectionNames, commit.Name, nameRecord{ManifestDigest: commit.Manifest.Digest.String()})
 		}
 		record := imageRecord{
 			ManifestDigest: commit.Manifest.Digest.String(), OS: commit.Manifest.Platform.OS,
-			Architecture: commit.Manifest.Platform.Architecture, BootProfile: string(commit.Boot.Profile),
+			RegistryReference: commit.RegistryReference,
+			Architecture:      commit.Manifest.Platform.Architecture, BootProfile: string(commit.Boot.Profile),
 			KernelLayer: commit.Boot.KernelLayer.String(), InitrdLayer: commit.Boot.InitrdLayer.String(), KernelFile: commit.Boot.KernelFile, InitrdFile: commit.Boot.InitrdFile,
 			Size: commit.Size, CreatedAt: commit.Created,
 		}
@@ -421,8 +436,9 @@ func loadImage(ctx context.Context, reader metadata.Reader, digestID string) (ty
 		return types.Image{}, corruptRecord("initrd digest", err)
 	}
 	image := types.Image{
-		ManifestDigest: manifest, Platform: types.Platform{OS: record.OS, Architecture: record.Architecture},
-		Boot: types.Boot{Profile: types.BootProfile(record.BootProfile), KernelLayer: kernel, InitrdLayer: initrd, KernelFile: record.KernelFile, InitrdFile: record.InitrdFile}, Size: record.Size, CreatedAt: record.CreatedAt,
+		ManifestDigest: manifest, RegistryReference: record.RegistryReference,
+		Platform: types.Platform{OS: record.OS, Architecture: record.Architecture},
+		Boot:     types.Boot{Profile: types.BootProfile(record.BootProfile), KernelLayer: kernel, InitrdLayer: initrd, KernelFile: record.KernelFile, InitrdFile: record.InitrdFile}, Size: record.Size, CreatedAt: record.CreatedAt,
 	}
 	if err := reader.Scan(ctx, CollectionNames, func(name string, raw []byte) error {
 		var item nameRecord

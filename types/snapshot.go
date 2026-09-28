@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -45,6 +46,9 @@ type Snapshot struct {
 	SourceGeneration uint64
 	// ImageDigest pins the immutable image layers required by the sandbox.
 	ImageDigest Digest
+	// RegistryReference records a known OCI pull source for another host.
+	// The recorded digest, rather than a mutable tag, is used when pulling.
+	RegistryReference string
 	// VMM selects the adapter capable of restoring the native snapshot.
 	VMM VMMType
 	// Config is the source sandbox resource and network request.
@@ -71,6 +75,9 @@ func (s Snapshot) Validate() error {
 	}
 	if _, err := ParseDigest(s.ImageDigest.String()); err != nil {
 		return err
+	}
+	if len(s.RegistryReference) > 512 || strings.ContainsAny(s.RegistryReference, "\x00\r\n\t") {
+		return errors.New("snapshot registry reference is invalid")
 	}
 	if err := s.VMM.Validate(); err != nil {
 		return err

@@ -6,51 +6,106 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/kumabox/kumabox/agent"
 	"github.com/kumabox/kumabox/errdefs"
+	"github.com/kumabox/kumabox/images"
+	"github.com/kumabox/kumabox/images/source"
 	filelock "github.com/kumabox/kumabox/lock/flock"
+	"github.com/kumabox/kumabox/snapshot"
 	"github.com/kumabox/kumabox/types"
 	"github.com/kumabox/kumabox/vmm"
 )
 
-// Clone creates a new running sandbox from an immutable native snapshot. It
+// CloneOptions selects the capture source and permitted target network overrides.
+type CloneOptions struct {
+	// Name is the required identity assigned to the new sandbox.
+	Name string
+	// Pull fetches a missing registry image by the snapshot's exact digest.
+	Pull bool
+	// SourceDirectory selects a portable directory instead of a catalog snapshot.
+	SourceDirectory string
+	// NICs overrides the captured interface count, including zero.
+	NICs *int
+	// NetworkName selects another CNI network for the new interfaces.
+	NetworkName string
+}
+
+// Clone preserves the ordinary local-image workflow for callers without options.
+func (s *SnapshotService) Clone(ctx context.Context, snapshotReference, name string) (types.Sandbox, error) {
+	return s.CloneWithOptions(ctx, snapshotReference, CloneOptions{Name: name})
+}
+
+// CloneWithOptions creates a new running sandbox from an immutable native snapshot. It
 // inherits the source resource shape while assigning a fresh identity, COW,
 // network allocation, and VMM process. Source artifacts stay read-only.
 //
 //	snapshot lock -> validate -> Create -> private COW copy -> Starting
 //	                                      -> rebind VMM -> guest network -> Running
-func (s *SnapshotService) Clone(ctx context.Context, snapshotReference, name string) (result types.Sandbox, returnErr error) {
+func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReference string, options CloneOptions) (result types.Sandbox, returnErr error) {
 	if s == nil || s.lifecycle == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || s.now == nil {
 		return types.Sandbox{}, errors.New("snapshot clone service is not configured")
 	}
-	if snapshotReference == "" || name == "" {
-		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("SNAPSHOT and --name are required"))
+	if options.Name == "" || (snapshotReference == "") == (options.SourceDirectory == "") {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("exactly one of SNAPSHOT or --from-dir, plus --name, is required"))
 	}
-	if err := s.reporter.Status("resolving snapshot"); err != nil {
-		return types.Sandbox{}, err
-	}
-	capture, err := s.snapshots.Resolve(ctx, snapshotReference)
-	if err != nil {
-		return types.Sandbox{}, err
-	}
-	lockPath, err := s.paths.Lock(capture.ID)
-	if err != nil {
-		return types.Sandbox{}, err
-	}
-	lock := filelock.New(lockPath)
-	if err := lock.Lock(ctx); err != nil {
-		return types.Sandbox{}, err
-	}
-	defer func() { returnErr = errors.Join(returnErr, lock.Unlock(context.WithoutCancel(ctx))) }()
-	capture, err = s.snapshots.Resolve(ctx, capture.ID.String())
-	if err != nil {
-		return types.Sandbox{}, err
+	var capture types.Snapshot
+	var snapshotDir string
+	if options.SourceDirectory != "" {
+		if err := s.reporter.Status("staging snapshot directory"); err != nil {
+			return types.Sandbox{}, err
+		}
+		stage, err := os.MkdirTemp(s.paths.StagingDir(), "clone-*")
+		if err != nil {
+			return types.Sandbox{}, err
+		}
+		defer func() { returnErr = errors.Join(returnErr, os.RemoveAll(stage)) }()
+		capture, err = snapshot.StageDirectory(ctx, options.SourceDirectory, stage)
+		if err != nil {
+			return types.Sandbox{}, err
+		}
+		snapshotDir = stage
+	} else {
+		if err := s.reporter.Status("resolving snapshot"); err != nil {
+			return types.Sandbox{}, err
+		}
+		var err error
+		capture, err = s.snapshots.Resolve(ctx, snapshotReference)
+		if err != nil {
+			return types.Sandbox{}, err
+		}
+		lockPath, err := s.paths.Lock(capture.ID)
+		if err != nil {
+			return types.Sandbox{}, err
+		}
+		lock := filelock.New(lockPath)
+		if err := lock.Lock(ctx); err != nil {
+			return types.Sandbox{}, err
+		}
+		defer func() { returnErr = errors.Join(returnErr, lock.Unlock(context.WithoutCancel(ctx))) }()
+		capture, err = s.snapshots.Resolve(ctx, capture.ID.String())
+		if err != nil {
+			return types.Sandbox{}, err
+		}
+		snapshotDir, err = s.paths.Dir(capture.ID)
+		if err != nil {
+			return types.Sandbox{}, err
+		}
 	}
 	config := capture.Config
-	config.Name = name
+	config.Name = options.Name
+	if options.NICs != nil {
+		config.NICs = *options.NICs
+	}
+	if options.NetworkName != "" {
+		config.NetworkName = options.NetworkName
+	} else if config.NICs == 0 {
+		config.NetworkName = ""
+	}
 	if err := config.Validate(); err != nil {
 		return types.Sandbox{}, err
 	}
@@ -62,14 +117,7 @@ func (s *SnapshotService) Clone(ctx context.Context, snapshotReference, name str
 	if !ok {
 		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, fmt.Errorf("VMM backend %q does not support clone", capture.VMM))
 	}
-	snapshotDir, err := s.paths.Dir(capture.ID)
-	if err != nil {
-		return types.Sandbox{}, err
-	}
-	snapshotCOW, err := s.paths.COW(capture.ID)
-	if err != nil {
-		return types.Sandbox{}, err
-	}
+	snapshotCOW := filepath.Join(snapshotDir, "cow.raw")
 	if info, err := os.Lstat(snapshotCOW); err != nil {
 		return types.Sandbox{}, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, err)
 	} else if !info.Mode().IsRegular() || info.Size() != config.Storage {
@@ -82,6 +130,11 @@ func (s *SnapshotService) Clone(ctx context.Context, snapshotReference, name str
 	}
 	if err := backend.Preflight(); err != nil {
 		return types.Sandbox{}, err
+	}
+	if options.Pull {
+		if err := s.ensureCloneImage(ctx, capture); err != nil {
+			return types.Sandbox{}, err
+		}
 	}
 	if err := s.reporter.Status("creating clone identity and network"); err != nil {
 		return types.Sandbox{}, err
@@ -151,6 +204,9 @@ func (s *SnapshotService) Clone(ctx context.Context, snapshotReference, name str
 	if err := s.reporter.Status("configuring guest identity and network"); err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, process)
 	}
+	if err := reseedProcess(ctx, backend, process, true); err != nil {
+		return starting, s.lifecycle.failStart(ctx, backend, starting, "reseed guest", err, process)
+	}
 	if err := s.configureCloneGuest(ctx, backend, process, starting); err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "configure guest", err, process)
 	}
@@ -159,6 +215,51 @@ func (s *SnapshotService) Clone(ctx context.Context, snapshotReference, name str
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "commit running", err, process)
 	}
 	return running, nil
+}
+
+// ensureCloneImage uses only a registry source captured at image pull time.
+// Local import aliases cannot be inferred as registry repositories safely.
+func (s *SnapshotService) ensureCloneImage(ctx context.Context, capture types.Snapshot) (returnErr error) {
+	_, err := s.lifecycle.dependencies.images.WithAvailable(ctx, capture.ImageDigest.String(), func(types.Image) error { return nil })
+	if err == nil {
+		return nil
+	}
+	code, ok := errdefs.CodeOf(err)
+	if !ok || (code != errdefs.CodeNotFound && code != errdefs.CodeArtifactUnavailable) {
+		return err
+	}
+	if capture.RegistryReference == "" {
+		return errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, errors.New("snapshot has no registry source; import its image on this host before cloning"))
+	}
+	pinned, err := source.PinnedRegistryReference(capture.RegistryReference, capture.ImageDigest)
+	if err != nil {
+		return err
+	}
+	if err := s.reporter.Status("pulling pinned snapshot image"); err != nil {
+		return err
+	}
+	input, alias, err := NewRegistrySource(pinned)
+	if err != nil {
+		return err
+	}
+	store, err := OpenImages(ctx, s.configuration)
+	if err != nil {
+		return err
+	}
+	defer func() { returnErr = errors.Join(returnErr, store.Close()) }()
+	platform := types.Platform{OS: "linux", Architecture: runtime.GOARCH}
+	importer, err := NewImageImporter(ctx, store, images.DiscardReporter{}, platform)
+	if err != nil {
+		return err
+	}
+	image, err := importer.Import(ctx, alias, platform, input)
+	if err != nil {
+		return err
+	}
+	if image.ManifestDigest != capture.ImageDigest {
+		return errdefs.New(errdefs.ClassCorrupt, errdefs.CodeDigestMismatch, errors.New("pulled image differs from snapshot digest"))
+	}
+	return nil
 }
 
 // configureCloneGuest applies the new MAC/IP map over vsock, which remains

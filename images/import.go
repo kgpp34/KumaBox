@@ -306,6 +306,9 @@ func (i *Importer) Import(ctx context.Context, name string, platform types.Platf
 		}
 	}
 	commit := ImportCommit{Name: name, Manifest: manifest, Layers: layers, Boot: boot, Size: total, Created: i.options.Now().UTC()}
+	if registry, ok := source.(interface{ RegistryReference() string }); ok {
+		commit.RegistryReference = registry.RegistryReference()
+	}
 	if err := i.catalog.CommitImport(ctx, commit); err != nil {
 		return types.Image{}, errdefs.Context(err, "import image", name, "catalog commit", "retry; unregistered artifacts will be rebuilt", false)
 	}

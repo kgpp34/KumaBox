@@ -20,7 +20,7 @@ const (
 
 	// MessageExec starts one command session.
 	MessageExec = "exec"
-	// MessageReseed reserves the identity refresh operation.
+	// MessageReseed mixes fresh host entropy into the guest random pool.
 	MessageReseed = "reseed"
 	// MessageStdin carries one command input chunk.
 	MessageStdin = "stdin"
@@ -61,7 +61,7 @@ type Message struct {
 	ExitCode int `json:"exit_code,omitempty"`
 	// Message contains the diagnostic reported by MessageError.
 	Message string `json:"message,omitempty"`
-	// RegenMachineID requests machine identity renewal during a future reseed.
+	// RegenMachineID requests a new persistent machine identity during reseed.
 	RegenMachineID bool `json:"regen_machine_id,omitempty"`
 }
 

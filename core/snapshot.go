@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"time"
 
@@ -49,16 +50,17 @@ type snapshotCatalog interface {
 // SnapshotService coordinates sandbox locking, VMM capture, artifact
 // publication, and snapshot metadata.
 type SnapshotService struct {
-	paths        snapshot.Paths
-	sandboxPaths sandboxfs.Paths
-	sandboxes    sandboxCatalog
-	snapshots    snapshotCatalog
-	runtimes     *vmm.Registry
-	reporter     SnapshotReporter
-	newID        func() (types.SnapshotID, error)
-	now          func() time.Time
-	store        metadata.Store
-	lifecycle    *SandboxService
+	configuration config.Config
+	paths         snapshot.Paths
+	sandboxPaths  sandboxfs.Paths
+	sandboxes     sandboxCatalog
+	snapshots     snapshotCatalog
+	runtimes      *vmm.Registry
+	reporter      SnapshotReporter
+	newID         func() (types.SnapshotID, error)
+	now           func() time.Time
+	store         metadata.Store
+	lifecycle     *SandboxService
 }
 
 // OpenSnapshots assembles the local snapshot service. The caller must close it.
@@ -78,7 +80,8 @@ func OpenSnapshots(ctx context.Context, configuration config.Config, reporter Sn
 		reporter = discardSnapshotReporter{}
 	}
 	return &SnapshotService{
-		paths: snapshotPaths, sandboxPaths: lifecycle.dependencies.paths,
+		configuration: configuration,
+		paths:         snapshotPaths, sandboxPaths: lifecycle.dependencies.paths,
 		sandboxes: lifecycle.dependencies.catalog, snapshots: snapshotcatalog.New(lifecycle.dependencies.store),
 		runtimes: lifecycle.dependencies.runtimes, reporter: reporter,
 		newID: types.NewSnapshotID, now: time.Now, store: lifecycle.dependencies.store, lifecycle: lifecycle,
@@ -117,11 +120,8 @@ func (s *SnapshotService) Hibernate(ctx context.Context, request SaveSnapshotReq
 // capture owns the shared reservation and publication contract. The optional
 // hibernate tail moves publication inside the VMM pause window.
 func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotRequest, hibernate bool) (result types.Snapshot, returnErr error) {
-	if s == nil || s.sandboxes == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || s.newID == nil || s.now == nil {
+	if s == nil || s.lifecycle == nil || s.lifecycle.dependencies.images == nil || s.sandboxes == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || s.newID == nil || s.now == nil {
 		return types.Snapshot{}, errors.New("snapshot service is not configured")
-	}
-	if hibernate && s.lifecycle == nil {
-		return types.Snapshot{}, errors.New("hibernate lifecycle is not configured")
 	}
 	if request.SandboxReference == "" {
 		return types.Snapshot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("SANDBOX must not be empty"))
@@ -177,6 +177,15 @@ func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotReque
 	if observation.State != vmm.ProcessRunning {
 		return types.Snapshot{}, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("sandbox has no ready VMM process to snapshot"))
 	}
+	image, err := s.lifecycle.dependencies.images.WithAvailable(ctx, record.ImageDigest.String(), func(image types.Image) error {
+		if image.ManifestDigest != record.ImageDigest {
+			return errors.New("snapshot image differs from the sandbox pin")
+		}
+		return nil
+	})
+	if err != nil {
+		return types.Snapshot{}, errdefs.Context(err, operation, request.SandboxReference, "image", "restore the pinned image before snapshotting", false)
+	}
 	id, err := s.newID()
 	if err != nil {
 		return types.Snapshot{}, err
@@ -184,7 +193,8 @@ func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotReque
 	pending := types.Snapshot{
 		ID: id, Name: request.Name, Description: request.Description,
 		SandboxID: record.ID, SourceGeneration: record.Generation,
-		ImageDigest: record.ImageDigest, VMM: record.VMM, Config: record.Config,
+		ImageDigest: record.ImageDigest, RegistryReference: image.RegistryReference,
+		VMM: record.VMM, Config: record.Config,
 		CreatedAt: s.now().UTC(),
 	}
 	if err := pending.Validate(); err != nil {
@@ -308,6 +318,28 @@ func (s *SnapshotService) List(ctx context.Context) ([]types.Snapshot, error) {
 	return s.snapshots.List(ctx)
 }
 
+// ListForSandbox resolves a sandbox name or ID before filtering ready captures.
+func (s *SnapshotService) ListForSandbox(ctx context.Context, sandboxReference string) ([]types.Snapshot, error) {
+	if s == nil || s.sandboxes == nil || s.snapshots == nil {
+		return nil, errors.New("snapshot service is not configured")
+	}
+	owner, err := s.sandboxes.Resolve(ctx, sandboxReference)
+	if err != nil {
+		return nil, err
+	}
+	listed, err := s.snapshots.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]types.Snapshot, 0)
+	for _, capture := range listed {
+		if capture.SandboxID == owner.ID {
+			result = append(result, capture)
+		}
+	}
+	return result, nil
+}
+
 // Inspect resolves one ready snapshot by name or complete ID.
 func (s *SnapshotService) Inspect(ctx context.Context, reference string) (types.Snapshot, error) {
 	if s == nil || s.snapshots == nil {
@@ -346,6 +378,17 @@ func (s *SnapshotService) Remove(ctx context.Context, reference string) (result 
 	return record, nil
 }
 
+// RestoreOptions selects an external capture and whether a different source
+// sandbox identity may be restored into the target.
+type RestoreOptions struct {
+	// SourceDirectory selects a portable capture instead of a catalog snapshot.
+	SourceDirectory string
+	// Force accepts a different source sandbox identity if the shape matches.
+	Force bool
+	// Pull fetches a missing registry image by the capture's exact digest.
+	Pull bool
+}
+
 // Restore replaces a stopped sandbox's writable disk and launches its native
 // VMM snapshot. A live or retained-error source is cleaned through the normal
 // stop lifecycle before replacement.
@@ -354,60 +397,80 @@ func (s *SnapshotService) Remove(ctx context.Context, reference string) (result 
 //	                                                              -> disk replace
 //	                                                              -> VMM restore -> Running
 func (s *SnapshotService) Restore(ctx context.Context, sandboxReference, snapshotReference string) (result types.Sandbox, returnErr error) {
+	return s.RestoreWithOptions(ctx, sandboxReference, snapshotReference, RestoreOptions{})
+}
+
+// RestoreWithOptions also accepts an exported directory. Its native state is
+// rebound through the VMM cloner so host paths and NICs can differ from the
+// machine that produced the snapshot.
+func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReference, snapshotReference string, options RestoreOptions) (result types.Sandbox, returnErr error) {
 	if s == nil || s.lifecycle == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || s.now == nil {
 		return types.Sandbox{}, errors.New("snapshot restore service is not configured")
 	}
-	if sandboxReference == "" || snapshotReference == "" {
-		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("SANDBOX and SNAPSHOT must not be empty"))
+	if sandboxReference == "" || (snapshotReference == "") == (options.SourceDirectory == "") || (options.Force && options.SourceDirectory == "") {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("provide SANDBOX and exactly one of SNAPSHOT or --from-dir; --force requires --from-dir"))
 	}
 	if err := s.reporter.Status("resolving snapshot and sandbox"); err != nil {
 		return types.Sandbox{}, err
 	}
-	capture, err := s.snapshots.Resolve(ctx, snapshotReference)
-	if err != nil {
-		return types.Sandbox{}, err
-	}
-	snapshotLockPath, err := s.paths.Lock(capture.ID)
-	if err != nil {
-		return types.Sandbox{}, err
-	}
-	snapshotLock := filelock.New(snapshotLockPath)
-	if err := snapshotLock.Lock(ctx); err != nil {
-		return types.Sandbox{}, errdefs.Context(err, "restore sandbox", sandboxReference, "lock snapshot", "retry the restore", false)
-	}
-	defer func() {
-		returnErr = errors.Join(returnErr, errdefs.Context(snapshotLock.Unlock(context.WithoutCancel(ctx)), "restore sandbox", sandboxReference, "unlock snapshot", "inspect the sandbox before retrying", result.Generation > 0))
-	}()
 	record, err := s.sandboxes.Resolve(ctx, sandboxReference)
 	if err != nil {
 		return types.Sandbox{}, err
 	}
-	if err := validateRestoreLineage(record, capture); err != nil {
+	var capture types.Snapshot
+	var snapshotDir string
+	if options.SourceDirectory != "" {
+		stage, stageErr := os.MkdirTemp(s.paths.StagingDir(), "restore-*")
+		if stageErr != nil {
+			return types.Sandbox{}, stageErr
+		}
+		defer func() { returnErr = errors.Join(returnErr, os.RemoveAll(stage)) }()
+		capture, err = snapshot.StageDirectory(ctx, options.SourceDirectory, stage)
+		if err != nil {
+			return types.Sandbox{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err)
+		}
+		snapshotDir = stage
+	} else {
+		capture, err = s.snapshots.Resolve(ctx, snapshotReference)
+		if err != nil {
+			return types.Sandbox{}, err
+		}
+		snapshotLockPath, err := s.paths.Lock(capture.ID)
+		if err != nil {
+			return types.Sandbox{}, err
+		}
+		snapshotLock := filelock.New(snapshotLockPath)
+		if err := snapshotLock.Lock(ctx); err != nil {
+			return types.Sandbox{}, errdefs.Context(err, "restore sandbox", sandboxReference, "lock snapshot", "retry the restore", false)
+		}
+		defer func() {
+			returnErr = errors.Join(returnErr, errdefs.Context(snapshotLock.Unlock(context.WithoutCancel(ctx)), "restore sandbox", sandboxReference, "unlock snapshot", "inspect the sandbox before retrying", result.Generation > 0))
+		}()
+		snapshotDir, err = s.paths.Dir(capture.ID)
+		if err != nil {
+			return types.Sandbox{}, err
+		}
+	}
+	if err := validateRestoreSource(record, capture, options); err != nil {
 		return types.Sandbox{}, err
 	}
 	backend, err := s.runtimes.Backend(record.VMM)
 	if err != nil {
 		return record, err
 	}
-	restorer, ok := backend.(vmm.Restorer)
-	if !ok {
+	restorer, canRestore := backend.(vmm.Restorer)
+	cloner, canClone := backend.(vmm.Cloner)
+	if (options.SourceDirectory == "" && !canRestore) || (options.SourceDirectory != "" && !canClone) {
 		return record, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, fmt.Errorf("VMM backend %q does not support restore", record.VMM))
 	}
 	if err := s.reporter.Status("validating snapshot artifacts"); err != nil {
 		return record, err
 	}
-	snapshotDir, err := s.paths.Dir(capture.ID)
-	if err != nil {
-		return record, err
-	}
-	snapshotCOW, err := s.paths.COW(capture.ID)
-	if err != nil {
-		return record, err
-	}
+	snapshotCOW := filepath.Join(snapshotDir, "cow.raw")
 	if info, err := os.Lstat(snapshotCOW); err != nil {
 		return record, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, err)
-	} else if !info.Mode().IsRegular() || info.Size() == 0 {
-		return record, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("snapshot COW is not a nonempty regular file"))
+	} else if !info.Mode().IsRegular() || info.Size() == 0 || (options.SourceDirectory != "" && info.Size() != capture.Config.Storage) {
+		return record, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("snapshot COW has an invalid file type or logical size"))
 	}
 	if validator, ok := backend.(vmm.RestoreValidator); ok {
 		if err := validator.ValidateRestore(ctx, snapshotDir); err != nil {
@@ -420,9 +483,24 @@ func (s *SnapshotService) Restore(ctx context.Context, sandboxReference, snapsho
 	if err := backend.Preflight(); err != nil {
 		return record, err
 	}
-	stagedCOW, err := s.paths.RestoreCOW(capture.ID, record.ID)
-	if err != nil {
-		return record, err
+	if options.Pull {
+		if err := s.ensureCloneImage(ctx, capture); err != nil {
+			return record, err
+		}
+	}
+	if options.SourceDirectory != "" {
+		if _, err := s.lifecycle.dependencies.images.WithAvailable(ctx, capture.ImageDigest.String(), func(types.Image) error { return nil }); err != nil {
+			return record, errdefs.Context(err, "restore sandbox", sandboxReference, "resolve image", "import or pull the snapshot image before restoring", false)
+		}
+	}
+	var stagedCOW string
+	if options.SourceDirectory != "" {
+		stagedCOW = snapshotDir + "-cow.raw"
+	} else {
+		stagedCOW, err = s.paths.RestoreCOW(capture.ID, record.ID)
+		if err != nil {
+			return record, err
+		}
 	}
 	if err := ignoreNotExist(os.Remove(stagedCOW)); err != nil {
 		return record, errdefs.Context(err, "restore sandbox", sandboxReference, "clean staging disk", "inspect snapshot staging storage before retrying", false)
@@ -475,7 +553,7 @@ func (s *SnapshotService) Restore(ctx context.Context, sandboxReference, snapsho
 	if record.State != types.SandboxStateStopped && record.State != types.SandboxStateError {
 		return record, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s changed to state %s before restore", record.ID, record.State))
 	}
-	if err := validateRestoreLineage(record, capture); err != nil {
+	if err := validateRestoreSource(record, capture, options); err != nil {
 		return record, err
 	}
 	if err := s.reporter.Status("committing starting state"); err != nil {
@@ -503,12 +581,43 @@ func (s *SnapshotService) Restore(ctx context.Context, sandboxReference, snapsho
 	if err := s.reporter.Status("restoring VMM state"); err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, vmm.Process{})
 	}
-	process, err := restorer.Restore(ctx, vmm.RestorePlan{
+	plan := vmm.RestorePlan{
 		SandboxID: starting.ID, Generation: starting.Generation, CPUs: starting.Config.CPUs,
 		SnapshotDir: snapshotDir, Network: starting.Network,
-	})
+	}
+	var process vmm.Process
+	if options.SourceDirectory == "" {
+		process, err = restorer.Restore(ctx, plan)
+	} else {
+		var image types.Image
+		image, err = s.lifecycle.dependencies.images.WithAvailable(ctx, capture.ImageDigest.String(), func(types.Image) error { return nil })
+		if err == nil {
+			var launch vmm.LaunchPlan
+			launch, err = s.lifecycle.launchPlan(starting, image)
+			if err == nil {
+				process, err = cloner.Clone(ctx, vmm.ClonePlan{
+					RestorePlan:  plan,
+					WritableDisk: liveCOW, ImageDisks: launch.Disks[:len(launch.Disks)-1], Kernel: launch.Kernel, Initrd: launch.Initrd,
+				})
+			}
+		}
+	}
 	if err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "restore VMM", err, process)
+	}
+	if err := s.reporter.Status("refreshing guest random state"); err != nil {
+		return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, process)
+	}
+	if err := reseedProcess(ctx, backend, process, options.Force && capture.SandboxID != record.ID); err != nil {
+		return starting, s.lifecycle.failStart(ctx, backend, starting, "reseed guest", err, process)
+	}
+	if options.SourceDirectory != "" {
+		if err := s.reporter.Status("configuring restored guest network"); err != nil {
+			return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, process)
+		}
+		if err := s.configureCloneGuest(ctx, backend, process, starting); err != nil {
+			return starting, s.lifecycle.failStart(ctx, backend, starting, "configure guest", err, process)
+		}
 	}
 	if err := s.reporter.Status("committing running state"); err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, process)
@@ -528,6 +637,20 @@ func validateRestoreLineage(sandbox types.Sandbox, capture types.Snapshot) error
 		return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("snapshot runtime configuration differs from the target sandbox"))
 	}
 	return nil
+}
+
+func validateRestoreSource(sandbox types.Sandbox, capture types.Snapshot, options RestoreOptions) error {
+	if options.Force && options.SourceDirectory != "" {
+		if capture.VMM != sandbox.VMM || capture.ImageDigest != sandbox.ImageDigest || capture.Config.CPUs != sandbox.Config.CPUs ||
+			capture.Config.Memory != sandbox.Config.Memory || capture.Config.Storage != sandbox.Config.Storage || capture.Config.NICs != sandbox.Config.NICs {
+			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("snapshot VMM, image, or resource shape differs from the target sandbox"))
+		}
+		return nil
+	}
+	if options.SourceDirectory != "" && capture.SandboxID == sandbox.ID {
+		return validateRestoreSource(sandbox, capture, RestoreOptions{SourceDirectory: options.SourceDirectory, Force: true})
+	}
+	return validateRestoreLineage(sandbox, capture)
 }
 
 func ignoreNotExist(err error) error {

@@ -1,22 +1,30 @@
 package sandbox
 
 import (
+	"context"
 	"errors"
 
 	"github.com/spf13/cobra"
 
 	"github.com/kumabox/kumabox/core"
 	"github.com/kumabox/kumabox/errdefs"
+	"github.com/kumabox/kumabox/types"
 )
 
 // NewStopCommand builds the top-level sandbox stop command.
 func NewStopCommand(configuration configProvider) *cobra.Command {
 	asJSON := false
 	command := &cobra.Command{
-		Use:   "stop SANDBOX",
+		Use:   "stop SANDBOX...",
 		Short: "stop a running or interrupted sandbox",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
+			if len(args) > 1 {
+				return runSandboxBatch(command, configuration, args, "stop sandbox", asJSON, false,
+					func(ctx context.Context, service *core.SandboxService, reference string) (types.Sandbox, error) {
+						return service.Stop(ctx, reference)
+					})
+			}
 			reference := args[0]
 			progress, err := startStopProgress(command, reference)
 			if err != nil {

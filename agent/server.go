@@ -107,7 +107,11 @@ func (s *Server) handle(ctx context.Context, connection net.Conn) {
 	case MessageExec:
 		s.runCommand(ctx, connection, decoder, encoder, first)
 	case MessageReseed:
-		_ = encoder.sendError("reseed is not implemented by this KumaBox agent")
+		if err := reseedGuest(first.Data, first.RegenMachineID); err != nil {
+			_ = encoder.sendError("reseed: %v", err)
+			return
+		}
+		_ = encoder.Encode(Message{Type: MessageExit})
 	default:
 		_ = encoder.sendError("expected first frame type %q, got %q", MessageExec, first.Type)
 	}

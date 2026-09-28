@@ -77,6 +77,7 @@ func newTestSnapshotService(t *testing.T) (*SnapshotService, *SandboxService, *[
 			Generation: 3, Binary: "cloud-hypervisor", APISocket: "/run/kumabox/api.sock",
 		},
 	}
+	testRuntime(t, sandboxService).vsockFactory = guestTestConnection
 	sandboxDir, err := sandboxService.dependencies.paths.Dir(fixedID)
 	if err != nil {
 		t.Fatal(err)
@@ -142,6 +143,46 @@ func TestRestoreStopsRunningSandboxAndResumesSnapshot(t *testing.T) {
 	}
 	if position != len(wantSequence) {
 		t.Fatalf("restore steps = %v, missing sequence %v", *steps, wantSequence)
+	}
+}
+
+func TestListForSandboxResolvesNameBeforeFiltering(t *testing.T) {
+	service, _, _ := newTestSnapshotService(t)
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := capture
+	foreign.ID = types.SnapshotID("423e4567-e89b-42d3-a456-426614174000")
+	foreign.SandboxID = types.SandboxID("323e4567-e89b-42d3-a456-426614174000")
+	if err := service.snapshots.Reserve(t.Context(), foreign); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.snapshots.Commit(t.Context(), foreign.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := service.ListForSandbox(t.Context(), "box")
+	if err != nil || len(listed) != 1 || listed[0].ID != capture.ID {
+		t.Fatalf("filtered snapshots = %+v, %v", listed, err)
+	}
+}
+
+func TestDirectoryRestoreForceStillRequiresCompatibleImageAndShape(t *testing.T) {
+	_, sandbox, _ := newTestSnapshotService(t)
+	record := sandbox.dependencies.catalog.(*fakeCatalog).record
+	capture := types.Snapshot{
+		SandboxID:   types.SandboxID("323e4567-e89b-42d3-a456-426614174000"),
+		ImageDigest: record.ImageDigest, VMM: record.VMM, Config: record.Config,
+	}
+	if err := validateRestoreSource(record, capture, RestoreOptions{SourceDirectory: "/capture"}); err == nil {
+		t.Fatal("foreign snapshot accepted without force")
+	}
+	if err := validateRestoreSource(record, capture, RestoreOptions{SourceDirectory: "/capture", Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	capture.Config.Memory *= 2
+	if err := validateRestoreSource(record, capture, RestoreOptions{SourceDirectory: "/capture", Force: true}); err == nil {
+		t.Fatal("incompatible memory accepted with force")
 	}
 }
 

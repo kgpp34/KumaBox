@@ -18,6 +18,8 @@ type imageOutput struct {
 	Names []string `json:"names"`
 	// ManifestDigest is the complete normalized manifest content identity.
 	ManifestDigest string `json:"manifest_digest"`
+	// RegistryReference is present when the image has a known pull source.
+	RegistryReference string `json:"registry_reference,omitempty"`
 	// Platform selects the Linux guest OS and architecture.
 	Platform platformOutput `json:"platform"`
 	// Layers preserve source order from the base layer to the topmost layer.
@@ -88,7 +90,7 @@ func imageResult(image types.Image) imageOutput {
 		}
 		layers = append(layers, layerOutput{SourceDigest: layer.SourceDigest.String(), EROFSDigest: layer.EROFSDigest.String(), Size: layer.Size, BootFiles: bootFiles, Whiteouts: layer.Whiteouts, BootOpaque: layer.BootOpaque})
 	}
-	return imageOutput{Names: image.Names, ManifestDigest: image.ManifestDigest.String(), Platform: platformOutput{OS: image.Platform.OS, Architecture: image.Platform.Architecture}, Layers: layers, Boot: bootOutput{Profile: string(image.Boot.Profile), KernelLayer: image.Boot.KernelLayer.String(), KernelFile: image.Boot.KernelFile, InitrdLayer: image.Boot.InitrdLayer.String(), InitrdFile: image.Boot.InitrdFile}, Size: image.Size, CreatedAt: image.CreatedAt}
+	return imageOutput{Names: image.Names, ManifestDigest: image.ManifestDigest.String(), RegistryReference: image.RegistryReference, Platform: platformOutput{OS: image.Platform.OS, Architecture: image.Platform.Architecture}, Layers: layers, Boot: bootOutput{Profile: string(image.Boot.Profile), KernelLayer: image.Boot.KernelLayer.String(), KernelFile: image.Boot.KernelFile, InitrdLayer: image.Boot.InitrdLayer.String(), InitrdFile: image.Boot.InitrdFile}, Size: image.Size, CreatedAt: image.CreatedAt}
 }
 
 // writeImage reports the aliases and full manifest digest after a successful import.

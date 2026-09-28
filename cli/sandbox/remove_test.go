@@ -108,6 +108,35 @@ func TestRemoveCommandClosesCreateAndImageReferenceLifecycle(t *testing.T) {
 	}
 }
 
+func TestRemoveBatchReportsSuccessesEvenWhenOneReferenceFails(t *testing.T) {
+	base := t.TempDir()
+	roots := storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")}
+	seedImage(t, roots)
+	installFakeMKFS(t, base)
+	first := executeCreate(t, roots, "first")
+	second := executeCreate(t, roots, "second")
+	command := NewRemoveCommand(func() config.Config { return sandboxTestConfig(roots) })
+	command.SetArgs([]string{"first", "missing", "second", "--json"})
+	command.SilenceUsage = true
+	command.SilenceErrors = true
+	var stdout bytes.Buffer
+	command.SetOut(&stdout)
+	command.SetErr(&bytes.Buffer{})
+	if err := command.ExecuteContext(t.Context()); err == nil {
+		t.Fatal("batch removal hid the missing reference")
+	}
+	var removed []removeOutput
+	if err := json.Unmarshal(stdout.Bytes(), &removed); err != nil {
+		t.Fatalf("batch output %q: %v", stdout.String(), err)
+	}
+	if len(removed) != 2 || removed[0].ID != first.String() || removed[1].ID != second.String() {
+		t.Fatalf("batch output = %+v", removed)
+	}
+	if output := executeList(t, roots, "--all", "--json"); output != "[]\n" {
+		t.Fatalf("batch left sandboxes: %q", output)
+	}
+}
+
 func executeCreate(t *testing.T, roots storage.Roots, name string) types.SandboxID {
 	t.Helper()
 	command := NewCreateCommand(func() config.Config { return sandboxTestConfig(roots) })

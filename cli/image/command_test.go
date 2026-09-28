@@ -5,15 +5,20 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"io"
+	"log"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/registry"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/layout"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
 	"github.com/kumabox/kumabox/config"
@@ -154,6 +159,52 @@ func TestImageCommandsFromLayoutAndArchive(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(roots.Data, "images", "blobs")); !os.IsNotExist(err) {
 		t.Fatalf("persistent OCI blobs exist: %v", err)
+	}
+}
+
+func TestImagePullPersistsRegistryOrigin(t *testing.T) {
+	_, execute := newImageTestExecutor(t)
+	if _, err := execute("import", "local", "../../testdata/oci-layout", "--platform", "linux/amd64"); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(registry.New(registry.Logger(log.New(io.Discard, "", 0))))
+	defer server.Close()
+	ref, err := name.NewTag(strings.TrimPrefix(server.URL, "http://")+"/tiny:v1", name.Insecure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := layout.FromPath("../../testdata/oci-layout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := fixture.ImageIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := index.IndexManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	image, err := fixture.Image(manifest.Manifests[0].Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.Write(ref, image, remote.WithContext(t.Context())); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execute("pull", ref.String(), "--platform", "linux/amd64"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := execute("inspect", ref.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored imageOutput
+	if err := json.Unmarshal([]byte(out), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.RegistryReference != ref.String() {
+		t.Fatalf("registry origin = %q, want %q", stored.RegistryReference, ref.String())
 	}
 }
 

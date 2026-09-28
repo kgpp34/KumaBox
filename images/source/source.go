@@ -42,6 +42,8 @@ type resolvedLayer struct {
 type resolvedSource struct {
 	// resolve selects the format-specific image.
 	resolve func(context.Context, types.Platform) (v1.Image, error)
+	// registryReference is populated only for an OCI registry pull.
+	registryReference string
 	// mu protects replacement and lookup of the resolved layer map.
 	mu sync.RWMutex
 	// layers is populated only after successful metadata validation.
@@ -51,6 +53,9 @@ type resolvedSource struct {
 }
 
 var _ images.Source = (*resolvedSource)(nil)
+
+// RegistryReference identifies a pull source without guessing from local aliases.
+func (s *resolvedSource) RegistryReference() string { return s.registryReference }
 
 // Resolve validates the selected manifest, config, platform, and layer descriptors
 // before publishing the layer lookup used by OpenLayer. Encoded digest, size, and

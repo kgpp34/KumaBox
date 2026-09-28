@@ -30,7 +30,7 @@ func NewRegistry(reference string) (images.Source, string, error) {
 	if err != nil {
 		return nil, "", errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, &safeRegistryError{cause: err, message: "invalid OCI registry reference"})
 	}
-	source := &resolvedSource{limits: images.DefaultLimits()}
+	source := &resolvedSource{limits: images.DefaultLimits(), registryReference: parsed.String()}
 	source.resolve = func(ctx context.Context, platform types.Platform) (v1.Image, error) {
 		image, err := remote.Image(parsed, remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithPlatform(v1.Platform{OS: platform.OS, Architecture: platform.Architecture}))
 		if err != nil {
@@ -39,6 +39,19 @@ func NewRegistry(reference string) (images.Source, string, error) {
 		return &registryImage{Image: image}, nil
 	}
 	return source, parsed.String(), nil
+}
+
+// PinnedRegistryReference keeps the original repository while selecting the
+// exact manifest recorded by a snapshot, regardless of later tag movement.
+func PinnedRegistryReference(reference string, digest types.Digest) (string, error) {
+	if reference == "" || digest.IsZero() || strings.Contains(reference, "://") {
+		return "", invalidSource("a registry reference and snapshot digest are required")
+	}
+	parsed, err := name.ParseReference(reference)
+	if err != nil {
+		return "", invalidSource("invalid snapshot registry reference")
+	}
+	return parsed.Context().Digest(digest.String()).String(), nil
 }
 
 // safeRegistryError separates a safe display message from diagnostic error identity.

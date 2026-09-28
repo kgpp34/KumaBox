@@ -11,16 +11,17 @@ import (
 )
 
 type output struct {
-	ID               string       `json:"id"`
-	Name             string       `json:"name,omitempty"`
-	Description      string       `json:"description,omitempty"`
-	SandboxID        string       `json:"sandbox_id"`
-	SourceGeneration uint64       `json:"source_generation"`
-	ImageDigest      string       `json:"image_digest"`
-	VMM              string       `json:"vmm"`
-	Config           configOutput `json:"config"`
-	Size             int64        `json:"size"`
-	CreatedAt        time.Time    `json:"created_at"`
+	ID                string       `json:"id"`
+	Name              string       `json:"name,omitempty"`
+	Description       string       `json:"description,omitempty"`
+	SandboxID         string       `json:"sandbox_id"`
+	SourceGeneration  uint64       `json:"source_generation"`
+	ImageDigest       string       `json:"image_digest"`
+	RegistryReference string       `json:"registry_reference,omitempty"`
+	VMM               string       `json:"vmm"`
+	Config            configOutput `json:"config"`
+	Size              int64        `json:"size"`
+	CreatedAt         time.Time    `json:"created_at"`
 }
 
 type configOutput struct {
@@ -36,7 +37,8 @@ func result(snapshot types.Snapshot) output {
 	return output{
 		ID: snapshot.ID.String(), Name: snapshot.Name, Description: snapshot.Description,
 		SandboxID: snapshot.SandboxID.String(), SourceGeneration: snapshot.SourceGeneration,
-		ImageDigest: snapshot.ImageDigest.String(), VMM: string(snapshot.VMM),
+		ImageDigest: snapshot.ImageDigest.String(), RegistryReference: snapshot.RegistryReference,
+		VMM: string(snapshot.VMM),
 		Config: configOutput{
 			Name: snapshot.Config.Name, CPUs: snapshot.Config.CPUs, Memory: snapshot.Config.Memory,
 			Storage: snapshot.Config.Storage, NICs: snapshot.Config.NICs, NetworkName: snapshot.Config.NetworkName,

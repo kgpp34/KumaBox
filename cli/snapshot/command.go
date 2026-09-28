@@ -9,6 +9,7 @@ import (
 	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/core"
 	"github.com/kumabox/kumabox/errdefs"
+	"github.com/kumabox/kumabox/types"
 )
 
 type configProvider func() config.Config
@@ -97,6 +98,7 @@ func NewHibernateCommand(configuration func() config.Config) *cobra.Command {
 
 func newListCommand(configuration configProvider) *cobra.Command {
 	var asJSON bool
+	var sandboxReference string
 	command := &cobra.Command{
 		Use:     "ls",
 		Aliases: []string{"list"},
@@ -110,7 +112,12 @@ func newListCommand(configuration configProvider) *cobra.Command {
 			defer func() {
 				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "list snapshots", "", "close metadata", "retry the query", false))
 			}()
-			records, err := service.List(command.Context())
+			var records []types.Snapshot
+			if sandboxReference == "" {
+				records, err = service.List(command.Context())
+			} else {
+				records, err = service.ListForSandbox(command.Context(), sandboxReference)
+			}
 			if err != nil {
 				return err
 			}
@@ -121,6 +128,7 @@ func newListCommand(configuration configProvider) *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&asJSON, "json", false, "print snapshots as indented JSON")
+	command.Flags().StringVar(&sandboxReference, "sandbox", "", "only show snapshots belonging to this sandbox")
 	return command
 }
 
@@ -149,9 +157,9 @@ func newInspectCommand(configuration configProvider) *cobra.Command {
 func newRemoveCommand(configuration configProvider) *cobra.Command {
 	var asJSON bool
 	command := &cobra.Command{
-		Use:   "rm SNAPSHOT",
-		Short: "remove a snapshot",
-		Args:  cobra.ExactArgs(1),
+		Use:   "rm SNAPSHOT...",
+		Short: "remove one or more snapshots",
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
 			service, err := core.OpenSnapshots(command.Context(), configuration(), nil)
 			if err != nil {
@@ -160,11 +168,28 @@ func newRemoveCommand(configuration configProvider) *cobra.Command {
 			defer func() {
 				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "remove snapshot", args[0], "close metadata", "retry snapshot removal", true))
 			}()
-			record, err := service.Remove(command.Context(), args[0])
-			if err != nil {
-				return err
+			removed := make([]types.Snapshot, 0, len(args))
+			var failures []error
+			for _, reference := range args {
+				record, removeErr := service.Remove(command.Context(), reference)
+				if removeErr != nil {
+					failures = append(failures, removeErr)
+					continue
+				}
+				removed = append(removed, record)
+				if !asJSON {
+					if err := writeResult(command.OutOrStdout(), record, false); err != nil {
+						return errors.Join(errors.Join(failures...), err)
+					}
+				}
 			}
-			return writeResult(command.OutOrStdout(), record, asJSON)
+			if asJSON {
+				if len(args) == 1 && len(removed) == 1 {
+					return errors.Join(errors.Join(failures...), writeJSON(command.OutOrStdout(), removed[0]))
+				}
+				return errors.Join(errors.Join(failures...), writeListJSON(command.OutOrStdout(), removed))
+			}
+			return errors.Join(failures...)
 		},
 	}
 	command.Flags().BoolVar(&asJSON, "json", false, "print the removed snapshot as indented JSON")

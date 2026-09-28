@@ -122,6 +122,9 @@ type Boot struct {
 type Image struct {
 	// Names contains local aliases bound to the manifest, sorted by the catalog.
 	Names []string
+	// RegistryReference is the original pull source, if this image came from a registry.
+	// A clone uses its repository with ManifestDigest to avoid mutable tag drift.
+	RegistryReference string
 	// ManifestDigest identifies the resolved source manifest or its normalized form.
 	ManifestDigest Digest
 	// Platform is the operating system and instruction set of all layers.

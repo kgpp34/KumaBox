@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kumabox/kumabox/agent"
 	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
@@ -288,6 +290,7 @@ type fakeRuntime struct {
 	plan          vmm.LaunchPlan
 	console       io.ReadWriteCloser
 	vsock         io.ReadWriteCloser
+	vsockFactory  func() io.ReadWriteCloser
 	logs          string
 	logsErr       error
 	removeLogsErr error
@@ -338,6 +341,15 @@ func (f *fakeRuntime) Restore(_ context.Context, plan vmm.RestorePlan) (vmm.Proc
 		Generation: plan.Generation, Binary: "cloud-hypervisor", APISocket: "/run/kumabox/restore.sock",
 	}
 	return process, f.restoreErr
+}
+
+func (f *fakeRuntime) Clone(_ context.Context, plan vmm.ClonePlan) (vmm.Process, error) {
+	*f.steps = append(*f.steps, "clone")
+	f.restorePlan = plan.RestorePlan
+	return vmm.Process{
+		PID: 44, StartTicks: 12, BootID: "boot", SandboxID: plan.SandboxID,
+		Generation: plan.Generation, Binary: "cloud-hypervisor", APISocket: "/run/kumabox/clone.sock",
+	}, f.restoreErr
 }
 
 func (f *fakeRuntime) Type() types.VMMType {
@@ -397,10 +409,34 @@ func (f *fakeRuntime) Console(context.Context, vmm.Process) (io.ReadWriteCloser,
 
 func (f *fakeRuntime) DialVsock(context.Context, vmm.Process, uint32) (io.ReadWriteCloser, error) {
 	*f.steps = append(*f.steps, "vsock")
+	if f.vsockFactory != nil {
+		return f.vsockFactory(), nil
+	}
 	if f.vsock == nil {
 		return nil, errors.New("fake vsock is not configured")
 	}
 	return f.vsock, nil
+}
+
+func guestTestConnection() io.ReadWriteCloser {
+	host, guest := net.Pipe()
+	go func() {
+		defer func() { _ = guest.Close() }()
+		decoder := agent.NewDecoder(guest)
+		request, err := decoder.Decode()
+		if err != nil {
+			return
+		}
+		if request.Type == agent.MessageExec {
+			_, _ = decoder.Decode()
+			_ = agent.NewEncoder(guest).Encode(agent.Message{Type: agent.MessageExit})
+			return
+		}
+		if request.Type == agent.MessageReseed && len(request.Data) == 32 {
+			_ = agent.NewEncoder(guest).Encode(agent.Message{Type: agent.MessageExit})
+		}
+	}()
+	return host
 }
 
 func (f *fakeRuntime) Logs(_ context.Context, _ types.SandboxID, options vmm.LogOptions, output io.Writer) error {

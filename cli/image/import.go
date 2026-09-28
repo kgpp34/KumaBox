@@ -2,6 +2,7 @@ package image
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -13,19 +14,15 @@ import (
 func newPullCommand(configuration configProvider) *cobra.Command {
 	platform := defaultPlatform()
 	command := &cobra.Command{
-		Use:   "pull REF",
+		Use:   "pull REF...",
 		Short: "pull an OCI image from a registry",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
 			parsedPlatform, err := parsePlatform(platform)
 			if err != nil {
 				return err
 			}
-			input, name, err := core.NewRegistrySource(args[0])
-			if err != nil {
-				return err
-			}
-			progress, err := startImageProgress(command, "Pull", name)
+			progress, err := startImageProgress(command, "Pull", strings.Join(args, ", "))
 			if err != nil {
 				return err
 			}
@@ -39,14 +36,26 @@ func newPullCommand(configuration configProvider) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := progress.Status("downloading and converting layers"); err != nil {
-				return err
+			var failures []error
+			for _, reference := range args {
+				input, name, sourceErr := core.NewRegistrySource(reference)
+				if sourceErr != nil {
+					failures = append(failures, sourceErr)
+					continue
+				}
+				if err := progress.Status("downloading and converting " + name); err != nil {
+					return errors.Join(errors.Join(failures...), err)
+				}
+				image, importErr := importer.Import(command.Context(), name, parsedPlatform, input)
+				if importErr != nil {
+					failures = append(failures, importErr)
+					continue
+				}
+				if err := writeImage(progress.Output(command.OutOrStdout()), image); err != nil {
+					return errors.Join(errors.Join(failures...), err)
+				}
 			}
-			image, err := importer.Import(command.Context(), name, parsedPlatform, input)
-			if err != nil {
-				return err
-			}
-			return writeImage(progress.Output(command.OutOrStdout()), image)
+			return errors.Join(failures...)
 		},
 	}
 	command.Flags().StringVar(&platform, "platform", platform, "target platform (linux/amd64 or linux/arm64)")

@@ -150,6 +150,7 @@ func newRootCommand() (*cobra.Command, error) {
 	root.AddCommand(sandboxcmd.NewListCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewLogsCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewRemoveCommand(provideConfig))
+	root.AddCommand(sandboxcmd.NewReseedCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewRestoreCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewRunCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewStartCommand(provideConfig))

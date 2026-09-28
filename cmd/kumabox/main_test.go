@@ -41,9 +41,9 @@ func TestMainBinaryStreamsAndExitCodes(t *testing.T) {
 		{name: "logs missing", args: append(append([]string(nil), global...), "logs", "missing"), wantCode: 3, stderrContains: "NOT_FOUND"},
 		{name: "logs usage", args: append(append([]string(nil), global...), "logs"), wantCode: 2, stderrContains: "kumabox:"},
 		{name: "start missing", args: append(append([]string(nil), global...), "start", "missing"), wantCode: 3, stderrContains: `Start "missing" failed`},
-		{name: "start usage", args: append(append([]string(nil), global...), "start", "one", "two"), wantCode: 2, stderrContains: "kumabox:"},
+		{name: "start usage", args: append(append([]string(nil), global...), "start"), wantCode: 2, stderrContains: "kumabox:"},
 		{name: "stop missing", args: append(append([]string(nil), global...), "stop", "missing"), wantCode: 3, stderrContains: `Stop "missing" failed`},
-		{name: "stop usage", args: append(append([]string(nil), global...), "stop", "one", "two"), wantCode: 2, stderrContains: "kumabox:"},
+		{name: "stop usage", args: append(append([]string(nil), global...), "stop"), wantCode: 2, stderrContains: "kumabox:"},
 		{name: "console usage", args: append(append([]string(nil), global...), "console"), wantCode: 2, stderrContains: "kumabox:"},
 		{name: "console escape validation", args: append(append([]string(nil), global...), "console", "box", "--escape-char", "^?"), wantCode: 5, stderrContains: "--escape-char"},
 	}

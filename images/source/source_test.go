@@ -283,9 +283,16 @@ func TestRegistrySourcePullsFromHTTPRegistry(t *testing.T) {
 	if normalized != ref.String() {
 		t.Fatalf("reference = %s", normalized)
 	}
+	if origin := source.(interface{ RegistryReference() string }).RegistryReference(); origin != ref.String() {
+		t.Fatalf("registry origin = %q", origin)
+	}
 	manifest, err := source.Resolve(t.Context(), types.Platform{OS: "linux", Architecture: "amd64"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	pinned, err := PinnedRegistryReference(ref.String(), manifest.Digest)
+	if err != nil || pinned != ref.Context().Digest(manifest.Digest.String()).String() {
+		t.Fatalf("pinned reference = %q, %v", pinned, err)
 	}
 	reader, err := source.OpenLayer(t.Context(), manifest.Layers[0])
 	if err != nil {

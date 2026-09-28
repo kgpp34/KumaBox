@@ -1,22 +1,30 @@
 package sandbox
 
 import (
+	"context"
 	"errors"
 
 	"github.com/spf13/cobra"
 
 	"github.com/kumabox/kumabox/core"
 	"github.com/kumabox/kumabox/errdefs"
+	"github.com/kumabox/kumabox/types"
 )
 
 // NewRemoveCommand builds the top-level sandbox removal command.
 func NewRemoveCommand(configuration configProvider) *cobra.Command {
 	asJSON := false
 	command := &cobra.Command{
-		Use:   "rm SANDBOX",
+		Use:   "rm SANDBOX...",
 		Short: "remove a sandbox and its persistent resources",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
+			if len(args) > 1 {
+				return runSandboxBatch(command, configuration, args, "remove sandbox", asJSON, true,
+					func(ctx context.Context, service *core.SandboxService, reference string) (types.Sandbox, error) {
+						return service.Remove(ctx, reference)
+					})
+			}
 			reference := args[0]
 			progress, err := startRemoveProgress(command, reference)
 			if err != nil {
