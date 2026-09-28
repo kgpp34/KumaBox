@@ -439,6 +439,18 @@ func guestTestConnection() io.ReadWriteCloser {
 	return host
 }
 
+func rejectedReseedTestConnection() io.ReadWriteCloser {
+	host, guest := net.Pipe()
+	go func() {
+		defer func() { _ = guest.Close() }()
+		if _, err := agent.NewDecoder(guest).Decode(); err != nil {
+			return
+		}
+		_ = agent.NewEncoder(guest).Encode(agent.Message{Type: agent.MessageError, Message: "unsupported"})
+	}()
+	return host
+}
+
 func (f *fakeRuntime) Logs(_ context.Context, _ types.SandboxID, options vmm.LogOptions, output io.Writer) error {
 	*f.steps = append(*f.steps, "logs")
 	f.logOptions = options

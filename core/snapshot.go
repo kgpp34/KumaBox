@@ -608,9 +608,7 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 	if err := s.reporter.Status("refreshing guest random state"); err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, process)
 	}
-	if err := reseedProcess(ctx, backend, process, options.Force && capture.SandboxID != record.ID); err != nil {
-		return starting, s.lifecycle.failStart(ctx, backend, starting, "reseed guest", err, process)
-	}
+	reseedErr := reseedProcess(ctx, backend, process, options.Force && capture.SandboxID != record.ID)
 	if options.SourceDirectory != "" {
 		if err := s.reporter.Status("configuring restored guest network"); err != nil {
 			return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, process)
@@ -625,6 +623,9 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 	running, err := s.sandboxes.MarkRunning(ctx, starting.ID, starting.Generation, s.now().UTC())
 	if err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "commit running", err, process)
+	}
+	if reseedErr != nil {
+		return running, errdefs.Context(reseedErr, "restore sandbox", sandboxReference, "reseed guest", "sandbox is running; upgrade the guest agent and run kumabox reseed", true)
 	}
 	return running, nil
 }

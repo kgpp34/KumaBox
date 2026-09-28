@@ -204,15 +204,16 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	if err := s.reporter.Status("configuring guest identity and network"); err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, process)
 	}
-	if err := reseedProcess(ctx, backend, process, true); err != nil {
-		return starting, s.lifecycle.failStart(ctx, backend, starting, "reseed guest", err, process)
-	}
+	reseedErr := reseedProcess(ctx, backend, process, true)
 	if err := s.configureCloneGuest(ctx, backend, process, starting); err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "configure guest", err, process)
 	}
 	running, err := s.sandboxes.MarkRunning(ctx, starting.ID, starting.Generation, s.now().UTC())
 	if err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "commit running", err, process)
+	}
+	if reseedErr != nil {
+		return running, errdefs.Context(reseedErr, "clone sandbox", options.Name, "reseed guest", "clone is running; upgrade the guest agent and run kumabox reseed --machine-id", true)
 	}
 	return running, nil
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/metadata"
 	"github.com/kumabox/kumabox/snapshot"
 	snapshotcatalog "github.com/kumabox/kumabox/snapshot/catalog"
@@ -143,6 +144,27 @@ func TestRestoreStopsRunningSandboxAndResumesSnapshot(t *testing.T) {
 	}
 	if position != len(wantSequence) {
 		t.Fatalf("restore steps = %v, missing sequence %v", *steps, wantSequence)
+	}
+}
+
+func TestRestoreReseedRejectionKeepsRestoredSandboxRunning(t *testing.T) {
+	service, sandboxService, _ := newTestSnapshotService(t)
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	testRuntime(t, sandboxService).vsockFactory = rejectedReseedTestConnection
+	restored, err := service.Restore(t.Context(), "box", capture.ID.String())
+	if err == nil || restored.State != types.SandboxStateRunning {
+		t.Fatalf("restore = %+v, %v", restored, err)
+	}
+	var classified *errdefs.Error
+	if !errors.As(err, &classified) || !classified.Committed {
+		t.Fatalf("reseed failure did not report committed restore: %v", err)
+	}
+	current := sandboxService.dependencies.catalog.(*fakeCatalog).record
+	if current.State != types.SandboxStateRunning {
+		t.Fatalf("reseed failure discarded running VM: %+v", current)
 	}
 }
 
