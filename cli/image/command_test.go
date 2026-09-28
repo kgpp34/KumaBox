@@ -192,8 +192,9 @@ func TestImagePullPersistsRegistryOrigin(t *testing.T) {
 	if err := remote.Write(ref, image, remote.WithContext(t.Context())); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := execute("pull", ref.String(), "--platform", "linux/amd64"); err != nil {
-		t.Fatal(err)
+	output, err := execute("pull", "bad://reference", ref.String(), "--platform", "linux/amd64")
+	if err == nil || !strings.Contains(output, ref.String()) {
+		t.Fatalf("batch pull did not continue after an invalid reference: %q, %v", output, err)
 	}
 	out, err := execute("inspect", ref.String())
 	if err != nil {
