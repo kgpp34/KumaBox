@@ -96,7 +96,7 @@ func (d *Driver) capturePaused(ctx context.Context, plan vmm.SnapshotPlan) error
 		return fmt.Errorf("capture cloud-hypervisor state: %w", err)
 	}
 	for _, file := range plan.WritableFiles {
-		if err := storage.CopySparse(file.Destination, file.Source); err != nil {
+		if err := storage.CloneFile(file.Destination, file.Source); err != nil {
 			return fmt.Errorf("capture writable disk: %w", err)
 		}
 	}

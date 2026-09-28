@@ -1,10 +1,32 @@
 package cloudhypervisor
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestRestorePayloadIncludesSelectedMemoryMode(t *testing.T) {
+	for _, mode := range []string{"", memoryModeOnDemand, memoryModeCopyOnWrite} {
+		payload, err := restorePayload("/data/native", mode)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var request map[string]string
+		if err := json.Unmarshal(payload, &request); err != nil {
+			t.Fatal(err)
+		}
+		if request["source_url"] != "file:///data/native" || request["memory_restore_mode"] != mode {
+			t.Fatalf("restore payload = %s", payload)
+		}
+		if mode == "" {
+			if _, exists := request["memory_restore_mode"]; exists {
+				t.Fatalf("default restore should omit memory mode: %s", payload)
+			}
+		}
+	}
+}
 
 func TestValidateRestoreRequiresCompleteNativeSnapshot(t *testing.T) {
 	directory := t.TempDir()

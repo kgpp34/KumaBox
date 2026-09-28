@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 
 	"github.com/kumabox/kumabox/network"
 	"github.com/kumabox/kumabox/storage"
@@ -16,7 +18,7 @@ import (
 
 var _ vmm.Cloner = (*Driver)(nil)
 
-// Clone copies native snapshot state into the new sandbox's runtime directory.
+// Clone stages native snapshot state under the new sandbox's persistent VMM area.
 // The immutable capture remains untouched while device paths and NICs are
 // rebound to resources owned by the clone.
 //
@@ -56,14 +58,15 @@ func (d *Driver) Clone(ctx context.Context, plan vmm.ClonePlan) (vmm.Process, er
 	if err != nil {
 		return vmm.Process{}, err
 	}
+	memoryMode := d.cloneMemoryMode(ctx, filepath.Join(privateDir, "config.json"))
 	plan.SnapshotDir = privateDir
-	return d.restore(ctx, plan.RestorePlan, func(ctx context.Context, _ string) error {
+	return d.restore(ctx, plan.RestorePlan, memoryMode, func(ctx context.Context, _ string) error {
 		return d.swapCloneNets(ctx, apiSocket, oldNets, plan.Network.Interfaces)
 	})
 }
 
-// copyNativeState copies only flat regular files emitted by the snapshot API.
-// cow.raw is installed separately at the new sandbox's permanent disk path.
+// copyNativeState shares immutable memory files by hard link when possible.
+// Other files are copied, and cow.raw is installed at the sandbox disk path.
 func copyNativeState(source, destination string) error {
 	entries, err := os.ReadDir(source)
 	if err != nil {
@@ -80,11 +83,31 @@ func copyNativeState(source, destination string) error {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("snapshot entry %q is not a regular file", entry.Name())
 		}
-		if err := storage.CopySparse(filepath.Join(destination, entry.Name()), filepath.Join(source, entry.Name())); err != nil {
+		from, to := filepath.Join(source, entry.Name()), filepath.Join(destination, entry.Name())
+		if err := cloneNativeFile(to, from, strings.HasPrefix(entry.Name(), "memory-range")); err != nil {
 			return fmt.Errorf("copy snapshot entry %q: %w", entry.Name(), err)
 		}
 	}
 	return nil
+}
+
+func cloneNativeFile(destination, source string, immutableMemory bool) error {
+	return cloneNativeFileWithLink(destination, source, immutableMemory, os.Link)
+}
+
+func cloneNativeFileWithLink(destination, source string, immutableMemory bool, link func(string, string) error) error {
+	if immutableMemory {
+		linkErr := link(source, destination)
+		if linkErr == nil {
+			return nil
+		}
+		if errors.Is(linkErr, syscall.EXDEV) {
+			// The monitor opens the source before clone completes and keeps its
+			// memory mapping alive even if the snapshot name is later removed.
+			return os.Symlink(source, destination)
+		}
+	}
+	return storage.CloneFile(destination, source)
 }
 
 type cloneNet struct {

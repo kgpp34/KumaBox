@@ -159,6 +159,17 @@ binary_version() {
     echo "$1" | grep -oE 'v?[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 | tr -d 'v'
 }
 
+version_at_least() {
+    local actual="$1" required="$2" actual_major actual_minor required_major required_minor
+    [[ "$actual" =~ ^[0-9]+\.[0-9]+ ]] || return 1
+    [[ "$required" =~ ^[0-9]+\.[0-9]+ ]] || return 1
+    actual_major="${actual%%.*}"
+    actual_minor="${actual#*.}"; actual_minor="${actual_minor%%.*}"
+    required_major="${required%%.*}"
+    required_minor="${required#*.}"; required_minor="${required_minor%%.*}"
+    (( 10#$actual_major > 10#$required_major || (10#$actual_major == 10#$required_major && 10#$actual_minor >= 10#$required_minor) ))
+}
+
 check_binary() {
     local name="$1"
     if command -v "$name" &>/dev/null; then
@@ -170,8 +181,8 @@ check_binary() {
             mkfs.erofs)       ver=$("$name" --version 2>&1 | head -1) || true ;;
         esac
         if { [ "$name" = "cloud-hypervisor" ] || [ "$name" = "ch-remote" ]; } \
-            && [ "$(binary_version "$ver")" != "${CH_VERSION#v}" ]; then
-            fail "$name (${ver:-unknown}) does not match required ${CH_VERSION}"
+            && ! version_at_least "$(binary_version "$ver")" "${CH_VERSION#v}"; then
+            fail "$name (${ver:-unknown}) is older than required ${CH_VERSION}"
             return
         fi
         if [ "$name" = "mkfs.erofs" ] && ! erofs_version_ok "$ver"; then
@@ -377,29 +388,45 @@ if $UPGRADE; then
     # -- cloud-hypervisor --------------------------------------------------
     header "Install cloud-hypervisor ${CH_VERSION}"
 
-    ch_url="https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/${CH_VERSION}/cloud-hypervisor-static${CH_SUFFIX}"
-    ch_dest="/usr/local/bin/cloud-hypervisor"
-    info "downloading ${ch_url}"
-    if curl -fsSL -o "${tmpdir}/cloud-hypervisor" "$ch_url"; then
-        install -m 0755 "${tmpdir}/cloud-hypervisor" "$ch_dest"
-        # virtio-net requires CAP_NET_ADMIN for tap devices
-        setcap cap_net_admin+ep "$ch_dest" 2>/dev/null || true
-        fixed "cloud-hypervisor ${CH_VERSION} -> ${ch_dest}"
+    current_ch=""
+    if command -v cloud-hypervisor &>/dev/null; then
+        current_ch=$(cloud-hypervisor --version 2>/dev/null | head -1) || true
+    fi
+    if version_at_least "$(binary_version "$current_ch")" "${CH_VERSION#v}"; then
+        info "keeping installed cloud-hypervisor (${current_ch})"
     else
-        fail "failed to download cloud-hypervisor from ${ch_url}"
+        ch_url="https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/${CH_VERSION}/cloud-hypervisor-static${CH_SUFFIX}"
+        ch_dest="/usr/local/bin/cloud-hypervisor"
+        info "downloading ${ch_url}"
+        if curl -fsSL -o "${tmpdir}/cloud-hypervisor" "$ch_url"; then
+            install -m 0755 "${tmpdir}/cloud-hypervisor" "$ch_dest"
+            # virtio-net requires CAP_NET_ADMIN for tap devices
+            setcap cap_net_admin+ep "$ch_dest" 2>/dev/null || true
+            fixed "cloud-hypervisor ${CH_VERSION} -> ${ch_dest}"
+        else
+            fail "failed to download cloud-hypervisor from ${ch_url}"
+        fi
     fi
 
     # -- ch-remote ----------------------------------------------------------
     header "Install ch-remote ${CH_VERSION}"
 
-    chr_url="https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/${CH_VERSION}/ch-remote-static${CH_SUFFIX}"
-    chr_dest="/usr/local/bin/ch-remote"
-    info "downloading ${chr_url}"
-    if curl -fsSL -o "${tmpdir}/ch-remote" "$chr_url"; then
-        install -m 0755 "${tmpdir}/ch-remote" "$chr_dest"
-        fixed "ch-remote ${CH_VERSION} -> ${chr_dest}"
+    current_chr=""
+    if command -v ch-remote &>/dev/null; then
+        current_chr=$(ch-remote --version 2>/dev/null | head -1) || true
+    fi
+    if version_at_least "$(binary_version "$current_chr")" "${CH_VERSION#v}"; then
+        info "keeping installed ch-remote (${current_chr})"
     else
-        fail "failed to download ch-remote from ${chr_url}"
+        chr_url="https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/${CH_VERSION}/ch-remote-static${CH_SUFFIX}"
+        chr_dest="/usr/local/bin/ch-remote"
+        info "downloading ${chr_url}"
+        if curl -fsSL -o "${tmpdir}/ch-remote" "$chr_url"; then
+            install -m 0755 "${tmpdir}/ch-remote" "$chr_dest"
+            fixed "ch-remote ${CH_VERSION} -> ${chr_dest}"
+        else
+            fail "failed to download ch-remote from ${chr_url}"
+        fi
     fi
 
     # -- CNI plugins --------------------------------------------------------

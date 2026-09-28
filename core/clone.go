@@ -6,14 +6,12 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/kumabox/kumabox/agent"
 	"github.com/kumabox/kumabox/errdefs"
 	filelock "github.com/kumabox/kumabox/lock/flock"
-	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/types"
 	"github.com/kumabox/kumabox/vmm"
 )
@@ -90,6 +88,7 @@ func (s *SnapshotService) Clone(ctx context.Context, snapshotReference, name str
 	}
 	created, err := s.lifecycle.Create(ctx, CreateSandboxRequest{
 		ImageReference: capture.ImageDigest.String(), Config: config, VMM: capture.VMM,
+		cloneDiskSource: snapshotCOW,
 	})
 	if err != nil {
 		return created, err
@@ -106,18 +105,6 @@ func (s *SnapshotService) Clone(ctx context.Context, snapshotReference, name str
 		_, removeErr := s.lifecycle.Remove(cleanupCtx, created.ID.String())
 		returnErr = errors.Join(returnErr, removeErr)
 	}()
-	dir, err := s.sandboxPaths.Dir(created.ID)
-	if err != nil {
-		return created, err
-	}
-	stagedCOW := filepath.Join(dir, "clone-cow.tmp")
-	defer func() { returnErr = errors.Join(returnErr, ignoreNotExist(os.Remove(stagedCOW))) }()
-	if err := s.reporter.Status("copying snapshot writable disk"); err != nil {
-		return created, err
-	}
-	if err := storage.CopySparse(stagedCOW, snapshotCOW); err != nil {
-		return created, errdefs.Context(err, "clone sandbox", name, "copy disk", "verify the snapshot and retry", false)
-	}
 	sandboxLockPath, err := s.sandboxPaths.Lock(created.ID)
 	if err != nil {
 		return created, err
@@ -142,9 +129,6 @@ func (s *SnapshotService) Clone(ctx context.Context, snapshotReference, name str
 	liveCOW, err := s.sandboxPaths.COW(created.ID)
 	if err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "resolve disk", err, vmm.Process{})
-	}
-	if err := storage.Publish(stagedCOW, liveCOW); err != nil {
-		return starting, s.lifecycle.failStart(ctx, backend, starting, "publish disk", err, vmm.Process{})
 	}
 	if err := s.reporter.Status("restoring private VMM state"); err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, vmm.Process{})

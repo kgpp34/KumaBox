@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime"
 
+	"github.com/kumabox/kumabox/disk"
 	"github.com/kumabox/kumabox/errdefs"
 	filelock "github.com/kumabox/kumabox/lock/flock"
 	"github.com/kumabox/kumabox/network"
@@ -31,6 +32,11 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 	}
 	if request.VMM == "" {
 		request.VMM = s.dependencies.defaultVMM
+	}
+	if request.cloneDiskSource != "" {
+		if _, ok := s.dependencies.disks.(disk.Cloner); !ok {
+			return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, errors.New("disk backend does not support snapshot cloning"))
+		}
 	}
 	if _, err := s.dependencies.runtimes.Backend(request.VMM); err != nil {
 		return types.Sandbox{}, err
@@ -128,11 +134,21 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 			return types.Sandbox{}, s.compensate(ctx, record, "network quiesce", err)
 		}
 	}
-	if err := s.dependencies.reporter.Status("creating sparse ext4 disk"); err != nil {
+	diskStatus := "creating sparse ext4 disk"
+	if request.cloneDiskSource != "" {
+		diskStatus = "cloning snapshot writable disk"
+	}
+	if err := s.dependencies.reporter.Status(diskStatus); err != nil {
 		return types.Sandbox{}, s.compensate(ctx, record, "report", err)
 	}
-	if err := s.dependencies.disks.Prepare(ctx, id, request.Config.Storage); err != nil {
-		return types.Sandbox{}, s.compensate(ctx, record, "disk", err)
+	var diskErr error
+	if request.cloneDiskSource != "" {
+		diskErr = s.dependencies.disks.(disk.Cloner).Clone(ctx, id, request.Config.Storage, request.cloneDiskSource)
+	} else {
+		diskErr = s.dependencies.disks.Prepare(ctx, id, request.Config.Storage)
+	}
+	if diskErr != nil {
+		return types.Sandbox{}, s.compensate(ctx, record, "disk", diskErr)
 	}
 	if err := s.dependencies.reporter.Status("committing created state"); err != nil {
 		return types.Sandbox{}, s.compensate(ctx, record, "report", err)

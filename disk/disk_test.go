@@ -68,3 +68,44 @@ func TestNewExt4RejectsMissingFormatter(t *testing.T) {
 		t.Fatal("NewExt4() accepted an empty formatter")
 	}
 }
+
+func TestExt4ClonePopulatesCOWWithoutFormatting(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("large sparse COW cloning is a Linux storage path")
+	}
+	base := t.TempDir()
+	paths, err := sandbox.NewPaths(storage.Roots{
+		Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(base, "snapshot-cow.raw")
+	file, err := os.OpenFile(source, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(types.MinSandboxStorage); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteAt([]byte{0x53, 0xef}, ext4MagicOffset); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	preparer, err := NewExt4(paths, "/missing/mkfs.ext4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := types.SandboxID("123e4567-e89b-42d3-a456-426614174000")
+	if err := preparer.Clone(t.Context(), id, types.MinSandboxStorage, source); err != nil {
+		t.Fatal(err)
+	}
+	if err := preparer.Check(t.Context(), id, types.MinSandboxStorage); err != nil {
+		t.Fatal(err)
+	}
+	if err := preparer.Clone(t.Context(), id, types.MinSandboxStorage, source); err == nil {
+		t.Fatal("clone replaced an owned COW")
+	}
+}

@@ -29,6 +29,9 @@ type CreateSandboxRequest struct {
 	Config types.SandboxConfig
 	// VMM selects the runtime backend; empty uses the configured default.
 	VMM types.VMMType
+	// cloneDiskSource selects the private disk clone path for snapshot workflows.
+	// Ordinary callers always create a new formatted disk.
+	cloneDiskSource string
 }
 
 // imageGuard is the image capability consumed by sandbox creation.

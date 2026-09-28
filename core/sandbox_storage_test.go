@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strings"
@@ -9,6 +10,39 @@ import (
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
 )
+
+type fakeCloneDisk struct {
+	fakeDisk
+	source string
+}
+
+func (d *fakeCloneDisk) Clone(_ context.Context, _ types.SandboxID, _ int64, source string) error {
+	*d.steps = append(*d.steps, "disk-clone")
+	d.source = source
+	return nil
+}
+
+func TestCreateFromSnapshotUsesDiskCloneWithoutFormatting(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	disk := &fakeCloneDisk{fakeDisk: fakeDisk{steps: steps}}
+	service.dependencies.disks = disk
+	_, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference:  "demo",
+		Config:          types.SandboxConfig{Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+		cloneDiskSource: "/snapshots/checkpoint/cow.raw",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disk.source != "/snapshots/checkpoint/cow.raw" {
+		t.Fatalf("disk clone source = %q", disk.source)
+	}
+	for _, step := range *steps {
+		if step == "disk" {
+			t.Fatalf("clone formatted a disposable disk: %v", *steps)
+		}
+	}
+}
 
 func TestCreateCommitsCreatedAfterDiskPreparation(t *testing.T) {
 	service, steps := newTestSandboxService(t, nil)

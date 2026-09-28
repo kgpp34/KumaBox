@@ -431,7 +431,7 @@ func (s *SnapshotService) Restore(ctx context.Context, sandboxReference, snapsho
 	if err := s.reporter.Status("staging snapshot writable disk"); err != nil {
 		return record, err
 	}
-	if err := storage.CopySparse(stagedCOW, snapshotCOW); err != nil {
+	if err := storage.CloneFile(stagedCOW, snapshotCOW); err != nil {
 		return record, errdefs.Context(err, "restore sandbox", sandboxReference, "stage disk", "verify the snapshot and retry", false)
 	}
 	stoppedForRestore := false

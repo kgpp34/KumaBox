@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/kumabox/kumabox/types"
@@ -67,6 +68,21 @@ func TestPatchCloneConfigRebindsOnlyPrivateDevices(t *testing.T) {
 	}
 }
 
+func TestCrossFilesystemMemoryUsesSourceLink(t *testing.T) {
+	directory := t.TempDir()
+	source := filepath.Join(directory, "memory-range-0")
+	target := filepath.Join(directory, "clone-memory")
+	if err := os.WriteFile(source, []byte("memory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cloneNativeFileWithLink(target, source, true, func(_, _ string) error { return syscall.EXDEV }); err != nil {
+		t.Fatal(err)
+	}
+	if destination, err := os.Readlink(target); err != nil || destination != source {
+		t.Fatalf("cross-filesystem memory link = %q, %v", destination, err)
+	}
+}
+
 func TestPatchCloneConfigRejectsUnidentifiedNIC(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(path, []byte(`{"disks":[{"serial":"kumabox-cow","path":"/old"}],"vsock":{"socket":"/old"},"net":[{"tap":"old"}]}`), 0o600); err != nil {
@@ -97,6 +113,21 @@ func TestCopyNativeStateKeepsCaptureAndSkipsWritableDisk(t *testing.T) {
 	}
 	if err := copyNativeState(source, target); err != nil {
 		t.Fatal(err)
+	}
+	memorySource, err := os.Stat(filepath.Join(source, "memory-range-0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	memoryTarget, err := os.Stat(filepath.Join(target, "memory-range-0"))
+	if err != nil || !os.SameFile(memorySource, memoryTarget) {
+		t.Fatalf("local memory snapshot was copied instead of shared: %v", err)
+	}
+	if err := os.Remove(filepath.Join(source, "memory-range-0")); err != nil {
+		t.Fatal(err)
+	}
+	memory, err := os.ReadFile(filepath.Join(target, "memory-range-0"))
+	if err != nil || string(memory) != "memory" {
+		t.Fatalf("clone lost its shared memory file after source removal: %q, %v", memory, err)
 	}
 	if _, err := os.Stat(filepath.Join(target, "cow.raw")); !os.IsNotExist(err) {
 		t.Fatalf("native copy contains writable disk: %v", err)

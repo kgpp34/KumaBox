@@ -35,6 +35,12 @@ type Backend interface {
 	Remove(context.Context, types.SandboxID) error
 }
 
+// Cloner is an optional backend capability for populating a new private disk
+// directly from a validated snapshot, without formatting an unused blank disk.
+type Cloner interface {
+	Clone(context.Context, types.SandboxID, int64, string) error
+}
+
 // Ext4 prepares one sparse, private COW disk directly at its sandbox-owned path.
 type Ext4 struct {
 	// paths derives the final path from a validated sandbox ID.
@@ -43,7 +49,42 @@ type Ext4 struct {
 	mkfs string
 }
 
-var _ Backend = (*Ext4)(nil)
+var (
+	_ Backend = (*Ext4)(nil)
+	_ Cloner  = (*Ext4)(nil)
+)
+
+// Clone populates the final private COW path from a snapshot. A partial file
+// remains owned by the Creating sandbox so its normal compensation removes it.
+func (d *Ext4) Clone(ctx context.Context, id types.SandboxID, size int64, source string) error {
+	if d == nil {
+		return errors.New("ext4 disk store is not configured")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validate(source, size); err != nil {
+		return fmt.Errorf("validate snapshot COW: %w", err)
+	}
+	dir, err := d.paths.Dir(id)
+	if err != nil {
+		return err
+	}
+	path, err := d.paths.COW(id)
+	if err != nil {
+		return err
+	}
+	if err := storage.EnsureDir(dir); err != nil {
+		return err
+	}
+	if err := storage.CloneFile(path, source); err != nil {
+		return fmt.Errorf("clone snapshot COW: %w", err)
+	}
+	if err := validate(path, size); err != nil {
+		return fmt.Errorf("validate cloned COW: %w", err)
+	}
+	return nil
+}
 
 // NewExt4 creates a disk preparer using the configured mkfs.ext4 executable.
 func NewExt4(paths sandbox.Paths, binary string) (*Ext4, error) {
