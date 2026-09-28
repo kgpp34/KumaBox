@@ -82,6 +82,15 @@ func startRestoreProgress(command *cobra.Command, reference string) (*snapshotSt
 	return &snapshotStatusProgress{sandboxProgress: progress}, nil
 }
 
+// startCloneProgress reports the snapshot-to-sandbox workflow.
+func startCloneProgress(command *cobra.Command, name string) (*snapshotStatusProgress, error) {
+	progress, err := startProgress(command, "clone sandbox", fmt.Sprintf("Clone %q", name), "preparing clone", "inspect the sandbox state and VMM log")
+	if err != nil {
+		return nil, err
+	}
+	return &snapshotStatusProgress{sandboxProgress: progress}, nil
+}
+
 func startProgress(command *cobra.Command, operation, label, status, recovery string) (*sandboxProgress, error) {
 	return newSandboxProgress(command.Context(), command.ErrOrStderr(), operation, label, status, recovery)
 }

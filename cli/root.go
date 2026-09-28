@@ -142,6 +142,7 @@ func newRootCommand() (*cobra.Command, error) {
 	root.AddCommand(doctorcmd.NewCommand())
 	root.AddCommand(imagecmd.NewCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewConsoleCommand(provideConfig))
+	root.AddCommand(sandboxcmd.NewCloneCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewCreateCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewExecCommand(provideConfig))
 	root.AddCommand(snapshotcmd.NewHibernateCommand(provideConfig))

@@ -65,6 +65,12 @@ func (*Driver) ValidateRestore(_ context.Context, directory string) error {
 //
 //	runtime dirs -> API-only process -> vm.restore -> vm.resume -> Running
 func (d *Driver) Restore(ctx context.Context, plan vmm.RestorePlan) (result vmm.Process, returnErr error) {
+	return d.restore(ctx, plan, nil)
+}
+
+// restore owns the shared process lifecycle. Clone supplies a paused-state
+// device swap; ordinary restore resumes the snapshot without changing devices.
+func (d *Driver) restore(ctx context.Context, plan vmm.RestorePlan, beforeResume func(context.Context, string) error) (result vmm.Process, returnErr error) {
 	if err := plan.Validate(); err != nil {
 		return vmm.Process{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
 	}
@@ -129,6 +135,11 @@ func (d *Driver) Restore(ctx context.Context, plan vmm.RestorePlan) (result vmm.
 	}
 	if err := d.snapshotAction(ctx, apiSocket, "vm.restore", payload, snapshotTimeout); err != nil {
 		return result, fmt.Errorf("restore cloud-hypervisor state: %w", err)
+	}
+	if beforeResume != nil {
+		if err := beforeResume(ctx, apiSocket); err != nil {
+			return result, fmt.Errorf("replace restored devices: %w", err)
+		}
 	}
 	if err := d.snapshotAction(ctx, apiSocket, "vm.resume", nil, d.startupTimeout); err != nil {
 		return result, fmt.Errorf("resume restored cloud-hypervisor: %w", err)

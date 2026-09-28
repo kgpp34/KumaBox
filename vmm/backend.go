@@ -82,6 +82,20 @@ type Restorer interface {
 	Restore(context.Context, RestorePlan) (Process, error)
 }
 
+// ClonePlan owns a new sandbox restored from an immutable snapshot. The VMM
+// adapter copies native state and replaces source-specific device bindings.
+type ClonePlan struct {
+	RestorePlan
+	// WritableDisk is the new sandbox's COW path already populated from the capture.
+	WritableDisk string
+}
+
+// Cloner is the optional native-state clone capability. It must never mutate
+// SnapshotDir or attach the source sandbox's writable disk and network devices.
+type Cloner interface {
+	Clone(context.Context, ClonePlan) (Process, error)
+}
+
 // RestoreValidator optionally validates native snapshot files before a running
 // sandbox is stopped for restore.
 type RestoreValidator interface {

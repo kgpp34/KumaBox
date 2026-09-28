@@ -50,6 +50,16 @@ func (p Paths) LogBase() string { return filepath.Join(p.roots.Log, "sandboxes")
 // RunDir returns one sandbox's private runtime directory.
 func (p Paths) RunDir(id types.SandboxID) (string, error) { return p.idDir(p.RunBase(), id) }
 
+// CloneStateDir holds a private native-state copy on persistent storage while
+// the cloned process may still have its memory files open or mapped. Cleanup
+// removes it only after the process is proven absent.
+func (p Paths) CloneStateDir(id types.SandboxID) (string, error) {
+	if _, err := types.ParseSandboxID(id.String()); err != nil {
+		return "", err
+	}
+	return storage.Join(p.roots.Data, "vmm", id.String(), "clone-state")
+}
+
 // LogDir returns one sandbox's private log directory.
 func (p Paths) LogDir(id types.SandboxID) (string, error) { return p.idDir(p.LogBase(), id) }
 
@@ -151,10 +161,14 @@ func (p Paths) Clear(id types.SandboxID) error {
 	if err := storage.CheckPath(dir); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("remove VMM runtime %s: %w", dir, err)
+	cloneState, err := p.CloneStateDir(id)
+	if err != nil {
+		return err
 	}
-	return nil
+	if err := storage.CheckPath(cloneState); err != nil {
+		return err
+	}
+	return errors.Join(os.RemoveAll(dir), os.RemoveAll(filepath.Dir(cloneState)))
 }
 
 func (p Paths) idDir(root string, id types.SandboxID) (string, error) {

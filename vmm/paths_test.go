@@ -36,10 +36,23 @@ func TestPathsRoundTripPrivateProcessIdentity(t *testing.T) {
 	if got != process {
 		t.Fatalf("process = %+v, want %+v", got, process)
 	}
+	cloneState, err := paths.CloneStateDir(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cloneState, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cloneState, "memory-range-0"), []byte("native state"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := paths.Clear(id); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
 		t.Fatalf("runtime directory remains: %v", err)
+	}
+	if _, err := os.Stat(cloneState); !os.IsNotExist(err) {
+		t.Fatalf("private clone state remains: %v", err)
 	}
 }

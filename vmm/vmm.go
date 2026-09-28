@@ -246,3 +246,14 @@ func (p RestorePlan) Validate() error {
 	}
 	return p.Network.Validate()
 }
+
+// Validate rejects a clone plan without a complete source capture and new COW.
+func (p ClonePlan) Validate() error {
+	if err := p.RestorePlan.Validate(); err != nil {
+		return err
+	}
+	if !filepath.IsAbs(p.WritableDisk) {
+		return errors.New("clone requires an absolute writable disk path")
+	}
+	return nil
+}
