@@ -42,10 +42,19 @@ func TestSnapshotArchiveImportsIntoAnotherRoot(t *testing.T) {
 		t.Fatalf("archive expanded the sparse COW to %d bytes", archive.Len())
 	}
 	payload := bytes.Clone(archive.Bytes())
-	target, _, _ := newTestSnapshotService(t)
+	target, _, steps := newTestSnapshotService(t)
+	guard := target.lifecycle.dependencies.images.(fakeGuard)
+	guard.afterUse = errors.New("image is not available at target root")
+	target.lifecycle.dependencies.images = guard
+	beforeImport := len(*steps)
 	imported, err := target.Import(t.Context(), bytes.NewReader(payload), "transferred", "")
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, step := range (*steps)[beforeImport:] {
+		if step == "verify" {
+			t.Fatal("snapshot import required the target image")
+		}
 	}
 	if imported.Name != "transferred" || imported.Config.Storage != types.DefaultSandboxStorage || imported.ImageDigest != record.ImageDigest {
 		t.Fatalf("imported snapshot = %+v", imported)
@@ -61,14 +70,14 @@ func TestSnapshotArchiveImportsIntoAnotherRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	failed, _, _ := newTestSnapshotService(t)
-	guard := failed.lifecycle.dependencies.images.(fakeGuard)
-	guard.afterUse = errors.New("image availability changed")
-	failed.lifecycle.dependencies.images = guard
-	if _, err := failed.Import(t.Context(), bytes.NewReader(payload), "rolled-back", ""); !errors.Is(err, guard.afterUse) {
-		t.Fatalf("import after image guard failure = %v", err)
+	if _, err := failed.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "existing"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := failed.Import(t.Context(), bytes.NewReader(payload), "rolled-back", ""); err == nil {
+		t.Fatal("import reused an existing snapshot ID")
 	}
 	listed, err := failed.List(t.Context())
-	if err != nil || len(listed) != 0 {
+	if err != nil || len(listed) != 1 || listed[0].Name != "existing" {
 		t.Fatalf("failed import retained metadata: %+v, %v", listed, err)
 	}
 	entries, err := os.ReadDir(failed.paths.StagingDir())

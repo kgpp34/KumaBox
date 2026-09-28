@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -56,12 +55,13 @@ func (s *SnapshotService) Export(ctx context.Context, reference string, output i
 }
 
 // Import stages and verifies a portable archive before reserving a fresh
-// identity. The image guard closes deletion races while metadata begins to pin
-// the image. A failed import leaves neither a ready record nor a partial tree.
+// identity. The imported record pins its image digest even if the target root
+// has not imported that image yet. A failed import leaves neither a ready
+// record nor a partial tree.
 //
-//	stream -> private stage -> validate -> image lock + reserve -> publish -> ready
+//	stream -> private stage -> validate -> reserve -> publish -> ready
 func (s *SnapshotService) Import(ctx context.Context, input io.Reader, name, description string) (result types.Snapshot, returnErr error) {
-	if s == nil || s.lifecycle == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || s.newID == nil || s.now == nil || input == nil {
+	if s == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || s.newID == nil || s.now == nil || input == nil {
 		return types.Snapshot{}, errors.New("snapshot import service is not configured")
 	}
 	id, err := s.newID()
@@ -113,22 +113,13 @@ func (s *SnapshotService) Import(ctx context.Context, input io.Reader, name, des
 	if err := s.validateSnapshotArtifacts(ctx, imported, staged); err != nil {
 		return types.Snapshot{}, err
 	}
-	if err := s.reporter.Status("reserving imported snapshot and image"); err != nil {
+	if err := s.reporter.Status("reserving imported snapshot"); err != nil {
 		return types.Snapshot{}, err
 	}
-	_, err = s.lifecycle.dependencies.images.WithAvailable(ctx, imported.ImageDigest.String(), func(image types.Image) error {
-		if image.ManifestDigest != imported.ImageDigest {
-			return errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, fmt.Errorf("image %s differs from imported snapshot", image.ManifestDigest))
-		}
-		if err := s.snapshots.Reserve(ctx, imported); err != nil {
-			return err
-		}
-		reserved = true
-		return nil
-	})
-	if err != nil {
-		return types.Snapshot{}, errdefs.Context(err, "import snapshot", imported.Name, "image", "import the required image first, then retry", false)
+	if err := s.snapshots.Reserve(ctx, imported); err != nil {
+		return types.Snapshot{}, err
 	}
+	reserved = true
 	if err := s.reporter.Status("publishing imported snapshot"); err != nil {
 		return types.Snapshot{}, err
 	}
