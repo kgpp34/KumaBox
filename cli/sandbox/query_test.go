@@ -149,6 +149,8 @@ func TestListCommandRejectsJSONWithQuiet(t *testing.T) {
 	}
 	command := NewListCommand(func() config.Config { return sandboxTestConfig(roots) })
 	command.SetArgs([]string{"--json", "--quiet"})
+	command.SilenceUsage = true
+	command.SilenceErrors = true
 	if err := command.ExecuteContext(t.Context()); err == nil {
 		t.Fatal("ps accepted --json with --quiet")
 	} else if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeInvalidArgument {
@@ -197,6 +199,8 @@ func TestLogsCommandStreamsTailByName(t *testing.T) {
 
 	command = NewLogsCommand(func() config.Config { return sandboxTestConfig(roots) })
 	command.SetArgs([]string{"box", "--tail", "-1"})
+	command.SilenceUsage = true
+	command.SilenceErrors = true
 	if err := command.ExecuteContext(t.Context()); err == nil {
 		t.Fatal("logs accepted negative --tail")
 	} else if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeInvalidArgument {

@@ -60,6 +60,8 @@ func TestExecCommandRejectsEnvironmentBeforeOpeningService(t *testing.T) {
 		return config.Config{}
 	})
 	command.SetArgs([]string{"box", "--env", "BROKEN", "--", "env"})
+	command.SilenceUsage = true
+	command.SilenceErrors = true
 	err := command.ExecuteContext(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "--env") {
 		t.Fatalf("exec error = %v, want --env context", err)

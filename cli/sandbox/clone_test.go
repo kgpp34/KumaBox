@@ -14,6 +14,8 @@ func TestCloneRequiresNameBeforeOpeningService(t *testing.T) {
 		return config.Config{}
 	})
 	command.SetArgs([]string{"checkpoint"})
+	command.SilenceUsage = true
+	command.SilenceErrors = true
 	err := command.ExecuteContext(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "--name") {
 		t.Fatalf("clone error = %v", err)

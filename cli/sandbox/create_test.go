@@ -63,6 +63,8 @@ func TestCreateCommandMapsResourceValidationToFlags(t *testing.T) {
 				return config.Config{}
 			})
 			command.SetArgs(test.args)
+			command.SilenceUsage = true
+			command.SilenceErrors = true
 			err := command.ExecuteContext(t.Context())
 			if err == nil || !strings.Contains(err.Error(), test.flag) {
 				t.Fatalf("create error = %v, want flag %s", err, test.flag)
@@ -151,6 +153,8 @@ func TestRunCommandValidatesResourcesBeforeOpeningService(t *testing.T) {
 		return config.Config{}
 	})
 	command.SetArgs([]string{"demo", "--name", "box", "--memory", "1MiB"})
+	command.SilenceUsage = true
+	command.SilenceErrors = true
 	err := command.ExecuteContext(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "--memory") {
 		t.Fatalf("run error = %v, want --memory", err)
@@ -272,10 +276,12 @@ func seedImage(t *testing.T, roots storage.Roots) {
 	}
 }
 
-// sandboxTestConfig returns production defaults scoped to one test directory.
+// sandboxTestConfig isolates host CNI discovery and scopes state to one test directory.
 func sandboxTestConfig(roots storage.Roots) config.Config {
 	configuration := config.Default()
 	configuration.Paths = roots
+	configuration.Network.CNI.ConfDir = filepath.Join(roots.Data, "cni-conf")
+	configuration.Network.CNI.BinDir = filepath.Join(roots.Data, "cni-bin")
 	return configuration
 }
 

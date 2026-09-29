@@ -15,6 +15,8 @@ func TestRestoreRejectsAmbiguousSourceBeforeOpeningService(t *testing.T) {
 			return config.Config{}
 		})
 		command.SetArgs(args)
+		command.SilenceUsage = true
+		command.SilenceErrors = true
 		err := command.ExecuteContext(t.Context())
 		if err == nil || (!strings.Contains(err.Error(), "--from-dir") && !strings.Contains(err.Error(), "--force")) {
 			t.Fatalf("restore %v error = %v", args, err)

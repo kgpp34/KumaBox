@@ -19,6 +19,8 @@ func TestNetRejectsMissingOrOutOfRangeTargetBeforeOpeningService(t *testing.T) {
 			return config.Config{}
 		})
 		command.SetArgs(args)
+		command.SilenceUsage = true
+		command.SilenceErrors = true
 		err := command.ExecuteContext(t.Context())
 		if err == nil || !strings.Contains(err.Error(), "--nics") {
 			t.Fatalf("net %v error = %v", args, err)
