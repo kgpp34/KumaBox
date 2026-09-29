@@ -37,6 +37,34 @@ const (
 // Collections declares the metadata owned by the CNI adapter.
 func Collections() []metadata.Collection { return []metadata.Collection{CollectionRecords} }
 
+// OwnedIDs lists every CNI cleanup journal, including incomplete allocations.
+// The caller must recheck sandbox ownership under its operation lock before
+// deleting any returned network namespace.
+func (p *Provider) OwnedIDs(ctx context.Context) ([]types.SandboxID, error) {
+	if p == nil || p.store == nil {
+		return nil, errors.New("CNI provider is not configured")
+	}
+	ids := make([]types.SandboxID, 0)
+	err := p.store.View(ctx, func(reader metadata.Reader) error {
+		return reader.Scan(ctx, CollectionRecords, func(key string, raw []byte) error {
+			record, err := decodeRecord(raw)
+			if err != nil {
+				return err
+			}
+			if record.SandboxID != key {
+				return corrupt(errors.New("network record key differs from sandbox ID"))
+			}
+			id, err := types.ParseSandboxID(key)
+			if err != nil {
+				return corrupt(err)
+			}
+			ids = append(ids, id)
+			return nil
+		})
+	})
+	return ids, err
+}
+
 // Options contains immutable host paths and cleanup policy for one provider.
 type Options struct {
 	// ConfDir contains host-installed .conflist files.

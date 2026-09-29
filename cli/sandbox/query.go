@@ -7,6 +7,7 @@ import (
 
 	"github.com/kumabox/kumabox/core"
 	"github.com/kumabox/kumabox/errdefs"
+	"github.com/kumabox/kumabox/types"
 )
 
 // NewInspectCommand builds the read-only detailed sandbox query. Inspect always
@@ -24,11 +25,11 @@ func NewInspectCommand(configuration configProvider) *cobra.Command {
 			defer func() {
 				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "inspect sandbox", args[0], "close metadata", "retry the query", false))
 			}()
-			record, err := service.Inspect(command.Context(), args[0])
+			statuses, err := service.Status(command.Context(), args[0])
 			if err != nil {
 				return err
 			}
-			return writeSandboxJSON(command.OutOrStdout(), record)
+			return writeStatusDetailJSON(command.OutOrStdout(), statuses[0])
 		},
 	}
 	return command
@@ -78,13 +79,24 @@ func NewListCommand(configuration configProvider) *cobra.Command {
 			defer func() {
 				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "list sandboxes", "", "close metadata", "retry the query", false))
 			}()
-			records, err := service.List(command.Context(), includeAll)
+			statuses, err := service.Status(command.Context())
 			if err != nil {
 				return err
 			}
+			records := make([]types.Sandbox, 0, len(statuses))
+			visible := make([]core.SandboxStatus, 0, len(statuses))
+			for _, status := range statuses {
+				projected := projectStatus(status)
+				if !includeAll && projected.State != string(types.SandboxStateStarting) && projected.State != string(types.SandboxStateRunning) && projected.State != string(types.SandboxStateStopping) {
+					continue
+				}
+				status.Sandbox.State = types.SandboxState(projected.State)
+				records = append(records, status.Sandbox)
+				visible = append(visible, status)
+			}
 			switch {
 			case asJSON:
-				return writeSandboxListJSON(command.OutOrStdout(), records)
+				return writeStatusJSON(command.OutOrStdout(), visible)
 			case quiet:
 				return writeSandboxIDs(command.OutOrStdout(), records)
 			default:

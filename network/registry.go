@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
@@ -66,4 +67,22 @@ func (r *Registry) Len() int {
 		return 0
 	}
 	return len(r.providers)
+}
+
+// Providers returns the configured adapters in stable identity order for
+// cross-provider maintenance. The registry itself remains immutable.
+func (r *Registry) Providers() []Provider {
+	if r == nil {
+		return nil
+	}
+	identities := make([]types.NetworkBackend, 0, len(r.providers))
+	for identity := range r.providers {
+		identities = append(identities, identity)
+	}
+	slices.Sort(identities)
+	providers := make([]Provider, 0, len(identities))
+	for _, identity := range identities {
+		providers = append(providers, r.providers[identity])
+	}
+	return providers
 }

@@ -140,6 +140,8 @@ func newRootCommand() (*cobra.Command, error) {
 	provideConfig := func() config.Config { return configuration }
 
 	root.AddCommand(doctorcmd.NewCommand())
+	root.AddCommand(newDaemonCommand(provideConfig))
+	root.AddCommand(newGCCommand(provideConfig))
 	root.AddCommand(imagecmd.NewCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewConsoleCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewCloneCommand(provideConfig))
@@ -155,6 +157,7 @@ func newRootCommand() (*cobra.Command, error) {
 	root.AddCommand(sandboxcmd.NewRestoreCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewRunCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewStartCommand(provideConfig))
+	root.AddCommand(sandboxcmd.NewStatusCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewStopCommand(provideConfig))
 	root.AddCommand(snapshotcmd.NewCommand(provideConfig))
 	root.AddCommand(newVersionCommand())

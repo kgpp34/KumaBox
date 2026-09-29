@@ -69,6 +69,14 @@ type Resizer interface {
 	Remove(context.Context, types.SandboxID, ...int) error
 }
 
+// GarbageCollector is an optional provider capability for discovering durable
+// network allocations whose sandbox record may have been lost. The application
+// service rechecks ownership under the sandbox lock before calling Delete.
+type GarbageCollector interface {
+	Provider
+	OwnedIDs(context.Context) ([]types.SandboxID, error)
+}
+
 // AddRange builds fresh NIC requests for a contiguous index range.
 func AddRange(first, count int) []AddSpec {
 	if first < 0 || count <= 0 {

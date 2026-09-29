@@ -65,6 +65,9 @@ type SnapshotService struct {
 
 // OpenSnapshots assembles the local snapshot service. The caller must close it.
 func OpenSnapshots(ctx context.Context, configuration config.Config, reporter SnapshotReporter) (*SnapshotService, error) {
+	if err := configuration.Validate(); err != nil {
+		return nil, err
+	}
 	lifecycle, err := OpenSandbox(ctx, configuration, nil)
 	if err != nil {
 		return nil, err
@@ -200,6 +203,17 @@ func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotReque
 	if err := pending.Validate(); err != nil {
 		return types.Snapshot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
 	}
+	snapshotLockPath, err := s.paths.Lock(id)
+	if err != nil {
+		return types.Snapshot{}, err
+	}
+	snapshotLock := filelock.New(snapshotLockPath)
+	if err := snapshotLock.Lock(ctx); err != nil {
+		return types.Snapshot{}, errdefs.Context(err, operation, id.String(), "lock snapshot", "retry the snapshot", false)
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, snapshotLock.Unlock(context.WithoutCancel(ctx)))
+	}()
 	if err := s.reporter.Status("reserving snapshot identity"); err != nil {
 		return types.Snapshot{}, err
 	}

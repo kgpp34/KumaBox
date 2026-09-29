@@ -281,8 +281,8 @@ func (s *SandboxService) List(ctx context.Context, includeAll bool) ([]types.San
 	return active, nil
 }
 
-// Inspect resolves one sandbox snapshot without changing persistent or runtime state.
-// Runtime observation will be added here when the VMM lifecycle is available.
+// Inspect resolves one durable sandbox snapshot without changing persistent or
+// runtime state. Use Status to combine it with a live VMM observation.
 func (s *SandboxService) Inspect(ctx context.Context, reference string) (types.Sandbox, error) {
 	if s == nil || s.dependencies.catalog == nil {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")

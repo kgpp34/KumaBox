@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
@@ -183,4 +184,22 @@ func (r *Registry) Len() int {
 		return 0
 	}
 	return len(r.backends)
+}
+
+// Backends returns the configured adapters in stable identity order for
+// cross-backend maintenance. The registry itself remains immutable.
+func (r *Registry) Backends() []Backend {
+	if r == nil {
+		return nil
+	}
+	identities := make([]types.VMMType, 0, len(r.backends))
+	for identity := range r.backends {
+		identities = append(identities, identity)
+	}
+	slices.Sort(identities)
+	backends := make([]Backend, 0, len(identities))
+	for _, identity := range identities {
+		backends = append(backends, r.backends[identity])
+	}
+	return backends
 }

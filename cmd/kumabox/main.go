@@ -1,8 +1,7 @@
 // Command kumabox is the KumaBox command line.
 //
-// v1 has no daemon: every invocation opens the node root, does one job and
-// exits. This file only hands control to the command layer and turns the result
-// into a process exit code.
+// This file hands control to the command layer and turns the result into a
+// process exit code. The optional daemon command uses the same entry point.
 package main
 
 import (

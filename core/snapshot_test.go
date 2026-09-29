@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/errdefs"
+	filelock "github.com/kumabox/kumabox/lock/flock"
 	"github.com/kumabox/kumabox/metadata"
 	"github.com/kumabox/kumabox/snapshot"
 	snapshotcatalog "github.com/kumabox/kumabox/snapshot/catalog"
@@ -420,6 +421,64 @@ func TestSaveSnapshotPublishesCompleteCapture(t *testing.T) {
 	listed, err := service.List(t.Context())
 	if err != nil || len(listed) != 1 || listed[0].ID != record.ID {
 		t.Fatalf("List = %+v, %v", listed, err)
+	}
+}
+
+type snapshotLockProbeReporter struct {
+	t     *testing.T
+	path  string
+	stage string
+	seen  bool
+}
+
+func (r *snapshotLockProbeReporter) Status(stage string) error {
+	if stage != r.stage {
+		return nil
+	}
+	r.seen = true
+	probe := filelock.New(r.path)
+	acquired, err := probe.TryLock(r.t.Context())
+	if err != nil {
+		return err
+	}
+	if acquired {
+		_ = probe.Unlock(r.t.Context())
+		r.t.Fatal("snapshot capture did not hold the snapshot operation lock")
+	}
+	return nil
+}
+
+func (*snapshotLockProbeReporter) Committed(types.Snapshot) error { return nil }
+
+func TestSaveSnapshotHoldsSnapshotLockDuringCapture(t *testing.T) {
+	service, _, _ := newTestSnapshotService(t)
+	path, err := service.paths.Lock(fixedSnapshotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reporter := &snapshotLockProbeReporter{t: t, path: path, stage: "capturing VMM and writable disk"}
+	service.reporter = reporter
+	if _, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box"}); err != nil {
+		t.Fatal(err)
+	}
+	if !reporter.seen {
+		t.Fatal("snapshot capture stage was not reached")
+	}
+}
+
+func TestImportSnapshotHoldsSnapshotLockDuringExtraction(t *testing.T) {
+	service, _, _ := newTestSnapshotService(t)
+	path, err := service.paths.Lock(fixedSnapshotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reporter := &snapshotLockProbeReporter{t: t, path: path, stage: "extracting and checking snapshot archive"}
+	service.reporter = reporter
+	if _, err := service.Import(t.Context(), bytes.NewBufferString("invalid archive"), "", ""); err == nil {
+		t.Fatal("invalid archive was accepted")
+	}
+	if !reporter.seen {
+		t.Fatal("snapshot extraction stage was not reached")
 	}
 }
 

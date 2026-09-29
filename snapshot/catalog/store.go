@@ -34,6 +34,69 @@ type Store struct{ store metadata.Store }
 // New constructs a snapshot catalog without taking ownership of the engine.
 func New(store metadata.Store) *Store { return &Store{store: store} }
 
+// State exposes only the publication facts needed by crash recovery. Snapshot
+// payloads remain private to this persistence adapter.
+type State struct {
+	ID       types.SnapshotID
+	Ready    bool
+	Deleting bool
+}
+
+// States returns every snapshot reservation, including pending and deleting
+// records that ordinary List intentionally hides.
+func (s *Store) States(ctx context.Context) ([]State, error) {
+	if s == nil || s.store == nil {
+		return nil, errors.New("snapshot catalog is not configured")
+	}
+	states := make([]State, 0)
+	err := s.store.View(ctx, func(reader metadata.Reader) error {
+		return reader.Scan(ctx, CollectionSnapshots, func(key string, raw []byte) error {
+			record, err := decode(raw)
+			if err != nil {
+				return err
+			}
+			if record.ID != key {
+				return corrupt(errors.New("snapshot record key differs from ID"))
+			}
+			id, err := types.ParseSnapshotID(key)
+			if err != nil {
+				return corrupt(err)
+			}
+			states = append(states, State{ID: id, Ready: record.Ready, Deleting: record.Deleting})
+			return nil
+		})
+	})
+	return states, err
+}
+
+// State returns the current publication state for a specific snapshot ID.
+func (s *Store) State(ctx context.Context, id types.SnapshotID) (State, bool, error) {
+	if s == nil || s.store == nil {
+		return State{}, false, errors.New("snapshot catalog is not configured")
+	}
+	if _, err := types.ParseSnapshotID(id.String()); err != nil {
+		return State{}, false, err
+	}
+	var state State
+	var found bool
+	err := s.store.View(ctx, func(reader metadata.Reader) error {
+		raw, exists, err := reader.Get(ctx, CollectionSnapshots, id.String())
+		if err != nil || !exists {
+			return err
+		}
+		record, err := decode(raw)
+		if err != nil {
+			return err
+		}
+		if record.ID != id.String() {
+			return corrupt(errors.New("snapshot record key differs from ID"))
+		}
+		state, found = State{ID: id, Ready: record.Ready, Deleting: record.Deleting}, true
+		return nil
+	})
+	return state, found, err
+}
+
 type recordData struct {
 	ID                string    `json:"id"`
 	Name              string    `json:"name,omitempty"`

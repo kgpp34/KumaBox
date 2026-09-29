@@ -91,6 +91,15 @@ func (s *SnapshotService) Import(ctx context.Context, input io.Reader, name, des
 	if err != nil {
 		return types.Snapshot{}, err
 	}
+	lockPath, err := s.paths.Lock(id)
+	if err != nil {
+		return types.Snapshot{}, err
+	}
+	lock := filelock.New(lockPath)
+	if err := lock.Lock(ctx); err != nil {
+		return types.Snapshot{}, errdefs.Context(err, "import snapshot", id.String(), "lock", "retry the import", false)
+	}
+	defer func() { returnErr = errors.Join(returnErr, lock.Unlock(context.WithoutCancel(ctx))) }()
 	if err := s.paths.PrepareStage(id); err != nil {
 		return types.Snapshot{}, err
 	}
