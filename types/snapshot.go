@@ -57,6 +57,9 @@ type Snapshot struct {
 	Size int64
 	// CreatedAt records when capture was requested.
 	CreatedAt time.Time
+	// LastAccessedAt records the latest successful restore, clone, or export.
+	// Older records default to CreatedAt when decoded from metadata.
+	LastAccessedAt time.Time
 }
 
 // Validate rejects snapshot facts that cannot safely drive lookup or restore.

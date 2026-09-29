@@ -22,6 +22,7 @@ type output struct {
 	Config            configOutput `json:"config"`
 	Size              int64        `json:"size"`
 	CreatedAt         time.Time    `json:"created_at"`
+	LastAccessedAt    time.Time    `json:"last_accessed_at"`
 }
 
 type configOutput struct {
@@ -34,6 +35,10 @@ type configOutput struct {
 }
 
 func result(snapshot types.Snapshot) output {
+	lastAccessed := snapshot.LastAccessedAt
+	if lastAccessed.IsZero() {
+		lastAccessed = snapshot.CreatedAt
+	}
 	return output{
 		ID: snapshot.ID.String(), Name: snapshot.Name, Description: snapshot.Description,
 		SandboxID: snapshot.SandboxID.String(), SourceGeneration: snapshot.SourceGeneration,
@@ -43,7 +48,7 @@ func result(snapshot types.Snapshot) output {
 			Name: snapshot.Config.Name, CPUs: snapshot.Config.CPUs, Memory: snapshot.Config.Memory,
 			Storage: snapshot.Config.Storage, NICs: snapshot.Config.NICs, NetworkName: snapshot.Config.NetworkName,
 		},
-		Size: snapshot.Size, CreatedAt: snapshot.CreatedAt.UTC(),
+		Size: snapshot.Size, CreatedAt: snapshot.CreatedAt.UTC(), LastAccessedAt: lastAccessed.UTC(),
 	}
 }
 
@@ -73,14 +78,18 @@ func writeListJSON(writer io.Writer, snapshots []types.Snapshot) error {
 
 func writeTable(writer io.Writer, snapshots []types.Snapshot) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(table, "SNAPSHOT ID\tNAME\tSANDBOX ID\tCPUS\tMEMORY\tSIZE\tDESCRIPTION\tCREATED"); err != nil {
+	if _, err := fmt.Fprintln(table, "SNAPSHOT ID\tNAME\tSANDBOX ID\tCPUS\tMEMORY\tSIZE\tDESCRIPTION\tCREATED\tLAST ACCESSED"); err != nil {
 		return err
 	}
 	for _, snapshot := range snapshots {
-		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
+		lastAccessed := snapshot.LastAccessedAt
+		if lastAccessed.IsZero() {
+			lastAccessed = snapshot.CreatedAt
+		}
+		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
 			snapshot.ID, snapshot.Name, snapshot.SandboxID, snapshot.Config.CPUs,
 			formatIECBytes(snapshot.Config.Memory), formatIECBytes(snapshot.Size), snapshot.Description,
-			snapshot.CreatedAt.UTC().Format(time.RFC3339),
+			snapshot.CreatedAt.UTC().Format(time.RFC3339), lastAccessed.UTC().Format(time.RFC3339),
 		); err != nil {
 			return err
 		}

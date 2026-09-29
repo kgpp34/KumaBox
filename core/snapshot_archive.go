@@ -74,7 +74,7 @@ func (s *SnapshotService) withSnapshotDirectory(ctx context.Context, reference s
 	if err := use(record, directory); err != nil {
 		return types.Snapshot{}, err
 	}
-	return record, nil
+	return s.snapshots.Touch(ctx, record.ID, s.now().UTC())
 }
 
 // Import stages and verifies a portable archive before reserving a fresh
@@ -167,7 +167,7 @@ func (s *SnapshotService) Import(ctx context.Context, input io.Reader, name, des
 	if err != nil {
 		return types.Snapshot{}, err
 	}
-	result, err = s.snapshots.Commit(ctx, id, size)
+	result, err = s.snapshots.Commit(ctx, id, size, s.now().UTC())
 	if err != nil {
 		result = types.Snapshot{}
 		return types.Snapshot{}, err

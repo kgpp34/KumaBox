@@ -31,13 +31,14 @@ func TestParseBytes(t *testing.T) {
 		{"10GiB", 10 << 30},
 		{"1024", 1024},
 		{"1TiB", 1 << 40},
+		{"1GB", 1 << 30},
 	} {
 		got, err := parseBytes(test.input)
 		if err != nil || got != test.want {
 			t.Fatalf("parseBytes(%q) = %d, %v; want %d", test.input, got, err, test.want)
 		}
 	}
-	for _, input := range []string{"", "-1GiB", "1GB", "1.5GiB", "0"} {
+	for _, input := range []string{"", "-1GiB", "1XB", "1.5GiB", "0"} {
 		if _, err := parseBytes(input); err == nil {
 			t.Fatalf("parseBytes(%q) succeeded", input)
 		}

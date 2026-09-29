@@ -155,7 +155,7 @@ func TestCollectSnapshotRemovesStaleStageWithoutDeletingReadySnapshot(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := catalog.Commit(t.Context(), id, 1); err != nil {
+	if _, err := catalog.Commit(t.Context(), id, 1, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	published, err := paths.Dir(id)
@@ -244,7 +244,7 @@ func TestCollectSnapshotForgetsReadyRecordWithMissingDirectory(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := catalog.Commit(t.Context(), id, 1); err != nil {
+	if _, err := catalog.Commit(t.Context(), id, 1, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	service := &SnapshotService{paths: paths, store: store, snapshots: catalog}

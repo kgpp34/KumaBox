@@ -124,6 +124,8 @@ func TestRestoreStopsRunningSandboxAndResumesSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	accessedAt := capture.LastAccessedAt.Add(time.Hour)
+	service.now = func() time.Time { return accessedAt }
 	*steps = nil
 	record, err := service.Restore(t.Context(), "box", capture.ID.String())
 	if err != nil {
@@ -131,6 +133,10 @@ func TestRestoreStopsRunningSandboxAndResumesSnapshot(t *testing.T) {
 	}
 	if record.State != types.SandboxStateRunning || record.Generation != 8 {
 		t.Fatalf("restored sandbox = %+v", record)
+	}
+	updated, err := service.snapshots.Resolve(t.Context(), capture.ID.String())
+	if err != nil || !updated.LastAccessedAt.Equal(accessedAt) {
+		t.Fatalf("restore access time = %s, %v", updated.LastAccessedAt, err)
 	}
 	plan := testRuntime(t, sandboxService).restorePlan
 	if plan.SandboxID != fixedID || plan.Generation != 7 || plan.SnapshotDir == "" {
@@ -181,7 +187,7 @@ func TestListForSandboxResolvesNameBeforeFiltering(t *testing.T) {
 	if err := service.snapshots.Reserve(t.Context(), foreign); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.snapshots.Commit(t.Context(), foreign.ID, 1); err != nil {
+	if _, err := service.snapshots.Commit(t.Context(), foreign.ID, 1, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	listed, err := service.ListForSandbox(t.Context(), "box")
@@ -421,6 +427,34 @@ func TestSaveSnapshotPublishesCompleteCapture(t *testing.T) {
 	listed, err := service.List(t.Context())
 	if err != nil || len(listed) != 1 || listed[0].ID != record.ID {
 		t.Fatalf("List = %+v, %v", listed, err)
+	}
+}
+
+func TestSnapshotReadRefreshesAccessTime(t *testing.T) {
+	service, _, _ := newTestSnapshotService(t)
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "exported"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessedAt := capture.LastAccessedAt.Add(time.Hour)
+	service.now = func() time.Time { return accessedAt }
+	directory, err := service.paths.Dir(capture.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(filepath.Join(directory, "cow.raw"), capture.Config.Storage); err != nil {
+		t.Fatal(err)
+	}
+	used := false
+	if _, err := service.withSnapshotDirectory(t.Context(), capture.ID.String(), func(types.Snapshot, string) error {
+		used = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := service.snapshots.Resolve(t.Context(), capture.ID.String())
+	if err != nil || !updated.LastAccessedAt.Equal(accessedAt) || !used {
+		t.Fatalf("snapshot read access time = %s used=%t error=%v", updated.LastAccessedAt, used, err)
 	}
 }
 

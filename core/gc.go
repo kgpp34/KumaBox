@@ -45,6 +45,14 @@ func (s *SnapshotService) ReconcileSandboxes(ctx context.Context) ([]ReconcileAc
 	return s.lifecycle.ReconcileSandboxes(ctx)
 }
 
+// Status exposes the live VMM observations needed by the optional supervisor.
+func (s *SnapshotService) Status(ctx context.Context) ([]SandboxStatus, error) {
+	if s == nil || s.lifecycle == nil {
+		return nil, errors.New("sandbox status service is not configured")
+	}
+	return s.lifecycle.Status(ctx)
+}
+
 // Collect repairs ownerless lifecycle states and reclaims only managed
 // artifacts with no current catalog owner. It never evicts healthy snapshots.
 //

@@ -114,6 +114,7 @@ type recordData struct {
 	NetworkName       string    `json:"network_name,omitempty"`
 	Size              int64     `json:"size"`
 	CreatedAt         time.Time `json:"created_at"`
+	LastAccessedAt    time.Time `json:"last_accessed_at,omitzero"`
 	Ready             bool      `json:"ready"`
 	Deleting          bool      `json:"deleting,omitempty"`
 }
@@ -181,7 +182,10 @@ func (s *Store) Reserve(ctx context.Context, snapshot types.Snapshot) error {
 }
 
 // Commit publishes size and readiness after artifacts are atomically visible.
-func (s *Store) Commit(ctx context.Context, id types.SnapshotID, size int64) (types.Snapshot, error) {
+func (s *Store) Commit(ctx context.Context, id types.SnapshotID, size int64, accessedAt time.Time) (types.Snapshot, error) {
+	if accessedAt.IsZero() {
+		return types.Snapshot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("snapshot access time must be set"))
+	}
 	var result types.Snapshot
 	err := s.store.Update(ctx, func(writer metadata.Writer) error {
 		record, err := load(ctx, writer, id)
@@ -196,6 +200,7 @@ func (s *Store) Commit(ctx context.Context, id types.SnapshotID, size int64) (ty
 			return nil
 		}
 		record.Size = size
+		record.LastAccessedAt = accessedAt.UTC()
 		result, err = decodeSnapshot(record)
 		if err != nil {
 			return err
@@ -211,6 +216,42 @@ func (s *Store) Commit(ctx context.Context, id types.SnapshotID, size int64) (ty
 		return nil
 	})
 	return result, errdefs.Context(err, "save snapshot", id.String(), "commit", "inspect snapshot storage before retrying", true)
+}
+
+// Touch records a successful snapshot use. Callers hold the snapshot operation
+// lock; an already started use may finish even if a remover has marked deleting
+// while waiting for that same lock.
+func (s *Store) Touch(ctx context.Context, id types.SnapshotID, accessedAt time.Time) (types.Snapshot, error) {
+	if accessedAt.IsZero() {
+		return types.Snapshot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("snapshot access time must be set"))
+	}
+	var result types.Snapshot
+	err := s.store.Update(ctx, func(writer metadata.Writer) error {
+		record, err := load(ctx, writer, id)
+		if err != nil {
+			return err
+		}
+		if !record.Ready {
+			return notFound(id.String())
+		}
+		current := record.LastAccessedAt
+		if current.IsZero() {
+			current = record.CreatedAt
+		}
+		if current.Before(accessedAt) {
+			record.LastAccessedAt = accessedAt.UTC()
+			raw, err := json.Marshal(record)
+			if err != nil {
+				return err
+			}
+			if err := writer.Put(ctx, CollectionSnapshots, id.String(), raw); err != nil {
+				return err
+			}
+		}
+		result, err = decodeSnapshot(record)
+		return err
+	})
+	return result, errdefs.Context(err, "access snapshot", id.String(), "metadata", "retry the snapshot operation", false)
 }
 
 // Forget releases a pending reservation during pre-publication compensation.
@@ -390,7 +431,7 @@ func encode(snapshot types.Snapshot, ready bool) recordData {
 		VMM:  string(snapshot.VMM),
 		CPUs: snapshot.Config.CPUs, Memory: snapshot.Config.Memory, Storage: snapshot.Config.Storage,
 		NICs: snapshot.Config.NICs, NetworkName: snapshot.Config.NetworkName,
-		Size: snapshot.Size, CreatedAt: snapshot.CreatedAt.UTC(), Ready: ready,
+		Size: snapshot.Size, CreatedAt: snapshot.CreatedAt.UTC(), LastAccessedAt: snapshot.LastAccessedAt.UTC(), Ready: ready,
 	}
 }
 
@@ -416,7 +457,10 @@ func decodeSnapshot(record recordData) (types.Snapshot, error) {
 			Name: record.SandboxName, CPUs: record.CPUs, Memory: record.Memory, Storage: record.Storage,
 			NICs: record.NICs, NetworkName: record.NetworkName,
 		},
-		CreatedAt: record.CreatedAt.UTC(),
+		CreatedAt: record.CreatedAt.UTC(), LastAccessedAt: record.LastAccessedAt.UTC(),
+	}
+	if result.LastAccessedAt.IsZero() {
+		result.LastAccessedAt = result.CreatedAt
 	}
 	return result, result.Validate()
 }

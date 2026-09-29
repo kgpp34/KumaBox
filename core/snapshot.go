@@ -39,7 +39,8 @@ type SnapshotReporter interface {
 
 type snapshotCatalog interface {
 	Reserve(context.Context, types.Snapshot) error
-	Commit(context.Context, types.SnapshotID, int64) (types.Snapshot, error)
+	Commit(context.Context, types.SnapshotID, int64, time.Time) (types.Snapshot, error)
+	Touch(context.Context, types.SnapshotID, time.Time) (types.Snapshot, error)
 	Forget(context.Context, types.SnapshotID) error
 	Resolve(context.Context, string) (types.Snapshot, error)
 	List(context.Context) ([]types.Snapshot, error)
@@ -278,7 +279,7 @@ func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotReque
 		if err := s.reporter.Status("committing snapshot metadata"); err != nil {
 			return errdefs.Context(err, operation, request.SandboxReference, "report", "inspect snapshot storage before retrying", true)
 		}
-		result, err = s.snapshots.Commit(ctx, id, size)
+		result, err = s.snapshots.Commit(ctx, id, size, s.now().UTC())
 		if err != nil {
 			result = types.Snapshot{}
 			return err
@@ -637,6 +638,11 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 	running, err := s.sandboxes.MarkRunning(ctx, starting.ID, starting.Generation, s.now().UTC())
 	if err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "commit running", err, process)
+	}
+	if options.SourceDirectory == "" {
+		if _, err := s.snapshots.Touch(ctx, capture.ID, s.now().UTC()); err != nil {
+			return running, errdefs.Context(err, "restore sandbox", sandboxReference, "record snapshot access", "sandbox is running; inspect it before retrying", true)
+		}
 	}
 	if reseedErr != nil {
 		return running, errdefs.Context(reseedErr, "restore sandbox", sandboxReference, "reseed guest", "sandbox is running; upgrade the guest agent and run kumabox reseed", true)

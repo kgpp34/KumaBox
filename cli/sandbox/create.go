@@ -6,8 +6,6 @@ package sandbox
 import (
 	"errors"
 	"fmt"
-	"math"
-	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -129,25 +127,7 @@ func NewCreateCommand(configuration configProvider) *cobra.Command {
 
 // parseBytes accepts integer bytes or binary IEC units without floating-point rounding.
 func parseBytes(value string) (int64, error) {
-	if value == "" {
-		return 0, errors.New("size must not be empty")
-	}
-	digits := 0
-	for digits < len(value) && value[digits] >= '0' && value[digits] <= '9' {
-		digits++
-	}
-	if digits == 0 {
-		return 0, fmt.Errorf("invalid size %q", value)
-	}
-	number, err := strconv.ParseInt(value[:digits], 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid size %q: %w", value, err)
-	}
-	multiplier, ok := map[string]int64{"": 1, "B": 1, "KiB": 1 << 10, "MiB": 1 << 20, "GiB": 1 << 30, "TiB": 1 << 40}[value[digits:]]
-	if !ok || number == 0 || number > math.MaxInt64/multiplier {
-		return 0, fmt.Errorf("invalid or overflowing size %q; use B, KiB, MiB, GiB, or TiB", value)
-	}
-	return number * multiplier, nil
+	return types.ParseByteSize(value)
 }
 
 // invalidFlag attaches user-correctable classification to size parsing errors.

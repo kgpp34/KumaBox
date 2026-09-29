@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +9,55 @@ import (
 	"github.com/kumabox/kumabox/metadata"
 	"github.com/kumabox/kumabox/types"
 )
+
+func TestSnapshotCatalogReadsLegacyAccessTimeAndTouchesMonotonically(t *testing.T) {
+	memory, err := metadata.NewMemory(Collections())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := New(memory)
+	digest, err := types.ParseDigest("sha256:" + strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	record := types.Snapshot{
+		ID: "223e4567-e89b-42d3-a456-426614174000", SandboxID: "123e4567-e89b-42d3-a456-426614174000",
+		SourceGeneration: 4, ImageDigest: digest, VMM: types.VMMCloudHypervisor,
+		Config:    types.SandboxConfig{Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+		CreatedAt: created,
+	}
+	legacy, err := json.Marshal(encode(record, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(legacy, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "last_accessed_at")
+	legacy, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := memory.Update(t.Context(), func(writer metadata.Writer) error {
+		return writer.Put(t.Context(), CollectionSnapshots, record.ID.String(), legacy)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Resolve(t.Context(), record.ID.String())
+	if err != nil || !loaded.LastAccessedAt.Equal(created) {
+		t.Fatalf("legacy access time = %s, %v", loaded.LastAccessedAt, err)
+	}
+	touched, err := store.Touch(t.Context(), record.ID, created.Add(time.Hour))
+	if err != nil || !touched.LastAccessedAt.Equal(created.Add(time.Hour)) {
+		t.Fatalf("touched access time = %s, %v", touched.LastAccessedAt, err)
+	}
+	unchanged, err := store.Touch(t.Context(), record.ID, created)
+	if err != nil || !unchanged.LastAccessedAt.Equal(touched.LastAccessedAt) {
+		t.Fatalf("older touch changed access time = %s, %v", unchanged.LastAccessedAt, err)
+	}
+}
 
 func TestSnapshotCatalogPublishesAndDeletesNameAtomically(t *testing.T) {
 	memory, err := metadata.NewMemory(Collections())
@@ -33,7 +83,7 @@ func TestSnapshotCatalogPublishesAndDeletesNameAtomically(t *testing.T) {
 	if _, err := store.Resolve(t.Context(), "checkpoint"); err == nil {
 		t.Fatal("pending snapshot was visible")
 	}
-	ready, err := store.Commit(t.Context(), record.ID, 42)
+	ready, err := store.Commit(t.Context(), record.ID, 42, time.Now().UTC())
 	if err != nil || ready.Size != 42 || ready.Config.Name != "box" || ready.RegistryReference != record.RegistryReference {
 		t.Fatalf("Commit = %+v, %v", ready, err)
 	}
@@ -82,7 +132,7 @@ func TestSnapshotUsagePinsImageUntilFinalDeletion(t *testing.T) {
 		}
 	}
 	check(true)
-	if _, err := store.Commit(t.Context(), record.ID, 42); err != nil {
+	if _, err := store.Commit(t.Context(), record.ID, 42, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	check(true)
