@@ -158,6 +158,13 @@ func TestCollectSnapshotRemovesStaleStageWithoutDeletingReadySnapshot(t *testing
 	if _, err := catalog.Commit(t.Context(), id, 1); err != nil {
 		t.Fatal(err)
 	}
+	published, err := paths.Dir(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(published, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := paths.PrepareStage(id); err != nil {
 		t.Fatal(err)
 	}
@@ -207,6 +214,46 @@ func TestCollectSnapshotRemovesInterruptedRestoreStage(t *testing.T) {
 	}
 	if _, err := os.Stat(file); !os.IsNotExist(err) {
 		t.Fatalf("interrupted restore file remains: %v", err)
+	}
+}
+
+func TestCollectSnapshotForgetsReadyRecordWithMissingDirectory(t *testing.T) {
+	roots := gcTestRoots(t)
+	paths, err := snapshot.NewPaths(roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := paths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := metadata.NewMemory(snapshotcatalog.Collections())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := types.SnapshotID("223e4567-e89b-42d3-a456-426614174000")
+	digest, err := types.ParseDigest("sha256:" + strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := snapshotcatalog.New(store)
+	if err := catalog.Reserve(t.Context(), types.Snapshot{
+		ID: id, Name: "missing", SandboxID: fixedID, SourceGeneration: 4,
+		ImageDigest: digest, VMM: types.VMMCloudHypervisor,
+		Config:    types.SandboxConfig{Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalog.Commit(t.Context(), id, 1); err != nil {
+		t.Fatal(err)
+	}
+	service := &SnapshotService{paths: paths, store: store, snapshots: catalog}
+	action, busy, err := service.collectSnapshot(t.Context(), id, nil)
+	if err != nil || busy || action != "removed-missing-dir" {
+		t.Fatalf("collectSnapshot = %q, %t, %v", action, busy, err)
+	}
+	if _, found, err := catalog.State(t.Context(), id); err != nil || found {
+		t.Fatalf("missing-dir record remains: found=%t error=%v", found, err)
 	}
 }
 

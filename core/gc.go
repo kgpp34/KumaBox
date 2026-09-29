@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/kumabox/kumabox/errdefs"
+	"github.com/kumabox/kumabox/images"
+	imagescatalog "github.com/kumabox/kumabox/images/catalog"
 	filelock "github.com/kumabox/kumabox/lock/flock"
 	"github.com/kumabox/kumabox/network"
 	"github.com/kumabox/kumabox/snapshot"
@@ -67,6 +69,23 @@ func (s *SnapshotService) Collect(ctx context.Context) (report GCReport, returnE
 	if err != nil {
 		return report, err
 	}
+	imagePaths, err := images.NewPaths(s.configuration.Paths)
+	if err != nil {
+		return report, err
+	}
+	imageCandidates, err := discoverImageArtifacts(imagePaths)
+	if err != nil {
+		return report, err
+	}
+	imageRecords, err := imagescatalog.New(s.store).List(ctx)
+	if err != nil {
+		return report, err
+	}
+	for _, image := range imageRecords {
+		for _, layer := range image.Layers {
+			delete(imageCandidates, layer.SourceDigest)
+		}
+	}
 	for _, state := range snapshotStates {
 		snapshotIDs[state.ID] = true
 	}
@@ -111,6 +130,21 @@ func (s *SnapshotService) Collect(ctx context.Context) (report GCReport, returnE
 			failures = append(failures, fmt.Errorf("snapshot %s: %w", id, err))
 		} else if action != "" {
 			report.Actions = append(report.Actions, GCAction{Kind: "snapshot", ID: id.String(), Action: action})
+		}
+	}
+	for _, digest := range sortedImageDigests(imageCandidates) {
+		if err := ctx.Err(); err != nil {
+			failures = append(failures, err)
+			break
+		}
+		collected, busy, err := s.collectOrphanImage(ctx, imagePaths, digest)
+		if busy {
+			report.Skipped++
+		}
+		if err != nil {
+			failures = append(failures, fmt.Errorf("image layer %s: %w", digest, err))
+		} else if collected {
+			report.Actions = append(report.Actions, GCAction{Kind: "image-layer", ID: digest.String(), Action: "removed-orphan"})
 		}
 	}
 	return report, errors.Join(failures...)
@@ -340,6 +374,18 @@ func (s *SnapshotService) collectSnapshot(ctx context.Context, id types.Snapshot
 		return "", false, err
 	}
 	if found && state.Ready && !state.Deleting {
+		published, err := s.paths.Dir(id)
+		if err != nil {
+			return "", false, err
+		}
+		if info, err := os.Lstat(published); errors.Is(err, fs.ErrNotExist) {
+			remove = true
+			return "removed-missing-dir", false, nil
+		} else if err != nil {
+			return "", false, err
+		} else if !info.IsDir() {
+			return "", false, fmt.Errorf("snapshot artifact %s is not a directory", published)
+		}
 		stage, err := s.paths.Stage(id)
 		if err != nil {
 			return "", false, err
