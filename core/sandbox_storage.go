@@ -30,6 +30,9 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 	if err := request.Config.Validate(); err != nil {
 		return types.Sandbox{}, err
 	}
+	if request.Config.NICs == 0 && request.Config.NetworkName != "" {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("network name requires at least one NIC when creating a sandbox"))
+	}
 	if request.VMM == "" {
 		request.VMM = s.dependencies.defaultVMM
 	}
@@ -48,6 +51,10 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 		if providerErr != nil {
 			return types.Sandbox{}, providerErr
 		}
+	} else {
+		// An available provider gives even an initially offline sandbox a
+		// namespace that its running VMM can use for later hotplug.
+		networkProvider, _ = s.dependencies.networks.Provider(s.dependencies.defaultNetwork)
 	}
 	if int(request.Config.CPUs) > runtime.NumCPU() { //nolint:gosec // Config validation bounds CPUs to a small positive value
 		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, fmt.Errorf("requested %d vCPUs exceeds available host CPUs (%d)", request.Config.CPUs, runtime.NumCPU()))
@@ -98,6 +105,16 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 		return types.Sandbox{}, errdefs.Context(err, "create sandbox", request.Config.Name, "reserve", "check the image and sandbox name", false)
 	}
 	setup := types.NetworkSetup{}
+	if _, hotpluggable := networkProvider.(network.Resizer); request.Config.NICs == 0 && hotpluggable {
+		namespace, prepareErr := networkProvider.Prepare(ctx, id)
+		if prepareErr != nil {
+			return types.Sandbox{}, s.compensate(ctx, record, "network prepare", prepareErr)
+		}
+		if namespace != "" {
+			setup = types.NetworkSetup{Backend: networkProvider.Type(), Namespace: namespace, Interfaces: []types.NetworkInterface{}}
+			record.Network = setup
+		}
+	}
 	if request.Config.NICs > 0 {
 		if err := s.dependencies.reporter.Status("preparing sandbox network"); err != nil {
 			return types.Sandbox{}, s.compensate(ctx, record, "report", err)

@@ -418,7 +418,13 @@ type vmInfo struct {
 			Mode string `json:"mode"`
 			File string `json:"file"`
 		} `json:"console"`
+		Nets []struct {
+			ID  string `json:"id"`
+			TAP string `json:"tap"`
+			MAC string `json:"mac"`
+		} `json:"net"`
 	} `json:"config"`
+	DeviceTree map[string]json.RawMessage `json:"device_tree"`
 }
 
 // queryInfo performs one bounded vm.info request over the private Unix socket.

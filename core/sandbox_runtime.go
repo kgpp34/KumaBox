@@ -7,6 +7,7 @@ import (
 	"io"
 	"reflect"
 	"runtime"
+	"slices"
 
 	"github.com/kumabox/kumabox/agent"
 	"github.com/kumabox/kumabox/errdefs"
@@ -279,7 +280,7 @@ func (s *SandboxService) recoverNetwork(ctx context.Context, record types.Sandbo
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(recovered, record.Network.Interfaces) {
+	if !slices.EqualFunc(recovered, record.Network.Interfaces, func(left, right types.NetworkInterface) bool { return reflect.DeepEqual(left, right) }) {
 		return errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("recovered network identity differs from persisted sandbox state"))
 	}
 	return nil

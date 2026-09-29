@@ -137,7 +137,7 @@ type SandboxConfig struct {
 	Memory int64
 	// Storage is the logical size of the sparse ext4 COW disk in bytes.
 	Storage int64
-	// NICs is the requested network interface count; zero disables networking.
+	// NICs is the current network interface count; zero disables networking.
 	NICs int
 	// NetworkName selects one CNI conflist. Empty selects the provider default
 	// and is replaced by the resolved name when creation commits.
@@ -160,9 +160,6 @@ func (c SandboxConfig) Validate() error {
 	}
 	if c.NICs < 0 || c.NICs > MaxSandboxNICs {
 		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("NIC count must be between 0 and %d", MaxSandboxNICs))
-	}
-	if c.NICs == 0 && c.NetworkName != "" {
-		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("network name requires at least one NIC"))
 	}
 	if c.NetworkName != "" && !validNetworkName.MatchString(c.NetworkName) {
 		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("network name %q must match %s", c.NetworkName, validNetworkName))
@@ -254,8 +251,13 @@ func (s Sandbox) Validate() error {
 	if err := s.Network.Validate(); err != nil {
 		return err
 	}
-	if s.Config.NICs == 0 && s.Network.Backend != "" {
-		return errors.New("sandbox without NICs must not contain network setup")
+	// A zero-NIC sandbox may retain an empty namespace so a running VMM can
+	// attach its first NIC without moving the process between namespaces.
+	if s.Config.NICs == 0 && len(s.Network.Interfaces) != 0 {
+		return errors.New("sandbox without NICs must not contain interfaces")
+	}
+	if s.Config.NICs == 0 && s.Network.Backend == "" && s.Config.NetworkName != "" {
+		return errors.New("sandbox without a network owner must not retain a network name")
 	}
 	if s.Network.Backend != "" {
 		if len(s.Network.Interfaces) != s.Config.NICs {

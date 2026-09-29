@@ -57,6 +57,18 @@ type Provider interface {
 	Delete(context.Context, types.SandboxID) error
 }
 
+// Resizer is the optional per-NIC capability required for live hotplug.
+// Providers without it remain usable for ordinary create/start/stop flows.
+type Resizer interface {
+	Provider
+	// Allocated includes incomplete allocations left by an interrupted change.
+	Allocated(context.Context, types.SandboxID) ([]int, error)
+	// IndexForTAP maps one provider-owned TAP to its sandbox slot.
+	IndexForTAP(types.SandboxID, string) (int, bool)
+	// Remove releases selected interfaces while retaining the namespace.
+	Remove(context.Context, types.SandboxID, ...int) error
+}
+
 // AddRange builds fresh NIC requests for a contiguous index range.
 func AddRange(first, count int) []AddSpec {
 	if first < 0 || count <= 0 {

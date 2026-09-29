@@ -102,7 +102,10 @@ type Provider struct {
 	loadErr     error
 }
 
-var _ network.Provider = (*Provider)(nil)
+var (
+	_ network.Provider = (*Provider)(nil)
+	_ network.Resizer  = (*Provider)(nil)
+)
 
 // New creates a provider. Conflist discovery is intentionally best-effort so a
 // command can still open metadata and report or retry retained cleanup state
@@ -190,9 +193,10 @@ const (
 	phaseReady     recordPhase = "ready"
 	phaseDeleting  recordPhase = "deleting"
 
-	interfaceStaged interfacePhase = "staged"
-	interfaceAdding interfacePhase = "adding"
-	interfaceReady  interfacePhase = "ready"
+	interfaceStaged   interfacePhase = "staged"
+	interfaceAdding   interfacePhase = "adding"
+	interfaceReady    interfacePhase = "ready"
+	interfaceDeleting interfacePhase = "deleting"
 )
 
 // recordData is an adapter-owned cleanup journal. The aggregate is written
@@ -319,7 +323,7 @@ func validateRecord(record *recordData) error {
 			return fmt.Errorf("network record interface %d is invalid", item.Index)
 		}
 		switch item.Phase {
-		case interfaceStaged, interfaceAdding:
+		case interfaceStaged, interfaceAdding, interfaceDeleting:
 		case interfaceReady:
 			if _, err := item.toType(record.Network); err != nil {
 				return err

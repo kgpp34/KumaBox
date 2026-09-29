@@ -94,6 +94,18 @@ func (f *fakeCatalog) MarkRunning(_ context.Context, _ types.SandboxID, expected
 	return f.record, nil
 }
 
+func (f *fakeCatalog) UpdateNetwork(_ context.Context, _ types.SandboxID, expected uint64, setup types.NetworkSetup, networkName string, updated time.Time) (types.Sandbox, error) {
+	*f.steps = append(*f.steps, "network-update")
+	if f.record.State != types.SandboxStateRunning || f.record.Generation != expected {
+		return types.Sandbox{}, errors.New("wrong running generation")
+	}
+	f.record.Network = setup
+	f.record.Config.NICs = len(setup.Interfaces)
+	f.record.Config.NetworkName = networkName
+	f.record.UpdatedAt = updated
+	return f.record, nil
+}
+
 func (f *fakeCatalog) MarkStartError(_ context.Context, _ types.SandboxID, expected uint64, failure types.SandboxFailure, updated time.Time) (types.Sandbox, error) {
 	*f.steps = append(*f.steps, "start-error")
 	if f.record.State != types.SandboxStateStarting || f.record.Generation != expected {

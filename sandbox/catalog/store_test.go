@@ -107,6 +107,49 @@ func TestMarkCreatedAtomicallyPublishesResolvedNetwork(t *testing.T) {
 	}
 }
 
+func TestUpdateNetworkKeepsRunningProcessGeneration(t *testing.T) {
+	store, err := metadata.NewMemory(Collections())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := types.SandboxID("123e4567-e89b-42d3-a456-426614174000")
+	created := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
+	record := types.Sandbox{
+		ID:          id,
+		Config:      types.SandboxConfig{Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+		ImageDigest: testDigest(t, 'a'), VMM: types.VMMCloudHypervisor,
+		Network: types.NetworkSetup{Backend: types.NetworkBackendCNI, Namespace: "/var/run/netns/kb-box", Interfaces: []types.NetworkInterface{}},
+		State:   types.SandboxStateRunning, Generation: 4, CreatedAt: created, UpdatedAt: created,
+	}
+	if err := store.Update(t.Context(), func(writer metadata.Writer) error {
+		return putJSON(t.Context(), writer, CollectionSandboxes, id.String(), encode(record))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	catalog := New(store, nil)
+	device := types.NetworkInterface{Index: 0, Name: "eth0", TAP: "tap0", MAC: "02:00:00:00:00:01", Queues: 4, QueueSize: 512, Network: "bridge"}
+	setup := record.Network
+	setup.Interfaces = []types.NetworkInterface{device}
+	updated, err := catalog.UpdateNetwork(t.Context(), id, 4, setup, "bridge", created.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Config.NICs != 1 || updated.Generation != 4 || updated.Config.NetworkName != "bridge" {
+		t.Fatalf("updated running sandbox = %+v", updated)
+	}
+	setup.Interfaces = []types.NetworkInterface{}
+	updated, err = catalog.UpdateNetwork(t.Context(), id, 4, setup, "bridge", created.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Config.NICs != 0 || updated.Network.Backend != types.NetworkBackendCNI || updated.Config.NetworkName != "bridge" {
+		t.Fatalf("zero-NIC sandbox lost hotplug identity: %+v", updated)
+	}
+	if _, err := catalog.UpdateNetwork(t.Context(), id, 3, setup, "bridge", created.Add(3*time.Second)); err == nil {
+		t.Fatal("accepted stale process generation")
+	}
+}
+
 func TestListReturnsValidatedRecordsNewestFirst(t *testing.T) {
 	store, err := metadata.NewMemory(Collections())
 	if err != nil {

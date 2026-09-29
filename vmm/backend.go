@@ -30,6 +30,22 @@ type Backend interface {
 	RemoveLogs(context.Context, types.SandboxID) error
 }
 
+// NetworkDevice is a NIC currently reported by a running VMM. TAP identity
+// lets the service reconcile interrupted hotplug against the CNI journal.
+type NetworkDevice struct {
+	ID  string
+	TAP string
+	MAC string
+}
+
+// NetworkHotplugger is an optional VMM capability for one-at-a-time live NIC
+// changes. The service owns CNI allocation and durable sandbox state.
+type NetworkHotplugger interface {
+	LiveNICs(context.Context, Process) ([]NetworkDevice, error)
+	AddNIC(context.Context, Process, types.NetworkInterface) error
+	RemoveNIC(context.Context, Process, string) error
+}
+
 // SnapshotFile describes one writable disk copied inside the VMM pause window.
 type SnapshotFile struct {
 	// Source is the current sandbox-owned writable disk.

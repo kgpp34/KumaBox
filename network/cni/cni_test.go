@@ -152,6 +152,58 @@ func TestProviderLifecyclePersistsCleanupIntent(t *testing.T) {
 	}
 }
 
+func TestRemoveNICRetainsNamespaceAndCanReadd(t *testing.T) {
+	provider, executor, host, id := testProvider(t)
+	if _, err := provider.Prepare(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	first, err := provider.Add(t.Context(), id, "bridge", network.AddSpec{Index: 0, Queues: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index, ok := provider.IndexForTAP(id, first[0].TAP); !ok || index != 0 {
+		t.Fatalf("TAP ownership = %d, %t", index, ok)
+	}
+	if _, ok := provider.IndexForTAP(types.SandboxID("223e4567-e89b-42d3-a456-426614174000"), first[0].TAP); ok {
+		t.Fatal("accepted another sandbox's TAP")
+	}
+	if err := provider.Remove(t.Context(), id, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.Remove(t.Context(), id, 0); err != nil {
+		t.Fatalf("idempotent remove: %v", err)
+	}
+	indices, err := provider.Allocated(t.Context(), id)
+	if err != nil || len(indices) != 0 || !host.namespace {
+		t.Fatalf("remaining indices = %v, namespace = %t, err = %v", indices, host.namespace, err)
+	}
+	if !slices.Equal(executor.dels, []string{"eth0"}) || !slices.Equal(host.deletedTAPs, []string{first[0].TAP}) {
+		t.Fatalf("released CNI=%v TAP=%v", executor.dels, host.deletedTAPs)
+	}
+	if _, err := provider.Add(t.Context(), id, "bridge", network.AddSpec{Index: 0, Queues: 4}); err != nil {
+		t.Fatalf("readd after removal: %v", err)
+	}
+}
+
+func TestRemoveNICRetainsIntentAfterCNIError(t *testing.T) {
+	provider, executor, _, id := testProvider(t)
+	if _, err := provider.Add(t.Context(), id, "bridge", network.AddSpec{Index: 0, Queues: 4}); err != nil {
+		t.Fatal(err)
+	}
+	executor.delError = errors.New("plugin unavailable")
+	if err := provider.Remove(t.Context(), id, 0); err == nil {
+		t.Fatal("remove succeeded despite CNI DEL failure")
+	}
+	record, err := provider.view(t.Context(), id)
+	if err != nil || record.Interfaces[0].Phase != interfaceDeleting {
+		t.Fatalf("retained cleanup intent = %+v, %v", record, err)
+	}
+	executor.delError = nil
+	if err := provider.Remove(t.Context(), id, 0); err != nil {
+		t.Fatalf("retry removal: %v", err)
+	}
+}
+
 func TestAddFailureCompensatesWithoutLosingNamespaceOwnership(t *testing.T) {
 	provider, executor, _, id := testProvider(t)
 	executor.addError = errors.New("injected ADD failure")

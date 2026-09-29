@@ -56,6 +56,7 @@ type sandboxCatalog interface {
 	MarkStartError(context.Context, types.SandboxID, uint64, types.SandboxFailure, time.Time) (types.Sandbox, error)
 	BeginStop(context.Context, types.SandboxID, uint64, time.Time) (types.Sandbox, error)
 	MarkStopped(context.Context, types.SandboxID, uint64, types.SandboxState, time.Time) (types.Sandbox, error)
+	UpdateNetwork(context.Context, types.SandboxID, uint64, types.NetworkSetup, string, time.Time) (types.Sandbox, error)
 }
 
 var (

@@ -61,7 +61,7 @@ type recordData struct {
 	Memory int64 `json:"memory"`
 	// Storage is logical COW capacity in bytes.
 	Storage int64 `json:"storage"`
-	// NICs is the immutable requested network interface count.
+	// NICs is the current network interface count.
 	NICs int `json:"nics,omitempty"`
 	// NetworkName is the resolved CNI conflist name.
 	NetworkName string `json:"network_name,omitempty"`
@@ -183,8 +183,8 @@ func (c *Store) MarkCreated(ctx context.Context, id types.SandboxID, expected ui
 			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s changed from expected Creating generation %d", id, expected))
 		}
 		if record.Config.NICs == 0 {
-			if setup.Backend != "" {
-				return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("sandbox without NICs cannot commit network setup"))
+			if len(setup.Interfaces) != 0 {
+				return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("sandbox without NICs cannot commit network interfaces"))
 			}
 		} else {
 			if setup.Backend == "" || len(setup.Interfaces) != record.Config.NICs {
@@ -261,6 +261,44 @@ func (c *Store) BeginStart(ctx context.Context, id types.SandboxID, expected uin
 // the observed process.
 func (c *Store) MarkRunning(ctx context.Context, id types.SandboxID, expected uint64, updated time.Time) (types.Sandbox, error) {
 	return c.transition(ctx, id, expected, types.SandboxStateStarting, types.SandboxStateRunning, nil, updated)
+}
+
+// UpdateNetwork replaces the live NIC handoff under the same process generation.
+// A network edit does not advance Generation because that value also identifies
+// the Running VMM launched by the preceding Starting transition.
+func (c *Store) UpdateNetwork(ctx context.Context, id types.SandboxID, expected uint64, setup types.NetworkSetup, networkName string, updated time.Time) (types.Sandbox, error) {
+	if err := setup.Validate(); err != nil {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+	}
+	var result types.Sandbox
+	err := c.store.Update(ctx, func(writer metadata.Writer) error {
+		record, err := load(ctx, writer, id)
+		if err != nil {
+			return err
+		}
+		if record.State != types.SandboxStateRunning || record.Generation != expected {
+			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s changed during network resize", id))
+		}
+		if record.Network.Backend != setup.Backend || record.Network.Namespace != setup.Namespace {
+			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("network owner or namespace changed during resize"))
+		}
+		if record.Config.NetworkName != "" && record.Config.NetworkName != networkName {
+			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("network name changed during resize"))
+		}
+		record.Network = setup
+		record.Config.NICs = len(setup.Interfaces)
+		record.Config.NetworkName = networkName
+		record.UpdatedAt = updated
+		if err := record.Validate(); err != nil {
+			return corrupt("sandbox network resize", err)
+		}
+		if err := putJSON(ctx, writer, CollectionSandboxes, id.String(), encode(record)); err != nil {
+			return err
+		}
+		result = record
+		return nil
+	})
+	return result, errdefs.Context(err, "resize sandbox network", id.String(), "persist network", "inspect the sandbox and retry", false)
 }
 
 // MarkStartError retains launch diagnostics and ownership after cleanup was

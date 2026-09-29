@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io/fs"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/containernetworking/cni/libcni"
 	cnitypes "github.com/containernetworking/cni/pkg/types"
@@ -104,6 +106,9 @@ func (p *Provider) Add(ctx context.Context, id types.SandboxID, networkName stri
 			result = append(result, ready)
 			continue
 		}
+		if item.Phase == interfaceDeleting {
+			return nil, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("NIC %d has incomplete removal", spec.Index))
+		}
 		touched = append(touched, spec.Index)
 		if item.Phase == interfaceAdding {
 			if err := p.deleteOne(ctx, id, list, item, true); err != nil {
@@ -136,6 +141,96 @@ func (p *Provider) Add(ctx context.Context, id types.SandboxID, networkName stri
 	return result, nil
 }
 
+// Allocated reports every recorded slot, including interrupted additions and
+// removals. The namespace remains owned even when the result is empty.
+func (p *Provider) Allocated(ctx context.Context, id types.SandboxID) ([]int, error) {
+	if err := validID(id); err != nil {
+		return nil, err
+	}
+	record, err := p.view(ctx, id)
+	if err != nil || record == nil {
+		return nil, err
+	}
+	indices := make([]int, 0, len(record.Interfaces))
+	for _, item := range record.Interfaces {
+		indices = append(indices, item.Index)
+	}
+	slices.Sort(indices)
+	return indices, nil
+}
+
+// IndexForTAP accepts only a TAP name generated for this sandbox identity.
+func (*Provider) IndexForTAP(id types.SandboxID, tap string) (int, bool) {
+	position := strings.LastIndexByte(tap, '-')
+	if position < 0 {
+		return 0, false
+	}
+	index, err := strconv.Atoi(tap[position+1:])
+	if err != nil || index < 0 {
+		return 0, false
+	}
+	expected, err := network.TAPName(defaultTAPPrefix, id, index)
+	return index, err == nil && expected == tap
+}
+
+// Remove releases selected NICs while retaining the private namespace for
+// subsequent hotplug. Intent is durable before CNI DEL and TAP deletion.
+func (p *Provider) Remove(ctx context.Context, id types.SandboxID, indices ...int) error {
+	if err := validID(id); err != nil {
+		return err
+	}
+	for _, index := range indices {
+		if index < 0 {
+			return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("negative NIC index %d", index))
+		}
+		if err := p.removeIndex(ctx, id, index); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *Provider) removeIndex(ctx context.Context, id types.SandboxID, index int) error {
+	var item interfaceData
+	var networkName string
+	if err := p.update(ctx, id, func(record *recordData) (*recordData, error) {
+		if record == nil {
+			return nil, nil
+		}
+		if record.Phase == phaseDeleting {
+			return nil, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("network namespace deletion is in progress"))
+		}
+		position := findInterface(record, index)
+		if position < 0 {
+			return record, nil
+		}
+		item = record.Interfaces[position]
+		networkName = record.Network
+		record.Phase = phasePreparing
+		record.Interfaces[position].Phase = interfaceDeleting
+		return record, nil
+	}); err != nil || item.TAP == "" {
+		return err
+	}
+	list, err := p.confList(networkName)
+	if err != nil && item.Phase != interfaceStaged {
+		return err
+	}
+	if err := p.deleteOne(ctx, id, list, item, true); err != nil {
+		return err
+	}
+	return p.update(ctx, id, func(record *recordData) (*recordData, error) {
+		if record == nil {
+			return nil, nil
+		}
+		removeInterface(record, index)
+		if !slices.ContainsFunc(record.Interfaces, func(item interfaceData) bool { return item.Phase != interfaceReady }) {
+			record.Phase = phaseReady
+		}
+		return record, nil
+	})
+}
+
 func (p *Provider) stage(ctx context.Context, id types.SandboxID, networkName string, specs []network.AddSpec) error {
 	return p.update(ctx, id, func(record *recordData) (*recordData, error) {
 		if record == nil {
@@ -153,6 +248,7 @@ func (p *Provider) stage(ctx context.Context, id types.SandboxID, networkName st
 			if position >= 0 {
 				continue
 			}
+			record.Phase = phasePreparing
 			tap, err := network.TAPName(defaultTAPPrefix, id, spec.Index)
 			if err != nil {
 				return nil, err
