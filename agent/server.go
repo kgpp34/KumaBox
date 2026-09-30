@@ -112,6 +112,16 @@ func (s *Server) handle(ctx context.Context, connection net.Conn) {
 			return
 		}
 		_ = encoder.Encode(Message{Type: MessageExit})
+	case MessageConfigureNetwork:
+		if first.Network == nil {
+			_ = encoder.sendError("configure network: missing configuration")
+			return
+		}
+		if err := applyGuestNetwork(ctx, *first.Network); err != nil {
+			_ = encoder.sendError("configure network: %v", err)
+			return
+		}
+		_ = encoder.Encode(Message{Type: MessageExit})
 	default:
 		_ = encoder.sendError("expected first frame type %q, got %q", MessageExec, first.Type)
 	}

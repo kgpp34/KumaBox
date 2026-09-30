@@ -102,7 +102,7 @@ func TestClonePullUsesSnapshotDigestAfterTagMoves(t *testing.T) {
 	}
 }
 
-func TestCloneGuestScriptUsesNewIdentityAndAddress(t *testing.T) {
+func TestCloneGuestNetworkUsesNewIdentityAndAddress(t *testing.T) {
 	record := types.Sandbox{
 		Config: types.SandboxConfig{Name: "clone-box", CPUs: 2, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage, NICs: 1, NetworkName: "test"},
 		Network: types.NetworkSetup{Interfaces: []types.NetworkInterface{{
@@ -111,17 +111,13 @@ func TestCloneGuestScriptUsesNewIdentityAndAddress(t *testing.T) {
 			IPv4: &types.IPv4Config{Address: "10.0.0.3", Gateway: "10.0.0.1", Prefix: 24},
 		}}},
 	}
-	script, err := cloneGuestScript(record, []string{"1.1.1.1"})
+	configuration, err := guestNetworkConfig(record, []string{"1.1.1.1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{
-		"rm -f /etc/systemd/network/10-kumabox-*.network",
-		"MACAddress=02:00:00:00:00:02", "Address=10.0.0.3/24", "Gateway=10.0.0.1",
-		"DNS=1.1.1.1", "hostname 'clone-box'", "systemctl restart systemd-networkd",
-	} {
-		if !strings.Contains(script, expected) {
-			t.Fatalf("guest script misses %q: %s", expected, script)
-		}
+	if configuration.Hostname != "clone-box" || len(configuration.Interfaces) != 1 ||
+		configuration.Interfaces[0].MAC != "02:00:00:00:00:02" || configuration.Interfaces[0].Address != "10.0.0.3" ||
+		configuration.Interfaces[0].Gateway != "10.0.0.1" || len(configuration.DNSServers) != 1 || configuration.DNSServers[0] != "1.1.1.1" {
+		t.Fatalf("guest configuration = %+v", configuration)
 	}
 }

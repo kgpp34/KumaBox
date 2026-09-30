@@ -4,16 +4,55 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/kumabox/kumabox/agent"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/network"
 	"github.com/kumabox/kumabox/types"
 	"github.com/kumabox/kumabox/vmm"
 )
+
+func TestConfigureGuestNetworkFallsBackForOldAgent(t *testing.T) {
+	attempts := 0
+	var steps []string
+	runtime := &fakeRuntime{steps: &steps}
+	runtime.vsockFactory = func() io.ReadWriteCloser {
+		attempts++
+		current := attempts
+		host, guest := net.Pipe()
+		go func() {
+			defer func() { _ = guest.Close() }()
+			request, err := agent.NewDecoder(guest).Decode()
+			if err != nil {
+				return
+			}
+			if current == 1 {
+				_ = agent.NewEncoder(guest).Encode(agent.Message{Type: agent.MessageError, Message: `expected first frame type "exec", got "configure_network"`})
+				return
+			}
+			if request.Type != agent.MessageExec || len(request.Argv) != 3 || request.Argv[0] != "/bin/sh" {
+				return
+			}
+			_, _ = agent.NewDecoder(guest).Decode()
+			_ = agent.NewEncoder(guest).Encode(agent.Message{Type: agent.MessageExit})
+		}()
+		return host
+	}
+	configuration := agent.NetworkConfig{Hostname: "box", Interfaces: []agent.NetworkInterface{{MAC: "02:00:00:00:00:02", Address: "10.0.0.3", Prefix: 24}}}
+	connection := runtime.vsockFactory()
+	if err := configureGuestNetworkConnection(t.Context(), runtime, vmm.Process{}, connection, configuration); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 {
+		t.Fatalf("guest connections = %d, want structured request plus legacy exec", attempts)
+	}
+}
 
 type resizeNetwork struct {
 	*fakeNetwork

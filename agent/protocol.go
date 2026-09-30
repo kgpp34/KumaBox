@@ -22,6 +22,8 @@ const (
 	MessageExec = "exec"
 	// MessageReseed mixes fresh host entropy into the guest random pool.
 	MessageReseed = "reseed"
+	// MessageConfigureNetwork applies host-assigned guest identity and NIC settings.
+	MessageConfigureNetwork = "configure_network"
 	// MessageStdin carries one command input chunk.
 	MessageStdin = "stdin"
 	// MessageStdinClose closes command input without ending the session.
@@ -63,6 +65,8 @@ type Message struct {
 	Message string `json:"message,omitempty"`
 	// RegenMachineID requests a new persistent machine identity during reseed.
 	RegenMachineID bool `json:"regen_machine_id,omitempty"`
+	// Network carries the complete guest network configuration for one update.
+	Network *NetworkConfig `json:"network,omitempty"`
 }
 
 // Decoder reads bounded newline-delimited JSON messages.

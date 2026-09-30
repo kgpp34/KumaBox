@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 
 	"github.com/kumabox/kumabox/agent"
@@ -243,8 +244,8 @@ func (s *SandboxService) nicCleanupContext(ctx context.Context) (context.Context
 	return context.WithTimeout(context.WithoutCancel(ctx), s.dependencies.cleanupTimeout)
 }
 
-// runGuestNetworkScript uses the existing host-only agent protocol, so older
-// guest images with working exec support need no new agent message type.
+// runGuestNetworkScript is the compatibility path for older guest agents and
+// for the live NIC quiesce operation.
 func runGuestNetworkScript(ctx context.Context, backend vmm.Backend, process vmm.Process, script string) error {
 	connection, err := backend.DialVsock(ctx, process, agent.Port)
 	if err != nil {
@@ -255,17 +256,58 @@ func runGuestNetworkScript(ctx context.Context, backend vmm.Backend, process vmm
 }
 
 func configureGuestNetwork(ctx context.Context, backend vmm.Backend, process vmm.Process, record types.Sandbox, dns []string) error {
-	script, err := cloneGuestScript(record, dns)
+	configuration, err := guestNetworkConfig(record, dns)
 	if err != nil {
 		return err
 	}
-	return runGuestNetworkScript(ctx, backend, process, script)
+	connection, err := backend.DialVsock(ctx, process, agent.Port)
+	if err != nil {
+		return fmt.Errorf("connect guest agent: %w", err)
+	}
+	return configureGuestNetworkConnection(ctx, backend, process, connection, configuration)
+}
+
+func guestNetworkConfig(record types.Sandbox, dns []string) (agent.NetworkConfig, error) {
+	if err := record.Config.Validate(); err != nil {
+		return agent.NetworkConfig{}, err
+	}
+	configuration := agent.NetworkConfig{
+		Hostname: record.Config.Name, DNSServers: dns,
+		Interfaces: make([]agent.NetworkInterface, 0, len(record.Network.Interfaces)),
+	}
+	for _, device := range record.Network.Interfaces {
+		if err := device.Validate(); err != nil {
+			return agent.NetworkConfig{}, err
+		}
+		guest := agent.NetworkInterface{MAC: device.MAC}
+		if device.IPv4 != nil {
+			guest.Address, guest.Prefix, guest.Gateway = device.IPv4.Address, device.IPv4.Prefix, device.IPv4.Gateway
+		}
+		configuration.Interfaces = append(configuration.Interfaces, guest)
+	}
+	return configuration, configuration.Validate()
+}
+
+func configureGuestNetworkConnection(ctx context.Context, backend vmm.Backend, process vmm.Process, connection io.ReadWriteCloser, configuration agent.NetworkConfig) error {
+	err := agent.ConfigureNetwork(ctx, connection, configuration)
+	closeErr := connection.Close()
+	if errors.Is(err, agent.ErrNetworkConfigUnsupported) {
+		script, scriptErr := agent.LegacyNetworkScript(configuration)
+		if scriptErr != nil {
+			return errors.Join(scriptErr, closeErr)
+		}
+		return errors.Join(runGuestNetworkScript(ctx, backend, process, script), closeErr)
+	}
+	return errors.Join(err, closeErr)
 }
 
 func quiesceGuestNIC(ctx context.Context, backend vmm.Backend, process vmm.Process, device types.NetworkInterface) error {
 	if err := device.Validate(); err != nil {
 		return err
 	}
-	script := fmt.Sprintf("for net in /sys/class/net/*; do [ \"$(cat \"$net/address\")\" = '%s' ] || continue; ip link set \"${net##*/}\" down; done", device.MAC)
+	script, err := agent.LegacyQuiesceNICScript(device.MAC)
+	if err != nil {
+		return err
+	}
 	return runGuestNetworkScript(ctx, backend, process, script)
 }

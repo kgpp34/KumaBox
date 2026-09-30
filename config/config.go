@@ -82,6 +82,8 @@ type Network struct {
 	Scope string `mapstructure:"scope"`
 	// CleanupTimeout bounds detached compensation after caller cancellation.
 	CleanupTimeout time.Duration `mapstructure:"cleanup_timeout"`
+	// GuestAgentTimeout bounds clone's wait for a restored guest agent.
+	GuestAgentTimeout time.Duration `mapstructure:"guest_agent_timeout"`
 }
 
 // CNI contains host-owned CNI discovery paths.
@@ -155,7 +157,7 @@ func Default() Config {
 		Sandbox:  Sandbox{Ext4Binary: "mkfs.ext4", CleanupTimeout: 10 * time.Second},
 		Network: Network{
 			CNI: CNI{ConfDir: "/etc/cni/net.d", BinDir: "/opt/cni/bin"},
-			DNS: "8.8.8.8,1.1.1.1", CleanupTimeout: 30 * time.Second,
+			DNS: "8.8.8.8,1.1.1.1", CleanupTimeout: 30 * time.Second, GuestAgentTimeout: 20 * time.Second,
 		},
 		VMM: VMM{
 			Default: types.VMMCloudHypervisor, CgroupParent: "/sys/fs/cgroup/kumabox.slice",
@@ -192,8 +194,8 @@ func (c *Config) Validate() error {
 	if !filepath.IsAbs(c.Network.CNI.ConfDir) || !filepath.IsAbs(c.Network.CNI.BinDir) {
 		return errors.New("network CNI configuration and binary directories must be absolute")
 	}
-	if c.Network.CleanupTimeout <= 0 {
-		return errors.New("network cleanup timeout must be positive")
+	if c.Network.CleanupTimeout <= 0 || c.Network.GuestAgentTimeout <= 0 {
+		return errors.New("network cleanup and guest agent timeouts must be positive")
 	}
 	if _, err := c.Network.DNSServers(); err != nil {
 		return fmt.Errorf("network DNS: %w", err)
@@ -247,8 +249,8 @@ func NewLoader() *Loader {
 		"sandbox.ext4_binary": defaults.Sandbox.Ext4Binary, "sandbox.cleanup_timeout": defaults.Sandbox.CleanupTimeout,
 		"network.cni.conf_dir": defaults.Network.CNI.ConfDir, "network.cni.bin_dir": defaults.Network.CNI.BinDir,
 		"network.dns": defaults.Network.DNS, "network.scope": defaults.Network.Scope,
-		"network.cleanup_timeout": defaults.Network.CleanupTimeout,
-		"vmm.default":             defaults.VMM.Default, "vmm.cgroup_parent": defaults.VMM.CgroupParent,
+		"network.cleanup_timeout": defaults.Network.CleanupTimeout, "network.guest_agent_timeout": defaults.Network.GuestAgentTimeout,
+		"vmm.default": defaults.VMM.Default, "vmm.cgroup_parent": defaults.VMM.CgroupParent,
 		"vmm.cloud_hypervisor.binary":          defaults.VMM.CloudHypervisor.Binary,
 		"vmm.cloud_hypervisor.startup_timeout": defaults.VMM.CloudHypervisor.StartupTimeout,
 		"vmm.cloud_hypervisor.stop_grace":      defaults.VMM.CloudHypervisor.StopGrace,

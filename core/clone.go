@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/kumabox/kumabox/agent"
@@ -286,28 +284,30 @@ func (s *SnapshotService) ensureCloneImage(ctx context.Context, capture types.Sn
 	return nil
 }
 
+const guestAgentConnectRetryInterval = 250 * time.Millisecond
+
 // configureCloneGuest applies the new MAC/IP map over vsock, which remains
 // available even before the clone has a working guest network.
 func (s *SnapshotService) configureCloneGuest(ctx context.Context, backend vmm.Backend, process vmm.Process, record types.Sandbox) error {
-	script, err := cloneGuestScript(record, s.dnsServers)
+	configuration, err := guestNetworkConfig(record, s.dnsServers)
 	if err != nil {
 		return err
 	}
-	deadline := time.NewTimer(20 * time.Second)
+	deadline := time.NewTimer(s.configuration.Network.GuestAgentTimeout)
 	defer deadline.Stop()
+	retry := time.NewTicker(guestAgentConnectRetryInterval)
+	defer retry.Stop()
 	for {
 		connection, err := backend.DialVsock(ctx, process, agent.Port)
 		if err == nil {
-			code, runErr := agent.Run(ctx, connection, types.Command{Args: []string{"/bin/sh", "-c", script}}, nil, nil, nil)
-			_ = connection.Close()
-			return errors.Join(runErr, guestExitError(code))
+			return configureGuestNetworkConnection(ctx, backend, process, connection, configuration)
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
 			return fmt.Errorf("guest agent unavailable after clone: %w", err)
-		case <-time.After(250 * time.Millisecond):
+		case <-retry.C:
 		}
 	}
 }
@@ -317,38 +317,4 @@ func guestExitError(code int) error {
 		return fmt.Errorf("guest network configuration exited with status %d", code)
 	}
 	return nil
-}
-
-func cloneGuestScript(record types.Sandbox, dns []string) (string, error) {
-	var script strings.Builder
-	script.WriteString("set -eu\nmkdir -p /etc/systemd/network\nrm -f /etc/systemd/network/10-kumabox-*.network\n")
-	for _, device := range record.Network.Interfaces {
-		if err := device.Validate(); err != nil {
-			return "", err
-		}
-		if device.IPv4 == nil {
-			continue
-		}
-		filename := strings.ReplaceAll(device.MAC, ":", "")
-		fmt.Fprintf(&script, "cat > /etc/systemd/network/10-kumabox-%s.network <<'KUMABOX_NETWORK'\n", filename)
-		fmt.Fprintf(&script, "[Match]\nMACAddress=%s\n\n[Network]\nAddress=%s/%d\n", device.MAC, device.IPv4.Address, device.IPv4.Prefix)
-		if device.IPv4.Gateway != "" {
-			fmt.Fprintf(&script, "Gateway=%s\n", device.IPv4.Gateway)
-		}
-		for _, server := range dns {
-			if ip := net.ParseIP(server); ip == nil || ip.To4() == nil {
-				return "", fmt.Errorf("invalid guest DNS address %q", server)
-			}
-			fmt.Fprintf(&script, "DNS=%s\n", server)
-		}
-		script.WriteString("KUMABOX_NETWORK\n")
-	}
-	if err := record.Config.Validate(); err != nil {
-		return "", err
-	}
-	fmt.Fprintf(&script, "printf '%%s\\n' '%s' > /etc/hostname\nhostname '%s'\n", record.Config.Name, record.Config.Name)
-	if len(record.Network.Interfaces) > 0 {
-		script.WriteString("systemctl restart systemd-networkd\n")
-	}
-	return script.String(), nil
 }

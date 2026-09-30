@@ -460,6 +460,10 @@ func guestTestConnection() io.ReadWriteCloser {
 		}
 		if request.Type == agent.MessageReseed && len(request.Data) == 32 {
 			_ = agent.NewEncoder(guest).Encode(agent.Message{Type: agent.MessageExit})
+			return
+		}
+		if request.Type == agent.MessageConfigureNetwork && request.Network != nil {
+			_ = agent.NewEncoder(guest).Encode(agent.Message{Type: agent.MessageExit})
 		}
 	}()
 	return host

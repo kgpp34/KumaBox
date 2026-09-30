@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/errdefs"
 	filelock "github.com/kumabox/kumabox/lock/flock"
 	"github.com/kumabox/kumabox/metadata"
@@ -110,7 +111,8 @@ func newTestSnapshotService(t *testing.T) (*SnapshotService, *SandboxService, *[
 	}
 	service := &SnapshotService{
 		applicationState: &applicationState{
-			paths: paths, sandboxPaths: sandboxService.dependencies.paths,
+			configuration: config.Default(),
+			paths:         paths, sandboxPaths: sandboxService.dependencies.paths,
 			sandboxes: catalog, snapshots: snapshotcatalog.New(memory), runtimes: sandboxService.dependencies.runtimes,
 			now: func() time.Time { return time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC) }, store: memory,
 			lifecycle: sandboxService, images: sandboxService.dependencies.images,
