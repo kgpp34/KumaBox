@@ -6,6 +6,7 @@ package sandbox
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -28,6 +29,7 @@ type createOptions struct {
 	storageSize string
 	nics        int
 	networkName string
+	dataDisks   []string
 }
 
 // defaultCreateOptions returns the public resource defaults for a new sandbox.
@@ -45,6 +47,7 @@ func (o *createOptions) addFlags(command *cobra.Command) {
 	command.Flags().StringVar(&o.storageSize, "storage", o.storageSize, "logical sparse COW size (minimum 10GiB)")
 	command.Flags().IntVar(&o.nics, "nics", o.nics, "number of network interfaces (0 disables networking)")
 	command.Flags().StringVar(&o.networkName, "network", o.networkName, "CNI network name (empty selects the default)")
+	command.Flags().StringArrayVar(&o.dataDisks, "data-disk", nil, "managed disk: size=20GiB[,name=db][,fstype=ext4|none]; repeatable")
 }
 
 // request validates CLI values before any persistent service is opened.
@@ -76,10 +79,79 @@ func (o createOptions) request(imageReference string) (core.CreateSandboxRequest
 		Name: o.name, CPUs: o.cpus, Memory: memoryBytes, Storage: storageBytes,
 		NICs: o.nics, NetworkName: o.networkName,
 	}
+	if len(o.dataDisks) > types.MaxDataDisks {
+		return core.CreateSandboxRequest{}, invalidFlag("data-disk", fmt.Errorf("at most %d disks are supported", types.MaxDataDisks))
+	}
+	for _, value := range o.dataDisks {
+		disk, err := parseDataDisk(value)
+		if err != nil {
+			return core.CreateSandboxRequest{}, invalidFlag("data-disk", err)
+		}
+		sandboxConfig.DataDisks = append(sandboxConfig.DataDisks, disk)
+	}
+	// Explicit names reserve their serials first; unnamed disks then receive
+	// deterministic data1, data2... identities that survive snapshot transfer.
+	usedNames := make(map[string]bool, len(sandboxConfig.DataDisks))
+	for _, disk := range sandboxConfig.DataDisks {
+		if disk.Name != "" {
+			usedNames[disk.Name] = true
+		}
+	}
+	index := 1
+	for position := range sandboxConfig.DataDisks {
+		if sandboxConfig.DataDisks[position].Name != "" {
+			continue
+		}
+		for {
+			candidate := fmt.Sprintf("data%d", index)
+			index++
+			if !usedNames[candidate] {
+				sandboxConfig.DataDisks[position].Name = candidate
+				usedNames[candidate] = true
+				break
+			}
+		}
+	}
 	if err := sandboxConfig.Validate(); err != nil {
 		return core.CreateSandboxRequest{}, err
 	}
 	return core.CreateSandboxRequest{ImageReference: imageReference, Config: sandboxConfig}, nil
+}
+
+// parseDataDisk accepts a compact, explicit disk specification without
+// allowing unrecognized keys to silently change the requested disk shape.
+func parseDataDisk(value string) (types.DataDiskSpec, error) {
+	spec := types.DataDiskSpec{FSType: "ext4"}
+	seen := make(map[string]bool)
+	for part := range strings.SplitSeq(value, ",") {
+		key, raw, ok := strings.Cut(part, "=")
+		key, raw = strings.TrimSpace(key), strings.TrimSpace(raw)
+		if !ok || raw == "" || seen[key] {
+			return spec, fmt.Errorf("invalid or duplicate data disk field %q", part)
+		}
+		seen[key] = true
+		switch key {
+		case "name":
+			spec.Name = raw
+		case "size":
+			size, err := parseBytes(raw)
+			if err != nil {
+				return spec, err
+			}
+			spec.Size = size
+		case "fstype":
+			spec.FSType = raw
+		default:
+			return spec, fmt.Errorf("unknown data disk field %q", key)
+		}
+	}
+	if spec.Size < types.MinDataDiskSize || spec.FSType != "ext4" && spec.FSType != "none" {
+		return spec, fmt.Errorf("data disk size must be at least %d bytes and fstype must be ext4 or none", types.MinDataDiskSize)
+	}
+	if spec.Name != "" {
+		return spec, spec.Validate()
+	}
+	return spec, nil
 }
 
 // NewCreateCommand builds the top-level create command.

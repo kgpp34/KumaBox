@@ -258,6 +258,15 @@ func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotReque
 		Process: observation.Process, Destination: stage,
 		WritableFiles: []vmm.SnapshotFile{{Source: cowSource, Destination: cowDestination}},
 	}
+	for _, spec := range record.Config.DataDisks {
+		source, err := s.sandboxPaths.DataDisk(record.ID, spec.Name)
+		if err != nil {
+			return types.Snapshot{}, err
+		}
+		plan.WritableFiles = append(plan.WritableFiles, vmm.SnapshotFile{
+			Source: source, Destination: filepath.Join(stage, types.DataDiskFile(spec.Name)),
+		})
+	}
 	var stopping types.Sandbox
 	persist := func() error {
 		if err := s.reporter.Status("publishing snapshot artifacts"); err != nil {
@@ -404,12 +413,12 @@ type RestoreOptions struct {
 	Pull bool
 }
 
-// Restore replaces a stopped sandbox's writable disk and launches its native
+// Restore replaces a stopped sandbox's writable disks and launches its native
 // VMM snapshot. A live or retained-error source is cleaned through the normal
 // stop lifecycle before replacement.
 //
-//	snapshot lock -> validate + stage disk -> stop -> sandbox lock -> Starting
-//	                                                              -> disk replace
+//	snapshot lock -> validate + stage disks -> stop -> sandbox lock -> Starting
+//	                                                               -> disk replace
 //	                                                              -> VMM restore -> Running
 func (s *SnapshotService) Restore(ctx context.Context, sandboxReference, snapshotReference string) (result types.Sandbox, returnErr error) {
 	return s.RestoreWithOptions(ctx, sandboxReference, snapshotReference, RestoreOptions{})
@@ -487,6 +496,9 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 	} else if !info.Mode().IsRegular() || info.Size() == 0 || (options.SourceDirectory != "" && info.Size() != capture.Config.Storage) {
 		return record, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("snapshot COW has an invalid file type or logical size"))
 	}
+	if err := validateCapturedDataDisks(snapshotDir, capture.Config.DataDisks); err != nil {
+		return record, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err)
+	}
 	if validator, ok := backend.(vmm.RestoreValidator); ok {
 		if err := validator.ValidateRestore(ctx, snapshotDir); err != nil {
 			return record, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err)
@@ -526,6 +538,28 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 	}
 	if err := storage.CloneFile(stagedCOW, snapshotCOW); err != nil {
 		return record, errdefs.Context(err, "restore sandbox", sandboxReference, "stage disk", "verify the snapshot and retry", false)
+	}
+	// Each writable disk is staged while the old VM can still run. After stop,
+	// only target-owned paths are replaced; a failed copy leaves them untouched.
+	stagedData := make([]vmm.SnapshotFile, 0, len(capture.Config.DataDisks))
+	defer func() {
+		for _, file := range stagedData {
+			returnErr = errors.Join(returnErr, ignoreNotExist(os.Remove(file.Source)))
+		}
+	}()
+	for _, spec := range capture.Config.DataDisks {
+		live, err := s.sandboxPaths.DataDisk(record.ID, spec.Name)
+		if err != nil {
+			return record, err
+		}
+		staged := stagedCOW + "-" + types.DataDiskFile(spec.Name)
+		if err := ignoreNotExist(os.Remove(staged)); err != nil {
+			return record, err
+		}
+		stagedData = append(stagedData, vmm.SnapshotFile{Source: staged, Destination: live})
+		if err := storage.CloneFile(staged, filepath.Join(snapshotDir, types.DataDiskFile(spec.Name))); err != nil {
+			return record, errdefs.Context(err, "restore sandbox", sandboxReference, "stage data disk", "verify the snapshot and retry", false)
+		}
 	}
 	stoppedForRestore := false
 	defer func() {
@@ -593,6 +627,11 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 	if err := storage.Publish(stagedCOW, liveCOW); err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "replace disk", err, vmm.Process{})
 	}
+	for _, file := range stagedData {
+		if err := storage.Publish(file.Source, file.Destination); err != nil {
+			return starting, s.lifecycle.failStart(ctx, backend, starting, "replace data disk", err, vmm.Process{})
+		}
+	}
 	if err := s.reporter.Status("restoring VMM state"); err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, vmm.Process{})
 	}
@@ -610,10 +649,15 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 			var launch vmm.LaunchPlan
 			launch, err = s.lifecycle.launchPlan(starting, image)
 			if err == nil {
-				process, err = cloner.Clone(ctx, vmm.ClonePlan{
-					RestorePlan:  plan,
-					WritableDisk: liveCOW, ImageDisks: launch.Disks[:len(launch.Disks)-1], Kernel: launch.Kernel, Initrd: launch.Initrd,
-				})
+				var imageDisks, dataDisks []vmm.Disk
+				imageDisks, dataDisks, err = cloneDiskBindings(launch, len(starting.Config.DataDisks))
+				if err == nil {
+					process, err = cloner.Clone(ctx, vmm.ClonePlan{
+						RestorePlan: plan, WritableDisk: liveCOW,
+						ImageDisks: imageDisks, DataDisks: dataDisks,
+						Kernel: launch.Kernel, Initrd: launch.Initrd,
+					})
+				}
 			}
 		}
 	}
@@ -663,7 +707,8 @@ func validateRestoreLineage(sandbox types.Sandbox, capture types.Snapshot) error
 func validateRestoreSource(sandbox types.Sandbox, capture types.Snapshot, options RestoreOptions) error {
 	if options.Force && options.SourceDirectory != "" {
 		if capture.VMM != sandbox.VMM || capture.ImageDigest != sandbox.ImageDigest || capture.Config.CPUs != sandbox.Config.CPUs ||
-			capture.Config.Memory != sandbox.Config.Memory || capture.Config.Storage != sandbox.Config.Storage || capture.Config.NICs != sandbox.Config.NICs {
+			capture.Config.Memory != sandbox.Config.Memory || capture.Config.Storage != sandbox.Config.Storage || capture.Config.NICs != sandbox.Config.NICs ||
+			!reflect.DeepEqual(capture.Config.DataDisks, sandbox.Config.DataDisks) {
 			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("snapshot VMM, image, or resource shape differs from the target sandbox"))
 		}
 		return nil

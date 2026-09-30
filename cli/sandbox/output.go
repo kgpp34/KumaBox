@@ -30,6 +30,8 @@ type sandboxOutput struct {
 	Memory int64 `json:"memory"`
 	// Storage is the logical sparse COW size in bytes.
 	Storage int64 `json:"storage"`
+	// DataDisks are sandbox-owned writable disks.
+	DataDisks []types.DataDiskSpec `json:"data_disks,omitempty"`
 	// NICs is the requested network interface count.
 	NICs int `json:"nics"`
 	// NetworkName is the resolved CNI network name.
@@ -107,7 +109,7 @@ func sandboxResult(sandbox types.Sandbox) sandboxOutput {
 	result := sandboxOutput{
 		ID: sandbox.ID.String(), Name: sandbox.Config.Name, ImageDigest: sandbox.ImageDigest.String(), VMM: string(sandbox.VMM),
 		State: string(sandbox.State), CPUs: sandbox.Config.CPUs, Memory: sandbox.Config.Memory,
-		Storage: sandbox.Config.Storage, NICs: sandbox.Config.NICs, NetworkName: sandbox.Config.NetworkName,
+		Storage: sandbox.Config.Storage, DataDisks: sandbox.Config.DataDisks, NICs: sandbox.Config.NICs, NetworkName: sandbox.Config.NetworkName,
 		Generation: sandbox.Generation,
 		CreatedAt:  sandbox.CreatedAt.UTC(), UpdatedAt: sandbox.UpdatedAt.UTC(),
 	}

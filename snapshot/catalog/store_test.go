@@ -74,8 +74,11 @@ func TestSnapshotCatalogPublishesAndDeletesNameAtomically(t *testing.T) {
 		SandboxID: types.SandboxID("123e4567-e89b-42d3-a456-426614174000"), SourceGeneration: 4,
 		ImageDigest: digest, VMM: types.VMMCloudHypervisor,
 		RegistryReference: "registry.example.test/team/guest:v1",
-		Config:            types.SandboxConfig{Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
-		CreatedAt:         time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC),
+		Config: types.SandboxConfig{
+			Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage,
+			DataDisks: []types.DataDiskSpec{{Name: "db", Size: types.MinDataDiskSize, FSType: "ext4"}},
+		},
+		CreatedAt: time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC),
 	}
 	if err := store.Reserve(t.Context(), record); err != nil {
 		t.Fatal(err)
@@ -84,7 +87,8 @@ func TestSnapshotCatalogPublishesAndDeletesNameAtomically(t *testing.T) {
 		t.Fatal("pending snapshot was visible")
 	}
 	ready, err := store.Commit(t.Context(), record.ID, 42, time.Now().UTC())
-	if err != nil || ready.Size != 42 || ready.Config.Name != "box" || ready.RegistryReference != record.RegistryReference {
+	if err != nil || ready.Size != 42 || ready.Config.Name != "box" || ready.RegistryReference != record.RegistryReference ||
+		len(ready.Config.DataDisks) != 1 || ready.Config.DataDisks[0].Name != "db" {
 		t.Fatalf("Commit = %+v, %v", ready, err)
 	}
 	deleting, err := store.BeginDelete(t.Context(), "checkpoint")

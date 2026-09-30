@@ -66,14 +66,14 @@ func (d *Driver) Clone(ctx context.Context, plan vmm.ClonePlan) (vmm.Process, er
 }
 
 // copyNativeState shares immutable memory files by hard link when possible.
-// Other files are copied, and cow.raw is installed at the sandbox disk path.
+// Other files are copied; writable disks already live at sandbox-owned paths.
 func copyNativeState(source, destination string) error {
 	entries, err := os.ReadDir(source)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.Name() == "cow.raw" {
+		if entry.Name() == "cow.raw" || strings.HasPrefix(entry.Name(), "data-") && strings.HasSuffix(entry.Name(), ".raw") {
 			continue
 		}
 		info, err := entry.Info()
@@ -130,8 +130,8 @@ func patchCloneConfig(path string, plan vmm.ClonePlan, vsockSocket string) ([]cl
 	if err := json.Unmarshal(config["disks"], &disks); err != nil || len(disks) == 0 {
 		return nil, errors.Join(err, errors.New("clone config has no disks"))
 	}
-	if len(disks) != len(plan.ImageDisks)+1 {
-		return nil, fmt.Errorf("clone config has %d disks, expected %d", len(disks), len(plan.ImageDisks)+1)
+	if len(disks) != len(plan.ImageDisks)+1+len(plan.DataDisks) {
+		return nil, fmt.Errorf("clone config has %d disks, expected %d", len(disks), len(plan.ImageDisks)+1+len(plan.DataDisks))
 	}
 	cowCount := 0
 	for position, disk := range disks {
@@ -139,15 +139,16 @@ func patchCloneConfig(path string, plan vmm.ClonePlan, vsockSocket string) ([]cl
 		if err := json.Unmarshal(disk["serial"], &serial); err != nil {
 			return nil, fmt.Errorf("decode snapshot disk serial: %w", err)
 		}
-		if serial == vmm.COWSerial {
+		switch {
+		case serial == vmm.COWSerial:
 			cowCount++
 			disk["path"], err = json.Marshal(plan.WritableDisk)
 			if err != nil {
 				return nil, err
 			}
 			disk["readonly"] = json.RawMessage("false")
-		} else {
-			if position >= len(plan.ImageDisks) || serial != plan.ImageDisks[position].Serial {
+		case position < len(plan.ImageDisks):
+			if serial != plan.ImageDisks[position].Serial {
 				return nil, fmt.Errorf("clone image disk %d has unexpected serial %q", position, serial)
 			}
 			disk["path"], err = json.Marshal(plan.ImageDisks[position].Path)
@@ -155,6 +156,16 @@ func patchCloneConfig(path string, plan vmm.ClonePlan, vsockSocket string) ([]cl
 				return nil, err
 			}
 			disk["readonly"] = json.RawMessage("true")
+		default:
+			dataIndex := position - len(plan.ImageDisks) - 1
+			if dataIndex < 0 || dataIndex >= len(plan.DataDisks) || serial != plan.DataDisks[dataIndex].Serial {
+				return nil, fmt.Errorf("clone data disk %d has unexpected serial %q", dataIndex, serial)
+			}
+			disk["path"], err = json.Marshal(plan.DataDisks[dataIndex].Path)
+			if err != nil {
+				return nil, err
+			}
+			disk["readonly"] = json.RawMessage("false")
 		}
 	}
 	if cowCount != 1 {

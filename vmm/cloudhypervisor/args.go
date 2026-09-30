@@ -11,7 +11,8 @@ import (
 const diskQueueSize = 512
 
 // buildArgs renders one direct-boot Cloud Hypervisor command. Disk attachment
-// order remains base-to-top then COW; only the initramfs cmdline reverses layers.
+// order remains base-to-top, COW, then data disks; only the initramfs cmdline
+// reverses immutable layers.
 func buildArgs(plan vmm.LaunchPlan, apiSocket, vsock string) []string {
 	maximumCPUs := max(runtime.NumCPU(), int(plan.CPUs))
 	args := []string{

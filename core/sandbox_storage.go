@@ -41,6 +41,11 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 			return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, errors.New("disk backend does not support snapshot cloning"))
 		}
 	}
+	if len(request.Config.DataDisks) > 0 {
+		if _, ok := s.dependencies.disks.(disk.DataStore); !ok {
+			return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, errors.New("disk backend does not support managed data disks"))
+		}
+	}
 	if _, err := s.dependencies.runtimes.Backend(request.VMM); err != nil {
 		return types.Sandbox{}, err
 	}
@@ -166,6 +171,17 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 	}
 	if diskErr != nil {
 		return types.Sandbox{}, s.compensate(ctx, record, "disk", diskErr)
+	}
+	if len(request.Config.DataDisks) > 0 {
+		dataStore := s.dependencies.disks.(disk.DataStore)
+		if request.cloneDataSource != "" {
+			diskErr = dataStore.CloneData(ctx, id, request.Config.DataDisks, request.cloneDataSource)
+		} else {
+			diskErr = dataStore.PrepareData(ctx, id, request.Config.DataDisks)
+		}
+		if diskErr != nil {
+			return types.Sandbox{}, s.compensate(ctx, record, "data disks", diskErr)
+		}
 	}
 	if err := s.dependencies.reporter.Status("committing created state"); err != nil {
 		return types.Sandbox{}, s.compensate(ctx, record, "report", err)

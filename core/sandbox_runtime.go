@@ -10,6 +10,7 @@ import (
 	"slices"
 
 	"github.com/kumabox/kumabox/agent"
+	"github.com/kumabox/kumabox/disk"
 	"github.com/kumabox/kumabox/errdefs"
 	filelock "github.com/kumabox/kumabox/lock/flock"
 	"github.com/kumabox/kumabox/types"
@@ -105,7 +106,17 @@ func (s *SandboxService) Start(ctx context.Context, reference string) (result ty
 		if buildErr != nil {
 			return buildErr
 		}
-		return s.dependencies.disks.Check(ctx, record.ID, record.Config.Storage)
+		if err := s.dependencies.disks.Check(ctx, record.ID, record.Config.Storage); err != nil {
+			return err
+		}
+		if len(record.Config.DataDisks) > 0 {
+			dataStore, ok := s.dependencies.disks.(disk.DataStore)
+			if !ok {
+				return errors.New("disk backend does not support managed data disks")
+			}
+			return dataStore.CheckData(ctx, record.ID, record.Config.DataDisks)
+		}
+		return nil
 	})
 	if err != nil {
 		return record, failBeforeLaunch("validate artifacts", err)
@@ -247,7 +258,7 @@ func (s *SandboxService) launchPlan(record types.Sandbox, image types.Image) (vm
 	if err != nil {
 		return vmm.LaunchPlan{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeImageIncompatible, err)
 	}
-	disks := make([]vmm.Disk, 0, len(image.Layers)+1)
+	disks := make([]vmm.Disk, 0, len(image.Layers)+1+len(record.Config.DataDisks))
 	for position, layer := range image.Layers {
 		disks = append(disks, vmm.Disk{Path: s.dependencies.imagePaths.EROFS(layer.SourceDigest), Serial: fmt.Sprintf("%s%d", vmm.LayerSerialPrefix, position), ReadOnly: true})
 	}
@@ -256,6 +267,13 @@ func (s *SandboxService) launchPlan(record types.Sandbox, image types.Image) (vm
 		return vmm.LaunchPlan{}, err
 	}
 	disks = append(disks, vmm.Disk{Path: cow, Serial: vmm.COWSerial})
+	for _, spec := range record.Config.DataDisks {
+		path, err := s.dependencies.paths.DataDisk(record.ID, spec.Name)
+		if err != nil {
+			return vmm.LaunchPlan{}, err
+		}
+		disks = append(disks, vmm.Disk{Path: path, Serial: types.DataDiskSerial(spec.Name)})
+	}
 	return vmm.LaunchPlan{
 		SandboxID: record.ID, CPUs: record.Config.CPUs, Memory: record.Config.Memory,
 		BootProfile: image.Boot.Profile, Kernel: kernel, Initrd: initrd, Cmdline: cmdline, Disks: disks,

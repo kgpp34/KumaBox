@@ -32,6 +32,8 @@ type CreateSandboxRequest struct {
 	// cloneDiskSource selects the private disk clone path for snapshot workflows.
 	// Ordinary callers always create a new formatted disk.
 	cloneDiskSource string
+	// cloneDataSource is the captured directory containing inherited data disks.
+	cloneDataSource string
 }
 
 // imageGuard is the image capability consumed by sandbox creation.

@@ -30,12 +30,46 @@ const (
 	MaxSandboxCPUs uint32 = 1024
 	// MaxSandboxNICs bounds host resource allocation from one create request.
 	MaxSandboxNICs = 64
+	// MinDataDiskSize is the smallest supported managed data disk.
+	MinDataDiskSize int64 = 16 << 20
+	// MaxDataDisks bounds devices and snapshot artifacts per sandbox.
+	MaxDataDisks = 32
 )
 
 var (
-	validSandboxName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
-	validNetworkName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
+	validSandboxName  = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
+	validNetworkName  = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
+	validDataDiskName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,19}$`)
 )
+
+// DataDiskSpec describes a sandbox-owned writable disk. The name is its stable
+// guest serial and the only user-controlled part of its backing filename.
+type DataDiskSpec struct {
+	Name   string `json:"name"`
+	Size   int64  `json:"size"`
+	FSType string `json:"fstype"`
+}
+
+// Validate rejects unsafe names and unsupported initial filesystem formats.
+func (d DataDiskSpec) Validate() error {
+	if !validDataDiskName.MatchString(d.Name) || strings.HasPrefix(d.Name, "kumabox-") {
+		return fmt.Errorf("invalid data disk name %q", d.Name)
+	}
+	if d.Size < MinDataDiskSize {
+		return fmt.Errorf("data disk %q must be at least %d bytes", d.Name, MinDataDiskSize)
+	}
+	if d.FSType != "ext4" && d.FSType != "none" {
+		return fmt.Errorf("data disk %q filesystem must be ext4 or none", d.Name)
+	}
+	return nil
+}
+
+// DataDiskFile returns the canonical managed backing filename.
+func DataDiskFile(name string) string { return "data-" + name + ".raw" }
+
+// DataDiskSerial returns the stable guest-visible disk identity. Keeping the
+// serial within 20 bytes preserves the virtio block identification limit.
+func DataDiskSerial(name string) string { return name }
 
 // VMMType identifies the virtual machine monitor that owns a sandbox's
 // runtime. It is persisted so every later lifecycle operation selects the same
@@ -142,6 +176,8 @@ type SandboxConfig struct {
 	// NetworkName selects one CNI conflist. Empty selects the provider default
 	// and is replaced by the resolved name when creation commits.
 	NetworkName string
+	// DataDisks are additional sandbox-owned writable disks in attachment order.
+	DataDisks []DataDiskSpec
 }
 
 // Validate enforces the resource and naming contract before any persistent change.
@@ -163,6 +199,19 @@ func (c SandboxConfig) Validate() error {
 	}
 	if c.NetworkName != "" && !validNetworkName.MatchString(c.NetworkName) {
 		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("network name %q must match %s", c.NetworkName, validNetworkName))
+	}
+	if len(c.DataDisks) > MaxDataDisks {
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("at most %d data disks are supported", MaxDataDisks))
+	}
+	seenDisks := make(map[string]bool, len(c.DataDisks))
+	for _, disk := range c.DataDisks {
+		if err := disk.Validate(); err != nil {
+			return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+		}
+		if seenDisks[disk.Name] {
+			return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("duplicate data disk %q", disk.Name))
+		}
+		seenDisks[disk.Name] = true
 	}
 	return nil
 }

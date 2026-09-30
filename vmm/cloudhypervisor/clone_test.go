@@ -78,6 +78,38 @@ func TestPatchCloneConfigRebindsOnlyPrivateDevices(t *testing.T) {
 	}
 }
 
+func TestPatchCloneConfigRebindsManagedDataDisk(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	original := `{"disks":[{"serial":"kumabox-layer0","path":"/old/layer"},{"serial":"kumabox-cow","path":"/old/cow"},{"serial":"db","path":"/old/data-db.raw"}],"vsock":{"socket":"/old/vsock"}}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan := vmm.ClonePlan{
+		RestorePlan:  vmm.RestorePlan{SandboxID: types.SandboxID("123e4567-e89b-42d3-a456-426614174000")},
+		WritableDisk: "/new/cow", ImageDisks: []vmm.Disk{{Path: "/new/layer", Serial: "kumabox-layer0", ReadOnly: true}},
+		DataDisks: []vmm.Disk{{Path: "/new/data-db.raw", Serial: "db"}}, Kernel: "/new/kernel", Initrd: "/new/initrd",
+	}
+	if _, err := patchCloneConfig(path, plan, "/new/vsock"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Disks []struct {
+			Path     string `json:"path"`
+			ReadOnly bool   `json:"readonly"`
+		} `json:"disks"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Disks) != 3 || config.Disks[2].Path != "/new/data-db.raw" || config.Disks[2].ReadOnly {
+		t.Fatalf("managed data disk was not rebound: %s", raw)
+	}
+}
+
 func TestCrossFilesystemMemoryUsesSourceLink(t *testing.T) {
 	directory := t.TempDir()
 	source := filepath.Join(directory, "memory-range-0")

@@ -41,10 +41,10 @@ func (s *SnapshotService) Clone(ctx context.Context, snapshotReference, name str
 }
 
 // CloneWithOptions creates a new running sandbox from an immutable native snapshot. It
-// inherits the source resource shape while assigning a fresh identity, COW,
+// inherits the source resource shape while assigning a fresh identity, disks,
 // network allocation, and VMM process. Source artifacts stay read-only.
 //
-//	snapshot lock -> validate -> Create -> private COW copy -> Starting
+//	snapshot lock -> validate -> Create -> private writable disks -> Starting
 //	                                      -> rebind VMM -> guest network -> Running
 func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReference string, options CloneOptions) (result types.Sandbox, returnErr error) {
 	if s == nil || s.lifecycle == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || s.now == nil {
@@ -123,6 +123,9 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	} else if !info.Mode().IsRegular() || info.Size() != config.Storage {
 		return types.Sandbox{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("snapshot COW size or file type is invalid"))
 	}
+	if err := validateCapturedDataDisks(snapshotDir, config.DataDisks); err != nil {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err)
+	}
 	if validator, ok := backend.(vmm.RestoreValidator); ok {
 		if err := validator.ValidateRestore(ctx, snapshotDir); err != nil {
 			return types.Sandbox{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err)
@@ -141,7 +144,7 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	}
 	created, err := s.lifecycle.Create(ctx, CreateSandboxRequest{
 		ImageReference: capture.ImageDigest.String(), Config: config, VMM: capture.VMM,
-		cloneDiskSource: snapshotCOW,
+		cloneDiskSource: snapshotCOW, cloneDataSource: snapshotDir,
 	})
 	if err != nil {
 		return created, err
@@ -194,10 +197,17 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	if err := s.reporter.Status("restoring private VMM state"); err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, vmm.Process{})
 	}
-	process, err := cloner.Clone(ctx, vmm.ClonePlan{RestorePlan: vmm.RestorePlan{
-		SandboxID: starting.ID, Generation: starting.Generation, CPUs: starting.Config.CPUs,
-		SnapshotDir: snapshotDir, Network: starting.Network,
-	}, WritableDisk: liveCOW, ImageDisks: launch.Disks[:len(launch.Disks)-1], Kernel: launch.Kernel, Initrd: launch.Initrd})
+	imageDisks, dataDisks, err := cloneDiskBindings(launch, len(config.DataDisks))
+	if err != nil {
+		return starting, s.lifecycle.failStart(ctx, backend, starting, "clone disk bindings", err, vmm.Process{})
+	}
+	process, err := cloner.Clone(ctx, vmm.ClonePlan{
+		RestorePlan: vmm.RestorePlan{
+			SandboxID: starting.ID, Generation: starting.Generation, CPUs: starting.Config.CPUs,
+			SnapshotDir: snapshotDir, Network: starting.Network,
+		}, WritableDisk: liveCOW, ImageDisks: imageDisks,
+		DataDisks: dataDisks, Kernel: launch.Kernel, Initrd: launch.Initrd,
+	})
 	if err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "clone VMM", err, process)
 	}

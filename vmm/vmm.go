@@ -50,7 +50,7 @@ type LaunchPlan struct {
 	Initrd string
 	// Cmdline carries the versioned boot profile parameters.
 	Cmdline string
-	// Disks are attached base-to-top followed by the private COW disk.
+	// Disks are image layers, the private COW disk, then managed data disks.
 	Disks []Disk
 	// Network is the validated host-to-VMM handoff. Its zero value disables
 	// network attachment and namespace entry.
@@ -72,18 +72,28 @@ func (p LaunchPlan) Validate() error {
 		return errors.New("launch plan requires absolute boot artifacts, a cmdline, image layers, and COW")
 	}
 	seen := make(map[string]bool, len(p.Disks))
+	cowSeen := false
 	for position, disk := range p.Disks {
 		if !filepath.IsAbs(disk.Path) || disk.Serial == "" || seen[disk.Serial] {
 			return errors.New("launch plan contains an invalid or duplicate disk")
 		}
 		seen[disk.Serial] = true
-		last := position == len(p.Disks)-1
-		if last != (disk.Serial == COWSerial && !disk.ReadOnly) {
-			return errors.New("launch plan must end with one writable kumabox-cow disk")
+		switch {
+		case disk.Serial == COWSerial:
+			if cowSeen || position == 0 || disk.ReadOnly {
+				return errors.New("launch plan requires one writable COW after image layers")
+			}
+			cowSeen = true
+		case !cowSeen:
+			if !disk.ReadOnly || disk.Serial != fmt.Sprintf("%s%d", LayerSerialPrefix, position) {
+				return errors.New("image disks must be read-only and serialed by manifest position")
+			}
+		case disk.ReadOnly || disk.Serial == "" || strings.HasPrefix(disk.Serial, LayerSerialPrefix):
+			return errors.New("managed data disks must be writable and follow the COW")
 		}
-		if !last && (!disk.ReadOnly || disk.Serial != fmt.Sprintf("%s%d", LayerSerialPrefix, position)) {
-			return errors.New("image disks must be read-only and serialed by manifest position")
-		}
+	}
+	if !cowSeen {
+		return errors.New("launch plan requires a COW disk")
 	}
 	if err := p.Network.Validate(); err != nil {
 		return fmt.Errorf("launch network: %w", err)
@@ -265,6 +275,13 @@ func (p ClonePlan) Validate() error {
 		if !filepath.IsAbs(disk.Path) || !disk.ReadOnly || disk.Serial != fmt.Sprintf("%s%d", LayerSerialPrefix, position) {
 			return errors.New("clone image layers must be read-only and ordered by manifest position")
 		}
+	}
+	seenData := make(map[string]bool, len(p.DataDisks))
+	for _, disk := range p.DataDisks {
+		if !filepath.IsAbs(disk.Path) || disk.ReadOnly || disk.Serial == COWSerial || strings.HasPrefix(disk.Serial, LayerSerialPrefix) || seenData[disk.Serial] {
+			return errors.New("clone data disks must be writable, unique, and target-owned")
+		}
+		seenData[disk.Serial] = true
 	}
 	return nil
 }

@@ -430,6 +430,35 @@ func TestSaveSnapshotPublishesCompleteCapture(t *testing.T) {
 	}
 }
 
+func TestSaveSnapshotIncludesManagedDataDisks(t *testing.T) {
+	service, sandboxService, _ := newTestSnapshotService(t)
+	catalog := sandboxService.dependencies.catalog.(*fakeCatalog)
+	catalog.record.Config.DataDisks = []types.DataDiskSpec{{Name: "db", Size: types.MinDataDiskSize, FSType: "ext4"}}
+	dataPath, err := sandboxService.dependencies.paths.DataDisk(fixedID, "db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dataPath, []byte("live-data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := testRuntime(t, sandboxService).snapshotPlan
+	if len(plan.WritableFiles) != 2 || filepath.Base(plan.WritableFiles[1].Source) != "data-db.raw" ||
+		filepath.Base(plan.WritableFiles[1].Destination) != "data-db.raw" {
+		t.Fatalf("capture writable files = %+v", plan.WritableFiles)
+	}
+	artifactDir, err := service.paths.Dir(capture.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(artifactDir, "data-db.raw")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSnapshotReadRefreshesAccessTime(t *testing.T) {
 	service, _, _ := newTestSnapshotService(t)
 	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "exported"})

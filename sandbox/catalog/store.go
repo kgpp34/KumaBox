@@ -61,6 +61,8 @@ type recordData struct {
 	Memory int64 `json:"memory"`
 	// Storage is logical COW capacity in bytes.
 	Storage int64 `json:"storage"`
+	// DataDisks are managed writable disks in attachment order.
+	DataDisks []types.DataDiskSpec `json:"data_disks,omitempty"`
 	// NICs is the current network interface count.
 	NICs int `json:"nics,omitempty"`
 	// NetworkName is the resolved CNI conflist name.
@@ -589,7 +591,7 @@ func deleteRecord(ctx context.Context, writer metadata.Writer, record types.Sand
 func encode(record types.Sandbox) recordData {
 	data := recordData{
 		ID: record.ID.String(), Name: record.Config.Name, CPUs: record.Config.CPUs,
-		Memory: record.Config.Memory, Storage: record.Config.Storage, NICs: record.Config.NICs,
+		Memory: record.Config.Memory, Storage: record.Config.Storage, DataDisks: record.Config.DataDisks, NICs: record.Config.NICs,
 		NetworkName: record.Config.NetworkName,
 		ImageDigest: record.ImageDigest.String(), VMM: string(record.VMM), State: string(record.State),
 		Generation: record.Generation, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
@@ -622,7 +624,7 @@ func decode(raw []byte) (types.Sandbox, error) {
 	}
 	record := types.Sandbox{
 		ID: id, Config: types.SandboxConfig{
-			Name: data.Name, CPUs: data.CPUs, Memory: data.Memory, Storage: data.Storage,
+			Name: data.Name, CPUs: data.CPUs, Memory: data.Memory, Storage: data.Storage, DataDisks: data.DataDisks,
 			NICs: data.NICs, NetworkName: data.NetworkName,
 		},
 		ImageDigest: digest, VMM: types.VMMType(data.VMM), State: types.SandboxState(data.State), Generation: data.Generation,

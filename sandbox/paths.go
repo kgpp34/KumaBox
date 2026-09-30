@@ -58,6 +58,18 @@ func (p Paths) COW(id types.SandboxID) (string, error) {
 	return storage.Join(dir, "cow.raw")
 }
 
+// DataDisk returns a sandbox-owned data disk path after validating its name.
+func (p Paths) DataDisk(id types.SandboxID, name string) (string, error) {
+	if err := (types.DataDiskSpec{Name: name, Size: types.MinDataDiskSize, FSType: "none"}).Validate(); err != nil {
+		return "", err
+	}
+	dir, err := p.Dir(id)
+	if err != nil {
+		return "", err
+	}
+	return storage.Join(dir, types.DataDiskFile(name))
+}
+
 // Lock returns the stable operation lock path for an ID.
 func (p Paths) Lock(id types.SandboxID) (string, error) {
 	if _, err := types.ParseSandboxID(id.String()); err != nil {

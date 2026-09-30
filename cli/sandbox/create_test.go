@@ -45,6 +45,32 @@ func TestParseBytes(t *testing.T) {
 	}
 }
 
+func TestParseManagedDataDisks(t *testing.T) {
+	options := defaultCreateOptions()
+	options.name = "box"
+	options.dataDisks = []string{"name=db,size=20GiB", "name=scratch,size=16MiB,fstype=none"}
+	request, err := options.request("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Config.DataDisks) != 2 || request.Config.DataDisks[0].Size != 20<<30 || request.Config.DataDisks[1].FSType != "none" {
+		t.Fatalf("parsed data disks = %+v", request.Config.DataDisks)
+	}
+	options.dataDisks = []string{"size=16MiB", "name=data1,size=16MiB"}
+	request, err = options.request("demo")
+	if err != nil || request.Config.DataDisks[0].Name != "data2" {
+		t.Fatalf("auto-named disks = %+v, %v", request.Config.DataDisks, err)
+	}
+	options.dataDisks = []string{"name=db,size=20GiB", "name=db,size=20GiB"}
+	if _, err := options.request("demo"); err == nil {
+		t.Fatal("duplicate data disk name was accepted")
+	}
+	options.dataDisks = []string{"name=db,size=20GiB,mount=/data"}
+	if _, err := options.request("demo"); err == nil {
+		t.Fatal("unsupported data disk option was silently accepted")
+	}
+}
+
 func TestCreateCommandMapsResourceValidationToFlags(t *testing.T) {
 	tests := []struct {
 		name string

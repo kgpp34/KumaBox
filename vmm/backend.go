@@ -123,6 +123,8 @@ type ClonePlan struct {
 	WritableDisk string
 	// ImageDisks are read-only layers in manifest order at the target data root.
 	ImageDisks []Disk
+	// DataDisks are target-owned copies of the captured writable disks.
+	DataDisks []Disk
 	// Kernel and Initrd are the target root's selected boot artifacts.
 	Kernel string
 	Initrd string
