@@ -183,11 +183,29 @@ func (d *Driver) Launch(ctx context.Context, plan vmm.LaunchPlan) (result vmm.Pr
 	if err := d.paths.WriteProcess(result); err != nil {
 		return result, fmt.Errorf("persist VMM process identity: %w", err)
 	}
-	go func() { _ = command.Wait() }()
+	exited := make(chan error, 1)
+	go func() { exited <- command.Wait() }()
 	if err := d.WaitReady(ctx, result); err != nil {
-		return result, err
+		return result, withProcessExit(err, exited)
 	}
 	return result, nil
+}
+
+// withProcessExit adds the child's exit status when readiness lost the VMM.
+// WaitReady can observe /proc disappearance just before Cmd.Wait publishes its
+// result, so give the reaper a short window without delaying normal startup.
+func withProcessExit(readinessErr error, exited <-chan error) error {
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case exitErr := <-exited:
+		if exitErr == nil {
+			return errors.Join(readinessErr, errors.New("cloud-hypervisor exited with status 0"))
+		}
+		return errors.Join(readinessErr, fmt.Errorf("cloud-hypervisor process: %w", exitErr))
+	case <-timer.C:
+		return readinessErr
+	}
 }
 
 // Locate verifies process generation, boot ID, executable, and unique API

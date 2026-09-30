@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,6 +141,22 @@ func TestWaitReadyTimesOutWhileAPIIsUnavailable(t *testing.T) {
 	})
 	if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeArtifactUnavailable {
 		t.Fatalf("timeout code = %q, %v; error = %v", code, ok, err)
+	}
+}
+
+func TestWithProcessExitPreservesReadinessAndExitErrors(t *testing.T) {
+	readinessErr := errors.New("VMM disappeared before Running")
+	exitErr := errors.New("signal: killed")
+	exited := make(chan error, 1)
+	exited <- exitErr
+	err := withProcessExit(readinessErr, exited)
+	if !errors.Is(err, readinessErr) || !errors.Is(err, exitErr) {
+		t.Fatalf("withProcessExit() = %v, want both errors", err)
+	}
+	exited <- nil
+	err = withProcessExit(readinessErr, exited)
+	if !errors.Is(err, readinessErr) || !strings.Contains(err.Error(), "exited with status 0") {
+		t.Fatalf("withProcessExit() = %v, want successful child exit", err)
 	}
 }
 
