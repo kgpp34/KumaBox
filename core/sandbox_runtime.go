@@ -12,7 +12,6 @@ import (
 	"github.com/kumabox/kumabox/agent"
 	"github.com/kumabox/kumabox/disk"
 	"github.com/kumabox/kumabox/errdefs"
-	filelock "github.com/kumabox/kumabox/lock/flock"
 	"github.com/kumabox/kumabox/types"
 	"github.com/kumabox/kumabox/vmm"
 )
@@ -35,33 +34,18 @@ func (s *SandboxService) Start(ctx context.Context, reference string) (result ty
 	if err := s.dependencies.reporter.Status("resolving sandbox"); err != nil {
 		return types.Sandbox{}, err
 	}
-	record, err := s.dependencies.catalog.Resolve(ctx, reference)
+	record, unlock, err := s.lockExistingSandbox(ctx, sandboxLockRequest{
+		reference: reference, operation: "start sandbox", retryHint: "retry the start", reportWait: true,
+	})
 	if err != nil {
 		return types.Sandbox{}, err
-	}
-	lockPath, err := s.dependencies.paths.Lock(record.ID)
-	if err != nil {
-		return types.Sandbox{}, err
-	}
-	if err := s.dependencies.reporter.Status("waiting for sandbox operation lock"); err != nil {
-		return types.Sandbox{}, err
-	}
-	lock := filelock.New(lockPath)
-	if err := lock.Lock(ctx); err != nil {
-		return types.Sandbox{}, errdefs.Context(err, "start sandbox", reference, "lock", "retry the start", false)
 	}
 	committed := false
 	defer func() {
-		if unlockErr := lock.Unlock(context.WithoutCancel(ctx)); unlockErr != nil {
+		if unlockErr := unlock(); unlockErr != nil {
 			returnErr = errdefs.Context(errors.Join(returnErr, unlockErr), "start sandbox", reference, "unlock", "inspect the sandbox before retrying", committed)
 		}
 	}()
-
-	// The first resolve selects the lock; this second resolve is authoritative.
-	record, err = s.dependencies.catalog.Resolve(ctx, record.ID.String())
-	if err != nil {
-		return types.Sandbox{}, err
-	}
 	backend, err := s.dependencies.runtimes.Backend(record.VMM)
 	if err != nil {
 		return record, err
@@ -362,33 +346,18 @@ func (s *SandboxService) Stop(ctx context.Context, reference string) (result typ
 	if err := s.dependencies.reporter.Status("resolving sandbox"); err != nil {
 		return types.Sandbox{}, err
 	}
-	record, err := s.dependencies.catalog.Resolve(ctx, reference)
+	record, unlock, err := s.lockExistingSandbox(ctx, sandboxLockRequest{
+		reference: reference, operation: "stop sandbox", retryHint: "retry the stop", reportWait: true,
+	})
 	if err != nil {
 		return types.Sandbox{}, err
-	}
-	lockPath, err := s.dependencies.paths.Lock(record.ID)
-	if err != nil {
-		return types.Sandbox{}, err
-	}
-	if err := s.dependencies.reporter.Status("waiting for sandbox operation lock"); err != nil {
-		return types.Sandbox{}, err
-	}
-	lock := filelock.New(lockPath)
-	if err := lock.Lock(ctx); err != nil {
-		return types.Sandbox{}, errdefs.Context(err, "stop sandbox", reference, "lock", "retry the stop", false)
 	}
 	committed := false
 	defer func() {
-		if unlockErr := lock.Unlock(context.WithoutCancel(ctx)); unlockErr != nil {
+		if unlockErr := unlock(); unlockErr != nil {
 			returnErr = errdefs.Context(errors.Join(returnErr, unlockErr), "stop sandbox", reference, "unlock", "inspect the sandbox before retrying", committed)
 		}
 	}()
-
-	// The first resolve selects the lock; this second resolve is authoritative.
-	record, err = s.dependencies.catalog.Resolve(ctx, record.ID.String())
-	if err != nil {
-		return types.Sandbox{}, err
-	}
 	backend, err := s.dependencies.runtimes.Backend(record.VMM)
 	if err != nil {
 		return record, err
@@ -589,30 +558,19 @@ func (s *SandboxService) locateRunning(ctx context.Context, reference, operation
 	if reference == "" {
 		return nil, vmm.Process{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("SANDBOX must not be empty"))
 	}
-	record, err := s.dependencies.catalog.Resolve(ctx, reference)
+	record, unlock, err := s.lockExistingSandbox(ctx, sandboxLockRequest{
+		reference: reference, operation: operation, retryHint: "retry the operation",
+	})
 	if err != nil {
 		return nil, vmm.Process{}, err
-	}
-	lockPath, err := s.dependencies.paths.Lock(record.ID)
-	if err != nil {
-		return nil, vmm.Process{}, err
-	}
-	lock := filelock.New(lockPath)
-	if err := lock.Lock(ctx); err != nil {
-		return nil, vmm.Process{}, errdefs.Context(err, operation, reference, "lock", "retry the operation", false)
 	}
 	defer func() {
-		if unlockErr := lock.Unlock(context.WithoutCancel(ctx)); unlockErr != nil {
+		if unlockErr := unlock(); unlockErr != nil {
 			backend = nil
 			process = vmm.Process{}
 			returnErr = errdefs.Context(errors.Join(returnErr, unlockErr), operation, reference, "unlock", "retry the operation", false)
 		}
 	}()
-
-	record, err = s.dependencies.catalog.Resolve(ctx, record.ID.String())
-	if err != nil {
-		return nil, vmm.Process{}, err
-	}
 	if record.State != types.SandboxStateRunning {
 		return nil, vmm.Process{}, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s is %s, not running", record.ID, record.State))
 	}

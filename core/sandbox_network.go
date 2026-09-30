@@ -9,7 +9,6 @@ import (
 
 	"github.com/kumabox/kumabox/agent"
 	"github.com/kumabox/kumabox/errdefs"
-	filelock "github.com/kumabox/kumabox/lock/flock"
 	"github.com/kumabox/kumabox/network"
 	"github.com/kumabox/kumabox/types"
 	"github.com/kumabox/kumabox/vmm"
@@ -28,27 +27,17 @@ func (s *SandboxService) NetResize(ctx context.Context, reference string, target
 	if reference == "" || target < 0 || target > types.MaxSandboxNICs {
 		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("SANDBOX and --nics between 0 and %d are required", types.MaxSandboxNICs))
 	}
-	record, err := s.dependencies.catalog.Resolve(ctx, reference)
+	record, unlock, err := s.lockExistingSandbox(ctx, sandboxLockRequest{
+		reference: reference, operation: "resize sandbox network", retryHint: "retry the resize",
+	})
 	if err != nil {
 		return types.Sandbox{}, err
-	}
-	lockPath, err := s.dependencies.paths.Lock(record.ID)
-	if err != nil {
-		return types.Sandbox{}, err
-	}
-	lock := filelock.New(lockPath)
-	if err := lock.Lock(ctx); err != nil {
-		return types.Sandbox{}, errdefs.Context(err, "resize sandbox network", reference, "lock", "retry the resize", false)
 	}
 	defer func() {
-		if err := lock.Unlock(context.WithoutCancel(ctx)); err != nil {
+		if err := unlock(); err != nil {
 			returnErr = errors.Join(returnErr, err)
 		}
 	}()
-	record, err = s.dependencies.catalog.Resolve(ctx, record.ID.String())
-	if err != nil {
-		return types.Sandbox{}, err
-	}
 	if record.State != types.SandboxStateRunning || record.Generation < 2 {
 		return record, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s is %s, not Running", record.ID, record.State))
 	}

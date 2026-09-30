@@ -240,34 +240,19 @@ func (s *SandboxService) Remove(ctx context.Context, reference string) (result t
 	if err := s.dependencies.reporter.Status("resolving sandbox"); err != nil {
 		return types.Sandbox{}, err
 	}
-	record, err := s.dependencies.catalog.Resolve(ctx, reference)
+	record, unlock, err := s.lockExistingSandbox(ctx, sandboxLockRequest{
+		reference: reference, operation: "remove sandbox", retryHint: "retry the removal", reportWait: true,
+	})
 	if err != nil {
 		return types.Sandbox{}, err
-	}
-	lockPath, err := s.dependencies.paths.Lock(record.ID)
-	if err != nil {
-		return types.Sandbox{}, err
-	}
-	if err := s.dependencies.reporter.Status("waiting for sandbox operation lock"); err != nil {
-		return types.Sandbox{}, err
-	}
-	lock := filelock.New(lockPath)
-	if err := lock.Lock(ctx); err != nil {
-		return types.Sandbox{}, errdefs.Context(err, "remove sandbox", reference, "lock", "retry the removal", false)
 	}
 	committed := false
 	defer func() {
-		unlockErr := lock.Unlock(context.WithoutCancel(ctx))
+		unlockErr := unlock()
 		if unlockErr != nil {
 			returnErr = errdefs.Context(errors.Join(returnErr, unlockErr), "remove sandbox", reference, "unlock", "inspect the sandbox removal state before retrying", committed)
 		}
 	}()
-	// The first resolve selects the lock; this second resolve supplies the
-	// authoritative generation and persisted backend for cleanup.
-	record, err = s.dependencies.catalog.Resolve(ctx, record.ID.String())
-	if err != nil {
-		return types.Sandbox{}, err
-	}
 	backend, err := s.dependencies.runtimes.Backend(record.VMM)
 	if err != nil {
 		return record, err
