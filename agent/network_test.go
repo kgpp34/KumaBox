@@ -94,3 +94,11 @@ func TestNetworkConfigRejectsUnsafeValues(t *testing.T) {
 		}
 	}
 }
+
+func TestNetworkConfigAcceptsIPv6DNS(t *testing.T) {
+	configuration := testNetworkConfig()
+	configuration.DNSServers = []string{"2001:4860:4860::8888"}
+	if err := configuration.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

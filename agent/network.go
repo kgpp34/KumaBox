@@ -38,7 +38,7 @@ func (c NetworkConfig) Validate() error {
 		return errors.New("invalid guest hostname, NIC count, or DNS count")
 	}
 	for _, server := range c.DNSServers {
-		if net.ParseIP(server).To4() == nil {
+		if net.ParseIP(server) == nil {
 			return fmt.Errorf("invalid guest DNS address %q", server)
 		}
 	}
