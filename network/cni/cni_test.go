@@ -19,6 +19,11 @@ import (
 	"github.com/kumabox/kumabox/types"
 )
 
+// newTestProvider injects host and plugin seams without opening real networks.
+func newTestProvider(options Options, store metadata.Store, lists map[string]*libcni.NetworkConfigList, defaultName string, executor pluginRuntime, host platform) *Provider {
+	return &Provider{options: options, store: store, lists: lists, defaultName: defaultName, runtime: executor, platform: host}
+}
+
 type fakeRuntime struct {
 	addError error
 	delError error

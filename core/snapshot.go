@@ -167,12 +167,20 @@ func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotReque
 	if err != nil {
 		return types.Snapshot{}, err
 	}
+	var hibernator vmm.Hibernator
+	var snapshotter vmm.Snapshotter
 	if hibernate {
-		if _, ok := backend.(vmm.Hibernator); !ok {
+		var ok bool
+		hibernator, ok = backend.(vmm.Hibernator)
+		if !ok {
 			return types.Snapshot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, fmt.Errorf("VMM backend %q does not support hibernate", record.VMM))
 		}
-	} else if _, ok := backend.(vmm.Snapshotter); !ok {
-		return types.Snapshot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, fmt.Errorf("VMM backend %q does not support snapshots", record.VMM))
+	} else {
+		var ok bool
+		snapshotter, ok = backend.(vmm.Snapshotter)
+		if !ok {
+			return types.Snapshot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, fmt.Errorf("VMM backend %q does not support snapshots", record.VMM))
+		}
 	}
 	observation, err := backend.Observe(ctx, record.ID, record.Generation-1)
 	if err != nil {
@@ -305,7 +313,7 @@ func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotReque
 		return nil
 	}
 	if hibernate {
-		if err := backend.(vmm.Hibernator).Hibernate(ctx, plan, persist); err != nil {
+		if err := hibernator.Hibernate(ctx, plan, persist); err != nil {
 			return result, errdefs.Context(err, operation, request.SandboxReference, "capture or stop", "inspect the sandbox and snapshot before retrying", result.ID != "" || stopping.Generation > 0)
 		}
 		if err := s.reporter.Status("cleaning stopped runtime"); err != nil {
@@ -321,7 +329,7 @@ func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotReque
 			return result, errdefs.Context(err, operation, request.SandboxReference, "mark stopped", "retry stop to finish cleanup", true)
 		}
 	} else {
-		if err := backend.(vmm.Snapshotter).Snapshot(ctx, plan); err != nil {
+		if err := snapshotter.Snapshot(ctx, plan); err != nil {
 			return types.Snapshot{}, errdefs.Context(err, operation, request.SandboxReference, "capture", "inspect the running sandbox and retry", false)
 		}
 		if err := persist(); err != nil {

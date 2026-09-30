@@ -36,13 +36,19 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 	if request.VMM == "" {
 		request.VMM = s.dependencies.defaultVMM
 	}
+	var cloner disk.Cloner
 	if request.cloneDiskSource != "" {
-		if _, ok := s.dependencies.disks.(disk.Cloner); !ok {
+		var ok bool
+		cloner, ok = s.dependencies.disks.(disk.Cloner)
+		if !ok {
 			return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, errors.New("disk backend does not support snapshot cloning"))
 		}
 	}
+	var dataStore disk.DataStore
 	if len(request.Config.DataDisks) > 0 {
-		if _, ok := s.dependencies.disks.(disk.DataStore); !ok {
+		var ok bool
+		dataStore, ok = s.dependencies.disks.(disk.DataStore)
+		if !ok {
 			return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, errors.New("disk backend does not support managed data disks"))
 		}
 	}
@@ -165,7 +171,7 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 	}
 	var diskErr error
 	if request.cloneDiskSource != "" {
-		diskErr = s.dependencies.disks.(disk.Cloner).Clone(ctx, id, request.Config.Storage, request.cloneDiskSource)
+		diskErr = cloner.Clone(ctx, id, request.Config.Storage, request.cloneDiskSource)
 	} else {
 		diskErr = s.dependencies.disks.Prepare(ctx, id, request.Config.Storage)
 	}
@@ -173,7 +179,6 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 		return types.Sandbox{}, s.compensate(ctx, record, "disk", diskErr)
 	}
 	if len(request.Config.DataDisks) > 0 {
-		dataStore := s.dependencies.disks.(disk.DataStore)
 		if request.cloneDataSource != "" {
 			if request.cloneDataCount > len(request.Config.DataDisks) || request.cloneDataCount < 0 {
 				diskErr = errors.New("invalid inherited data disk count")

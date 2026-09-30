@@ -412,9 +412,3 @@ func removeInterface(record *recordData, index int) {
 		record.Interfaces = slices.Delete(record.Interfaces, position, position+1)
 	}
 }
-
-// newTestProvider constructs a provider around injected side-effect seams. It
-// stays unexported so production composition always uses New.
-func newTestProvider(options Options, store metadata.Store, lists map[string]*libcni.NetworkConfigList, defaultName string, executor pluginRuntime, host platform) *Provider {
-	return &Provider{options: options, store: store, lists: lists, defaultName: defaultName, runtime: executor, platform: host}
-}
