@@ -16,8 +16,8 @@ const nicEjectTimeout = 20 * time.Second
 
 var _ vmm.NetworkHotplugger = (*Driver)(nil)
 
-// liveNetworkInfo verifies the owned process before using its private API.
-func (d *Driver) liveNetworkInfo(ctx context.Context, process vmm.Process) (vmInfo, error) {
+// liveInfo verifies the owned process before using its private API.
+func (d *Driver) liveInfo(ctx context.Context, process vmm.Process) (vmInfo, error) {
 	if err := process.Validate(); err != nil {
 		return vmInfo{}, err
 	}
@@ -40,7 +40,7 @@ func (d *Driver) liveNetworkInfo(ctx context.Context, process vmm.Process) (vmIn
 
 // LiveNICs reports the TAP-to-device map for crash reconciliation.
 func (d *Driver) LiveNICs(ctx context.Context, process vmm.Process) ([]vmm.NetworkDevice, error) {
-	info, err := d.liveNetworkInfo(ctx, process)
+	info, err := d.liveInfo(ctx, process)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +60,7 @@ func (d *Driver) AddNIC(ctx context.Context, process vmm.Process, device types.N
 	if err := device.Validate(); err != nil {
 		return err
 	}
-	if _, err := d.liveNetworkInfo(ctx, process); err != nil {
+	if _, err := d.liveInfo(ctx, process); err != nil {
 		return err
 	}
 	payload, err := json.Marshal(map[string]any{
@@ -80,7 +80,7 @@ func (d *Driver) RemoveNIC(ctx context.Context, process vmm.Process, id string) 
 	if id == "" {
 		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("NIC device ID is empty"))
 	}
-	info, err := d.liveNetworkInfo(ctx, process)
+	info, err := d.liveInfo(ctx, process)
 	if err != nil {
 		return err
 	}
@@ -97,7 +97,7 @@ func (d *Driver) RemoveNIC(ctx context.Context, process vmm.Process, id string) 
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		info, err = d.liveNetworkInfo(ctx, process)
+		info, err = d.liveInfo(ctx, process)
 		if err != nil {
 			return errors.Join(requestErr, err)
 		}

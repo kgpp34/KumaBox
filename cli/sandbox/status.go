@@ -15,9 +15,10 @@ import (
 
 type statusOutput struct {
 	sandboxOutput
-	Runtime string `json:"runtime_state,omitempty"`
-	PID     int    `json:"pid,omitempty"`
-	Stale   bool   `json:"stale,omitempty"`
+	Runtime         string                 `json:"runtime_state,omitempty"`
+	PID             int                    `json:"pid,omitempty"`
+	Stale           bool                   `json:"stale,omitempty"`
+	AttachedDevices *types.AttachedDevices `json:"attached_devices,omitempty"`
 }
 
 // NewStatusCommand builds a read-only view of durable and live sandbox state.
@@ -56,10 +57,14 @@ func writeStatusJSON(writer io.Writer, statuses []core.SandboxStatus) error {
 	return encoder.Encode(result)
 }
 
-func writeStatusDetailJSON(writer io.Writer, status core.SandboxStatus) error {
+func writeStatusDetailJSON(writer io.Writer, status core.SandboxStatus, devices types.AttachedDevices) error {
 	encoder := json.NewEncoder(writer)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(projectStatus(status))
+	output := projectStatus(status)
+	if len(devices.Disks) > 0 || len(devices.Devices) > 0 {
+		output.AttachedDevices = &devices
+	}
+	return encoder.Encode(output)
 }
 
 func writeStatusTable(writer io.Writer, statuses []core.SandboxStatus) error {

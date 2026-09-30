@@ -73,6 +73,8 @@ type SandboxReporter interface {
 // sandboxDependencies names every adapter and policy consumed by SandboxService.
 // Keeping construction package-local avoids turning test seams into public API.
 type sandboxDependencies struct {
+	// roots fence external volumes away from KumaBox-owned cleanup trees.
+	roots storage.Roots
 	// paths supplies the stable per-sandbox operation lock path.
 	paths sandbox.Paths
 	// images closes the verify/pin race with image removal.
@@ -201,7 +203,7 @@ func OpenSandbox(ctx context.Context, configuration config.Config, reporter Sand
 	imageCatalog := imagecatalog.New(store, imagecatalog.WithImageUsage(imageUsage{}))
 	sandboxCatalog := sandboxcatalog.New(store, imagecatalog.Reader{})
 	service, err := newSandboxService(sandboxDependencies{
-		paths: sandboxPaths, imagePaths: imagePaths, images: images.NewGuard(imagePaths, imageCatalog),
+		roots: configuration.Paths, paths: sandboxPaths, imagePaths: imagePaths, images: images.NewGuard(imagePaths, imageCatalog),
 		catalog: sandboxCatalog, disks: disks, networks: networks, runtimes: runtimes, reporter: reporter,
 		store: store, defaultVMM: defaultVMM, defaultNetwork: types.NetworkBackendCNI,
 		cleanupTimeout: max(configuration.Sandbox.CleanupTimeout, configuration.Network.CleanupTimeout),

@@ -29,7 +29,11 @@ func NewInspectCommand(configuration configProvider) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeStatusDetailJSON(command.OutOrStdout(), statuses[0])
+			devices, err := service.AttachedDevices(command.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return writeStatusDetailJSON(command.OutOrStdout(), statuses[0], devices)
 		},
 	}
 	return command

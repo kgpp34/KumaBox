@@ -47,6 +47,22 @@ type NetworkHotplugger interface {
 	RemoveNIC(context.Context, Process, string) error
 }
 
+// DiskHotplugger manages external raw disks for one VMM run. Its methods never
+// create or delete the backing file; callers serialize them with capture/stop.
+type DiskHotplugger interface {
+	AttachedDisks(context.Context, Process) ([]types.AttachedDisk, error)
+	AddDisk(context.Context, Process, types.ExternalDisk) error
+	RemoveDisk(context.Context, Process, string) error
+}
+
+// PCIHotplugger manages VFIO passthrough devices for one VMM run. Host binding
+// and IOMMU configuration remain administrator responsibilities.
+type PCIHotplugger interface {
+	AttachedPCIDevices(context.Context, Process) ([]types.AttachedPCIDevice, error)
+	AddPCIDevice(context.Context, Process, types.PCIDevice) error
+	RemovePCIDevice(context.Context, Process, string) error
+}
+
 // SnapshotFile describes one writable disk copied inside the VMM pause window.
 type SnapshotFile struct {
 	// Source is the current sandbox-owned writable disk.

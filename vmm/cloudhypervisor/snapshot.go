@@ -81,8 +81,27 @@ func (d *Driver) pauseForCapture(ctx context.Context, plan vmm.SnapshotPlan) err
 	if observation.State != vmm.ProcessRunning || observation.Process.PID != plan.Process.PID || observation.Process.StartTicks != plan.Process.StartTicks {
 		return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("sandbox VMM changed before snapshot capture"))
 	}
+	info, err := d.liveInfo(ctx, plan.Process)
+	if err != nil {
+		return err
+	}
+	if err := refuseExternalDevices(info); err != nil {
+		return err
+	}
 	if err := d.snapshotAction(ctx, plan.Process.APISocket, "vm.pause", nil, probeTimeout); err != nil {
 		return fmt.Errorf("pause cloud-hypervisor: %w", err)
+	}
+	return nil
+}
+
+// refuseExternalDevices keeps captures independent of host-owned resources
+// that are neither copied into the snapshot nor guaranteed after restart.
+func refuseExternalDevices(info vmInfo) error {
+	if len(info.Config.FS) > 0 || len(info.Config.Devices) > 0 {
+		return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("detach runtime file shares and PCI devices before snapshot or hibernate"))
+	}
+	if disks := runtimeDisks(info); len(disks) > 0 {
+		return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("detach external disk %q before snapshot or hibernate", disks[0].Name))
 	}
 	return nil
 }

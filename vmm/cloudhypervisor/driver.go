@@ -423,8 +423,25 @@ type vmInfo struct {
 			TAP string `json:"tap"`
 			MAC string `json:"mac"`
 		} `json:"net"`
+		Disks   []vmDiskInfo      `json:"disks"`
+		Devices []vmPCIDeviceInfo `json:"devices"`
+		FS      []struct {
+			ID string `json:"id"`
+		} `json:"fs"`
 	} `json:"config"`
 	DeviceTree map[string]json.RawMessage `json:"device_tree"`
+}
+
+type vmDiskInfo struct {
+	ID       string `json:"id"`
+	Path     string `json:"path"`
+	Serial   string `json:"serial"`
+	ReadOnly bool   `json:"readonly"`
+}
+
+type vmPCIDeviceInfo struct {
+	ID   string `json:"id"`
+	Path string `json:"path"`
 }
 
 // queryInfo performs one bounded vm.info request over the private Unix socket.
