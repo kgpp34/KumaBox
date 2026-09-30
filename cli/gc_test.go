@@ -71,7 +71,7 @@ func TestDaemonStopsWhenContextIsCancelled(t *testing.T) {
 	configuration.Paths = storage.Roots{
 		Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log"),
 	}
-	service, err := core.OpenSnapshots(t.Context(), configuration, nil)
+	service, err := core.OpenMaintenance(t.Context(), configuration)
 	if err != nil {
 		t.Fatal(err)
 	}

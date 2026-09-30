@@ -38,7 +38,7 @@ func TestCollectOrphanImageRemovesUnreferencedArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &SnapshotService{store: store}
+	service := &MaintenanceService{applicationState: &applicationState{store: store}}
 	collected, busy, err := service.collectOrphanImage(t.Context(), paths, digest)
 	if err != nil || busy || !collected {
 		t.Fatalf("image collection = %t, %t, %v", collected, busy, err)
@@ -71,7 +71,7 @@ func TestCollectOrphanImageSkipsBusyDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = owner.Unlock(t.Context()) }()
-	service := &SnapshotService{}
+	service := &MaintenanceService{applicationState: &applicationState{}}
 	collected, busy, err := service.collectOrphanImage(t.Context(), paths, digest)
 	if err != nil || !busy || collected {
 		t.Fatalf("image collection = %t, %t, %v", collected, busy, err)

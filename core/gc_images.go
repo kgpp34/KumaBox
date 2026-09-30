@@ -67,7 +67,7 @@ func sortedImageDigests(candidates map[types.Digest]bool) []types.Digest {
 
 // collectOrphanImage rechecks layer references inside the source digest lock.
 // An importer or remover holding the same lock is retried on the next pass.
-func (s *SnapshotService) collectOrphanImage(ctx context.Context, paths images.Paths, digest types.Digest) (collected, busy bool, returnErr error) {
+func (s *MaintenanceService) collectOrphanImage(ctx context.Context, paths images.Paths, digest types.Digest) (collected, busy bool, returnErr error) {
 	lock := filelock.New(paths.Lock(digest))
 	acquired, err := lock.TryLock(ctx)
 	if err != nil || !acquired {

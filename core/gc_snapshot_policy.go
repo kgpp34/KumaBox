@@ -41,7 +41,7 @@ func (p SnapshotEvictionPolicy) validate() error {
 
 // CollectWithPolicy always runs the ordinary recovery pass first. LRU eviction
 // is opt-in and never used by daemon's periodic orphan sweep.
-func (s *SnapshotService) CollectWithPolicy(ctx context.Context, policy SnapshotEvictionPolicy) (GCReport, error) {
+func (s *MaintenanceService) CollectWithPolicy(ctx context.Context, policy SnapshotEvictionPolicy) (GCReport, error) {
 	if err := policy.validate(); err != nil {
 		return GCReport{}, err
 	}
@@ -140,7 +140,7 @@ func pickSnapshotEvictions(records []types.Snapshot, policy SnapshotEvictionPoli
 
 // evictSnapshot fences a selected access time under the snapshot lock before
 // committing a deletion tombstone. A newer access causes a harmless skip.
-func (s *SnapshotService) evictSnapshot(ctx context.Context, selected types.Snapshot, dryRun bool) (acted, busy bool, returnErr error) {
+func (s *MaintenanceService) evictSnapshot(ctx context.Context, selected types.Snapshot, dryRun bool) (acted, busy bool, returnErr error) {
 	path, err := s.paths.Lock(selected.ID)
 	if err != nil {
 		return false, false, err
@@ -154,7 +154,7 @@ func (s *SnapshotService) evictSnapshot(ctx context.Context, selected types.Snap
 	defer func() {
 		returnErr = errors.Join(returnErr, lock.Unlock(context.WithoutCancel(ctx)))
 		if remove && returnErr == nil {
-			_, returnErr = s.Remove(ctx, selected.ID.String())
+			_, returnErr = s.snapshotService.Remove(ctx, selected.ID.String())
 		}
 	}()
 	current, err := s.snapshots.Resolve(ctx, selected.ID.String())

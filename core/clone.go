@@ -49,7 +49,7 @@ func (s *SnapshotService) Clone(ctx context.Context, snapshotReference, name str
 //	snapshot lock -> validate -> Create -> private writable disks -> Starting
 //	                                      -> rebind VMM -> guest network -> Running
 func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReference string, options CloneOptions) (result types.Sandbox, returnErr error) {
-	if s == nil || s.lifecycle == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || s.now == nil {
+	if s == nil || s.applicationState == nil || s.lifecycle == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || s.now == nil {
 		return types.Sandbox{}, errors.New("snapshot clone service is not configured")
 	}
 	if options.Name == "" || (snapshotReference == "") == (options.SourceDirectory == "") {
@@ -188,7 +188,7 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	if err := s.lifecycle.recoverNetwork(ctx, starting); err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "recover network", err, vmm.Process{})
 	}
-	image, err := s.lifecycle.dependencies.images.WithAvailable(ctx, capture.ImageDigest.String(), func(types.Image) error { return nil })
+	image, err := s.images.WithAvailable(ctx, capture.ImageDigest.String(), func(types.Image) error { return nil })
 	if err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "resolve image", err, vmm.Process{})
 	}
@@ -244,7 +244,7 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 // ensureCloneImage uses only a registry source captured at image pull time.
 // Local import aliases cannot be inferred as registry repositories safely.
 func (s *SnapshotService) ensureCloneImage(ctx context.Context, capture types.Snapshot) (returnErr error) {
-	_, err := s.lifecycle.dependencies.images.WithAvailable(ctx, capture.ImageDigest.String(), func(types.Image) error { return nil })
+	_, err := s.images.WithAvailable(ctx, capture.ImageDigest.String(), func(types.Image) error { return nil })
 	if err == nil {
 		return nil
 	}
@@ -289,7 +289,7 @@ func (s *SnapshotService) ensureCloneImage(ctx context.Context, capture types.Sn
 // configureCloneGuest applies the new MAC/IP map over vsock, which remains
 // available even before the clone has a working guest network.
 func (s *SnapshotService) configureCloneGuest(ctx context.Context, backend vmm.Backend, process vmm.Process, record types.Sandbox) error {
-	script, err := cloneGuestScript(record, s.lifecycle.dependencies.dnsServers)
+	script, err := cloneGuestScript(record, s.dnsServers)
 	if err != nil {
 		return err
 	}

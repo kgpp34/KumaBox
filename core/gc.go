@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/images"
 	imagescatalog "github.com/kumabox/kumabox/images/catalog"
@@ -36,18 +37,41 @@ type GCReport struct {
 	Skipped int        `json:"skipped"`
 }
 
+// MaintenanceService owns cross-module repair and collection workflows.
+type MaintenanceService struct {
+	*applicationState
+	snapshotService *SnapshotService
+}
+
+// OpenMaintenance opens one application state for GC and the supervisor.
+func OpenMaintenance(ctx context.Context, configuration config.Config) (*MaintenanceService, error) {
+	application, err := OpenApplication(ctx, configuration, nil)
+	if err != nil {
+		return nil, err
+	}
+	return application.Maintenance, nil
+}
+
+// Close releases the shared metadata engine.
+func (s *MaintenanceService) Close() error {
+	if s == nil {
+		return nil
+	}
+	return s.close()
+}
+
 // ReconcileSandboxes exposes the same lightweight lifecycle pass used by the
 // full collector without scanning artifact directories on every daemon tick.
-func (s *SnapshotService) ReconcileSandboxes(ctx context.Context) ([]ReconcileAction, int, error) {
-	if s == nil || s.lifecycle == nil {
+func (s *MaintenanceService) ReconcileSandboxes(ctx context.Context) ([]ReconcileAction, int, error) {
+	if s == nil || s.applicationState == nil || s.lifecycle == nil {
 		return nil, 0, errors.New("sandbox reconciliation service is not configured")
 	}
 	return s.lifecycle.ReconcileSandboxes(ctx)
 }
 
 // Status exposes the live VMM observations needed by the optional supervisor.
-func (s *SnapshotService) Status(ctx context.Context) ([]SandboxStatus, error) {
-	if s == nil || s.lifecycle == nil {
+func (s *MaintenanceService) Status(ctx context.Context) ([]SandboxStatus, error) {
+	if s == nil || s.applicationState == nil || s.lifecycle == nil {
 		return nil, errors.New("sandbox status service is not configured")
 	}
 	return s.lifecycle.Status(ctx)
@@ -58,8 +82,8 @@ func (s *SnapshotService) Status(ctx context.Context) ([]SandboxStatus, error) {
 //
 //	discover -> lock each owner -> recheck catalog -> recover or delete
 //	                           \ busy or changed owner -> next pass
-func (s *SnapshotService) Collect(ctx context.Context) (report GCReport, returnErr error) {
-	if s == nil || s.lifecycle == nil || s.store == nil || s.snapshots == nil {
+func (s *MaintenanceService) Collect(ctx context.Context) (report GCReport, returnErr error) {
+	if s == nil || s.applicationState == nil || s.lifecycle == nil || s.store == nil || s.snapshots == nil {
 		return report, errors.New("garbage collector is not configured")
 	}
 	report.Actions = make([]GCAction, 0)
@@ -158,7 +182,7 @@ func (s *SnapshotService) Collect(ctx context.Context) (report GCReport, returnE
 	return report, errors.Join(failures...)
 }
 
-func (s *SnapshotService) discoverSandboxArtifacts(ctx context.Context) (map[types.SandboxID]bool, error) {
+func (s *MaintenanceService) discoverSandboxArtifacts(ctx context.Context) (map[types.SandboxID]bool, error) {
 	paths, err := vmm.NewPaths(s.configuration.Paths)
 	if err != nil {
 		return nil, err
@@ -190,7 +214,7 @@ func (s *SnapshotService) discoverSandboxArtifacts(ctx context.Context) (map[typ
 	}); err != nil {
 		return nil, err
 	}
-	for _, provider := range s.lifecycle.dependencies.networks.Providers() {
+	for _, provider := range s.networks.Providers() {
 		collector, ok := provider.(network.GarbageCollector)
 		if !ok {
 			continue
@@ -206,7 +230,7 @@ func (s *SnapshotService) discoverSandboxArtifacts(ctx context.Context) (map[typ
 	return ids, nil
 }
 
-func (s *SnapshotService) discoverSnapshotArtifacts() (map[types.SnapshotID]bool, map[types.SnapshotID][]string, error) {
+func (s *MaintenanceService) discoverSnapshotArtifacts() (map[types.SnapshotID]bool, map[types.SnapshotID][]string, error) {
 	ids := make(map[types.SnapshotID]bool)
 	restoreStages := make(map[types.SnapshotID][]string)
 	for _, directory := range []string{s.paths.DataDir(), s.paths.StagingDir()} {
@@ -295,7 +319,7 @@ func sortedSnapshotIDs(ids map[types.SnapshotID]bool) []types.SnapshotID {
 	return ordered
 }
 
-func (s *SnapshotService) collectOrphanSandbox(ctx context.Context, id types.SandboxID) (collected, busy bool, returnErr error) {
+func (s *MaintenanceService) collectOrphanSandbox(ctx context.Context, id types.SandboxID) (collected, busy bool, returnErr error) {
 	lockPath, err := s.sandboxPaths.Lock(id)
 	if err != nil {
 		return false, false, err
@@ -337,12 +361,12 @@ func (s *SnapshotService) collectOrphanSandbox(ctx context.Context, id types.San
 			return false, false, err
 		}
 	}
-	for _, provider := range s.lifecycle.dependencies.networks.Providers() {
+	for _, provider := range s.networks.Providers() {
 		if err := provider.Delete(ctx, id); err != nil {
 			return false, false, err
 		}
 	}
-	if err := s.lifecycle.dependencies.disks.Remove(ctx, id); err != nil {
+	if err := s.disks.Remove(ctx, id); err != nil {
 		return false, false, err
 	}
 	for _, backend := range s.runtimes.Backends() {
@@ -353,7 +377,7 @@ func (s *SnapshotService) collectOrphanSandbox(ctx context.Context, id types.San
 	return true, false, nil
 }
 
-func (s *SnapshotService) collectSnapshot(ctx context.Context, id types.SnapshotID, restoreStages []string) (action string, busy bool, returnErr error) {
+func (s *MaintenanceService) collectSnapshot(ctx context.Context, id types.SnapshotID, restoreStages []string) (action string, busy bool, returnErr error) {
 	lockPath, err := s.paths.Lock(id)
 	if err != nil {
 		return "", false, err
@@ -369,7 +393,7 @@ func (s *SnapshotService) collectSnapshot(ctx context.Context, id types.Snapshot
 	defer func() {
 		returnErr = errors.Join(returnErr, lock.Unlock(context.WithoutCancel(ctx)))
 		if remove && returnErr == nil {
-			_, returnErr = s.Remove(ctx, id.String())
+			_, returnErr = s.snapshotService.Remove(ctx, id.String())
 		}
 	}()
 	catalog := snapshotcatalog.New(s.store)
@@ -430,7 +454,7 @@ func (s *SnapshotService) collectSnapshot(ctx context.Context, id types.Snapshot
 	return "removed-orphan", false, nil
 }
 
-func (s *SnapshotService) removeRestoreStages(id types.SnapshotID, names []string) (bool, error) {
+func (s *MaintenanceService) removeRestoreStages(id types.SnapshotID, names []string) (bool, error) {
 	directory := s.paths.StagingDir()
 	removed := false
 	for _, name := range names {

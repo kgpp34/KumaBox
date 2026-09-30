@@ -18,7 +18,7 @@ import (
 // Export holds the snapshot operation lock while its immutable files stream to
 // the caller. A concurrent remove cannot delete an entry midway through tar.
 func (s *SnapshotService) Export(ctx context.Context, reference string, output io.Writer, compress bool) (result types.Snapshot, returnErr error) {
-	if s == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || output == nil {
+	if s == nil || s.applicationState == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || output == nil {
 		return types.Snapshot{}, errors.New("snapshot export service is not configured")
 	}
 	return s.withSnapshotDirectory(ctx, reference, func(record types.Snapshot, directory string) error {
@@ -35,7 +35,7 @@ func (s *SnapshotService) Export(ctx context.Context, reference string, output i
 // ExportDirectory reflinks a locked capture into an unpublished directory.
 // The caller is responsible for atomically publishing or removing that stage.
 func (s *SnapshotService) ExportDirectory(ctx context.Context, reference, destination string) (types.Snapshot, error) {
-	if s == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || destination == "" {
+	if s == nil || s.applicationState == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || destination == "" {
 		return types.Snapshot{}, errors.New("snapshot directory export service is not configured")
 	}
 	return s.withSnapshotDirectory(ctx, reference, func(record types.Snapshot, directory string) error {
@@ -84,7 +84,7 @@ func (s *SnapshotService) withSnapshotDirectory(ctx context.Context, reference s
 //
 //	stream -> private stage -> validate -> reserve -> publish -> ready
 func (s *SnapshotService) Import(ctx context.Context, input io.Reader, name, description string) (result types.Snapshot, returnErr error) {
-	if s == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || s.newID == nil || s.now == nil || input == nil {
+	if s == nil || s.applicationState == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || s.newID == nil || s.now == nil || input == nil {
 		return types.Snapshot{}, errors.New("snapshot import service is not configured")
 	}
 	id, err := s.newID()

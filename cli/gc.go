@@ -42,7 +42,7 @@ func newGCCommand(configuration func() config.Config) *cobra.Command {
 					return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("--snapshot-size: %w", err))
 				}
 			}
-			service, err := core.OpenSnapshots(command.Context(), configuration(), nil)
+			service, err := core.OpenMaintenance(command.Context(), configuration())
 			if err != nil {
 				return err
 			}

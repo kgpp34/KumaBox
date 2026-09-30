@@ -109,11 +109,15 @@ func newTestSnapshotService(t *testing.T) (*SnapshotService, *SandboxService, *[
 		t.Fatal(err)
 	}
 	service := &SnapshotService{
-		paths: paths, sandboxPaths: sandboxService.dependencies.paths,
-		sandboxes: catalog, snapshots: snapshotcatalog.New(memory), runtimes: sandboxService.dependencies.runtimes,
+		applicationState: &applicationState{
+			paths: paths, sandboxPaths: sandboxService.dependencies.paths,
+			sandboxes: catalog, snapshots: snapshotcatalog.New(memory), runtimes: sandboxService.dependencies.runtimes,
+			now: func() time.Time { return time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC) }, store: memory,
+			lifecycle: sandboxService, images: sandboxService.dependencies.images,
+			disks: sandboxService.dependencies.disks, networks: sandboxService.dependencies.networks,
+			dnsServers: sandboxService.dependencies.dnsServers,
+		},
 		reporter: fakeSnapshotReporter{steps: steps}, newID: func() (types.SnapshotID, error) { return fixedSnapshotID, nil },
-		now: func() time.Time { return time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC) }, store: memory,
-		lifecycle: sandboxService,
 	}
 	return service, sandboxService, steps
 }

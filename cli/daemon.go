@@ -41,7 +41,7 @@ func newDaemonCommand(configuration func() config.Config) *cobra.Command {
 			if err := resolved.Validate(); err != nil {
 				return err
 			}
-			service, err := core.OpenSnapshots(command.Context(), resolved, nil)
+			service, err := core.OpenMaintenance(command.Context(), resolved)
 			if err != nil {
 				return err
 			}
@@ -63,7 +63,7 @@ func newDaemonCommand(configuration func() config.Config) *cobra.Command {
 	return command
 }
 
-func supervise(ctx context.Context, service *core.SnapshotService, reconcileInterval, gcInterval time.Duration, diagnostics io.Writer) error {
+func supervise(ctx context.Context, service *core.MaintenanceService, reconcileInterval, gcInterval time.Duration, diagnostics io.Writer) error {
 	if reconcileInterval <= 0 || gcInterval < 0 {
 		return errors.New("invalid supervisor intervals")
 	}

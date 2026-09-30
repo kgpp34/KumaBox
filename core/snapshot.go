@@ -12,10 +12,7 @@ import (
 	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/errdefs"
 	filelock "github.com/kumabox/kumabox/lock/flock"
-	"github.com/kumabox/kumabox/metadata"
-	sandboxfs "github.com/kumabox/kumabox/sandbox"
 	"github.com/kumabox/kumabox/snapshot"
-	snapshotcatalog "github.com/kumabox/kumabox/snapshot/catalog"
 	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/types"
 	"github.com/kumabox/kumabox/vmm"
@@ -51,45 +48,18 @@ type snapshotCatalog interface {
 // SnapshotService coordinates sandbox locking, VMM capture, artifact
 // publication, and snapshot metadata.
 type SnapshotService struct {
-	configuration config.Config
-	paths         snapshot.Paths
-	sandboxPaths  sandboxfs.Paths
-	sandboxes     sandboxCatalog
-	snapshots     snapshotCatalog
-	runtimes      *vmm.Registry
-	reporter      SnapshotReporter
-	newID         func() (types.SnapshotID, error)
-	now           func() time.Time
-	store         metadata.Store
-	lifecycle     *SandboxService
+	*applicationState
+	reporter SnapshotReporter
+	newID    func() (types.SnapshotID, error)
 }
 
 // OpenSnapshots assembles the local snapshot service. The caller must close it.
 func OpenSnapshots(ctx context.Context, configuration config.Config, reporter SnapshotReporter) (*SnapshotService, error) {
-	if err := configuration.Validate(); err != nil {
-		return nil, err
-	}
-	lifecycle, err := OpenSandbox(ctx, configuration, nil)
+	application, err := OpenApplication(ctx, configuration, reporter)
 	if err != nil {
 		return nil, err
 	}
-	snapshotPaths, err := snapshot.NewPaths(configuration.Paths)
-	if err != nil {
-		return nil, errors.Join(err, lifecycle.Close())
-	}
-	if err := snapshotPaths.Ensure(); err != nil {
-		return nil, errors.Join(err, lifecycle.Close())
-	}
-	if reporter == nil {
-		reporter = discardSnapshotReporter{}
-	}
-	return &SnapshotService{
-		configuration: configuration,
-		paths:         snapshotPaths, sandboxPaths: lifecycle.dependencies.paths,
-		sandboxes: lifecycle.dependencies.catalog, snapshots: snapshotcatalog.New(lifecycle.dependencies.store),
-		runtimes: lifecycle.dependencies.runtimes, reporter: reporter,
-		newID: types.NewSnapshotID, now: time.Now, store: lifecycle.dependencies.store, lifecycle: lifecycle,
-	}, nil
+	return application.Snapshots, nil
 }
 
 // Close releases the shared metadata engine.
@@ -97,13 +67,7 @@ func (s *SnapshotService) Close() error {
 	if s == nil {
 		return nil
 	}
-	if s.lifecycle != nil {
-		return s.lifecycle.Close()
-	}
-	if s.store == nil {
-		return nil
-	}
-	return s.store.Close()
+	return s.close()
 }
 
 // Save captures native VMM state and the writable COW disk at one paused point.
@@ -124,7 +88,7 @@ func (s *SnapshotService) Hibernate(ctx context.Context, request SaveSnapshotReq
 // capture owns the shared reservation and publication contract. The optional
 // hibernate tail moves publication inside the VMM pause window.
 func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotRequest, hibernate bool) (result types.Snapshot, returnErr error) {
-	if s == nil || s.lifecycle == nil || s.lifecycle.dependencies.images == nil || s.sandboxes == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || s.newID == nil || s.now == nil {
+	if s == nil || s.applicationState == nil || s.lifecycle == nil || s.images == nil || s.sandboxes == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || s.newID == nil || s.now == nil {
 		return types.Snapshot{}, errors.New("snapshot service is not configured")
 	}
 	if request.SandboxReference == "" {
@@ -189,7 +153,7 @@ func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotReque
 	if observation.State != vmm.ProcessRunning {
 		return types.Snapshot{}, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("sandbox has no ready VMM process to snapshot"))
 	}
-	image, err := s.lifecycle.dependencies.images.WithAvailable(ctx, record.ImageDigest.String(), func(image types.Image) error {
+	image, err := s.images.WithAvailable(ctx, record.ImageDigest.String(), func(image types.Image) error {
 		if image.ManifestDigest != record.ImageDigest {
 			return errors.New("snapshot image differs from the sandbox pin")
 		}
@@ -344,7 +308,7 @@ func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotReque
 
 // List returns every ready snapshot.
 func (s *SnapshotService) List(ctx context.Context) ([]types.Snapshot, error) {
-	if s == nil || s.snapshots == nil {
+	if s == nil || s.applicationState == nil || s.snapshots == nil {
 		return nil, errors.New("snapshot service is not configured")
 	}
 	return s.snapshots.List(ctx)
@@ -352,7 +316,7 @@ func (s *SnapshotService) List(ctx context.Context) ([]types.Snapshot, error) {
 
 // ListForSandbox resolves a sandbox name or ID before filtering ready captures.
 func (s *SnapshotService) ListForSandbox(ctx context.Context, sandboxReference string) ([]types.Snapshot, error) {
-	if s == nil || s.sandboxes == nil || s.snapshots == nil {
+	if s == nil || s.applicationState == nil || s.sandboxes == nil || s.snapshots == nil {
 		return nil, errors.New("snapshot service is not configured")
 	}
 	owner, err := s.sandboxes.Resolve(ctx, sandboxReference)
@@ -374,7 +338,7 @@ func (s *SnapshotService) ListForSandbox(ctx context.Context, sandboxReference s
 
 // Inspect resolves one ready snapshot by name or complete ID.
 func (s *SnapshotService) Inspect(ctx context.Context, reference string) (types.Snapshot, error) {
-	if s == nil || s.snapshots == nil {
+	if s == nil || s.applicationState == nil || s.snapshots == nil {
 		return types.Snapshot{}, errors.New("snapshot service is not configured")
 	}
 	return s.snapshots.Resolve(ctx, reference)
@@ -383,7 +347,7 @@ func (s *SnapshotService) Inspect(ctx context.Context, reference string) (types.
 // Remove records deletion intent before removing artifacts, then releases the
 // metadata name. A failure after intent is retryable with the same reference.
 func (s *SnapshotService) Remove(ctx context.Context, reference string) (result types.Snapshot, returnErr error) {
-	if s == nil || s.snapshots == nil {
+	if s == nil || s.applicationState == nil || s.snapshots == nil {
 		return types.Snapshot{}, errors.New("snapshot service is not configured")
 	}
 	record, err := s.snapshots.BeginDelete(ctx, reference)
@@ -436,7 +400,7 @@ func (s *SnapshotService) Restore(ctx context.Context, sandboxReference, snapsho
 // rebound through the VMM cloner so host paths and NICs can differ from the
 // machine that produced the snapshot.
 func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReference, snapshotReference string, options RestoreOptions) (result types.Sandbox, returnErr error) {
-	if s == nil || s.lifecycle == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || s.now == nil {
+	if s == nil || s.applicationState == nil || s.lifecycle == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || s.now == nil {
 		return types.Sandbox{}, errors.New("snapshot restore service is not configured")
 	}
 	if sandboxReference == "" || (snapshotReference == "") == (options.SourceDirectory == "") || (options.Force && options.SourceDirectory == "") {
@@ -524,7 +488,7 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 		}
 	}
 	if options.SourceDirectory != "" {
-		if _, err := s.lifecycle.dependencies.images.WithAvailable(ctx, capture.ImageDigest.String(), func(types.Image) error { return nil }); err != nil {
+		if _, err := s.images.WithAvailable(ctx, capture.ImageDigest.String(), func(types.Image) error { return nil }); err != nil {
 			return record, errdefs.Context(err, "restore sandbox", sandboxReference, "resolve image", "import or pull the snapshot image before restoring", false)
 		}
 	}
@@ -659,7 +623,7 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 		process, err = restorer.Restore(ctx, plan)
 	} else {
 		var image types.Image
-		image, err = s.lifecycle.dependencies.images.WithAvailable(ctx, capture.ImageDigest.String(), func(types.Image) error { return nil })
+		image, err = s.images.WithAvailable(ctx, capture.ImageDigest.String(), func(types.Image) error { return nil })
 		if err == nil {
 			var launch vmm.LaunchPlan
 			launch, err = s.lifecycle.launchPlan(starting, image)

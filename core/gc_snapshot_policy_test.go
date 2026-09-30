@@ -16,7 +16,7 @@ import (
 func TestCollectWithPolicyPreviewsThenEvictsReadySnapshot(t *testing.T) {
 	configuration := config.Default()
 	configuration.Paths = gcTestRoots(t)
-	service, err := OpenSnapshots(t.Context(), configuration, nil)
+	service, err := OpenMaintenance(t.Context(), configuration)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestEvictSnapshotRechecksAccessAndSupportsDryRun(t *testing.T) {
 	if err := os.Mkdir(directory, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	service := &SnapshotService{paths: paths, store: store, snapshots: catalog}
+	service := testMaintenance(paths, store, catalog)
 	if acted, busy, err := service.evictSnapshot(t.Context(), selected, true); err != nil || busy || !acted {
 		t.Fatalf("dry-run = %t, %t, %v", acted, busy, err)
 	}

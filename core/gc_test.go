@@ -15,6 +15,11 @@ import (
 	"github.com/kumabox/kumabox/types"
 )
 
+func testMaintenance(paths snapshot.Paths, store metadata.Store, catalog snapshotCatalog) *MaintenanceService {
+	state := &applicationState{paths: paths, store: store, snapshots: catalog}
+	return &MaintenanceService{applicationState: state, snapshotService: &SnapshotService{applicationState: state}}
+}
+
 func TestCollectSnapshotReleasesAbandonedReservation(t *testing.T) {
 	roots := gcTestRoots(t)
 	paths, err := snapshot.NewPaths(roots)
@@ -46,7 +51,7 @@ func TestCollectSnapshotReleasesAbandonedReservation(t *testing.T) {
 	if err := paths.PrepareStage(id); err != nil {
 		t.Fatal(err)
 	}
-	service := &SnapshotService{paths: paths, store: store}
+	service := testMaintenance(paths, store, nil)
 	action, busy, err := service.collectSnapshot(t.Context(), id, nil)
 	if err != nil || busy || action != "removed-stale-pending" {
 		t.Fatalf("collectSnapshot = %q, %t, %v", action, busy, err)
@@ -90,7 +95,7 @@ func TestCollectSnapshotSkipsBusyReservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = owner.Unlock(t.Context()) }()
-	service := &SnapshotService{paths: paths, store: store}
+	service := testMaintenance(paths, store, nil)
 	action, busy, err := service.collectSnapshot(t.Context(), id, nil)
 	if err != nil || !busy || action != "" {
 		t.Fatalf("collectSnapshot = %q, %t, %v", action, busy, err)
@@ -113,7 +118,7 @@ func TestCollectSnapshotPreservesReadyAndRemovesOrphan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &SnapshotService{paths: paths, store: store}
+	service := testMaintenance(paths, store, nil)
 	orphan := types.SnapshotID("223e4567-e89b-42d3-a456-426614174000")
 	dir, _ := paths.Dir(orphan)
 	if err := os.Mkdir(dir, 0o700); err != nil {
@@ -168,7 +173,7 @@ func TestCollectSnapshotRemovesStaleStageWithoutDeletingReadySnapshot(t *testing
 	if err := paths.PrepareStage(id); err != nil {
 		t.Fatal(err)
 	}
-	service := &SnapshotService{paths: paths, store: store}
+	service := testMaintenance(paths, store, nil)
 	action, busy, err := service.collectSnapshot(t.Context(), id, nil)
 	if err != nil || busy || action != "removed-stale-stage" {
 		t.Fatalf("collectSnapshot = %q, %t, %v", action, busy, err)
@@ -203,7 +208,7 @@ func TestCollectSnapshotRemovesInterruptedRestoreStage(t *testing.T) {
 	if err := os.WriteFile(file, []byte("interrupted copy"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	service := &SnapshotService{paths: paths, store: store}
+	service := testMaintenance(paths, store, nil)
 	ids, restoreStages, err := service.discoverSnapshotArtifacts()
 	if err != nil || !ids[id] || len(restoreStages[id]) != 1 {
 		t.Fatalf("restore discovery: ids=%v stages=%v error=%v", ids, restoreStages, err)
@@ -247,7 +252,7 @@ func TestCollectSnapshotForgetsReadyRecordWithMissingDirectory(t *testing.T) {
 	if _, err := catalog.Commit(t.Context(), id, 1, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	service := &SnapshotService{paths: paths, store: store, snapshots: catalog}
+	service := testMaintenance(paths, store, catalog)
 	action, busy, err := service.collectSnapshot(t.Context(), id, nil)
 	if err != nil || busy || action != "removed-missing-dir" {
 		t.Fatalf("collectSnapshot = %q, %t, %v", action, busy, err)

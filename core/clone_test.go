@@ -86,6 +86,7 @@ func TestClonePullUsesSnapshotDigestAfterTagMoves(t *testing.T) {
 	guard := service.lifecycle.dependencies.images.(fakeGuard)
 	guard.afterUse = errdefs.New(errdefs.ClassNotFound, errdefs.CodeNotFound, errors.New("target image is absent"))
 	service.lifecycle.dependencies.images = guard
+	service.images = guard
 	capture := types.Snapshot{ImageDigest: digest, RegistryReference: ref.String()}
 	if err := service.ensureCloneImage(t.Context(), capture); err != nil {
 		t.Fatal(err)

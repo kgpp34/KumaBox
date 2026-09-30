@@ -19,6 +19,7 @@ func TestSnapshotArchiveImportsIntoAnotherRoot(t *testing.T) {
 	sourceImage := source.lifecycle.dependencies.images.(fakeGuard)
 	sourceImage.image.RegistryReference = "registry.example.test/team/guest:v1"
 	source.lifecycle.dependencies.images = sourceImage
+	source.images = sourceImage
 	record, err := source.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "warm"})
 	if err != nil {
 		t.Fatal(err)
@@ -79,6 +80,7 @@ func TestSnapshotArchiveImportsIntoAnotherRoot(t *testing.T) {
 	guard := target.lifecycle.dependencies.images.(fakeGuard)
 	guard.afterUse = errors.New("image is not available at target root")
 	target.lifecycle.dependencies.images = guard
+	target.images = guard
 	beforeImport := len(*steps)
 	imported, err := target.Import(t.Context(), bytes.NewReader(payload), "transferred", "")
 	if err != nil {
