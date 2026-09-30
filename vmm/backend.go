@@ -125,6 +125,8 @@ type ClonePlan struct {
 	ImageDisks []Disk
 	// DataDisks are target-owned copies of the captured writable disks.
 	DataDisks []Disk
+	// NewDataDisks are private blank disks hot-added before clone resume.
+	NewDataDisks []Disk
 	// Kernel and Initrd are the target root's selected boot artifacts.
 	Kernel string
 	Initrd string

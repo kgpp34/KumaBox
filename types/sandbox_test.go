@@ -52,6 +52,24 @@ func TestSandboxConfigValidationMatchesCreateContract(t *testing.T) {
 	}
 }
 
+func TestResolveDataDisksKeepsInheritedNamesAndAvoidsCollisions(t *testing.T) {
+	inherited := []DataDiskSpec{{Name: "data1", Size: MinDataDiskSize, FSType: "ext4"}}
+	additions := []DataDiskSpec{{Size: MinDataDiskSize, FSType: "none"}, {Name: "data2", Size: MinDataDiskSize, FSType: "ext4"}}
+	resolved, err := ResolveDataDisks(inherited, additions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved) != 3 || resolved[0].Name != "data1" || resolved[1].Name != "data3" || resolved[2].Name != "data2" {
+		t.Fatalf("resolved disks = %+v", resolved)
+	}
+	if additions[0].Name != "" {
+		t.Fatal("resolver mutated caller's additions")
+	}
+	if _, err := ResolveDataDisks(inherited, []DataDiskSpec{{Name: "data1", Size: MinDataDiskSize, FSType: "ext4"}}); err == nil {
+		t.Fatal("new disk reused an inherited serial")
+	}
+}
+
 func TestCommandValidation(t *testing.T) {
 	command := Command{Args: []string{"sh", "-c", "echo"}, Env: map[string]string{"A": "2", "EMPTY": ""}}
 	if err := command.Validate(); err != nil {

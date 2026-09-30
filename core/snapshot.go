@@ -605,6 +605,17 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 	if err := validateRestoreSource(record, capture, options); err != nil {
 		return record, err
 	}
+	backupDir, err := s.sandboxPaths.RestoreBackup(record.ID)
+	if err != nil {
+		return record, err
+	}
+	livePaths, err := writableDiskPaths(s.sandboxPaths, record.ID, record.Config.DataDisks)
+	if err != nil {
+		return record, err
+	}
+	if err := recoverWritableSet(backupDir, livePaths); err != nil {
+		return record, errdefs.Context(err, "restore sandbox", sandboxReference, "recover disks", "inspect retained disk backups before retrying", false)
+	}
 	if err := s.reporter.Status("committing starting state"); err != nil {
 		return record, err
 	}
@@ -624,13 +635,9 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 	if err := s.reporter.Status("replacing writable disk"); err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, vmm.Process{})
 	}
-	if err := storage.Publish(stagedCOW, liveCOW); err != nil {
-		return starting, s.lifecycle.failStart(ctx, backend, starting, "replace disk", err, vmm.Process{})
-	}
-	for _, file := range stagedData {
-		if err := storage.Publish(file.Source, file.Destination); err != nil {
-			return starting, s.lifecycle.failStart(ctx, backend, starting, "replace data disk", err, vmm.Process{})
-		}
+	files := append([]vmm.SnapshotFile{{Source: stagedCOW, Destination: liveCOW}}, stagedData...)
+	if err := replaceWritableSet(files, backupDir, storage.Publish); err != nil {
+		return starting, s.lifecycle.failStart(ctx, backend, starting, "replace disks", err, vmm.Process{})
 	}
 	if err := s.reporter.Status("restoring VMM state"); err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, vmm.Process{})

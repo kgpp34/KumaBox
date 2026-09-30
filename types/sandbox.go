@@ -48,6 +48,8 @@ type DataDiskSpec struct {
 	Name   string `json:"name"`
 	Size   int64  `json:"size"`
 	FSType string `json:"fstype"`
+	// DirectIO overrides the default direct-I/O policy. Nil means automatic.
+	DirectIO *bool `json:"direct_io,omitempty"`
 }
 
 // Validate rejects unsafe names and unsupported initial filesystem formats.
@@ -70,6 +72,56 @@ func DataDiskFile(name string) string { return "data-" + name + ".raw" }
 // DataDiskSerial returns the stable guest-visible disk identity. Keeping the
 // serial within 20 bytes preserves the virtio block identification limit.
 func DataDiskSerial(name string) string { return name }
+
+// ResolveDataDisks appends new disks to an inherited set, assigning stable
+// dataN names only after explicit names have reserved their identities.
+func ResolveDataDisks(inherited, additions []DataDiskSpec) ([]DataDiskSpec, error) {
+	if len(inherited)+len(additions) > MaxDataDisks {
+		return nil, fmt.Errorf("at most %d data disks are supported", MaxDataDisks)
+	}
+	result := make([]DataDiskSpec, 0, len(inherited)+len(additions))
+	used := make(map[string]bool, len(inherited)+len(additions))
+	for _, spec := range inherited {
+		if err := spec.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid inherited data disk %q: %w", spec.Name, err)
+		}
+		if used[spec.Name] {
+			return nil, fmt.Errorf("duplicate inherited data disk %q", spec.Name)
+		}
+		used[spec.Name] = true
+		result = append(result, spec)
+	}
+	for _, spec := range additions {
+		if spec.Name != "" {
+			if err := spec.Validate(); err != nil {
+				return nil, err
+			}
+			if used[spec.Name] {
+				return nil, fmt.Errorf("duplicate data disk %q", spec.Name)
+			}
+			used[spec.Name] = true
+		}
+	}
+	index := 1
+	for _, spec := range additions {
+		if spec.Name == "" {
+			for {
+				candidate := fmt.Sprintf("data%d", index)
+				index++
+				if !used[candidate] {
+					spec.Name = candidate
+					used[candidate] = true
+					break
+				}
+			}
+		}
+		if err := spec.Validate(); err != nil {
+			return nil, err
+		}
+		result = append(result, spec)
+	}
+	return result, nil
+}
 
 // VMMType identifies the virtual machine monitor that owns a sandbox's
 // runtime. It is persisted so every later lifecycle operation selects the same

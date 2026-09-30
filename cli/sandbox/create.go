@@ -47,7 +47,7 @@ func (o *createOptions) addFlags(command *cobra.Command) {
 	command.Flags().StringVar(&o.storageSize, "storage", o.storageSize, "logical sparse COW size (minimum 10GiB)")
 	command.Flags().IntVar(&o.nics, "nics", o.nics, "number of network interfaces (0 disables networking)")
 	command.Flags().StringVar(&o.networkName, "network", o.networkName, "CNI network name (empty selects the default)")
-	command.Flags().StringArrayVar(&o.dataDisks, "data-disk", nil, "managed disk: size=20GiB[,name=db][,fstype=ext4|none]; repeatable")
+	command.Flags().StringArrayVar(&o.dataDisks, "data-disk", nil, "managed disk: size=20GiB[,name=db][,fstype=ext4|none][,directio=on|off|auto]; repeatable")
 }
 
 // request validates CLI values before any persistent service is opened.
@@ -79,38 +79,17 @@ func (o createOptions) request(imageReference string) (core.CreateSandboxRequest
 		Name: o.name, CPUs: o.cpus, Memory: memoryBytes, Storage: storageBytes,
 		NICs: o.nics, NetworkName: o.networkName,
 	}
-	if len(o.dataDisks) > types.MaxDataDisks {
-		return core.CreateSandboxRequest{}, invalidFlag("data-disk", fmt.Errorf("at most %d disks are supported", types.MaxDataDisks))
-	}
+	requested := make([]types.DataDiskSpec, 0, len(o.dataDisks))
 	for _, value := range o.dataDisks {
 		disk, err := parseDataDisk(value)
 		if err != nil {
 			return core.CreateSandboxRequest{}, invalidFlag("data-disk", err)
 		}
-		sandboxConfig.DataDisks = append(sandboxConfig.DataDisks, disk)
+		requested = append(requested, disk)
 	}
-	// Explicit names reserve their serials first; unnamed disks then receive
-	// deterministic data1, data2... identities that survive snapshot transfer.
-	usedNames := make(map[string]bool, len(sandboxConfig.DataDisks))
-	for _, disk := range sandboxConfig.DataDisks {
-		if disk.Name != "" {
-			usedNames[disk.Name] = true
-		}
-	}
-	index := 1
-	for position := range sandboxConfig.DataDisks {
-		if sandboxConfig.DataDisks[position].Name != "" {
-			continue
-		}
-		for {
-			candidate := fmt.Sprintf("data%d", index)
-			index++
-			if !usedNames[candidate] {
-				sandboxConfig.DataDisks[position].Name = candidate
-				usedNames[candidate] = true
-				break
-			}
-		}
+	sandboxConfig.DataDisks, err = types.ResolveDataDisks(nil, requested)
+	if err != nil {
+		return core.CreateSandboxRequest{}, invalidFlag("data-disk", err)
 	}
 	if err := sandboxConfig.Validate(); err != nil {
 		return core.CreateSandboxRequest{}, err
@@ -141,6 +120,19 @@ func parseDataDisk(value string) (types.DataDiskSpec, error) {
 			spec.Size = size
 		case "fstype":
 			spec.FSType = raw
+		case "directio":
+			switch raw {
+			case "on":
+				enabled := true
+				spec.DirectIO = &enabled
+			case "off":
+				enabled := false
+				spec.DirectIO = &enabled
+			case "auto":
+				spec.DirectIO = nil
+			default:
+				return spec, fmt.Errorf("directio must be on, off, or auto")
+			}
 		default:
 			return spec, fmt.Errorf("unknown data disk field %q", key)
 		}

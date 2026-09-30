@@ -140,3 +140,25 @@ func TestBuildArgsMatchesDirectBootContract(t *testing.T) {
 		t.Fatalf("buildArgs() =\n%q\nwant\n%q", args, want)
 	}
 }
+
+func TestBuildArgsHonorsManagedDiskDirectIO(t *testing.T) {
+	off := false
+	plan := vmm.LaunchPlan{
+		SandboxID: "123e4567-e89b-42d3-a456-426614174000", Generation: 3,
+		CPUs: 2, Memory: 1 << 30, BootProfile: types.BootProfileOverlayV1,
+		Kernel: "/boot/kernel", Initrd: "/boot/initrd", Cmdline: "boot=kumabox-overlay",
+		Disks: []vmm.Disk{
+			{Path: "/image/base.raw", Serial: "kumabox-layer0", ReadOnly: true},
+			{Path: "/sandbox/cow.raw", Serial: vmm.COWSerial},
+			{Path: "/sandbox/data-db.raw", Serial: "db", DirectIO: &off},
+		},
+	}
+	if err := plan.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	args := buildArgs(plan, "/run/api", "/run/vsock")
+	diskArg := "path=/sandbox/data-db.raw,image_type=raw,num_queues=2,queue_size=512,serial=db,sparse=on"
+	if !slices.Contains(args, diskArg) {
+		t.Fatalf("directio=off disk argument missing: %q", args)
+	}
+}

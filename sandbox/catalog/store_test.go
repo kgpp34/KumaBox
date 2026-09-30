@@ -61,6 +61,7 @@ func TestResolveRejectsDanglingNameBinding(t *testing.T) {
 }
 
 func TestMarkCreatedAtomicallyPublishesResolvedNetwork(t *testing.T) {
+	directIO := false
 	store, err := metadata.NewMemory(Collections())
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +73,7 @@ func TestMarkCreatedAtomicallyPublishesResolvedNetwork(t *testing.T) {
 		Config: types.SandboxConfig{
 			Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory,
 			Storage: types.DefaultSandboxStorage, NICs: 1,
-			DataDisks: []types.DataDiskSpec{{Name: "db", Size: types.MinDataDiskSize, FSType: "ext4"}},
+			DataDisks: []types.DataDiskSpec{{Name: "db", Size: types.MinDataDiskSize, FSType: "ext4", DirectIO: &directIO}},
 		},
 		ImageDigest: testDigest(t, 'a'), VMM: types.VMMCloudHypervisor,
 		State: types.SandboxStateCreating, Generation: 1, CreatedAt: created, UpdatedAt: created,
@@ -104,7 +105,8 @@ func TestMarkCreatedAtomicallyPublishesResolvedNetwork(t *testing.T) {
 		t.Fatal(err)
 	}
 	if resolved.Config.NetworkName != "bridge" || resolved.Network.Interfaces[0].IPv4.Address != "10.42.0.2" ||
-		len(resolved.Config.DataDisks) != 1 || resolved.Config.DataDisks[0].Name != "db" {
+		len(resolved.Config.DataDisks) != 1 || resolved.Config.DataDisks[0].Name != "db" ||
+		resolved.Config.DataDisks[0].DirectIO == nil || *resolved.Config.DataDisks[0].DirectIO {
 		t.Fatalf("persisted network record = %+v", resolved)
 	}
 }

@@ -34,6 +34,9 @@ type CreateSandboxRequest struct {
 	cloneDiskSource string
 	// cloneDataSource is the captured directory containing inherited data disks.
 	cloneDataSource string
+	// cloneDataCount is the prefix inherited from cloneDataSource; later disks
+	// are freshly formatted for the new sandbox.
+	cloneDataCount int
 }
 
 // imageGuard is the image capability consumed by sandbox creation.

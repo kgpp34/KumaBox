@@ -33,6 +33,8 @@ type CloneOptions struct {
 	NICs *int
 	// NetworkName selects another CNI network for the new interfaces.
 	NetworkName string
+	// DataDisks are new disks attached to the clone after snapshot restoration.
+	DataDisks []types.DataDiskSpec
 }
 
 // Clone preserves the ordinary local-image workflow for callers without options.
@@ -98,6 +100,11 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	}
 	config := capture.Config
 	config.Name = options.Name
+	var err error
+	config.DataDisks, err = types.ResolveDataDisks(capture.Config.DataDisks, options.DataDisks)
+	if err != nil {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+	}
 	if options.NICs != nil {
 		config.NICs = *options.NICs
 	}
@@ -123,7 +130,7 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	} else if !info.Mode().IsRegular() || info.Size() != config.Storage {
 		return types.Sandbox{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("snapshot COW size or file type is invalid"))
 	}
-	if err := validateCapturedDataDisks(snapshotDir, config.DataDisks); err != nil {
+	if err := validateCapturedDataDisks(snapshotDir, capture.Config.DataDisks); err != nil {
 		return types.Sandbox{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err)
 	}
 	if validator, ok := backend.(vmm.RestoreValidator); ok {
@@ -145,6 +152,7 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	created, err := s.lifecycle.Create(ctx, CreateSandboxRequest{
 		ImageReference: capture.ImageDigest.String(), Config: config, VMM: capture.VMM,
 		cloneDiskSource: snapshotCOW, cloneDataSource: snapshotDir,
+		cloneDataCount: len(capture.Config.DataDisks),
 	})
 	if err != nil {
 		return created, err
@@ -201,12 +209,14 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	if err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "clone disk bindings", err, vmm.Process{})
 	}
+	inheritedCount := len(capture.Config.DataDisks)
 	process, err := cloner.Clone(ctx, vmm.ClonePlan{
 		RestorePlan: vmm.RestorePlan{
 			SandboxID: starting.ID, Generation: starting.Generation, CPUs: starting.Config.CPUs,
 			SnapshotDir: snapshotDir, Network: starting.Network,
 		}, WritableDisk: liveCOW, ImageDisks: imageDisks,
-		DataDisks: dataDisks, Kernel: launch.Kernel, Initrd: launch.Initrd,
+		DataDisks: dataDisks[:inheritedCount], NewDataDisks: dataDisks[inheritedCount:],
+		Kernel: launch.Kernel, Initrd: launch.Initrd,
 	})
 	if err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "clone VMM", err, process)

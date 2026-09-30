@@ -69,6 +69,22 @@ func TestParseManagedDataDisks(t *testing.T) {
 	if _, err := options.request("demo"); err == nil {
 		t.Fatal("unsupported data disk option was silently accepted")
 	}
+	for _, input := range []string{"name=db,size=16MiB,directio=on", "name=db,size=16MiB,directio=off", "name=db,size=16MiB,directio=auto"} {
+		options.dataDisks = []string{input}
+		request, err := options.request("demo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		direct := request.Config.DataDisks[0].DirectIO
+		switch {
+		case strings.HasSuffix(input, "on") && (direct == nil || !*direct):
+			t.Fatalf("directio on parsed as %v", direct)
+		case strings.HasSuffix(input, "off") && (direct == nil || *direct):
+			t.Fatalf("directio off parsed as %v", direct)
+		case strings.HasSuffix(input, "auto") && direct != nil:
+			t.Fatalf("directio auto parsed as %v", *direct)
+		}
+	}
 }
 
 func TestCreateCommandMapsResourceValidationToFlags(t *testing.T) {

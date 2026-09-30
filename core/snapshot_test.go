@@ -154,6 +154,45 @@ func TestRestoreStopsRunningSandboxAndResumesSnapshot(t *testing.T) {
 	}
 }
 
+func TestRestoreReplacesCOWAndManagedDataDiskTogether(t *testing.T) {
+	service, sandboxService, _ := newTestSnapshotService(t)
+	spec := types.DataDiskSpec{Name: "db", Size: types.MinDataDiskSize, FSType: "none"}
+	catalog := sandboxService.dependencies.catalog.(*fakeCatalog)
+	catalog.record.Config.DataDisks = []types.DataDiskSpec{spec}
+	dataPath, err := sandboxService.dependencies.paths.DataDisk(fixedID, spec.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(dataPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := errors.Join(file.Truncate(spec.Size), file.Close()); err != nil {
+		t.Fatal(err)
+	}
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dataPath, []byte("changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Restore(t.Context(), "box", capture.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dataPath)
+	if err != nil || info.Size() != spec.Size {
+		t.Fatalf("restored data disk = %+v, %v", info, err)
+	}
+	backup, err := sandboxService.dependencies.paths.RestoreBackup(fixedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(backup); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("restore backup remains: %v", err)
+	}
+}
+
 func TestRestoreReseedRejectionKeepsRestoredSandboxRunning(t *testing.T) {
 	service, sandboxService, _ := newTestSnapshotService(t)
 	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box"})

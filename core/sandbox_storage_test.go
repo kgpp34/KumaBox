@@ -13,12 +13,28 @@ import (
 
 type fakeCloneDisk struct {
 	fakeDisk
-	source string
+	source       string
+	clonedData   []types.DataDiskSpec
+	preparedData []types.DataDiskSpec
 }
 
 func (d *fakeCloneDisk) Clone(_ context.Context, _ types.SandboxID, _ int64, source string) error {
 	*d.steps = append(*d.steps, "disk-clone")
 	d.source = source
+	return nil
+}
+
+func (d *fakeCloneDisk) CloneData(_ context.Context, _ types.SandboxID, specs []types.DataDiskSpec, _ string) error {
+	d.clonedData = append([]types.DataDiskSpec(nil), specs...)
+	return nil
+}
+
+func (d *fakeCloneDisk) PrepareData(_ context.Context, _ types.SandboxID, specs []types.DataDiskSpec) error {
+	d.preparedData = append([]types.DataDiskSpec(nil), specs...)
+	return nil
+}
+
+func (d *fakeCloneDisk) CheckData(context.Context, types.SandboxID, []types.DataDiskSpec) error {
 	return nil
 }
 
@@ -41,6 +57,27 @@ func TestCreateFromSnapshotUsesDiskCloneWithoutFormatting(t *testing.T) {
 		if step == "disk" {
 			t.Fatalf("clone formatted a disposable disk: %v", *steps)
 		}
+	}
+}
+
+func TestCreateCloneSeparatesInheritedAndNewDataDisks(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	backend := &fakeCloneDisk{fakeDisk: fakeDisk{steps: steps}}
+	service.dependencies.disks = backend
+	specs := []types.DataDiskSpec{{Name: "db", Size: types.MinDataDiskSize, FSType: "ext4"}, {Name: "logs", Size: types.MinDataDiskSize, FSType: "none"}}
+	_, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo", Config: types.SandboxConfig{
+			Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory,
+			Storage: types.DefaultSandboxStorage, DataDisks: specs,
+		},
+		cloneDiskSource: "/snapshot/cow.raw", cloneDataSource: "/snapshot", cloneDataCount: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backend.clonedData) != 1 || backend.clonedData[0].Name != "db" ||
+		len(backend.preparedData) != 1 || backend.preparedData[0].Name != "logs" {
+		t.Fatalf("clone split = inherited %+v, new %+v", backend.clonedData, backend.preparedData)
 	}
 }
 

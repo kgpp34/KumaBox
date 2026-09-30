@@ -79,15 +79,16 @@ func TestPatchCloneConfigRebindsOnlyPrivateDevices(t *testing.T) {
 }
 
 func TestPatchCloneConfigRebindsManagedDataDisk(t *testing.T) {
+	directIO := false
 	path := filepath.Join(t.TempDir(), "config.json")
-	original := `{"disks":[{"serial":"kumabox-layer0","path":"/old/layer"},{"serial":"kumabox-cow","path":"/old/cow"},{"serial":"db","path":"/old/data-db.raw"}],"vsock":{"socket":"/old/vsock"}}`
+	original := `{"disks":[{"serial":"kumabox-layer0","path":"/old/layer"},{"serial":"kumabox-cow","path":"/old/cow"},{"serial":"db","path":"/old/data-db.raw","direct":true}],"vsock":{"socket":"/old/vsock"}}`
 	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	plan := vmm.ClonePlan{
 		RestorePlan:  vmm.RestorePlan{SandboxID: types.SandboxID("123e4567-e89b-42d3-a456-426614174000")},
 		WritableDisk: "/new/cow", ImageDisks: []vmm.Disk{{Path: "/new/layer", Serial: "kumabox-layer0", ReadOnly: true}},
-		DataDisks: []vmm.Disk{{Path: "/new/data-db.raw", Serial: "db"}}, Kernel: "/new/kernel", Initrd: "/new/initrd",
+		DataDisks: []vmm.Disk{{Path: "/new/data-db.raw", Serial: "db", DirectIO: &directIO}}, Kernel: "/new/kernel", Initrd: "/new/initrd",
 	}
 	if _, err := patchCloneConfig(path, plan, "/new/vsock"); err != nil {
 		t.Fatal(err)
@@ -100,13 +101,33 @@ func TestPatchCloneConfigRebindsManagedDataDisk(t *testing.T) {
 		Disks []struct {
 			Path     string `json:"path"`
 			ReadOnly bool   `json:"readonly"`
+			Direct   bool   `json:"direct"`
 		} `json:"disks"`
 	}
 	if err := json.Unmarshal(raw, &config); err != nil {
 		t.Fatal(err)
 	}
-	if len(config.Disks) != 3 || config.Disks[2].Path != "/new/data-db.raw" || config.Disks[2].ReadOnly {
+	if len(config.Disks) != 3 || config.Disks[2].Path != "/new/data-db.raw" || config.Disks[2].ReadOnly || config.Disks[2].Direct {
 		t.Fatalf("managed data disk was not rebound: %s", raw)
+	}
+}
+
+func TestCloneDataDiskPayloadHonorsDirectIO(t *testing.T) {
+	off := false
+	payload, err := cloneDataDiskPayload(vmm.Disk{Path: "/clone/data-new.raw", Serial: "new", DirectIO: &off}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		ID     string `json:"id"`
+		Path   string `json:"path"`
+		Direct bool   `json:"direct"`
+	}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.ID != "kumabox-data-new" || decoded.Path != "/clone/data-new.raw" || decoded.Direct {
+		t.Fatalf("clone data disk payload = %s", payload)
 	}
 }
 

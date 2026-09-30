@@ -30,6 +30,8 @@ type Disk struct {
 	Serial string
 	// ReadOnly protects shared image layers from guest writes.
 	ReadOnly bool
+	// DirectIO overrides the writable-disk default when non-nil.
+	DirectIO *bool
 }
 
 // LaunchPlan is a complete, immutable request for one VMM process.
@@ -277,7 +279,7 @@ func (p ClonePlan) Validate() error {
 		}
 	}
 	seenData := make(map[string]bool, len(p.DataDisks))
-	for _, disk := range p.DataDisks {
+	for _, disk := range append(append([]Disk(nil), p.DataDisks...), p.NewDataDisks...) {
 		if !filepath.IsAbs(disk.Path) || disk.ReadOnly || disk.Serial == COWSerial || strings.HasPrefix(disk.Serial, LayerSerialPrefix) || seenData[disk.Serial] {
 			return errors.New("clone data disks must be writable, unique, and target-owned")
 		}

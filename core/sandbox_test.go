@@ -324,6 +324,20 @@ func (f *fakeRuntime) Snapshot(_ context.Context, plan vmm.SnapshotPlan) error {
 		return err
 	}
 	for _, file := range plan.WritableFiles {
+		if strings.HasPrefix(filepath.Base(file.Destination), "data-") {
+			info, err := os.Stat(file.Source)
+			if err != nil {
+				return err
+			}
+			output, err := os.OpenFile(file.Destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+			if err != nil {
+				return err
+			}
+			if err := errors.Join(output.Truncate(info.Size()), output.Close()); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := os.WriteFile(file.Destination, []byte("cow"), 0o600); err != nil {
 			return err
 		}

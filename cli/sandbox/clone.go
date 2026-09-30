@@ -7,6 +7,7 @@ import (
 
 	"github.com/kumabox/kumabox/core"
 	"github.com/kumabox/kumabox/errdefs"
+	"github.com/kumabox/kumabox/types"
 )
 
 // NewCloneCommand builds a running sandbox from a saved native snapshot.
@@ -16,6 +17,7 @@ func NewCloneCommand(configuration configProvider) *cobra.Command {
 	var fromDir string
 	var nics int
 	var networkName string
+	var dataDiskFlags []string
 	var asJSON bool
 	command := &cobra.Command{
 		Use:   "clone [SNAPSHOT] --name NAME",
@@ -32,6 +34,14 @@ func NewCloneCommand(configuration configProvider) *cobra.Command {
 			if len(args) == 1 {
 				reference = args[0]
 			}
+			requested := make([]types.DataDiskSpec, 0, len(dataDiskFlags))
+			for _, raw := range dataDiskFlags {
+				spec, err := parseDataDisk(raw)
+				if err != nil {
+					return invalidFlag("data-disk", err)
+				}
+				requested = append(requested, spec)
+			}
 			progress, err := startCloneProgress(command, name)
 			if err != nil {
 				return err
@@ -45,7 +55,7 @@ func NewCloneCommand(configuration configProvider) *cobra.Command {
 			defer func() {
 				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "clone sandbox", name, "close metadata", "inspect the clone before retrying", committed))
 			}()
-			options := core.CloneOptions{Name: name, Pull: pull, SourceDirectory: fromDir, NetworkName: networkName}
+			options := core.CloneOptions{Name: name, Pull: pull, SourceDirectory: fromDir, NetworkName: networkName, DataDisks: requested}
 			if command.Flags().Changed("nics") {
 				options.NICs = &nics
 			}
@@ -65,6 +75,7 @@ func NewCloneCommand(configuration configProvider) *cobra.Command {
 	command.Flags().StringVar(&fromDir, "from-dir", "", "clone from a portable snapshot directory")
 	command.Flags().IntVar(&nics, "nics", 0, "override the captured NIC count, including zero")
 	command.Flags().StringVar(&networkName, "network", "", "use another CNI network (default: inherit)")
+	command.Flags().StringArrayVar(&dataDiskFlags, "data-disk", nil, "add a new managed disk: size=20GiB[,name=db][,fstype=ext4|none][,directio=on|off|auto]; repeatable")
 	command.Flags().BoolVar(&asJSON, "json", false, "print the cloned sandbox as indented JSON")
 	return command
 }

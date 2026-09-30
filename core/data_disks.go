@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/kumabox/kumabox/sandbox"
 	"github.com/kumabox/kumabox/types"
 	"github.com/kumabox/kumabox/vmm"
 )
@@ -23,6 +24,24 @@ func validateCapturedDataDisks(directory string, specs []types.DataDiskSpec) err
 		}
 	}
 	return nil
+}
+
+// writableDiskPaths returns every persistent writable path in launch order.
+func writableDiskPaths(paths sandbox.Paths, id types.SandboxID, specs []types.DataDiskSpec) ([]string, error) {
+	cow, err := paths.COW(id)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]string, 0, len(specs)+1)
+	result = append(result, cow)
+	for _, spec := range specs {
+		path, err := paths.DataDisk(id, spec.Name)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, path)
+	}
+	return result, nil
 }
 
 // cloneDiskBindings splits the validated launch attachment order at the COW.

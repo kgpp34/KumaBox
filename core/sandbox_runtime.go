@@ -86,6 +86,17 @@ func (s *SandboxService) Start(ctx context.Context, reference string) (result ty
 		}
 		return errdefs.Context(cause, "start sandbox", reference, phase, "fix the validation failure and retry", committed)
 	}
+	backupDir, err := s.dependencies.paths.RestoreBackup(record.ID)
+	if err != nil {
+		return record, failBeforeLaunch("resolve disk backup", err)
+	}
+	livePaths, err := writableDiskPaths(s.dependencies.paths, record.ID, record.Config.DataDisks)
+	if err != nil {
+		return record, failBeforeLaunch("resolve writable disks", err)
+	}
+	if err := recoverWritableSet(backupDir, livePaths); err != nil {
+		return record, failBeforeLaunch("recover writable disks", err)
+	}
 
 	if err := s.dependencies.reporter.Status("checking host runtime"); err != nil {
 		return record, failBeforeLaunch("report", err)
@@ -272,7 +283,7 @@ func (s *SandboxService) launchPlan(record types.Sandbox, image types.Image) (vm
 		if err != nil {
 			return vmm.LaunchPlan{}, err
 		}
-		disks = append(disks, vmm.Disk{Path: path, Serial: types.DataDiskSerial(spec.Name)})
+		disks = append(disks, vmm.Disk{Path: path, Serial: types.DataDiskSerial(spec.Name), DirectIO: spec.DirectIO})
 	}
 	return vmm.LaunchPlan{
 		SandboxID: record.ID, CPUs: record.Config.CPUs, Memory: record.Config.Memory,

@@ -70,6 +70,16 @@ func (p Paths) DataDisk(id types.SandboxID, name string) (string, error) {
 	return storage.Join(dir, types.DataDiskFile(name))
 }
 
+// RestoreBackup holds the old writable disk set during a restore. A stable
+// sandbox-owned path lets the next start recover an interrupted replacement.
+func (p Paths) RestoreBackup(id types.SandboxID) (string, error) {
+	dir, err := p.Dir(id)
+	if err != nil {
+		return "", err
+	}
+	return storage.Join(dir, ".restore-backup")
+}
+
 // Lock returns the stable operation lock path for an ID.
 func (p Paths) Lock(id types.SandboxID) (string, error) {
 	if _, err := types.ParseSandboxID(id.String()); err != nil {

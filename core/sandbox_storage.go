@@ -175,7 +175,14 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 	if len(request.Config.DataDisks) > 0 {
 		dataStore := s.dependencies.disks.(disk.DataStore)
 		if request.cloneDataSource != "" {
-			diskErr = dataStore.CloneData(ctx, id, request.Config.DataDisks, request.cloneDataSource)
+			if request.cloneDataCount > len(request.Config.DataDisks) || request.cloneDataCount < 0 {
+				diskErr = errors.New("invalid inherited data disk count")
+			} else {
+				diskErr = dataStore.CloneData(ctx, id, request.Config.DataDisks[:request.cloneDataCount], request.cloneDataSource)
+				if diskErr == nil {
+					diskErr = dataStore.PrepareData(ctx, id, request.Config.DataDisks[request.cloneDataCount:])
+				}
+			}
 		} else {
 			diskErr = dataStore.PrepareData(ctx, id, request.Config.DataDisks)
 		}

@@ -32,7 +32,10 @@ func buildArgs(plan vmm.LaunchPlan, apiSocket, vsock string) []string {
 		if disk.ReadOnly {
 			parts = append(parts, "readonly=on")
 		} else {
-			parts = append(parts, "direct=on", "sparse=on")
+			if disk.DirectIO == nil || *disk.DirectIO {
+				parts = append(parts, "direct=on")
+			}
+			parts = append(parts, "sparse=on")
 		}
 		args = append(args, strings.Join(parts, ","))
 	}

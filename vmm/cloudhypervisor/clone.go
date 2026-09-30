@@ -61,7 +61,35 @@ func (d *Driver) Clone(ctx context.Context, plan vmm.ClonePlan) (vmm.Process, er
 	memoryMode := d.cloneMemoryMode(ctx, filepath.Join(privateDir, "config.json"))
 	plan.SnapshotDir = privateDir
 	return d.restore(ctx, plan.RestorePlan, memoryMode, func(ctx context.Context, _ string) error {
-		return d.swapCloneNets(ctx, apiSocket, oldNets, plan.Network.Interfaces)
+		if err := d.swapCloneNets(ctx, apiSocket, oldNets, plan.Network.Interfaces); err != nil {
+			return err
+		}
+		return d.addCloneDataDisks(ctx, apiSocket, plan.NewDataDisks, plan.CPUs)
+	})
+}
+
+// addCloneDataDisks attaches freshly formatted disks to the paused clone.
+// They were absent from the captured device tree, so config patching alone
+// cannot expose them to the restored guest.
+func (d *Driver) addCloneDataDisks(ctx context.Context, socket string, disks []vmm.Disk, cpus uint32) error {
+	for _, disk := range disks {
+		payload, err := cloneDataDiskPayload(disk, cpus)
+		if err != nil {
+			return err
+		}
+		if err := d.snapshotAction(ctx, socket, "vm.add-disk", payload, d.startupTimeout); err != nil {
+			return fmt.Errorf("add clone data disk %q: %w", disk.Serial, err)
+		}
+	}
+	return nil
+}
+
+func cloneDataDiskPayload(disk vmm.Disk, cpus uint32) ([]byte, error) {
+	direct := disk.DirectIO == nil || *disk.DirectIO
+	return json.Marshal(map[string]any{
+		"id": "kumabox-data-" + disk.Serial, "path": disk.Path, "serial": disk.Serial,
+		"image_type": "Raw", "readonly": false, "direct": direct,
+		"sparse": true, "num_queues": cpus, "queue_size": diskQueueSize,
 	})
 }
 
@@ -166,6 +194,11 @@ func patchCloneConfig(path string, plan vmm.ClonePlan, vsockSocket string) ([]cl
 				return nil, err
 			}
 			disk["readonly"] = json.RawMessage("false")
+			direct := plan.DataDisks[dataIndex].DirectIO == nil || *plan.DataDisks[dataIndex].DirectIO
+			disk["direct"], err = json.Marshal(direct)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	if cowCount != 1 {
