@@ -37,7 +37,12 @@ func (s *SandboxService) lockExistingSandbox(ctx context.Context, request sandbo
 	}
 	lock := filelock.New(path)
 	if err := lock.Lock(ctx); err != nil {
-		return types.Sandbox{}, nil, errdefs.Context(err, request.operation, request.reference, "lock", request.retryHint, false)
+		return types.Sandbox{}, nil, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: request.operation,
+			Entity:    request.reference,
+			Phase:     "lock",
+			Action:    request.retryHint,
+		})
 	}
 	unlock = func() error { return lock.Unlock(context.WithoutCancel(ctx)) }
 	record, err = s.dependencies.catalog.Resolve(ctx, record.ID.String())

@@ -47,7 +47,12 @@ func NewExecCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			defer func() {
-				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "execute sandbox command", args[0], "close metadata", "retry the command", false))
+				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
+					Operation: "execute sandbox command",
+					Entity:    args[0],
+					Phase:     "close metadata",
+					Action:    "retry the command",
+				}))
 			}()
 			var input io.Reader
 			if interactive {

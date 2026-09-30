@@ -26,7 +26,12 @@ func (s *SnapshotService) Export(ctx context.Context, reference string, output i
 			return err
 		}
 		if err := snapshot.WriteArchive(ctx, output, directory, record, compress); err != nil {
-			return errdefs.Context(err, "export snapshot", reference, "stream", "discard the incomplete output and retry", false)
+			return errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "export snapshot",
+				Entity:    reference,
+				Phase:     "stream",
+				Action:    "discard the incomplete output and retry",
+			})
 		}
 		return nil
 	})
@@ -97,7 +102,12 @@ func (s *SnapshotService) Import(ctx context.Context, input io.Reader, name, des
 	}
 	lock := filelock.New(lockPath)
 	if err := lock.Lock(ctx); err != nil {
-		return types.Snapshot{}, errdefs.Context(err, "import snapshot", id.String(), "lock", "retry the import", false)
+		return types.Snapshot{}, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "import snapshot",
+			Entity:    id.String(),
+			Phase:     "lock",
+			Action:    "retry the import",
+		})
 	}
 	defer func() { returnErr = errors.Join(returnErr, lock.Unlock(context.WithoutCancel(ctx))) }()
 	if err := s.paths.PrepareStage(id); err != nil {
@@ -160,7 +170,13 @@ func (s *SnapshotService) Import(ctx context.Context, input io.Reader, name, des
 			_, statErr := os.Stat(destination)
 			published = statErr == nil
 		}
-		return types.Snapshot{}, errdefs.Context(err, "import snapshot", imported.Name, "publish", "inspect snapshot storage before retrying", published)
+		return types.Snapshot{}, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "import snapshot",
+			Entity:    imported.Name,
+			Phase:     "publish",
+			Action:    "inspect snapshot storage before retrying",
+			Committed: published,
+		})
 	}
 	published = true
 	size, err := s.paths.Size(id)
@@ -173,7 +189,13 @@ func (s *SnapshotService) Import(ctx context.Context, input io.Reader, name, des
 		return types.Snapshot{}, err
 	}
 	if err := s.reporter.Committed(result); err != nil {
-		return result, errdefs.Context(err, "import snapshot", imported.Name, "report", "snapshot was imported; inspect it before retrying", true)
+		return result, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "import snapshot",
+			Entity:    imported.Name,
+			Phase:     "report",
+			Action:    "snapshot was imported; inspect it before retrying",
+			Committed: true,
+		})
 	}
 	return result, nil
 }

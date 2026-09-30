@@ -41,10 +41,22 @@ func newRemoveCommand(configuration configProvider) *cobra.Command {
 					return err
 				}
 				if err := progress.Removed(len(args)); err != nil {
-					return errdefs.Context(err, "remove image", reference, "report", "image removed", true)
+					return errdefs.WithContext(err, errdefs.ContextInfo{
+						Operation: "remove image",
+						Entity:    reference,
+						Phase:     "report",
+						Action:    "image removed",
+						Committed: true,
+					})
 				}
 				if _, err := fmt.Fprintf(progress.Output(command.OutOrStdout()), "removed %s\n", strings.Join(removed.Names, ",")); err != nil {
-					return errdefs.Context(err, "remove image", reference, "report", "image removed", true)
+					return errdefs.WithContext(err, errdefs.ContextInfo{
+						Operation: "remove image",
+						Entity:    reference,
+						Phase:     "report",
+						Action:    "image removed",
+						Committed: true,
+					})
 				}
 			}
 			return nil

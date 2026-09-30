@@ -31,7 +31,12 @@ func NewNetCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			defer func() {
-				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "resize sandbox network", args[0], "close metadata", "inspect the sandbox", false))
+				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
+					Operation: "resize sandbox network",
+					Entity:    args[0],
+					Phase:     "close metadata",
+					Action:    "inspect the sandbox",
+				}))
 			}()
 			record, err := service.NetResize(command.Context(), args[0], nics)
 			if err != nil {

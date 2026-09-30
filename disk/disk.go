@@ -114,23 +114,48 @@ func (d *Ext4) Prepare(ctx context.Context, id types.SandboxID, size int64) erro
 		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
 	}
 	if err := storage.EnsureDir(dir); err != nil {
-		return errdefs.Context(errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, err), "prepare sandbox disk", id.String(), "directory", "check data root permissions", false)
+		return errdefs.WithContext(errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, err), errdefs.ContextInfo{
+			Operation: "prepare sandbox disk",
+			Entity:    id.String(),
+			Phase:     "directory",
+			Action:    "check data root permissions",
+		})
 	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {
-		return errdefs.Context(errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, err), "prepare sandbox disk", id.String(), "open directory", "inspect the sandbox data directory", false)
+		return errdefs.WithContext(errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, err), errdefs.ContextInfo{
+			Operation: "prepare sandbox disk",
+			Entity:    id.String(),
+			Phase:     "open directory",
+			Action:    "inspect the sandbox data directory",
+		})
 	}
 	file, err := root.OpenFile("cow.raw", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return errdefs.Context(errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, errors.Join(err, root.Close())), "prepare sandbox disk", id.String(), "create sparse file", "inspect the sandbox data directory", false)
+		return errdefs.WithContext(errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, errors.Join(err, root.Close())), errdefs.ContextInfo{
+			Operation: "prepare sandbox disk",
+			Entity:    id.String(),
+			Phase:     "create sparse file",
+			Action:    "inspect the sandbox data directory",
+		})
 	}
 	truncateErr := file.Truncate(size)
 	closeErr := errors.Join(file.Close(), root.Close())
 	if err := errors.Join(truncateErr, closeErr); err != nil {
-		return errdefs.Context(errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, err), "prepare sandbox disk", id.String(), "create sparse file", "remove the failed sandbox", false)
+		return errdefs.WithContext(errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, err), errdefs.ContextInfo{
+			Operation: "prepare sandbox disk",
+			Entity:    id.String(),
+			Phase:     "create sparse file",
+			Action:    "remove the failed sandbox",
+		})
 	}
 	if _, err := exec.LookPath(d.mkfs); err != nil {
-		return errdefs.Context(errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, err), "prepare sandbox disk", id.String(), "format ext4", "install e2fsprogs or run kumabox doctor --fix", false)
+		return errdefs.WithContext(errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, err), errdefs.ContextInfo{
+			Operation: "prepare sandbox disk",
+			Entity:    id.String(),
+			Phase:     "format ext4",
+			Action:    "install e2fsprogs or run kumabox doctor --fix",
+		})
 	}
 	output, err := exec.CommandContext( //nolint:gosec // executable is fixed by production construction; path is derived from validated roots and UUID
 		ctx, d.mkfs, "-F", "-m", "0", "-q", "-E", "lazy_itable_init=1,lazy_journal_init=1,discard", path,
@@ -140,10 +165,20 @@ func (d *Ext4) Prepare(ctx context.Context, id types.SandboxID, size int64) erro
 		if detail != "" {
 			err = fmt.Errorf("%w: %s", err, detail)
 		}
-		return errdefs.Context(errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, err), "prepare sandbox disk", id.String(), "format ext4", "remove the failed sandbox after checking mkfs.ext4", false)
+		return errdefs.WithContext(errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, err), errdefs.ContextInfo{
+			Operation: "prepare sandbox disk",
+			Entity:    id.String(),
+			Phase:     "format ext4",
+			Action:    "remove the failed sandbox after checking mkfs.ext4",
+		})
 	}
 	if err := validate(path, size); err != nil {
-		return errdefs.Context(errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err), "prepare sandbox disk", id.String(), "validate ext4", "remove and recreate the sandbox", false)
+		return errdefs.WithContext(errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err), errdefs.ContextInfo{
+			Operation: "prepare sandbox disk",
+			Entity:    id.String(),
+			Phase:     "validate ext4",
+			Action:    "remove and recreate the sandbox",
+		})
 	}
 	return nil
 }
@@ -159,10 +194,12 @@ func (d *Ext4) Check(_ context.Context, id types.SandboxID, size int64) error {
 		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
 	}
 	if err := validate(path, size); err != nil {
-		return errdefs.Context(
-			errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err),
-			"check sandbox disk", id.String(), "validate ext4", "remove and recreate the sandbox", false,
-		)
+		return errdefs.WithContext(errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err), errdefs.ContextInfo{
+			Operation: "check sandbox disk",
+			Entity:    id.String(),
+			Phase:     "validate ext4",
+			Action:    "remove and recreate the sandbox",
+		})
 	}
 	return nil
 }

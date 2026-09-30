@@ -40,7 +40,13 @@ func newSaveCommand(configuration configProvider) *cobra.Command {
 			}
 			committed := false
 			defer func() {
-				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "save snapshot", args[0], "close metadata", "inspect the snapshot before retrying", committed))
+				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
+					Operation: "save snapshot",
+					Entity:    args[0],
+					Phase:     "close metadata",
+					Action:    "inspect the snapshot before retrying",
+					Committed: committed,
+				}))
 			}()
 			record, err := service.Save(command.Context(), core.SaveSnapshotRequest{
 				SandboxReference: args[0], Name: name, Description: description,
@@ -78,7 +84,13 @@ func NewHibernateCommand(configuration func() config.Config) *cobra.Command {
 			}
 			committed := false
 			defer func() {
-				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "hibernate sandbox", args[0], "close metadata", "inspect the sandbox and snapshot before retrying", committed))
+				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
+					Operation: "hibernate sandbox",
+					Entity:    args[0],
+					Phase:     "close metadata",
+					Action:    "inspect the sandbox and snapshot before retrying",
+					Committed: committed,
+				}))
 			}()
 			record, err := service.Hibernate(command.Context(), core.SaveSnapshotRequest{
 				SandboxReference: args[0], Name: name, Description: description,
@@ -110,7 +122,12 @@ func newListCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			defer func() {
-				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "list snapshots", "", "close metadata", "retry the query", false))
+				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
+					Operation: "list snapshots",
+					Entity:    "",
+					Phase:     "close metadata",
+					Action:    "retry the query",
+				}))
 			}()
 			var records []types.Snapshot
 			if sandboxReference == "" {
@@ -143,7 +160,12 @@ func newInspectCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			defer func() {
-				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "inspect snapshot", args[0], "close metadata", "retry the query", false))
+				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
+					Operation: "inspect snapshot",
+					Entity:    args[0],
+					Phase:     "close metadata",
+					Action:    "retry the query",
+				}))
 			}()
 			record, err := service.Inspect(command.Context(), args[0])
 			if err != nil {
@@ -166,7 +188,13 @@ func newRemoveCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			defer func() {
-				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "remove snapshot", args[0], "close metadata", "retry snapshot removal", true))
+				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
+					Operation: "remove snapshot",
+					Entity:    args[0],
+					Phase:     "close metadata",
+					Action:    "retry snapshot removal",
+					Committed: true,
+				}))
 			}()
 			removed := make([]types.Snapshot, 0, len(args))
 			var failures []error

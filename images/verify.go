@@ -78,7 +78,7 @@ func (g *Guard) withLocked(ctx context.Context, reference string, check func(con
 // The reference is resolved again after waiting for locks to detect removal.
 func Verify(ctx context.Context, paths Paths, catalog ImageResolver, reference string) (result types.Image, returnErr error) {
 	image, err := NewGuard(paths, catalog).withLocked(ctx, reference, verifyImage, func(types.Image) error { return nil })
-	return image, errdefs.Context(err, "verify image", reference, "artifacts", "re-import the image", false)
+	return image, errdefs.WithContext(err, errdefs.ContextInfo{Operation: "verify image", Entity: reference, Phase: "artifacts", Action: "re-import the image"})
 }
 
 // availableImage checks bounded metadata and filesystem facts without reading full artifacts.

@@ -43,7 +43,13 @@ func (s *SandboxService) Start(ctx context.Context, reference string) (result ty
 	committed := false
 	defer func() {
 		if unlockErr := unlock(); unlockErr != nil {
-			returnErr = errdefs.Context(errors.Join(returnErr, unlockErr), "start sandbox", reference, "unlock", "inspect the sandbox before retrying", committed)
+			returnErr = errdefs.WithContext(errors.Join(returnErr, unlockErr), errdefs.ContextInfo{
+				Operation: "start sandbox",
+				Entity:    reference,
+				Phase:     "unlock",
+				Action:    "inspect the sandbox before retrying",
+				Committed: committed,
+			})
 		}
 	}()
 	backend, err := s.dependencies.runtimes.Backend(record.VMM)
@@ -53,13 +59,24 @@ func (s *SandboxService) Start(ctx context.Context, reference string) (result ty
 	beforeRecovery := record
 	result, done, err := s.recoverStart(ctx, backend, record)
 	if err != nil {
-		return types.Sandbox{}, errdefs.Context(err, "start sandbox", reference, "recover runtime", "inspect the sandbox and VMM log before retrying", false)
+		return types.Sandbox{}, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "start sandbox",
+			Entity:    reference,
+			Phase:     "recover runtime",
+			Action:    "inspect the sandbox and VMM log before retrying",
+		})
 	}
 	committed = result.Generation != beforeRecovery.Generation || result.State != beforeRecovery.State
 	if done {
 		committed = true
 		if err := s.dependencies.reporter.Committed(result); err != nil {
-			return result, errdefs.Context(err, "start sandbox", reference, "report", "sandbox is running; inspect it before retrying", true)
+			return result, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "start sandbox",
+				Entity:    reference,
+				Phase:     "report",
+				Action:    "sandbox is running; inspect it before retrying",
+				Committed: true,
+			})
 		}
 		return result, nil
 	}
@@ -68,7 +85,13 @@ func (s *SandboxService) Start(ctx context.Context, reference string) (result ty
 		if record.State == types.SandboxStateStarting {
 			return s.failStart(ctx, backend, record, phase, cause, vmm.Process{})
 		}
-		return errdefs.Context(cause, "start sandbox", reference, phase, "fix the validation failure and retry", committed)
+		return errdefs.WithContext(cause, errdefs.ContextInfo{
+			Operation: "start sandbox",
+			Entity:    reference,
+			Phase:     phase,
+			Action:    "fix the validation failure and retry",
+			Committed: committed,
+		})
 	}
 	backupDir, err := s.dependencies.paths.RestoreBackup(record.ID)
 	if err != nil {
@@ -121,7 +144,13 @@ func (s *SandboxService) Start(ctx context.Context, reference string) (result ty
 	}
 	starting, err := s.dependencies.catalog.BeginStart(ctx, record.ID, record.Generation, s.dependencies.now().UTC())
 	if err != nil {
-		return record, errdefs.Context(err, "start sandbox", reference, "mark starting", "inspect the sandbox before retrying", committed)
+		return record, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "start sandbox",
+			Entity:    reference,
+			Phase:     "mark starting",
+			Action:    "inspect the sandbox before retrying",
+			Committed: committed,
+		})
 	}
 	committed = true
 	result = starting
@@ -148,7 +177,13 @@ func (s *SandboxService) Start(ctx context.Context, reference string) (result ty
 	}
 	result = running
 	if err := s.dependencies.reporter.Committed(running); err != nil {
-		return running, errdefs.Context(err, "start sandbox", reference, "report", "sandbox is running; inspect it before retrying", true)
+		return running, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "start sandbox",
+			Entity:    reference,
+			Phase:     "report",
+			Action:    "sandbox is running; inspect it before retrying",
+			Committed: true,
+		})
 	}
 	return running, nil
 }
@@ -327,7 +362,13 @@ func (s *SandboxService) failStart(ctx context.Context, backend vmm.Backend, sta
 	failureCause := errors.Join(cause, cleanupErr)
 	failure := types.SandboxFailure{Phase: phase, Message: failureCause.Error()}
 	_, markErr := s.dependencies.catalog.MarkStartError(cleanupCtx, starting.ID, starting.Generation, failure, s.dependencies.now().UTC())
-	return errdefs.Context(errors.Join(failureCause, markErr), "start sandbox", starting.Config.Name, phase, "inspect the retained error sandbox and VMM log", true)
+	return errdefs.WithContext(errors.Join(failureCause, markErr), errdefs.ContextInfo{
+		Operation: "start sandbox",
+		Entity:    starting.Config.Name,
+		Phase:     phase,
+		Action:    "inspect the retained error sandbox and VMM log",
+		Committed: true,
+	})
 }
 
 // Stop terminates the exact VMM process owned by one sandbox and commits
@@ -355,7 +396,13 @@ func (s *SandboxService) Stop(ctx context.Context, reference string) (result typ
 	committed := false
 	defer func() {
 		if unlockErr := unlock(); unlockErr != nil {
-			returnErr = errdefs.Context(errors.Join(returnErr, unlockErr), "stop sandbox", reference, "unlock", "inspect the sandbox before retrying", committed)
+			returnErr = errdefs.WithContext(errors.Join(returnErr, unlockErr), errdefs.ContextInfo{
+				Operation: "stop sandbox",
+				Entity:    reference,
+				Phase:     "unlock",
+				Action:    "inspect the sandbox before retrying",
+				Committed: committed,
+			})
 		}
 	}()
 	backend, err := s.dependencies.runtimes.Backend(record.VMM)
@@ -371,13 +418,23 @@ func (s *SandboxService) Stop(ctx context.Context, reference string) (result typ
 			return record, err
 		}
 		if err := backend.Cleanup(ctx, record.ID); err != nil {
-			return record, errdefs.Context(err, "stop sandbox", reference, "cleanup runtime", "inspect the runtime scope before retrying", false)
+			return record, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "stop sandbox",
+				Entity:    reference,
+				Phase:     "cleanup runtime",
+				Action:    "inspect the runtime scope before retrying",
+			})
 		}
 		if err := s.quiesceNetwork(ctx, record); err != nil {
-			return record, errdefs.Context(err, "stop sandbox", reference, "quiesce network", "retry the stop to finish network cleanup", false)
+			return record, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "stop sandbox",
+				Entity:    reference,
+				Phase:     "quiesce network",
+				Action:    "retry the stop to finish network cleanup",
+			})
 		}
 		if err := s.dependencies.reporter.Committed(record); err != nil {
-			return record, errdefs.Context(err, "stop sandbox", reference, "report", "sandbox is not running", false)
+			return record, errdefs.WithContext(err, errdefs.ContextInfo{Operation: "stop sandbox", Entity: reference, Phase: "report", Action: "sandbox is not running"})
 		}
 		return record, nil
 	}
@@ -391,7 +448,12 @@ func (s *SandboxService) Stop(ctx context.Context, reference string) (result typ
 	}
 	process, exists, err := backend.Locate(ctx, record.ID, processGeneration)
 	if err != nil {
-		return record, errdefs.Context(err, "stop sandbox", reference, "observe runtime", "inspect the sandbox runtime before retrying", false)
+		return record, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "stop sandbox",
+			Entity:    reference,
+			Phase:     "observe runtime",
+			Action:    "inspect the sandbox runtime before retrying",
+		})
 	}
 
 	if record.State == types.SandboxStateRunning && exists {
@@ -400,47 +462,106 @@ func (s *SandboxService) Stop(ctx context.Context, reference string) (result typ
 		}
 		record, err = s.dependencies.catalog.BeginStop(ctx, record.ID, record.Generation, s.dependencies.now().UTC())
 		if err != nil {
-			return result, errdefs.Context(err, "stop sandbox", reference, "mark stopping", "inspect the sandbox before retrying", false)
+			return result, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "stop sandbox",
+				Entity:    reference,
+				Phase:     "mark stopping",
+				Action:    "inspect the sandbox before retrying",
+			})
 		}
 		result, committed = record, true
 	}
 
 	if exists {
 		if err := s.dependencies.reporter.Status("stopping " + string(backend.Type())); err != nil {
-			return record, errdefs.Context(err, "stop sandbox", reference, "report", "retry the stop to resume Stopping", committed)
+			return record, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "stop sandbox",
+				Entity:    reference,
+				Phase:     "report",
+				Action:    "retry the stop to resume Stopping",
+				Committed: committed,
+			})
 		}
 		if err := backend.Stop(ctx, process); err != nil {
-			return record, errdefs.Context(err, "stop sandbox", reference, "stop VMM", "retry the stop; the retained state preserves ownership", committed)
+			return record, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "stop sandbox",
+				Entity:    reference,
+				Phase:     "stop VMM",
+				Action:    "retry the stop; the retained state preserves ownership",
+				Committed: committed,
+			})
 		}
 	}
 	if err := s.dependencies.reporter.Status("cleaning runtime state"); err != nil {
-		return record, errdefs.Context(err, "stop sandbox", reference, "report", "retry the stop to finish cleanup", committed)
+		return record, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "stop sandbox",
+			Entity:    reference,
+			Phase:     "report",
+			Action:    "retry the stop to finish cleanup",
+			Committed: committed,
+		})
 	}
 	if err := backend.Cleanup(ctx, record.ID); err != nil {
-		return record, errdefs.Context(err, "stop sandbox", reference, "cleanup runtime", "retry the stop to finish cleanup", committed)
+		return record, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "stop sandbox",
+			Entity:    reference,
+			Phase:     "cleanup runtime",
+			Action:    "retry the stop to finish cleanup",
+			Committed: committed,
+		})
 	}
 	if err := s.quiesceNetwork(ctx, record); err != nil {
-		return record, errdefs.Context(err, "stop sandbox", reference, "quiesce network", "retry the stop to finish network cleanup", committed)
+		return record, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "stop sandbox",
+			Entity:    reference,
+			Phase:     "quiesce network",
+			Action:    "retry the stop to finish network cleanup",
+			Committed: committed,
+		})
 	}
 
 	// Error retains the original start/create diagnostic after any residual VMM
 	// is gone. It can be removed or started explicitly by the next command.
 	if record.State == types.SandboxStateError {
 		if err := s.dependencies.reporter.Committed(record); err != nil {
-			return record, errdefs.Context(err, "stop sandbox", reference, "report", "the VMM is stopped; inspect the retained error", committed)
+			return record, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "stop sandbox",
+				Entity:    reference,
+				Phase:     "report",
+				Action:    "the VMM is stopped; inspect the retained error",
+				Committed: committed,
+			})
 		}
 		return record, nil
 	}
 	if err := s.dependencies.reporter.Status("committing stopped state"); err != nil {
-		return record, errdefs.Context(err, "stop sandbox", reference, "report", "retry the stop to commit process absence", committed)
+		return record, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "stop sandbox",
+			Entity:    reference,
+			Phase:     "report",
+			Action:    "retry the stop to commit process absence",
+			Committed: committed,
+		})
 	}
 	stopped, err := s.dependencies.catalog.MarkStopped(ctx, record.ID, record.Generation, record.State, s.dependencies.now().UTC())
 	if err != nil {
-		return record, errdefs.Context(err, "stop sandbox", reference, "mark stopped", "inspect the sandbox before retrying", committed)
+		return record, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "stop sandbox",
+			Entity:    reference,
+			Phase:     "mark stopped",
+			Action:    "inspect the sandbox before retrying",
+			Committed: committed,
+		})
 	}
 	result, committed = stopped, true
 	if err := s.dependencies.reporter.Committed(stopped); err != nil {
-		return stopped, errdefs.Context(err, "stop sandbox", reference, "report", "sandbox is stopped; inspect it before retrying", true)
+		return stopped, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "stop sandbox",
+			Entity:    reference,
+			Phase:     "report",
+			Action:    "sandbox is stopped; inspect it before retrying",
+			Committed: true,
+		})
 	}
 	return stopped, nil
 }
@@ -478,7 +599,12 @@ func (s *SandboxService) Console(ctx context.Context, reference string) (io.Read
 	}
 	connection, err := backend.Console(ctx, process)
 	if err != nil {
-		return nil, errdefs.Context(err, "open sandbox console", reference, "open PTY", "inspect the VMM log and retry", false)
+		return nil, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "open sandbox console",
+			Entity:    reference,
+			Phase:     "open PTY",
+			Action:    "inspect the VMM log and retry",
+		})
 	}
 	return connection, nil
 }
@@ -517,7 +643,12 @@ func (s *SandboxService) Logs(ctx context.Context, reference string, options San
 		return err
 	}
 	if err := backend.Logs(ctx, record.ID, backendOptions, output); err != nil {
-		return errdefs.Context(err, "read sandbox logs", reference, "stream VMM log", "start the sandbox if it has no log, or retry the stream", false)
+		return errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "read sandbox logs",
+			Entity:    reference,
+			Phase:     "stream VMM log",
+			Action:    "start the sandbox if it has no log, or retry the stream",
+		})
 	}
 	return nil
 }
@@ -539,12 +670,22 @@ func (s *SandboxService) Exec(ctx context.Context, reference string, command typ
 	}
 	connection, err := backend.DialVsock(ctx, process, agent.Port)
 	if err != nil {
-		return 0, errdefs.Context(err, "execute sandbox command", reference, "connect guest agent", "the guest agent may still be starting; retry shortly or inspect its service", false)
+		return 0, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "execute sandbox command",
+			Entity:    reference,
+			Phase:     "connect guest agent",
+			Action:    "the guest agent may still be starting; retry shortly or inspect its service",
+		})
 	}
 	defer connection.Close() //nolint:errcheck // closing a completed read/write session cannot change the guest command result
 	exitCode, err := agent.Run(ctx, connection, command, stdin, stdout, stderr)
 	if err != nil {
-		return 0, errdefs.Context(err, "execute sandbox command", reference, "run guest command", "inspect the guest agent and retry", false)
+		return 0, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "execute sandbox command",
+			Entity:    reference,
+			Phase:     "run guest command",
+			Action:    "inspect the guest agent and retry",
+		})
 	}
 	return exitCode, nil
 }
@@ -568,7 +709,12 @@ func (s *SandboxService) locateRunning(ctx context.Context, reference, operation
 		if unlockErr := unlock(); unlockErr != nil {
 			backend = nil
 			process = vmm.Process{}
-			returnErr = errdefs.Context(errors.Join(returnErr, unlockErr), operation, reference, "unlock", "retry the operation", false)
+			returnErr = errdefs.WithContext(errors.Join(returnErr, unlockErr), errdefs.ContextInfo{
+				Operation: operation,
+				Entity:    reference,
+				Phase:     "unlock",
+				Action:    "retry the operation",
+			})
 		}
 	}()
 	if record.State != types.SandboxStateRunning {
@@ -583,7 +729,12 @@ func (s *SandboxService) locateRunning(ctx context.Context, reference, operation
 	}
 	process, exists, err := backend.Locate(ctx, record.ID, record.Generation-1)
 	if err != nil {
-		return nil, vmm.Process{}, errdefs.Context(err, operation, reference, "locate VMM", "inspect the sandbox runtime", false)
+		return nil, vmm.Process{}, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: operation,
+			Entity:    reference,
+			Phase:     "locate VMM",
+			Action:    "inspect the sandbox runtime",
+		})
 	}
 	if !exists {
 		return nil, vmm.Process{}, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, errors.New("sandbox state is running but its VMM process is absent"))

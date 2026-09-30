@@ -46,7 +46,13 @@ func NewRestoreCommand(configuration configProvider) *cobra.Command {
 			}
 			committed := false
 			defer func() {
-				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "restore sandbox", args[0], "close metadata", "inspect the sandbox before retrying", committed))
+				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
+					Operation: "restore sandbox",
+					Entity:    args[0],
+					Phase:     "close metadata",
+					Action:    "inspect the sandbox before retrying",
+					Committed: committed,
+				}))
 			}()
 			record, err := service.RestoreWithOptions(command.Context(), args[0], reference, core.RestoreOptions{SourceDirectory: fromDir, Force: force, Pull: pull})
 			if err != nil {
@@ -54,7 +60,13 @@ func NewRestoreCommand(configuration configProvider) *cobra.Command {
 			}
 			committed = true
 			if err := writeSandboxResult(progress.Output(command.OutOrStdout()), record, asJSON); err != nil {
-				return errdefs.Context(err, "restore sandbox", args[0], "output", "sandbox is running; inspect it before retrying", true)
+				return errdefs.WithContext(err, errdefs.ContextInfo{
+					Operation: "restore sandbox",
+					Entity:    args[0],
+					Phase:     "output",
+					Action:    "sandbox is running; inspect it before retrying",
+					Committed: true,
+				})
 			}
 			return nil
 		},

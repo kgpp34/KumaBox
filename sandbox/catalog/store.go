@@ -166,7 +166,12 @@ func (c *Store) Reserve(ctx context.Context, imageReference string, expected typ
 		}
 		return putJSON(ctx, writer, CollectionNames, record.Config.Name, nameData{ID: record.ID.String()})
 	})
-	return errdefs.Context(err, "reserve sandbox", record.Config.Name, "metadata", "choose another name or retry", false)
+	return errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "reserve sandbox",
+		Entity:    record.Config.Name,
+		Phase:     "metadata",
+		Action:    "choose another name or retry",
+	})
 }
 
 // MarkCreated atomically publishes resolved network state and the Created
@@ -211,7 +216,12 @@ func (c *Store) MarkCreated(ctx context.Context, id types.SandboxID, expected ui
 		result = record
 		return nil
 	})
-	return result, errdefs.Context(err, "create sandbox", id.String(), "mark created", "inspect the sandbox state before retrying", false)
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "create sandbox",
+		Entity:    id.String(),
+		Phase:     "mark created",
+		Action:    "inspect the sandbox state before retrying",
+	})
 }
 
 // MarkError retains ownership and diagnostics when create cleanup cannot finish.
@@ -256,7 +266,12 @@ func (c *Store) BeginStart(ctx context.Context, id types.SandboxID, expected uin
 		result = record
 		return nil
 	})
-	return result, errdefs.Context(err, "start sandbox", id.String(), "mark starting", "inspect the sandbox state before retrying", false)
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "start sandbox",
+		Entity:    id.String(),
+		Phase:     "mark starting",
+		Action:    "inspect the sandbox state before retrying",
+	})
 }
 
 // MarkRunning commits readiness only for the Starting generation that launched
@@ -300,7 +315,12 @@ func (c *Store) UpdateNetwork(ctx context.Context, id types.SandboxID, expected 
 		result = record
 		return nil
 	})
-	return result, errdefs.Context(err, "resize sandbox network", id.String(), "persist network", "inspect the sandbox and retry", false)
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "resize sandbox network",
+		Entity:    id.String(),
+		Phase:     "persist network",
+		Action:    "inspect the sandbox and retry",
+	})
 }
 
 // MarkStartError retains launch diagnostics and ownership after cleanup was
@@ -344,7 +364,12 @@ func (c *Store) BeginStop(ctx context.Context, id types.SandboxID, expected uint
 		result = record
 		return nil
 	})
-	return result, errdefs.Context(err, "stop sandbox", id.String(), "mark stopping", "inspect the sandbox state before retrying", false)
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "stop sandbox",
+		Entity:    id.String(),
+		Phase:     "mark stopping",
+		Action:    "inspect the sandbox state before retrying",
+	})
 }
 
 // MarkStopped commits process absence from a lifecycle state that can own a
@@ -370,7 +395,12 @@ func (c *Store) Resolve(ctx context.Context, reference string) (types.Sandbox, e
 		result, err = resolveRecord(ctx, reader, reference)
 		return err
 	})
-	return result, errdefs.Context(err, "resolve sandbox", reference, "metadata", "check the sandbox name or ID", false)
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "resolve sandbox",
+		Entity:    reference,
+		Phase:     "metadata",
+		Action:    "check the sandbox name or ID",
+	})
 }
 
 // List returns one validated snapshot ordered newest first, with ID as the
@@ -399,7 +429,12 @@ func (c *Store) List(ctx context.Context) ([]types.Sandbox, error) {
 		}
 		return strings.Compare(left.ID.String(), right.ID.String())
 	})
-	return result, errdefs.Context(err, "list sandboxes", "", "metadata", "inspect the sandbox metadata store", false)
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "list sandboxes",
+		Entity:    "",
+		Phase:     "metadata",
+		Action:    "inspect the sandbox metadata store",
+	})
 }
 
 // BeginDelete records durable cleanup intent before any owned file is removed.
@@ -436,7 +471,12 @@ func (c *Store) BeginDelete(ctx context.Context, id types.SandboxID, expected ui
 		result = record
 		return nil
 	})
-	return result, errdefs.Context(err, "remove sandbox", id.String(), "mark deleting", "stop the sandbox if it is running, then retry", false)
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "remove sandbox",
+		Entity:    id.String(),
+		Phase:     "mark deleting",
+		Action:    "stop the sandbox if it is running, then retry",
+	})
 }
 
 // FinalizeDelete atomically releases the name and image reference only after
@@ -452,7 +492,12 @@ func (c *Store) FinalizeDelete(ctx context.Context, id types.SandboxID, expected
 		}
 		return deleteRecord(ctx, writer, record)
 	})
-	return errdefs.Context(err, "remove sandbox", id.String(), "finalize metadata", "retry removal to finish cleanup", false)
+	return errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "remove sandbox",
+		Entity:    id.String(),
+		Phase:     "finalize metadata",
+		Action:    "retry removal to finish cleanup",
+	})
 }
 
 // transition applies one generation-fenced state change and returns the committed record.
@@ -479,7 +524,12 @@ func (c *Store) transition(ctx context.Context, id types.SandboxID, expected uin
 		result = record
 		return nil
 	})
-	return result, errdefs.Context(err, "transition sandbox", id.String(), "metadata", "inspect the sandbox state", false)
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "transition sandbox",
+		Entity:    id.String(),
+		Phase:     "metadata",
+		Action:    "inspect the sandbox state",
+	})
 }
 
 // Forget removes a failed Creating reservation only if its generation is unchanged.
@@ -495,7 +545,12 @@ func (c *Store) Forget(ctx context.Context, id types.SandboxID, expected uint64)
 		}
 		return deleteRecord(ctx, writer, record)
 	})
-	return errdefs.Context(err, "forget sandbox", id.String(), "metadata", "inspect the retained sandbox record", false)
+	return errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "forget sandbox",
+		Entity:    id.String(),
+		Phase:     "metadata",
+		Action:    "inspect the retained sandbox record",
+	})
 }
 
 // Usage answers image deletion from the same metadata transaction that removes
@@ -695,5 +750,10 @@ func putJSON(ctx context.Context, writer metadata.Writer, collection metadata.Co
 
 // corrupt classifies malformed persisted data independently of caller operations.
 func corrupt(entity string, cause error) error {
-	return errdefs.Context(errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, cause), "read sandbox metadata", entity, "decode", "restore metadata from a trusted backup", false)
+	return errdefs.WithContext(errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, cause), errdefs.ContextInfo{
+		Operation: "read sandbox metadata",
+		Entity:    entity,
+		Phase:     "decode",
+		Action:    "restore metadata from a trusted backup",
+	})
 }

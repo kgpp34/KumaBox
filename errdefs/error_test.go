@@ -84,3 +84,17 @@ func TestContextNil(t *testing.T) {
 		t.Fatalf("Context(nil) = %v, want nil", err)
 	}
 }
+
+func TestWithContextUsesNamedFields(t *testing.T) {
+	cause := errors.New("disk write failed")
+	err := WithContext(cause, ContextInfo{
+		Operation: "create sandbox", Entity: "box", Phase: "disk", Action: "retry creation", Committed: true,
+	})
+	var classified *Error
+	if !errors.As(err, &classified) || !classified.Committed || classified.Action != "retry creation" {
+		t.Fatalf("named context = %#v", classified)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatal("named context lost the original error")
+	}
+}

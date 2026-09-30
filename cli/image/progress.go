@@ -136,7 +136,13 @@ func (p *imageProgress) Finish(operationErr error) error {
 	p.mu.Unlock()
 
 	reportErr := p.renderer.Finish(label, outcome, detail)
-	return errdefs.Context(reportErr, "image operation", label, "report", "check image state with image inspect", committed)
+	return errdefs.WithContext(reportErr, errdefs.ContextInfo{
+		Operation: "image operation",
+		Entity:    label,
+		Phase:     "report",
+		Action:    "check image state with image inspect",
+		Committed: committed,
+	})
 }
 
 // messageLocked formats aggregate image state while p.mu is held.

@@ -38,7 +38,13 @@ func NewRemoveCommand(configuration configProvider) *cobra.Command {
 			committed := false
 			defer func() {
 				closeErr := service.Close()
-				returnErr = errors.Join(returnErr, errdefs.Context(closeErr, "remove sandbox", reference, "close metadata", "inspect the sandbox before retrying", committed))
+				returnErr = errors.Join(returnErr, errdefs.WithContext(closeErr, errdefs.ContextInfo{
+					Operation: "remove sandbox",
+					Entity:    reference,
+					Phase:     "close metadata",
+					Action:    "inspect the sandbox before retrying",
+					Committed: committed,
+				}))
 			}()
 			removed, err := service.Remove(command.Context(), reference)
 			if err != nil {
@@ -46,7 +52,13 @@ func NewRemoveCommand(configuration configProvider) *cobra.Command {
 			}
 			committed = true
 			if err := writeRemoveResult(progress.Output(command.OutOrStdout()), removed, asJSON); err != nil {
-				return errdefs.Context(err, "remove sandbox", reference, "output", "sandbox was deleted; do not retry", true)
+				return errdefs.WithContext(err, errdefs.ContextInfo{
+					Operation: "remove sandbox",
+					Entity:    reference,
+					Phase:     "output",
+					Action:    "sandbox was deleted; do not retry",
+					Committed: true,
+				})
 			}
 			return nil
 		},

@@ -23,7 +23,12 @@ func NewInspectCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			defer func() {
-				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "inspect sandbox", args[0], "close metadata", "retry the query", false))
+				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
+					Operation: "inspect sandbox",
+					Entity:    args[0],
+					Phase:     "close metadata",
+					Action:    "retry the query",
+				}))
 			}()
 			statuses, err := service.Status(command.Context(), args[0])
 			if err != nil {
@@ -55,7 +60,12 @@ func NewLogsCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			defer func() {
-				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "read sandbox logs", reference, "close metadata", "retry the log stream", false))
+				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
+					Operation: "read sandbox logs",
+					Entity:    reference,
+					Phase:     "close metadata",
+					Action:    "retry the log stream",
+				}))
 			}()
 			return service.Logs(command.Context(), reference, core.SandboxLogOptions{Tail: tail, Follow: follow}, command.OutOrStdout())
 		},
@@ -81,7 +91,12 @@ func NewListCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			defer func() {
-				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "list sandboxes", "", "close metadata", "retry the query", false))
+				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
+					Operation: "list sandboxes",
+					Entity:    "",
+					Phase:     "close metadata",
+					Action:    "retry the query",
+				}))
 			}()
 			statuses, err := service.Status(command.Context())
 			if err != nil {

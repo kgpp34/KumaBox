@@ -102,13 +102,24 @@ func (s *SandboxService) create(ctx context.Context, request CreateSandboxReques
 	}
 	lock := filelock.New(lockPath)
 	if err := lock.Lock(ctx); err != nil {
-		return types.Sandbox{}, errdefs.Context(err, "create sandbox", request.Config.Name, "lock", "retry the create", false)
+		return types.Sandbox{}, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "create sandbox",
+			Entity:    request.Config.Name,
+			Phase:     "lock",
+			Action:    "retry the create",
+		})
 	}
 	defer func() {
 		unlockErr := lock.Unlock(context.WithoutCancel(ctx))
 		if unlockErr != nil {
 			committed := result.State == types.SandboxStateCreated
-			returnErr = errdefs.Context(errors.Join(returnErr, unlockErr), "create sandbox", request.Config.Name, "unlock", "inspect the sandbox before retrying", committed)
+			returnErr = errdefs.WithContext(errors.Join(returnErr, unlockErr), errdefs.ContextInfo{
+				Operation: "create sandbox",
+				Entity:    request.Config.Name,
+				Phase:     "unlock",
+				Action:    "inspect the sandbox before retrying",
+				Committed: committed,
+			})
 		}
 	}()
 
@@ -132,7 +143,12 @@ func (s *SandboxService) create(ctx context.Context, request CreateSandboxReques
 		if reserved {
 			return types.Sandbox{}, s.compensate(ctx, record, "image unlock", err)
 		}
-		return types.Sandbox{}, errdefs.Context(err, "create sandbox", request.Config.Name, "reserve", "check the image and sandbox name", false)
+		return types.Sandbox{}, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "create sandbox",
+			Entity:    request.Config.Name,
+			Phase:     "reserve",
+			Action:    "check the image and sandbox name",
+		})
 	}
 	setup := types.NetworkSetup{}
 	if _, hotpluggable := networkProvider.(network.Resizer); request.Config.NICs == 0 && hotpluggable {
@@ -219,7 +235,13 @@ func (s *SandboxService) create(ctx context.Context, request CreateSandboxReques
 	}
 	result = created
 	if err := s.dependencies.reporter.Committed(created); err != nil {
-		return created, errdefs.Context(err, "create sandbox", request.Config.Name, "report", "sandbox was created; inspect it before retrying", true)
+		return created, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "create sandbox",
+			Entity:    request.Config.Name,
+			Phase:     "report",
+			Action:    "sandbox was created; inspect it before retrying",
+			Committed: true,
+		})
 	}
 	return created, nil
 }
@@ -250,7 +272,13 @@ func (s *SandboxService) Remove(ctx context.Context, reference string) (result t
 	defer func() {
 		unlockErr := unlock()
 		if unlockErr != nil {
-			returnErr = errdefs.Context(errors.Join(returnErr, unlockErr), "remove sandbox", reference, "unlock", "inspect the sandbox removal state before retrying", committed)
+			returnErr = errdefs.WithContext(errors.Join(returnErr, unlockErr), errdefs.ContextInfo{
+				Operation: "remove sandbox",
+				Entity:    reference,
+				Phase:     "unlock",
+				Action:    "inspect the sandbox removal state before retrying",
+				Committed: committed,
+			})
 		}
 	}()
 	backend, err := s.dependencies.runtimes.Backend(record.VMM)
@@ -271,33 +299,87 @@ func (s *SandboxService) Remove(ctx context.Context, reference string) (result t
 	committed = true
 	result = deleting
 	if err := s.dependencies.reporter.Status("removing sandbox disk"); err != nil {
-		return deleting, errdefs.Context(err, "remove sandbox", reference, "report", "retry removal to finish cleanup", true)
+		return deleting, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "remove sandbox",
+			Entity:    reference,
+			Phase:     "report",
+			Action:    "retry removal to finish cleanup",
+			Committed: true,
+		})
 	}
 	if err := s.dependencies.disks.Remove(ctx, deleting.ID); err != nil {
-		return deleting, errdefs.Context(err, "remove sandbox", reference, "disk cleanup", "retry removal to finish cleanup", true)
+		return deleting, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "remove sandbox",
+			Entity:    reference,
+			Phase:     "disk cleanup",
+			Action:    "retry removal to finish cleanup",
+			Committed: true,
+		})
 	}
 	if hasNetwork {
 		if err := s.dependencies.reporter.Status("removing sandbox network"); err != nil {
-			return deleting, errdefs.Context(err, "remove sandbox", reference, "report", "retry removal to finish cleanup", true)
+			return deleting, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "remove sandbox",
+				Entity:    reference,
+				Phase:     "report",
+				Action:    "retry removal to finish cleanup",
+				Committed: true,
+			})
 		}
 		if err := networkProvider.Delete(ctx, deleting.ID); err != nil {
-			return deleting, errdefs.Context(err, "remove sandbox", reference, "network cleanup", "retry removal to finish cleanup", true)
+			return deleting, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "remove sandbox",
+				Entity:    reference,
+				Phase:     "network cleanup",
+				Action:    "retry removal to finish cleanup",
+				Committed: true,
+			})
 		}
 	}
 	if err := s.dependencies.reporter.Status("removing VMM logs"); err != nil {
-		return deleting, errdefs.Context(err, "remove sandbox", reference, "report", "retry removal to finish cleanup", true)
+		return deleting, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "remove sandbox",
+			Entity:    reference,
+			Phase:     "report",
+			Action:    "retry removal to finish cleanup",
+			Committed: true,
+		})
 	}
 	if err := backend.RemoveLogs(ctx, deleting.ID); err != nil {
-		return deleting, errdefs.Context(err, "remove sandbox", reference, "log cleanup", "retry removal to finish cleanup", true)
+		return deleting, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "remove sandbox",
+			Entity:    reference,
+			Phase:     "log cleanup",
+			Action:    "retry removal to finish cleanup",
+			Committed: true,
+		})
 	}
 	if err := s.dependencies.reporter.Status("releasing metadata and image reference"); err != nil {
-		return deleting, errdefs.Context(err, "remove sandbox", reference, "report", "retry removal to finish cleanup", true)
+		return deleting, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "remove sandbox",
+			Entity:    reference,
+			Phase:     "report",
+			Action:    "retry removal to finish cleanup",
+			Committed: true,
+		})
 	}
 	if err := s.dependencies.catalog.FinalizeDelete(ctx, deleting.ID, deleting.Generation); err != nil {
-		return deleting, errdefs.Context(err, "remove sandbox", reference, "finalize", "retry removal to finish cleanup", true)
+		return deleting, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "remove sandbox",
+			Entity:    reference,
+			Phase:     "finalize",
+			Action:    "retry removal to finish cleanup",
+			Committed: true,
+		})
 	}
 	if err := s.dependencies.reporter.Committed(deleting); err != nil {
-		return deleting, errdefs.Context(err, "remove sandbox", reference, "report", "sandbox was deleted; do not retry", true)
+		return deleting, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "remove sandbox",
+			Entity:    reference,
+			Phase:     "report",
+			Action:    "sandbox was deleted; do not retry",
+			Committed: true,
+		})
 	}
 	return deleting, nil
 }
@@ -317,11 +399,21 @@ func (s *SandboxService) compensate(ctx context.Context, record types.Sandbox, p
 	if cleanupErr == nil {
 		forgetErr := s.dependencies.catalog.Forget(cleanupCtx, record.ID, record.Generation)
 		if forgetErr == nil {
-			return errdefs.Context(cause, "create sandbox", record.Config.Name, phase, "fix the failure and retry", false)
+			return errdefs.WithContext(cause, errdefs.ContextInfo{
+				Operation: "create sandbox",
+				Entity:    record.Config.Name,
+				Phase:     phase,
+				Action:    "fix the failure and retry",
+			})
 		}
 		cleanupErr = forgetErr
 	}
 	failure := types.SandboxFailure{Phase: phase, Message: errors.Join(cause, cleanupErr).Error()}
 	_, markErr := s.dependencies.catalog.MarkError(cleanupCtx, record.ID, record.Generation, failure, s.dependencies.now().UTC())
-	return errdefs.Context(errors.Join(cause, cleanupErr, markErr), "create sandbox", record.Config.Name, phase, "inspect or remove the retained error sandbox", false)
+	return errdefs.WithContext(errors.Join(cause, cleanupErr, markErr), errdefs.ContextInfo{
+		Operation: "create sandbox",
+		Entity:    record.Config.Name,
+		Phase:     phase,
+		Action:    "inspect or remove the retained error sandbox",
+	})
 }

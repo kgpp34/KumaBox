@@ -193,10 +193,12 @@ func TestDomainErrorExitCodes(t *testing.T) {
 		{"internal", errdefs.CodeInternal, 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			err := errdefs.Context(
-				errdefs.New(errdefs.ClassInternal, test.code, errors.New("failure")),
-				"operation", "entity", "phase", "action", false,
-			)
+			err := errdefs.WithContext(errdefs.New(errdefs.ClassInternal, test.code, errors.New("failure")), errdefs.ContextInfo{
+				Operation: "operation",
+				Entity:    "entity",
+				Phase:     "phase",
+				Action:    "action",
+			})
 			if got := errorExitCode(err); got != test.want {
 				t.Fatalf("errorExitCode(%q) = %d, want %d", test.code, got, test.want)
 			}

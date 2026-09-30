@@ -109,9 +109,21 @@ func exportFile(command *cobra.Command, service *core.SnapshotService, reference
 	}
 	directory, err := os.Open(parent) //nolint:gosec // caller-selected output directory is opened only for fsync
 	if err != nil {
-		return errdefs.Context(err, "export snapshot", reference, "sync output", "archive exists; inspect it before retrying", true)
+		return errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "export snapshot",
+			Entity:    reference,
+			Phase:     "sync output",
+			Action:    "archive exists; inspect it before retrying",
+			Committed: true,
+		})
 	}
-	return errdefs.Context(errors.Join(directory.Sync(), directory.Close()), "export snapshot", reference, "sync output", "archive exists; inspect it before retrying", true)
+	return errdefs.WithContext(errors.Join(directory.Sync(), directory.Close()), errdefs.ContextInfo{
+		Operation: "export snapshot",
+		Entity:    reference,
+		Phase:     "sync output",
+		Action:    "archive exists; inspect it before retrying",
+		Committed: true,
+	})
 }
 
 // newImportCommand accepts a file or stdin and reports the fresh snapshot ID.

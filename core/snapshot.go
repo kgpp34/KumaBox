@@ -114,10 +114,21 @@ func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotReque
 	}
 	lock := filelock.New(lockPath)
 	if err := lock.Lock(ctx); err != nil {
-		return types.Snapshot{}, errdefs.Context(err, operation, request.SandboxReference, "lock", "retry the snapshot", false)
+		return types.Snapshot{}, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: operation,
+			Entity:    request.SandboxReference,
+			Phase:     "lock",
+			Action:    "retry the snapshot",
+		})
 	}
 	defer func() {
-		returnErr = errors.Join(returnErr, errdefs.Context(lock.Unlock(context.WithoutCancel(ctx)), operation, request.SandboxReference, "unlock", "inspect the snapshot before retrying", result.ID != ""))
+		returnErr = errors.Join(returnErr, errdefs.WithContext(lock.Unlock(context.WithoutCancel(ctx)), errdefs.ContextInfo{
+			Operation: operation,
+			Entity:    request.SandboxReference,
+			Phase:     "unlock",
+			Action:    "inspect the snapshot before retrying",
+			Committed: result.ID != "",
+		}))
 	}()
 
 	record, err = s.sandboxes.Resolve(ctx, record.ID.String())
@@ -160,7 +171,12 @@ func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotReque
 		return nil
 	})
 	if err != nil {
-		return types.Snapshot{}, errdefs.Context(err, operation, request.SandboxReference, "image", "restore the pinned image before snapshotting", false)
+		return types.Snapshot{}, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: operation,
+			Entity:    request.SandboxReference,
+			Phase:     "image",
+			Action:    "restore the pinned image before snapshotting",
+		})
 	}
 	id, err := s.newID()
 	if err != nil {
@@ -182,7 +198,12 @@ func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotReque
 	}
 	snapshotLock := filelock.New(snapshotLockPath)
 	if err := snapshotLock.Lock(ctx); err != nil {
-		return types.Snapshot{}, errdefs.Context(err, operation, id.String(), "lock snapshot", "retry the snapshot", false)
+		return types.Snapshot{}, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: operation,
+			Entity:    id.String(),
+			Phase:     "lock snapshot",
+			Action:    "retry the snapshot",
+		})
 	}
 	defer func() {
 		returnErr = errors.Join(returnErr, snapshotLock.Unlock(context.WithoutCancel(ctx)))
@@ -250,15 +271,33 @@ func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotReque
 				_, statErr := os.Stat(final)
 				published = statErr == nil
 			}
-			return errdefs.Context(errors.Join(err, pathErr), operation, request.SandboxReference, "publish", "inspect snapshot storage before retrying", published)
+			return errdefs.WithContext(errors.Join(err, pathErr), errdefs.ContextInfo{
+				Operation: operation,
+				Entity:    request.SandboxReference,
+				Phase:     "publish",
+				Action:    "inspect snapshot storage before retrying",
+				Committed: published,
+			})
 		}
 		published = true
 		size, err := s.paths.Size(id)
 		if err != nil {
-			return errdefs.Context(err, operation, request.SandboxReference, "measure", "inspect snapshot storage before retrying", true)
+			return errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: operation,
+				Entity:    request.SandboxReference,
+				Phase:     "measure",
+				Action:    "inspect snapshot storage before retrying",
+				Committed: true,
+			})
 		}
 		if err := s.reporter.Status("committing snapshot metadata"); err != nil {
-			return errdefs.Context(err, operation, request.SandboxReference, "report", "inspect snapshot storage before retrying", true)
+			return errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: operation,
+				Entity:    request.SandboxReference,
+				Phase:     "report",
+				Action:    "inspect snapshot storage before retrying",
+				Committed: true,
+			})
 		}
 		result, err = s.snapshots.Commit(ctx, id, size, s.now().UTC())
 		if err != nil {
@@ -278,30 +317,71 @@ func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotReque
 	}
 	if hibernate {
 		if err := hibernator.Hibernate(ctx, plan, persist); err != nil {
-			return result, errdefs.Context(err, operation, request.SandboxReference, "capture or stop", "inspect the sandbox and snapshot before retrying", result.ID != "" || stopping.Generation > 0)
+			return result, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: operation,
+				Entity:    request.SandboxReference,
+				Phase:     "capture or stop",
+				Action:    "inspect the sandbox and snapshot before retrying",
+				Committed: result.ID != "" || stopping.Generation > 0,
+			})
 		}
 		if err := s.reporter.Status("cleaning stopped runtime"); err != nil {
-			return result, errdefs.Context(err, operation, request.SandboxReference, "report", "retry stop to finish cleanup", true)
+			return result, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: operation,
+				Entity:    request.SandboxReference,
+				Phase:     "report",
+				Action:    "retry stop to finish cleanup",
+				Committed: true,
+			})
 		}
 		if err := backend.Cleanup(ctx, record.ID); err != nil {
-			return result, errdefs.Context(err, operation, request.SandboxReference, "cleanup runtime", "retry stop to finish cleanup", true)
+			return result, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: operation,
+				Entity:    request.SandboxReference,
+				Phase:     "cleanup runtime",
+				Action:    "retry stop to finish cleanup",
+				Committed: true,
+			})
 		}
 		if err := s.lifecycle.quiesceNetwork(ctx, stopping); err != nil {
-			return result, errdefs.Context(err, operation, request.SandboxReference, "quiesce network", "retry stop to finish cleanup", true)
+			return result, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: operation,
+				Entity:    request.SandboxReference,
+				Phase:     "quiesce network",
+				Action:    "retry stop to finish cleanup",
+				Committed: true,
+			})
 		}
 		if _, err := s.sandboxes.MarkStopped(ctx, record.ID, stopping.Generation, types.SandboxStateStopping, s.now().UTC()); err != nil {
-			return result, errdefs.Context(err, operation, request.SandboxReference, "mark stopped", "retry stop to finish cleanup", true)
+			return result, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: operation,
+				Entity:    request.SandboxReference,
+				Phase:     "mark stopped",
+				Action:    "retry stop to finish cleanup",
+				Committed: true,
+			})
 		}
 	} else {
 		if err := snapshotter.Snapshot(ctx, plan); err != nil {
-			return types.Snapshot{}, errdefs.Context(err, operation, request.SandboxReference, "capture", "inspect the running sandbox and retry", false)
+			return types.Snapshot{}, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: operation,
+				Entity:    request.SandboxReference,
+				Phase:     "capture",
+				Action:    "inspect the running sandbox and retry",
+			})
 		}
 		if err := persist(); err != nil {
 			return result, err
 		}
 	}
 	if err := s.reporter.Committed(result); err != nil {
-		return result, errdefs.Context(err, operation, request.SandboxReference, "report", "snapshot was saved; inspect it before retrying", true)
+		return result, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: operation,
+			Entity:    request.SandboxReference,
+			Phase:     "report",
+			Action:    "snapshot was saved; inspect it before retrying",
+			Committed: true,
+		})
 	}
 	return result, nil
 }
@@ -360,13 +440,31 @@ func (s *SnapshotService) Remove(ctx context.Context, reference string) (result 
 	}
 	lock := filelock.New(lockPath)
 	if err := lock.Lock(ctx); err != nil {
-		return record, errdefs.Context(err, "remove snapshot", reference, "lock", "retry snapshot removal", true)
+		return record, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "remove snapshot",
+			Entity:    reference,
+			Phase:     "lock",
+			Action:    "retry snapshot removal",
+			Committed: true,
+		})
 	}
 	defer func() {
-		returnErr = errors.Join(returnErr, errdefs.Context(lock.Unlock(context.WithoutCancel(ctx)), "remove snapshot", reference, "unlock", "retry snapshot removal", true))
+		returnErr = errors.Join(returnErr, errdefs.WithContext(lock.Unlock(context.WithoutCancel(ctx)), errdefs.ContextInfo{
+			Operation: "remove snapshot",
+			Entity:    reference,
+			Phase:     "unlock",
+			Action:    "retry snapshot removal",
+			Committed: true,
+		}))
 	}()
 	if err := snapshot.IgnoreAbsence(s.paths.Remove(record.ID)); err != nil {
-		return record, errdefs.Context(err, "remove snapshot", reference, "remove artifacts", "retry snapshot removal", true)
+		return record, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "remove snapshot",
+			Entity:    reference,
+			Phase:     "remove artifacts",
+			Action:    "retry snapshot removal",
+			Committed: true,
+		})
 	}
 	if err := s.snapshots.FinalizeDelete(ctx, record.ID); err != nil {
 		return record, err
@@ -437,10 +535,21 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 		}
 		snapshotLock := filelock.New(snapshotLockPath)
 		if err := snapshotLock.Lock(ctx); err != nil {
-			return types.Sandbox{}, errdefs.Context(err, "restore sandbox", sandboxReference, "lock snapshot", "retry the restore", false)
+			return types.Sandbox{}, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "restore sandbox",
+				Entity:    sandboxReference,
+				Phase:     "lock snapshot",
+				Action:    "retry the restore",
+			})
 		}
 		defer func() {
-			returnErr = errors.Join(returnErr, errdefs.Context(snapshotLock.Unlock(context.WithoutCancel(ctx)), "restore sandbox", sandboxReference, "unlock snapshot", "inspect the sandbox before retrying", result.Generation > 0))
+			returnErr = errors.Join(returnErr, errdefs.WithContext(snapshotLock.Unlock(context.WithoutCancel(ctx)), errdefs.ContextInfo{
+				Operation: "restore sandbox",
+				Entity:    sandboxReference,
+				Phase:     "unlock snapshot",
+				Action:    "inspect the sandbox before retrying",
+				Committed: result.Generation > 0,
+			}))
 		}()
 		snapshotDir, err = s.paths.Dir(capture.ID)
 		if err != nil {
@@ -489,7 +598,12 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 	}
 	if options.SourceDirectory != "" {
 		if _, err := s.images.WithAvailable(ctx, capture.ImageDigest.String(), func(types.Image) error { return nil }); err != nil {
-			return record, errdefs.Context(err, "restore sandbox", sandboxReference, "resolve image", "import or pull the snapshot image before restoring", false)
+			return record, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "restore sandbox",
+				Entity:    sandboxReference,
+				Phase:     "resolve image",
+				Action:    "import or pull the snapshot image before restoring",
+			})
 		}
 	}
 	var stagedCOW string
@@ -502,14 +616,24 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 		}
 	}
 	if err := ignoreNotExist(os.Remove(stagedCOW)); err != nil {
-		return record, errdefs.Context(err, "restore sandbox", sandboxReference, "clean staging disk", "inspect snapshot staging storage before retrying", false)
+		return record, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "restore sandbox",
+			Entity:    sandboxReference,
+			Phase:     "clean staging disk",
+			Action:    "inspect snapshot staging storage before retrying",
+		})
 	}
 	defer func() { returnErr = errors.Join(returnErr, ignoreNotExist(os.Remove(stagedCOW))) }()
 	if err := s.reporter.Status("staging snapshot writable disk"); err != nil {
 		return record, err
 	}
 	if err := storage.CloneFile(stagedCOW, snapshotCOW); err != nil {
-		return record, errdefs.Context(err, "restore sandbox", sandboxReference, "stage disk", "verify the snapshot and retry", false)
+		return record, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "restore sandbox",
+			Entity:    sandboxReference,
+			Phase:     "stage disk",
+			Action:    "verify the snapshot and retry",
+		})
 	}
 	// Each writable disk is staged while the old VM can still run. After stop,
 	// only target-owned paths are replaced; a failed copy leaves them untouched.
@@ -530,13 +654,24 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 		}
 		stagedData = append(stagedData, vmm.SnapshotFile{Source: staged, Destination: live})
 		if err := storage.CloneFile(staged, filepath.Join(snapshotDir, types.DataDiskFile(spec.Name))); err != nil {
-			return record, errdefs.Context(err, "restore sandbox", sandboxReference, "stage data disk", "verify the snapshot and retry", false)
+			return record, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "restore sandbox",
+				Entity:    sandboxReference,
+				Phase:     "stage data disk",
+				Action:    "verify the snapshot and retry",
+			})
 		}
 	}
 	stoppedForRestore := false
 	defer func() {
 		if stoppedForRestore && returnErr != nil {
-			returnErr = errdefs.Context(returnErr, "restore sandbox", sandboxReference, "after stop", "inspect the stopped or retained-error sandbox before retrying", true)
+			returnErr = errdefs.WithContext(returnErr, errdefs.ContextInfo{
+				Operation: "restore sandbox",
+				Entity:    sandboxReference,
+				Phase:     "after stop",
+				Action:    "inspect the stopped or retained-error sandbox before retrying",
+				Committed: true,
+			})
 		}
 	}()
 	switch record.State {
@@ -545,7 +680,13 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 			return types.Sandbox{}, err
 		}
 		if _, err := s.lifecycle.Stop(ctx, record.ID.String()); err != nil {
-			return types.Sandbox{}, errdefs.Context(err, "restore sandbox", sandboxReference, "stop", "inspect the sandbox before retrying", true)
+			return types.Sandbox{}, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "restore sandbox",
+				Entity:    sandboxReference,
+				Phase:     "stop",
+				Action:    "inspect the sandbox before retrying",
+				Committed: true,
+			})
 		}
 		stoppedForRestore = true
 	case types.SandboxStateStopped:
@@ -561,11 +702,22 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 	}
 	sandboxLock := filelock.New(sandboxLockPath)
 	if err := sandboxLock.Lock(ctx); err != nil {
-		return types.Sandbox{}, errdefs.Context(err, "restore sandbox", sandboxReference, "lock sandbox", "retry the restore", false)
+		return types.Sandbox{}, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "restore sandbox",
+			Entity:    sandboxReference,
+			Phase:     "lock sandbox",
+			Action:    "retry the restore",
+		})
 	}
 	committed := false
 	defer func() {
-		returnErr = errors.Join(returnErr, errdefs.Context(sandboxLock.Unlock(context.WithoutCancel(ctx)), "restore sandbox", sandboxReference, "unlock sandbox", "inspect the sandbox before retrying", committed))
+		returnErr = errors.Join(returnErr, errdefs.WithContext(sandboxLock.Unlock(context.WithoutCancel(ctx)), errdefs.ContextInfo{
+			Operation: "restore sandbox",
+			Entity:    sandboxReference,
+			Phase:     "unlock sandbox",
+			Action:    "inspect the sandbox before retrying",
+			Committed: committed,
+		}))
 	}()
 	record, err = s.sandboxes.Resolve(ctx, record.ID.String())
 	if err != nil {
@@ -586,7 +738,12 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 		return record, err
 	}
 	if err := recoverWritableSet(backupDir, livePaths); err != nil {
-		return record, errdefs.Context(err, "restore sandbox", sandboxReference, "recover disks", "inspect retained disk backups before retrying", false)
+		return record, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "restore sandbox",
+			Entity:    sandboxReference,
+			Phase:     "recover disks",
+			Action:    "inspect retained disk backups before retrying",
+		})
 	}
 	if err := s.reporter.Status("committing starting state"); err != nil {
 		return record, err
@@ -664,11 +821,23 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 	}
 	if options.SourceDirectory == "" {
 		if _, err := s.snapshots.Touch(ctx, capture.ID, s.now().UTC()); err != nil {
-			return running, errdefs.Context(err, "restore sandbox", sandboxReference, "record snapshot access", "sandbox is running; inspect it before retrying", true)
+			return running, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "restore sandbox",
+				Entity:    sandboxReference,
+				Phase:     "record snapshot access",
+				Action:    "sandbox is running; inspect it before retrying",
+				Committed: true,
+			})
 		}
 	}
 	if reseedErr != nil {
-		return running, errdefs.Context(reseedErr, "restore sandbox", sandboxReference, "reseed guest", "sandbox is running; upgrade the guest agent and run kumabox reseed", true)
+		return running, errdefs.WithContext(reseedErr, errdefs.ContextInfo{
+			Operation: "restore sandbox",
+			Entity:    sandboxReference,
+			Phase:     "reseed guest",
+			Action:    "sandbox is running; upgrade the guest agent and run kumabox reseed",
+			Committed: true,
+		})
 	}
 	return running, nil
 }

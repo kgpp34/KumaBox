@@ -125,30 +125,48 @@ func New(class Class, code Code, cause error) *Error {
 	return &Error{Class: class, Code: code, Cause: cause}
 }
 
-// Context wraps err with operation context without mutating an existing Error.
-// Nonempty supplied fields override prior context, and Committed can only become
-// true. Unclassified errors receive ClassInternal/CodeInternal; nil remains nil.
-func Context(err error, operation, entity, phase, action string, committed bool) error {
+// ContextInfo names the diagnostic fields supplied by an operation boundary.
+// Omitted fields retain context from an existing classified error.
+type ContextInfo struct {
+	Operation string
+	Entity    string
+	Phase     string
+	Action    string
+	Committed bool
+}
+
+// WithContext wraps err without mutating an existing Error. Committed can only
+// become true. Unclassified errors receive ClassInternal/CodeInternal; nil
+// remains nil.
+func WithContext(err error, info ContextInfo) error {
 	if err == nil {
 		return nil
 	}
 	var classified *Error
 	if errors.As(err, &classified) {
 		copy := *classified
-		copy.Operation = first(operation, copy.Operation)
-		copy.Entity = first(entity, copy.Entity)
-		copy.Phase = first(phase, copy.Phase)
-		copy.Action = first(action, copy.Action)
-		copy.Committed = committed || copy.Committed
+		copy.Operation = first(info.Operation, copy.Operation)
+		copy.Entity = first(info.Entity, copy.Entity)
+		copy.Phase = first(info.Phase, copy.Phase)
+		copy.Action = first(info.Action, copy.Action)
+		copy.Committed = info.Committed || copy.Committed
 		copy.Cause = diagnosticCause(err, classified)
 		copy.wrapped = err
 		return &copy
 	}
 	return &Error{
-		Class: ClassInternal, Code: CodeInternal, Operation: operation,
-		Entity: entity, Phase: phase, Committed: committed, Action: action,
+		Class: ClassInternal, Code: CodeInternal, Operation: info.Operation,
+		Entity: info.Entity, Phase: info.Phase, Committed: info.Committed, Action: info.Action,
 		Cause: err,
 	}
+}
+
+// Context is retained for callers using the original positional API. New
+// call sites should use WithContext with named ContextInfo fields.
+func Context(err error, operation, entity, phase, action string, committed bool) error {
+	return WithContext(err, ContextInfo{
+		Operation: operation, Entity: entity, Phase: phase, Action: action, Committed: committed,
+	})
 }
 
 // diagnosticCause removes the classification being replaced from the rendered

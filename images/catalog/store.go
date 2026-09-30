@@ -163,7 +163,12 @@ func (c *Store) Resolve(ctx context.Context, reference string) (types.Image, err
 		result = image
 		return nil
 	})
-	return result, errdefs.Context(err, "resolve image", reference, "metadata", "check the image name or digest", false)
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "resolve image",
+		Entity:    reference,
+		Phase:     "metadata",
+		Action:    "check the image name or digest",
+	})
 }
 
 // List loads a consistent snapshot and sorts images by full manifest digest.
@@ -183,7 +188,7 @@ func (c *Store) List(ctx context.Context) ([]types.Image, error) {
 	slices.SortFunc(result, func(left, right types.Image) int {
 		return strings.Compare(left.ManifestDigest.String(), right.ManifestDigest.String())
 	})
-	return result, errdefs.Context(err, "list images", "", "metadata", "inspect the metadata store", false)
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{Operation: "list images", Entity: "", Phase: "metadata", Action: "inspect the metadata store"})
 }
 
 // FindLayers returns committed mappings for requested source digests.
@@ -288,7 +293,7 @@ func (c *Store) CommitImport(ctx context.Context, commit images.ImportCommit) er
 		}
 		return putJSON(ctx, writer, CollectionNames, commit.Name, nameRecord{ManifestDigest: commit.Manifest.Digest.String()})
 	})
-	return errdefs.Context(err, "commit image import", commit.Name, "metadata", "retry the import", false)
+	return errdefs.WithContext(err, errdefs.ContextInfo{Operation: "commit image import", Entity: commit.Name, Phase: "metadata", Action: "retry the import"})
 }
 
 // Remove deletes one exact alias, or all aliases for a digest reference.
@@ -370,7 +375,12 @@ func (c *Store) Remove(ctx context.Context, reference string, expected types.Dig
 		}
 		return nil
 	})
-	return result, errdefs.Context(err, "remove image", reference, "metadata", "inspect image references", false)
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "remove image",
+		Entity:    reference,
+		Phase:     "metadata",
+		Action:    "inspect image references",
+	})
 }
 
 // resolveRecord keeps alias precedence consistent between lookup and removal,

@@ -68,19 +68,36 @@ func (s *SandboxService) NetResize(ctx context.Context, reference string, target
 		return record, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, errors.New("running sandbox VMM is absent"))
 	}
 	if err := reconcileNICs(ctx, record, target, resizer, hotplugger, process); err != nil {
-		return record, errdefs.Context(err, "resize sandbox network", reference, "reconcile previous operation", "inspect the sandbox and retry", false)
+		return record, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "resize sandbox network",
+			Entity:    reference,
+			Phase:     "reconcile previous operation",
+			Action:    "inspect the sandbox and retry",
+		})
 	}
 	initialNICs := record.Config.NICs
 	for record.Config.NICs < target {
 		record, err = s.addLiveNIC(ctx, record, resizer, hotplugger, backend, process)
 		if err != nil {
-			return record, errdefs.Context(err, "resize sandbox network", reference, "add NIC", "inspect the sandbox and retry", record.Config.NICs != initialNICs)
+			return record, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "resize sandbox network",
+				Entity:    reference,
+				Phase:     "add NIC",
+				Action:    "inspect the sandbox and retry",
+				Committed: record.Config.NICs != initialNICs,
+			})
 		}
 	}
 	for record.Config.NICs > target {
 		record, err = s.removeLiveNIC(ctx, record, resizer, hotplugger, backend, process)
 		if err != nil {
-			return record, errdefs.Context(err, "resize sandbox network", reference, "remove NIC", "inspect the sandbox and retry", record.Config.NICs != initialNICs)
+			return record, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "resize sandbox network",
+				Entity:    reference,
+				Phase:     "remove NIC",
+				Action:    "inspect the sandbox and retry",
+				Committed: record.Config.NICs != initialNICs,
+			})
 		}
 	}
 	return record, nil

@@ -154,5 +154,5 @@ func (p *sandboxProgress) Finish(operationErr error) error {
 	p.mu.Unlock()
 
 	reportErr := p.renderer.Finish(label, outcome, "")
-	return errdefs.Context(reportErr, operation, label, "report", recovery, committed)
+	return errdefs.WithContext(reportErr, errdefs.ContextInfo{Operation: operation, Entity: label, Phase: "report", Action: recovery, Committed: committed})
 }

@@ -42,7 +42,12 @@ func NewConsoleCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			defer func() {
-				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "console sandbox", reference, "close metadata", "retry the console connection", false))
+				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
+					Operation: "console sandbox",
+					Entity:    reference,
+					Phase:     "close metadata",
+					Action:    "retry the console connection",
+				}))
 			}()
 			connection, err := service.Console(command.Context(), reference)
 			if err != nil {

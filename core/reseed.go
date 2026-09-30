@@ -26,7 +26,12 @@ func (s *SandboxService) Reseed(ctx context.Context, reference string, machineID
 		return err
 	}
 	if err := reseedProcess(ctx, backend, process, machineID); err != nil {
-		return errdefs.Context(err, "reseed sandbox", reference, "contact guest agent", "inspect the guest agent service and retry", false)
+		return errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "reseed sandbox",
+			Entity:    reference,
+			Phase:     "contact guest agent",
+			Action:    "inspect the guest agent service and retry",
+		})
 	}
 	return nil
 }

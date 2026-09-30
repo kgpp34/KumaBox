@@ -53,7 +53,13 @@ func NewCloneCommand(configuration configProvider) *cobra.Command {
 			}
 			committed := false
 			defer func() {
-				returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), "clone sandbox", name, "close metadata", "inspect the clone before retrying", committed))
+				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
+					Operation: "clone sandbox",
+					Entity:    name,
+					Phase:     "close metadata",
+					Action:    "inspect the clone before retrying",
+					Committed: committed,
+				}))
 			}()
 			options := core.CloneOptions{Name: name, Pull: pull, SourceDirectory: fromDir, NetworkName: networkName, DataDisks: requested}
 			if command.Flags().Changed("nics") {
@@ -65,7 +71,13 @@ func NewCloneCommand(configuration configProvider) *cobra.Command {
 			}
 			committed = true
 			if err := writeSandboxResult(progress.Output(command.OutOrStdout()), record, asJSON); err != nil {
-				return errdefs.Context(err, "clone sandbox", name, "output", "clone is running; inspect it", true)
+				return errdefs.WithContext(err, errdefs.ContextInfo{
+					Operation: "clone sandbox",
+					Entity:    name,
+					Phase:     "output",
+					Action:    "clone is running; inspect it",
+					Committed: true,
+				})
 			}
 			return nil
 		},

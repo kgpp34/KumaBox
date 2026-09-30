@@ -57,5 +57,11 @@ func Remove(ctx context.Context, paths Paths, catalog RemovalCatalog, reference 
 			}
 		}
 	}
-	return result, errdefs.Context(errors.Join(cleanup...), "remove image", reference, "cleanup", "metadata removed; orphan artifacts can be reclaimed", true)
+	return result, errdefs.WithContext(errors.Join(cleanup...), errdefs.ContextInfo{
+		Operation: "remove image",
+		Entity:    reference,
+		Phase:     "cleanup",
+		Action:    "metadata removed; orphan artifacts can be reclaimed",
+		Committed: true,
+	})
 }

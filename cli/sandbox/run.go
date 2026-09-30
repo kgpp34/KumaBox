@@ -35,10 +35,13 @@ func NewRunCommand(configuration configProvider) *cobra.Command {
 			committed := false
 			defer func() {
 				closeErr := service.Close()
-				returnErr = errors.Join(returnErr, errdefs.Context(
-					closeErr, "run sandbox", options.name, "close metadata",
-					"inspect the sandbox before retrying", committed,
-				))
+				returnErr = errors.Join(returnErr, errdefs.WithContext(closeErr, errdefs.ContextInfo{
+					Operation: "run sandbox",
+					Entity:    options.name,
+					Phase:     "close metadata",
+					Action:    "inspect the sandbox before retrying",
+					Committed: committed,
+				}))
 			}()
 
 			record, err := service.Run(command.Context(), request)
@@ -47,7 +50,13 @@ func NewRunCommand(configuration configProvider) *cobra.Command {
 			}
 			committed = true
 			if err := writeSandboxResult(progress.Output(command.OutOrStdout()), record, asJSON); err != nil {
-				return errdefs.Context(err, "run sandbox", options.name, "output", "sandbox is running; inspect it before retrying", true)
+				return errdefs.WithContext(err, errdefs.ContextInfo{
+					Operation: "run sandbox",
+					Entity:    options.name,
+					Phase:     "output",
+					Action:    "sandbox is running; inspect it before retrying",
+					Committed: true,
+				})
 			}
 			return nil
 		},

@@ -179,7 +179,12 @@ func (s *Store) Reserve(ctx context.Context, snapshot types.Snapshot) error {
 		}
 		return writer.Put(ctx, CollectionSnapshots, snapshot.ID.String(), raw)
 	})
-	return errdefs.Context(err, "save snapshot", snapshot.Name, "reserve", "choose another snapshot name", false)
+	return errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "save snapshot",
+		Entity:    snapshot.Name,
+		Phase:     "reserve",
+		Action:    "choose another snapshot name",
+	})
 }
 
 // Commit publishes size and readiness after artifacts are atomically visible.
@@ -216,7 +221,13 @@ func (s *Store) Commit(ctx context.Context, id types.SnapshotID, size int64, acc
 		}
 		return nil
 	})
-	return result, errdefs.Context(err, "save snapshot", id.String(), "commit", "inspect snapshot storage before retrying", true)
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "save snapshot",
+		Entity:    id.String(),
+		Phase:     "commit",
+		Action:    "inspect snapshot storage before retrying",
+		Committed: true,
+	})
 }
 
 // Touch records a successful snapshot use. Callers hold the snapshot operation
@@ -252,7 +263,12 @@ func (s *Store) Touch(ctx context.Context, id types.SnapshotID, accessedAt time.
 		result, err = decodeSnapshot(record)
 		return err
 	})
-	return result, errdefs.Context(err, "access snapshot", id.String(), "metadata", "retry the snapshot operation", false)
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "access snapshot",
+		Entity:    id.String(),
+		Phase:     "metadata",
+		Action:    "retry the snapshot operation",
+	})
 }
 
 // Forget releases a pending reservation during pre-publication compensation.
@@ -295,7 +311,12 @@ func (s *Store) Resolve(ctx context.Context, reference string) (types.Snapshot, 
 		}
 		return nil
 	})
-	return result, errdefs.Context(err, "resolve snapshot", reference, "metadata", "check the snapshot name or ID", false)
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "resolve snapshot",
+		Entity:    reference,
+		Phase:     "metadata",
+		Action:    "check the snapshot name or ID",
+	})
 }
 
 // List returns ready snapshots ordered newest first.
@@ -326,7 +347,7 @@ func (s *Store) List(ctx context.Context) ([]types.Snapshot, error) {
 		}
 		return strings.Compare(left.ID.String(), right.ID.String())
 	})
-	return result, errdefs.Context(err, "list snapshots", "", "metadata", "inspect snapshot metadata", false)
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{Operation: "list snapshots", Entity: "", Phase: "metadata", Action: "inspect snapshot metadata"})
 }
 
 // BeginDelete records durable deletion intent and returns the artifact owner.
@@ -354,7 +375,12 @@ func (s *Store) BeginDelete(ctx context.Context, reference string) (types.Snapsh
 		}
 		return writer.Put(ctx, CollectionSnapshots, record.ID, raw)
 	})
-	return result, errdefs.Context(err, "remove snapshot", reference, "mark deleting", "retry snapshot removal", false)
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "remove snapshot",
+		Entity:    reference,
+		Phase:     "mark deleting",
+		Action:    "retry snapshot removal",
+	})
 }
 
 // FinalizeDelete releases metadata and the optional name after artifacts are absent.
@@ -374,7 +400,13 @@ func (s *Store) FinalizeDelete(ctx context.Context, id types.SnapshotID) error {
 		}
 		return writer.Delete(ctx, CollectionSnapshots, id.String())
 	})
-	return errdefs.Context(err, "remove snapshot", id.String(), "finalize", "retry snapshot removal", true)
+	return errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "remove snapshot",
+		Entity:    id.String(),
+		Phase:     "finalize",
+		Action:    "retry snapshot removal",
+		Committed: true,
+	})
 }
 
 func resolve(ctx context.Context, reader metadata.Reader, reference string) (recordData, error) {

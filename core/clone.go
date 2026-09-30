@@ -230,11 +230,23 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	}
 	if options.SourceDirectory == "" {
 		if _, err := s.snapshots.Touch(ctx, capture.ID, s.now().UTC()); err != nil {
-			return running, errdefs.Context(err, "clone sandbox", options.Name, "record snapshot access", "clone is running; inspect it before retrying", true)
+			return running, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "clone sandbox",
+				Entity:    options.Name,
+				Phase:     "record snapshot access",
+				Action:    "clone is running; inspect it before retrying",
+				Committed: true,
+			})
 		}
 	}
 	if reseedErr != nil {
-		return running, errdefs.Context(reseedErr, "clone sandbox", options.Name, "reseed guest", "clone is running; upgrade the guest agent and run kumabox reseed --machine-id", true)
+		return running, errdefs.WithContext(reseedErr, errdefs.ContextInfo{
+			Operation: "clone sandbox",
+			Entity:    options.Name,
+			Phase:     "reseed guest",
+			Action:    "clone is running; upgrade the guest agent and run kumabox reseed --machine-id",
+			Committed: true,
+		})
 	}
 	return running, nil
 }

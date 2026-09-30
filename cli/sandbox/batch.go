@@ -26,7 +26,12 @@ func runSandboxBatch(
 		return err
 	}
 	defer func() {
-		returnErr = errors.Join(returnErr, errdefs.Context(service.Close(), operation, "", "close metadata", "inspect completed targets before retrying", false))
+		returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
+			Operation: operation,
+			Entity:    "",
+			Phase:     "close metadata",
+			Action:    "inspect completed targets before retrying",
+		}))
 	}()
 	succeeded := make([]types.Sandbox, 0, len(references))
 	var failures []error
@@ -52,7 +57,13 @@ func runSandboxBatch(
 	} else {
 		outputErr = writeSandboxIDs(command.OutOrStdout(), succeeded)
 	}
-	return errors.Join(errors.Join(failures...), errdefs.Context(outputErr, operation, "", "output", "inspect completed targets before retrying", len(succeeded) > 0))
+	return errors.Join(errors.Join(failures...), errdefs.WithContext(outputErr, errdefs.ContextInfo{
+		Operation: operation,
+		Entity:    "",
+		Phase:     "output",
+		Action:    "inspect completed targets before retrying",
+		Committed: len(succeeded) > 0,
+	}))
 }
 
 func writeRemoveListJSON(writer io.Writer, records []types.Sandbox) error {

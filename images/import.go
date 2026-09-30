@@ -193,11 +193,21 @@ func (i *Importer) Import(ctx context.Context, name string, platform types.Platf
 		return types.Image{}, err
 	}
 	if err := i.paths.Ensure(); err != nil {
-		return types.Image{}, errdefs.Context(err, "import image", name, "prepare", "check managed directory permissions", false)
+		return types.Image{}, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "import image",
+			Entity:    name,
+			Phase:     "prepare",
+			Action:    "check managed directory permissions",
+		})
 	}
 	manifest, err := source.Resolve(ctx, platform)
 	if err != nil {
-		return types.Image{}, errdefs.Context(err, "import image", name, "resolve", "check the image source and platform", false)
+		return types.Image{}, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "import image",
+			Entity:    name,
+			Phase:     "resolve",
+			Action:    "check the image source and platform",
+		})
 	}
 	if manifest.Digest.IsZero() || manifest.Platform != platform || len(manifest.Layers) == 0 {
 		return types.Image{}, invalidImage("invalid image manifest or platform")
@@ -220,7 +230,13 @@ func (i *Importer) Import(ctx context.Context, name string, platform types.Platf
 	committed := false
 	defer func() {
 		if err := removeStaging(staging); err != nil {
-			returnErr = errors.Join(returnErr, errdefs.Context(err, "import image", name, "cleanup", "remove orphan staging", committed))
+			returnErr = errors.Join(returnErr, errdefs.WithContext(err, errdefs.ContextInfo{
+				Operation: "import image",
+				Entity:    name,
+				Phase:     "cleanup",
+				Action:    "remove orphan staging",
+				Committed: committed,
+			}))
 		}
 	}()
 	converted := make([]ConvertedLayer, len(manifest.Layers))
@@ -247,7 +263,12 @@ func (i *Importer) Import(ctx context.Context, name string, platform types.Platf
 		})
 	}
 	if err := group.Wait(); err != nil {
-		return types.Image{}, errdefs.Context(err, "import image", name, "convert", "fix source or converter and retry", false)
+		return types.Image{}, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "import image",
+			Entity:    name,
+			Phase:     "convert",
+			Action:    "fix source or converter and retry",
+		})
 	}
 	lockPaths := make([]string, len(digests))
 	for pos, digest := range digests {
@@ -258,7 +279,13 @@ func (i *Importer) Import(ctx context.Context, name string, platform types.Platf
 		return types.Image{}, err
 	}
 	defer func() {
-		returnErr = errors.Join(returnErr, errdefs.Context(locks.Unlock(context.WithoutCancel(ctx)), "import image", name, "unlock", "inspect runtime locks", committed))
+		returnErr = errors.Join(returnErr, errdefs.WithContext(locks.Unlock(context.WithoutCancel(ctx)), errdefs.ContextInfo{
+			Operation: "import image",
+			Entity:    name,
+			Phase:     "unlock",
+			Action:    "inspect runtime locks",
+			Committed: committed,
+		}))
 	}()
 	// Conversion is slow; metadata and files may have changed while we were staging.
 	current, err := i.catalog.FindLayers(ctx, digests)
@@ -280,7 +307,7 @@ func (i *Importer) Import(ctx context.Context, name string, platform types.Platf
 		}
 		layer, err := i.publishLayer(ctx, artifact, staging)
 		if err != nil {
-			return types.Image{}, errdefs.Context(err, "import image", name, "publish", "retry the import", false)
+			return types.Image{}, errdefs.WithContext(err, errdefs.ContextInfo{Operation: "import image", Entity: name, Phase: "publish", Action: "retry the import"})
 		}
 		if old, exists := current[layer.SourceDigest]; exists && !old.Equal(layer) {
 			return types.Image{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("rebuilt layer differs from committed metadata"))
@@ -310,16 +337,33 @@ func (i *Importer) Import(ctx context.Context, name string, platform types.Platf
 		commit.RegistryReference = registry.RegistryReference()
 	}
 	if err := i.catalog.CommitImport(ctx, commit); err != nil {
-		return types.Image{}, errdefs.Context(err, "import image", name, "catalog commit", "retry; unregistered artifacts will be rebuilt", false)
+		return types.Image{}, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "import image",
+			Entity:    name,
+			Phase:     "catalog commit",
+			Action:    "retry; unregistered artifacts will be rebuilt",
+		})
 	}
 	committed = true
 	result, err = i.catalog.Resolve(ctx, name)
 	if err != nil {
-		return types.Image{}, errdefs.Context(err, "import image", name, "read committed image", "run image verify", true)
+		return types.Image{}, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "import image",
+			Entity:    name,
+			Phase:     "read committed image",
+			Action:    "run image verify",
+			Committed: true,
+		})
 	}
 	i.reportMu.Lock()
 	defer i.reportMu.Unlock()
-	return result, errdefs.Context(i.reporter.Committed(result), "import image", name, "report", "image is committed; run image inspect", true)
+	return result, errdefs.WithContext(i.reporter.Committed(result), errdefs.ContextInfo{
+		Operation: "import image",
+		Entity:    name,
+		Phase:     "report",
+		Action:    "image is committed; run image inspect",
+		Committed: true,
+	})
 }
 
 // convert drains the source after tar processing so trailing hash, compression

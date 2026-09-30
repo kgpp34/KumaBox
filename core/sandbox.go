@@ -249,10 +249,13 @@ func (s *SandboxService) Run(ctx context.Context, request CreateSandboxRequest) 
 	}
 	running, err := s.Start(ctx, created.ID.String())
 	if err != nil {
-		return created, errdefs.Context(
-			err, "run sandbox", request.Config.Name, "start",
-			"inspect the retained sandbox and VMM log before retrying", true,
-		)
+		return created, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "run sandbox",
+			Entity:    request.Config.Name,
+			Phase:     "start",
+			Action:    "inspect the retained sandbox and VMM log before retrying",
+			Committed: true,
+		})
 	}
 	return running, nil
 }
