@@ -149,11 +149,9 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	if err := s.reporter.Status("creating clone identity and network"); err != nil {
 		return types.Sandbox{}, err
 	}
-	created, err := s.lifecycle.Create(ctx, CreateSandboxRequest{
+	created, err := s.lifecycle.createFromSnapshot(ctx, CreateSandboxRequest{
 		ImageReference: capture.ImageDigest.String(), Config: config, VMM: capture.VMM,
-		cloneDiskSource: snapshotCOW, cloneDataSource: snapshotDir,
-		cloneDataCount: len(capture.Config.DataDisks),
-	})
+	}, cloneDiskOrigin{cowPath: snapshotCOW, dataDirectory: snapshotDir, inheritedDataCount: len(capture.Config.DataDisks)})
 	if err != nil {
 		return created, err
 	}

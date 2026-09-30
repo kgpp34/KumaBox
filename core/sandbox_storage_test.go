@@ -42,11 +42,10 @@ func TestCreateFromSnapshotUsesDiskCloneWithoutFormatting(t *testing.T) {
 	service, steps := newTestSandboxService(t, nil)
 	disk := &fakeCloneDisk{fakeDisk: fakeDisk{steps: steps}}
 	service.dependencies.disks = disk
-	_, err := service.Create(t.Context(), CreateSandboxRequest{
-		ImageReference:  "demo",
-		Config:          types.SandboxConfig{Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
-		cloneDiskSource: "/snapshots/checkpoint/cow.raw",
-	})
+	_, err := service.createFromSnapshot(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config:         types.SandboxConfig{Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage},
+	}, cloneDiskOrigin{cowPath: "/snapshots/checkpoint/cow.raw", dataDirectory: "/snapshots/checkpoint"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,13 +64,12 @@ func TestCreateCloneSeparatesInheritedAndNewDataDisks(t *testing.T) {
 	backend := &fakeCloneDisk{fakeDisk: fakeDisk{steps: steps}}
 	service.dependencies.disks = backend
 	specs := []types.DataDiskSpec{{Name: "db", Size: types.MinDataDiskSize, FSType: "ext4"}, {Name: "logs", Size: types.MinDataDiskSize, FSType: "none"}}
-	_, err := service.Create(t.Context(), CreateSandboxRequest{
+	_, err := service.createFromSnapshot(t.Context(), CreateSandboxRequest{
 		ImageReference: "demo", Config: types.SandboxConfig{
 			Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory,
 			Storage: types.DefaultSandboxStorage, DataDisks: specs,
 		},
-		cloneDiskSource: "/snapshot/cow.raw", cloneDataSource: "/snapshot", cloneDataCount: 1,
-	})
+	}, cloneDiskOrigin{cowPath: "/snapshot/cow.raw", dataDirectory: "/snapshot", inheritedDataCount: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -20,7 +20,26 @@ import (
 //	validate -> reserve -> CNI namespace + NICs -> sparse ext4 COW -> Created
 //	                 |               |                         |
 //	                 +<------ detached failure cleanup <-------+
-func (s *SandboxService) Create(ctx context.Context, request CreateSandboxRequest) (result types.Sandbox, returnErr error) {
+func (s *SandboxService) Create(ctx context.Context, request CreateSandboxRequest) (types.Sandbox, error) {
+	return s.create(ctx, request, nil)
+}
+
+// cloneDiskOrigin identifies the immutable capture and inherited data-disk
+// prefix used only by the snapshot clone workflow.
+type cloneDiskOrigin struct {
+	cowPath            string
+	dataDirectory      string
+	inheritedDataCount int
+}
+
+func (s *SandboxService) createFromSnapshot(ctx context.Context, request CreateSandboxRequest, origin cloneDiskOrigin) (types.Sandbox, error) {
+	if origin.cowPath == "" || origin.dataDirectory == "" || origin.inheritedDataCount < 0 || origin.inheritedDataCount > len(request.Config.DataDisks) {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("invalid snapshot disk origin"))
+	}
+	return s.create(ctx, request, &origin)
+}
+
+func (s *SandboxService) create(ctx context.Context, request CreateSandboxRequest, origin *cloneDiskOrigin) (result types.Sandbox, returnErr error) {
 	if s == nil || s.dependencies.images == nil || s.dependencies.catalog == nil || s.dependencies.disks == nil || s.dependencies.networks == nil || s.dependencies.runtimes.Len() == 0 || s.dependencies.reporter == nil || s.dependencies.newID == nil || s.dependencies.now == nil || s.dependencies.cleanupTimeout <= 0 {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")
 	}
@@ -37,7 +56,7 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 		request.VMM = s.dependencies.defaultVMM
 	}
 	var cloner disk.Cloner
-	if request.cloneDiskSource != "" {
+	if origin != nil {
 		var ok bool
 		cloner, ok = s.dependencies.disks.(disk.Cloner)
 		if !ok {
@@ -163,15 +182,15 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 		}
 	}
 	diskStatus := "creating sparse ext4 disk"
-	if request.cloneDiskSource != "" {
+	if origin != nil {
 		diskStatus = "cloning snapshot writable disk"
 	}
 	if err := s.dependencies.reporter.Status(diskStatus); err != nil {
 		return types.Sandbox{}, s.compensate(ctx, record, "report", err)
 	}
 	var diskErr error
-	if request.cloneDiskSource != "" {
-		diskErr = cloner.Clone(ctx, id, request.Config.Storage, request.cloneDiskSource)
+	if origin != nil {
+		diskErr = cloner.Clone(ctx, id, request.Config.Storage, origin.cowPath)
 	} else {
 		diskErr = s.dependencies.disks.Prepare(ctx, id, request.Config.Storage)
 	}
@@ -179,14 +198,10 @@ func (s *SandboxService) Create(ctx context.Context, request CreateSandboxReques
 		return types.Sandbox{}, s.compensate(ctx, record, "disk", diskErr)
 	}
 	if len(request.Config.DataDisks) > 0 {
-		if request.cloneDataSource != "" {
-			if request.cloneDataCount > len(request.Config.DataDisks) || request.cloneDataCount < 0 {
-				diskErr = errors.New("invalid inherited data disk count")
-			} else {
-				diskErr = dataStore.CloneData(ctx, id, request.Config.DataDisks[:request.cloneDataCount], request.cloneDataSource)
-				if diskErr == nil {
-					diskErr = dataStore.PrepareData(ctx, id, request.Config.DataDisks[request.cloneDataCount:])
-				}
+		if origin != nil {
+			diskErr = dataStore.CloneData(ctx, id, request.Config.DataDisks[:origin.inheritedDataCount], origin.dataDirectory)
+			if diskErr == nil {
+				diskErr = dataStore.PrepareData(ctx, id, request.Config.DataDisks[origin.inheritedDataCount:])
 			}
 		} else {
 			diskErr = dataStore.PrepareData(ctx, id, request.Config.DataDisks)
