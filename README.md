@@ -44,6 +44,7 @@ Each sandbox is a real machine:
 - **Real networking.** A network namespace per VM, multiqueue TAP and CNI, with multiple NICs at creation.
 - **Guest execution without SSH.** `exec` over vsock with streamed stdout and stderr, optional stdin and environment variables, and real exit codes.
 - **Snapshots as first-class artifacts.** Save a running VM, restore or hibernate it, clone it with a fresh network identity, or export and import it as a portable archive.
+- **Runtime devices.** Attach external raw disks, virtio-fs shares and VFIO PCI devices to a running Cloud Hypervisor VM.
 - **Built to be scripted.** Lifecycle commands offer JSON output and `inspect` returns indented JSON.
 
 ## Architecture
@@ -117,6 +118,36 @@ Host and guest artifacts are a matched release pair. Pin a versioned guest tag
 such as `24.04-v0.1.0`, or an OCI digest, when reproducibility matters.
 `sudo kumabox-check` alone performs a read-only host audit.
 
+### Share a host directory with virtio-fs
+
+Create the sandbox with `--shared-memory`; this VM setting cannot be enabled
+after creation. On Ubuntu 24.04, install the `virtiofsd` package and start its
+server for the directory you want to share:
+
+```bash
+sudo apt-get install virtiofsd
+sudo install -d /tmp/kumabox-share
+sudo /usr/libexec/virtiofsd --socket-path=/tmp/kumabox-share.sock \
+  --shared-dir=/tmp/kumabox-share --cache=never &
+
+sudo kumabox run ghcr.io/kgpp34/kumabox/ubuntu:24.04 \
+  --name share-vm --shared-memory
+sudo kumabox fs attach share-vm --socket /tmp/kumabox-share.sock --tag data
+sudo kumabox fs list share-vm --json
+sudo kumabox exec share-vm -- sh -c \
+  'mkdir -p /mnt/data && mount -t virtiofs data /mnt/data && echo hello >/mnt/data/hello'
+sudo cat /tmp/kumabox-share/hello
+
+sudo kumabox exec share-vm -- umount /mnt/data
+sudo kumabox fs detach share-vm --tag data
+sudo kumabox stop share-vm
+sudo kumabox rm share-vm
+```
+
+`fs list` and `inspect` report live attachments. A share lasts only for the
+current VM process; after stop or restart, start a fresh `virtiofsd` and attach
+again. Unmount and detach it before `snapshot save` or `hibernate`.
+
 ### Drive it from an agent
 
 `exec` streams guest output and preserves the guest command's exit code.
@@ -155,10 +186,11 @@ which already installs the matching `kumabox-agent`, kernel and initramfs.
 | Area | Commands |
 | --- | --- |
 | VM lifecycle | `run`, `create`, `start`, `stop`, `rm`, `ps`, `inspect` |
-| Guest access | `exec`, `console`, `logs` |
+| Guest access | `exec`, `console`, `logs`, `reseed` |
 | Images | `image pull`, `image import`, `image inspect`, `image ls`, `image verify`, `image remove` |
 | Snapshots | `snapshot save`, `snapshot ls`, `snapshot inspect`, `snapshot export`, `snapshot import`, `snapshot rm`, `restore`, `clone`, `hibernate` |
-| Operations | `doctor`, `version` |
+| Network and devices | `net`, `disk attach/detach`, `fs attach/detach/list`, `device attach/detach` |
+| Operations | `status`, `gc`, `daemon`, `doctor`, `version` |
 
 `kumabox <command> --help` is the authoritative reference.
 
@@ -199,7 +231,7 @@ and across a fleet.
 
 - [x] OCI to EROFS images, CNI networking, guest exec over vsock
 - [x] Running snapshots, clone, restore, hibernate, export and import
-- [ ] Hotplug data disks, virtio-fs shares and VFIO PCI devices
+- [x] Hotplug data disks, virtio-fs shares and VFIO PCI devices
 - [ ] Daemon mode with an HTTP API
 - [ ] Multi-node control plane and scheduling
 - [ ] Go, Python and TypeScript SDKs
