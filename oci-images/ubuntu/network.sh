@@ -26,6 +26,15 @@ esac
 
 [ -n "$rootmnt" ] || exit 0
 
+# Docker supplies /etc/resolv.conf as a bind mount while building the image.
+# The exported root can therefore contain only an empty placeholder. Point it
+# at the resolver enabled in this guest without replacing a nonempty custom file.
+resolver="$rootmnt/etc/resolv.conf"
+if [ ! -L "$resolver" ] && [ ! -s "$resolver" ]; then
+	rm -f "$resolver"
+	ln -s /run/systemd/resolve/stub-resolv.conf "$resolver"
+fi
+
 for config_file in /run/net-*.conf; do
 	[ -f "$config_file" ] || continue
 	unset DEVICE IPV4ADDR IPV4NETMASK IPV4GATEWAY IPV4DNS0 IPV4DNS1 HWADDR
