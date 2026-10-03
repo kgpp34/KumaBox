@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 430" width="1200" height="430" role="img" aria-label="Sandbox lifecycle: build once, warm once, fork many">
+<title>Sandbox lifecycle: build once, warm once, fork many</title>
+<defs>
+  <pattern id="iso" width="40" height="23.094" patternUnits="userSpaceOnUse">
+    <path d="M0 0 L40 23.094 M40 0 L0 23.094" stroke="#ffffff" stroke-opacity="0.028" stroke-width="1"/>
+  </pattern>
+  <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#F5B83D" stop-opacity="0.35"/>
+    <stop offset="100%" stop-color="#F5B83D" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="vignette" cx="30%" cy="20%" r="90%">
+    <stop offset="0%" stop-color="#22324A"/>
+    <stop offset="100%" stop-color="#172233"/>
+  </radialGradient>
+  <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="#6F8FAF"/>
+  </marker>
+  <marker id="arrH" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="#F5B83D"/>
+  </marker>
+</defs>
+<style>
+  text { font-family: 'Inter','Segoe UI','SF Pro Text',-apple-system,'Helvetica Neue',Arial,sans-serif; }
+  .mono { font-family: 'JetBrains Mono','SFMono-Regular',Menlo,Consolas,'DejaVu Sans Mono',monospace; }
+  .flow { stroke-dasharray: 6 8; animation: flow 1.6s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -28; } }
+  
+  .fan { opacity: 0; animation: fan 5s ease-out infinite; }
+  .f1 { animation-delay: .2s; } .f2 { animation-delay: .5s; } .f3 { animation-delay: .8s; }
+  @keyframes fan { 0% {opacity:0;} 14% {opacity:1;} 88% {opacity:1;} 100% {opacity:0;} }
+  @media (prefers-reduced-motion: reduce) { .fan { opacity: 1; } }
+
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+<rect x="0" y="0" width="1200" height="430" rx="20" fill="url(#vignette)"/>
+<rect x="0" y="0" width="1200" height="430" rx="20" fill="url(#iso)"/>
+<rect x="0.5" y="0.5" width="1199" height="429" rx="20" fill="none" stroke="#34485F"/>
+<text x="48" y="58" font-size="26" fill="#E8EEF5" font-weight="700" text-anchor="start" >Warm once, fork many</text>
+<text x="48" y="88" font-size="16" fill="#98AABF" font-weight="400" text-anchor="start" >Pay the setup cost one time, then hand every agent attempt its own copy of a ready machine.</text>
+<g ><polygon points="90.556,190 120,207.0 120,246.1 90.556,229.1" fill="#1F2D40" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="149.444,190 120,207.0 120,246.1 149.444,229.1" fill="#4E6E8E" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="120,173.0 149.444,190 120,207.0 90.556,190" fill="#6F8FAF" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/></g>
+<circle cx="68" cy="156" r="12" fill="#243449" stroke="#34485F"/><text x="68" y="160.5" font-size="13" fill="#98AABF" font-weight="700" text-anchor="middle" >1</text>
+<text x="120" y="282" font-size="16" fill="#E8EEF5" font-weight="700" text-anchor="middle" >OCI image</text>
+<text x="120" y="304" font-size="13" fill="#98AABF" font-weight="400" text-anchor="middle" >any digest-pinned ref</text>
+<line x1="160" y1="210" x2="288" y2="210" stroke="#6F8FAF" stroke-width="2" stroke-linecap="round" marker-end="url(#arr)"/>
+<text x="225.0" y="198" font-size="13" fill="#6F8FAF" font-weight="600" text-anchor="middle" class="mono" >image build</text>
+<g ><polygon points="300.556,190 330,207.0 330,246.1 300.556,229.1" fill="#1F2D40" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="359.444,190 330,207.0 330,246.1 359.444,229.1" fill="#4E6E8E" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="330,173.0 359.444,190 330,207.0 300.556,190" fill="#6F8FAF" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/></g>
+<circle cx="278" cy="156" r="12" fill="#243449" stroke="#34485F"/><text x="278" y="160.5" font-size="13" fill="#98AABF" font-weight="700" text-anchor="middle" >2</text>
+<text x="330" y="282" font-size="16" fill="#E8EEF5" font-weight="700" text-anchor="middle" >EROFS layers</text>
+<text x="330" y="304" font-size="13" fill="#98AABF" font-weight="400" text-anchor="middle" >shared, read-only</text>
+<line x1="370" y1="210" x2="498" y2="210" stroke="#6F8FAF" stroke-width="2" stroke-linecap="round" marker-end="url(#arr)"/>
+<text x="435.0" y="198" font-size="13" fill="#6F8FAF" font-weight="600" text-anchor="middle" class="mono" >run</text>
+<g ><polygon points="510.556,190 540,207.0 540,246.1 510.556,229.1" fill="#1F2D40" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="569.444,190 540,207.0 540,246.1 569.444,229.1" fill="#4E6E8E" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="540,173.0 569.444,190 540,207.0 510.556,190" fill="#6F8FAF" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/></g>
+<circle cx="488" cy="156" r="12" fill="#243449" stroke="#34485F"/><text x="488" y="160.5" font-size="13" fill="#98AABF" font-weight="700" text-anchor="middle" >3</text>
+<text x="540" y="282" font-size="16" fill="#E8EEF5" font-weight="700" text-anchor="middle" >Running microVM</text>
+<text x="540" y="304" font-size="13" fill="#98AABF" font-weight="400" text-anchor="middle" >agent ready on vsock</text>
+<line x1="580" y1="210" x2="708" y2="210" stroke="#6F8FAF" stroke-width="2" stroke-linecap="round" marker-end="url(#arr)"/>
+<text x="645.0" y="198" font-size="13" fill="#6F8FAF" font-weight="600" text-anchor="middle" class="mono" >exec</text>
+<g ><polygon points="720.556,190 750,207.0 750,246.1 720.556,229.1" fill="#1F2D40" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="779.444,190 750,207.0 750,246.1 779.444,229.1" fill="#4E6E8E" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="750,173.0 779.444,190 750,207.0 720.556,190" fill="#6F8FAF" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/></g>
+<circle cx="698" cy="156" r="12" fill="#243449" stroke="#34485F"/><text x="698" y="160.5" font-size="13" fill="#98AABF" font-weight="700" text-anchor="middle" >4</text>
+<text x="750" y="282" font-size="16" fill="#E8EEF5" font-weight="700" text-anchor="middle" >Warmed sandbox</text>
+<text x="750" y="304" font-size="13" fill="#98AABF" font-weight="400" text-anchor="middle" >deps installed, caches hot</text>
+<line x1="790" y1="210" x2="918" y2="210" stroke="#6F8FAF" stroke-width="2" stroke-linecap="round" marker-end="url(#arr)"/>
+<text x="855.0" y="198" font-size="13" fill="#6F8FAF" font-weight="600" text-anchor="middle" class="mono" >snapshot</text>
+<g ><polygon points="930.556,190 960,207.0 960,246.1 930.556,229.1" fill="#1F2D40" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="989.444,190 960,207.0 960,246.1 989.444,229.1" fill="#4E6E8E" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="960,173.0 989.444,190 960,207.0 930.556,190" fill="#F5B83D" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/></g>
+<circle cx="908" cy="156" r="12" fill="#243449" stroke="#34485F"/><text x="908" y="160.5" font-size="13" fill="#98AABF" font-weight="700" text-anchor="middle" >5</text>
+<text x="960" y="282" font-size="16" fill="#F5B83D" font-weight="700" text-anchor="middle" >Running snapshot</text>
+<text x="960" y="304" font-size="13" fill="#98AABF" font-weight="400" text-anchor="middle" >memory + disks captured</text>
+<g class="fan f1"><path d="M1000 210 C 1040 210, 1050 140, 1080 140" stroke="#F5B83D" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 6"/>
+<g ><polygon points="1094.412,126 1110,135.0 1110,155.7 1094.412,146.7" fill="#1F2D40" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="1125.588,126 1110,135.0 1110,155.7 1125.588,146.7" fill="#4E6E8E" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="1110,117.0 1125.588,126 1110,135.0 1094.412,126" fill="#6F8FAF" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/></g>
+</g>
+<g class="fan f2"><path d="M1000 210 C 1040 210, 1050 210, 1080 210" stroke="#F5B83D" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 6"/>
+<g ><polygon points="1094.412,196 1110,205.0 1110,225.7 1094.412,216.7" fill="#1F2D40" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="1125.588,196 1110,205.0 1110,225.7 1125.588,216.7" fill="#4E6E8E" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="1110,187.0 1125.588,196 1110,205.0 1094.412,196" fill="#6F8FAF" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/></g>
+</g>
+<g class="fan f3"><path d="M1000 210 C 1040 210, 1050 280, 1080 280" stroke="#F5B83D" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 6"/>
+<g ><polygon points="1094.412,266 1110,275.0 1110,295.7 1094.412,286.7" fill="#1F2D40" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="1125.588,266 1110,275.0 1110,295.7 1125.588,286.7" fill="#4E6E8E" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="1110,257.0 1125.588,266 1110,275.0 1094.412,266" fill="#6F8FAF" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/></g>
+</g>
+<text x="1110" y="322" font-size="16" fill="#E8EEF5" font-weight="700" text-anchor="middle" >clone x N</text>
+<text x="1110" y="344" font-size="13" fill="#98AABF" font-weight="400" text-anchor="middle" >new IP, new identity</text>
+<text x="48" y="352" font-size="14" fill="#98AABF" font-weight="600" text-anchor="start" >The same snapshot also lets you</text>
+<rect x="48" y="368" width="243" height="32" rx="16.0" fill="#243449" stroke="#34485F" stroke-width="1.2" />
+<text x="169.5" y="388.86" font-size="13.5" fill="#E8EEF5" font-weight="400" text-anchor="middle" >restore in place to roll back</text>
+<rect x="303" y="368" width="272" height="32" rx="16.0" fill="#243449" stroke="#34485F" stroke-width="1.2" />
+<text x="439.0" y="388.86" font-size="13.5" fill="#E8EEF5" font-weight="400" text-anchor="middle" >export and import to another host</text>
+<rect x="587" y="368" width="316" height="32" rx="16.0" fill="#243449" stroke="#34485F" stroke-width="1.2" />
+<text x="745.0" y="388.86" font-size="13.5" fill="#E8EEF5" font-weight="400" text-anchor="middle" >hibernate: free the VMM, keep the state</text>
+</svg>
