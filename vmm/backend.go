@@ -55,6 +55,14 @@ type DiskHotplugger interface {
 	RemoveDisk(context.Context, Process, string) error
 }
 
+// FileShareHotplugger manages runtime virtio-fs devices backed by an external
+// vhost-user server. The socket and exported directory remain host-owned.
+type FileShareHotplugger interface {
+	AttachedFileShares(context.Context, Process) ([]types.AttachedFileShare, error)
+	AddFileShare(context.Context, Process, types.FileShare) error
+	RemoveFileShare(context.Context, Process, string) error
+}
+
 // PCIHotplugger manages VFIO passthrough devices for one VMM run. Host binding
 // and IOMMU configuration remain administrator responsibilities.
 type PCIHotplugger interface {

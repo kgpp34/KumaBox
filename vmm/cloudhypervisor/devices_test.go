@@ -22,6 +22,13 @@ func TestCaptureRejectsRuntimeExternalDevices(t *testing.T) {
 		t.Fatal("VFIO passthrough guard did not reject capture")
 	}
 	info.Config.Devices = nil
+	if err := json.Unmarshal([]byte(`{"config":{"fs":[{"id":"kumabox-fs-data","tag":"data","socket":"/run/virtiofsd.sock"}]}}`), &info); err != nil {
+		t.Fatal(err)
+	}
+	if err := refuseExternalDevices(info); err == nil {
+		t.Fatal("runtime virtio-fs guard did not reject capture")
+	}
+	info.Config.FS = nil
 	if err := refuseExternalDevices(info); err != nil {
 		t.Fatalf("plain sandbox cannot be captured: %v", err)
 	}

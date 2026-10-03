@@ -28,6 +28,8 @@ type sandboxOutput struct {
 	CPUs uint32 `json:"cpus"`
 	// Memory is requested guest memory in bytes.
 	Memory int64 `json:"memory"`
+	// SharedMemory reports whether the VMM can accept runtime virtio-fs shares.
+	SharedMemory bool `json:"shared_memory"`
 	// Storage is the logical sparse COW size in bytes.
 	Storage int64 `json:"storage"`
 	// DataDisks are sandbox-owned writable disks.
@@ -108,7 +110,7 @@ type removeOutput struct {
 func sandboxResult(sandbox types.Sandbox) sandboxOutput {
 	result := sandboxOutput{
 		ID: sandbox.ID.String(), Name: sandbox.Config.Name, ImageDigest: sandbox.ImageDigest.String(), VMM: string(sandbox.VMM),
-		State: string(sandbox.State), CPUs: sandbox.Config.CPUs, Memory: sandbox.Config.Memory,
+		State: string(sandbox.State), CPUs: sandbox.Config.CPUs, Memory: sandbox.Config.Memory, SharedMemory: sandbox.Config.SharedMemory,
 		Storage: sandbox.Config.Storage, DataDisks: sandbox.Config.DataDisks, NICs: sandbox.Config.NICs, NetworkName: sandbox.Config.NetworkName,
 		Generation: sandbox.Generation,
 		CreatedAt:  sandbox.CreatedAt.UTC(), UpdatedAt: sandbox.UpdatedAt.UTC(),

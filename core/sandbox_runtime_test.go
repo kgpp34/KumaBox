@@ -48,6 +48,23 @@ func TestRunCreatesAndStartsSandbox(t *testing.T) {
 	}
 }
 
+func TestRunCarriesSharedMemoryToVMM(t *testing.T) {
+	service, _ := newTestSandboxService(t, nil)
+	_, err := service.Run(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config: types.SandboxConfig{
+			Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory,
+			SharedMemory: true, Storage: types.DefaultSandboxStorage,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !testRuntime(t, service).plan.SharedMemory {
+		t.Fatal("shared-memory sandbox launched with private VMM memory")
+	}
+}
+
 func TestRunRetainsSandboxWhenStartFails(t *testing.T) {
 	service, steps := newTestSandboxService(t, nil)
 	failure := errors.New("VMM exited")

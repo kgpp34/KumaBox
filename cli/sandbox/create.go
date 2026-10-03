@@ -23,13 +23,14 @@ type configProvider func() config.Config
 // parsing here gives both commands one validation contract and one set of
 // defaults.
 type createOptions struct {
-	name        string
-	cpus        uint32
-	memory      string
-	storageSize string
-	nics        int
-	networkName string
-	dataDisks   []string
+	name         string
+	cpus         uint32
+	memory       string
+	sharedMemory bool
+	storageSize  string
+	nics         int
+	networkName  string
+	dataDisks    []string
 }
 
 // defaultCreateOptions returns the public resource defaults for a new sandbox.
@@ -44,6 +45,7 @@ func (o *createOptions) addFlags(command *cobra.Command) {
 	command.Flags().StringVar(&o.name, "name", o.name, "required sandbox name")
 	command.Flags().Uint32Var(&o.cpus, "cpus", o.cpus, "number of virtual CPUs")
 	command.Flags().StringVar(&o.memory, "memory", o.memory, "guest memory (for example 1GiB)")
+	command.Flags().BoolVar(&o.sharedMemory, "shared-memory", false, "enable shared guest memory for runtime virtio-fs attachment")
 	command.Flags().StringVar(&o.storageSize, "storage", o.storageSize, "logical sparse COW size (minimum 10GiB)")
 	command.Flags().IntVar(&o.nics, "nics", o.nics, "number of network interfaces (0 disables networking)")
 	command.Flags().StringVar(&o.networkName, "network", o.networkName, "CNI network name (empty selects the default)")
@@ -76,7 +78,7 @@ func (o createOptions) request(imageReference string) (core.CreateSandboxRequest
 		return core.CreateSandboxRequest{}, invalidFlag("network", errors.New("requires at least one NIC"))
 	}
 	sandboxConfig := types.SandboxConfig{
-		Name: o.name, CPUs: o.cpus, Memory: memoryBytes, Storage: storageBytes,
+		Name: o.name, CPUs: o.cpus, Memory: memoryBytes, SharedMemory: o.sharedMemory, Storage: storageBytes,
 		NICs: o.nics, NetworkName: o.networkName,
 	}
 	requested := make([]types.DataDiskSpec, 0, len(o.dataDisks))

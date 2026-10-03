@@ -57,6 +57,52 @@ func (s *SandboxService) DetachDisk(ctx context.Context, reference, name string)
 	})
 }
 
+// AttachFileShare hot-adds an externally served virtio-fs socket for this run.
+// The server and exported directory remain outside KumaBox ownership.
+func (s *SandboxService) AttachFileShare(ctx context.Context, reference string, share types.FileShare) (types.AttachedDevices, error) {
+	var err error
+	share, err = types.NormalizeFileShare(share)
+	if err != nil {
+		return types.AttachedDevices{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+	}
+	return s.withRunningDevice(ctx, reference, func(backend vmm.Backend, process vmm.Process, record types.Sandbox) error {
+		plugger, ok := backend.(vmm.FileShareHotplugger)
+		if !ok {
+			return unsupportedDevice(record.VMM, "file share")
+		}
+		if !record.Config.SharedMemory {
+			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("file share requires a sandbox created with --shared-memory"))
+		}
+		path, err := filepath.EvalSymlinks(share.Socket)
+		if err != nil {
+			return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("resolve file share socket: %w", err))
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+		}
+		if info.Mode()&os.ModeSocket == 0 {
+			return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("file share path %s is not a Unix socket", path))
+		}
+		share.Socket = path
+		return plugger.AddFileShare(ctx, process, share)
+	})
+}
+
+// DetachFileShare removes one runtime share after the guest releases its mount.
+func (s *SandboxService) DetachFileShare(ctx context.Context, reference, tag string) (types.AttachedDevices, error) {
+	if err := types.ValidateFileShareTag(tag); err != nil {
+		return types.AttachedDevices{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+	}
+	return s.withRunningDevice(ctx, reference, func(backend vmm.Backend, process vmm.Process, record types.Sandbox) error {
+		plugger, ok := backend.(vmm.FileShareHotplugger)
+		if !ok {
+			return unsupportedDevice(record.VMM, "file share")
+		}
+		return plugger.RemoveFileShare(ctx, process, tag)
+	})
+}
+
 // AttachPCIDevice assigns one VFIO-bound host PCI device to this VMM run.
 func (s *SandboxService) AttachPCIDevice(ctx context.Context, reference, pci, id string) (types.AttachedDevices, error) {
 	path, err := normalizePCIPath(pci)
@@ -174,6 +220,13 @@ func liveAttachedDevices(ctx context.Context, backend vmm.Backend, process vmm.P
 			return result, err
 		}
 		result.Devices = attached
+	}
+	if shares, ok := backend.(vmm.FileShareHotplugger); ok {
+		attached, err := shares.AttachedFileShares(ctx, process)
+		if err != nil {
+			return result, err
+		}
+		result.FS = attached
 	}
 	return result, nil
 }

@@ -258,6 +258,11 @@ func TestDirectoryRestoreForceStillRequiresCompatibleImageAndShape(t *testing.T)
 	if err := validateRestoreSource(record, capture, RestoreOptions{SourceDirectory: "/capture", Force: true}); err == nil {
 		t.Fatal("incompatible memory accepted with force")
 	}
+	capture.Config.Memory = record.Config.Memory
+	capture.Config.SharedMemory = !record.Config.SharedMemory
+	if err := validateRestoreSource(record, capture, RestoreOptions{SourceDirectory: "/capture", Force: true}); err == nil {
+		t.Fatal("incompatible shared-memory mode accepted with force")
+	}
 }
 
 func TestHibernatePersistsBeforeStoppingAndRestores(t *testing.T) {

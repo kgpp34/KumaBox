@@ -19,11 +19,16 @@ const (
 )
 
 var (
-	_ vmm.DiskHotplugger = (*Driver)(nil)
-	_ vmm.PCIHotplugger  = (*Driver)(nil)
+	_ vmm.DiskHotplugger      = (*Driver)(nil)
+	_ vmm.FileShareHotplugger = (*Driver)(nil)
+	_ vmm.PCIHotplugger       = (*Driver)(nil)
 )
 
 func diskID(name string) string { return externalDiskPrefix + name }
+
+const fileSharePrefix = "kumabox-fs-"
+
+func fileShareID(tag string) string { return fileSharePrefix + tag }
 
 // AttachedDisks reads the current VMM configuration, excluding sandbox-owned
 // boot disks. Runtime attachments do not survive a new VMM process.
@@ -102,6 +107,80 @@ func (d *Driver) RemoveDisk(ctx context.Context, process vmm.Process, name strin
 		}
 	}
 	return errdefs.New(errdefs.ClassNotFound, errdefs.CodeNotFound, fmt.Errorf("disk %q is not attached", name))
+}
+
+// AttachedFileShares reports only shares hot-attached to this VMM process.
+func (d *Driver) AttachedFileShares(ctx context.Context, process vmm.Process) ([]types.AttachedFileShare, error) {
+	info, err := d.liveInfo(ctx, process)
+	if err != nil {
+		return nil, err
+	}
+	var shares []types.AttachedFileShare
+	for _, share := range info.Config.FS {
+		if share.ID == fileShareID(share.Tag) {
+			shares = append(shares, types.AttachedFileShare{ID: share.ID, Tag: share.Tag, Socket: share.Socket})
+		}
+	}
+	return shares, nil
+}
+
+// AddFileShare attaches an external vhost-user-fs socket to a shared-memory VM.
+// A deterministic ID makes an interrupted API call safe to inspect and retry.
+func (d *Driver) AddFileShare(ctx context.Context, process vmm.Process, share types.FileShare) error {
+	var err error
+	share, err = types.NormalizeFileShare(share)
+	if err != nil {
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+	}
+	info, err := d.liveInfo(ctx, process)
+	if err != nil {
+		return err
+	}
+	if !info.Config.Memory.Shared {
+		return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("file share requires a sandbox created with --shared-memory"))
+	}
+	for _, existing := range info.Config.FS {
+		if existing.ID == fileShareID(share.Tag) || existing.Tag == share.Tag || existing.Socket == share.Socket {
+			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("file share tag or socket is already attached: %s", share.Tag))
+		}
+	}
+	payload, err := json.Marshal(map[string]any{
+		"id": fileShareID(share.Tag), "tag": share.Tag, "socket": share.Socket,
+		"num_queues": share.NumQueues, "queue_size": share.QueueSize,
+	})
+	if err != nil {
+		return err
+	}
+	requestErr := d.snapshotAction(ctx, process.APISocket, "vm.add-fs", payload, d.startupTimeout)
+	if requestErr == nil {
+		return nil
+	}
+	current, inspectErr := d.liveInfo(ctx, process)
+	if inspectErr == nil {
+		for _, existing := range current.Config.FS {
+			if existing.ID == fileShareID(share.Tag) && existing.Tag == share.Tag && existing.Socket == share.Socket {
+				return nil
+			}
+		}
+	}
+	return errors.Join(requestErr, inspectErr)
+}
+
+// RemoveFileShare ejects a runtime share by mount tag, preserving its server.
+func (d *Driver) RemoveFileShare(ctx context.Context, process vmm.Process, tag string) error {
+	if err := types.ValidateFileShareTag(tag); err != nil {
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+	}
+	info, err := d.liveInfo(ctx, process)
+	if err != nil {
+		return err
+	}
+	for _, share := range info.Config.FS {
+		if share.ID == fileShareID(tag) && share.Tag == tag {
+			return d.removeRuntimeDevice(ctx, process, share.ID)
+		}
+	}
+	return errdefs.New(errdefs.ClassNotFound, errdefs.CodeNotFound, fmt.Errorf("file share tag %q is not attached", tag))
 }
 
 // AttachedPCIDevices reports live VFIO devices from vm.info.

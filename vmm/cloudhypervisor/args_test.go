@@ -162,3 +162,18 @@ func TestBuildArgsHonorsManagedDiskDirectIO(t *testing.T) {
 		t.Fatalf("directio=off disk argument missing: %q", args)
 	}
 }
+
+func TestBuildArgsEnablesSharedMemoryOnlyWhenRequested(t *testing.T) {
+	plan := vmm.LaunchPlan{Memory: 1 << 30}
+	args := buildArgs(plan, "/run/api", "/run/vsock")
+	index := slices.Index(args, "--memory")
+	if index < 0 || args[index+1] != "size=1073741824" {
+		t.Fatalf("private memory argument = %v", args)
+	}
+	plan.SharedMemory = true
+	args = buildArgs(plan, "/run/api", "/run/vsock")
+	index = slices.Index(args, "--memory")
+	if index < 0 || args[index+1] != "size=1073741824,shared=on" {
+		t.Fatalf("shared memory argument = %v", args)
+	}
+}

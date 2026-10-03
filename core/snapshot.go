@@ -855,7 +855,8 @@ func validateRestoreLineage(sandbox types.Sandbox, capture types.Snapshot) error
 func validateRestoreSource(sandbox types.Sandbox, capture types.Snapshot, options RestoreOptions) error {
 	if options.Force && options.SourceDirectory != "" {
 		if capture.VMM != sandbox.VMM || capture.ImageDigest != sandbox.ImageDigest || capture.Config.CPUs != sandbox.Config.CPUs ||
-			capture.Config.Memory != sandbox.Config.Memory || capture.Config.Storage != sandbox.Config.Storage || capture.Config.NICs != sandbox.Config.NICs ||
+			capture.Config.Memory != sandbox.Config.Memory || capture.Config.SharedMemory != sandbox.Config.SharedMemory ||
+			capture.Config.Storage != sandbox.Config.Storage || capture.Config.NICs != sandbox.Config.NICs ||
 			!reflect.DeepEqual(capture.Config.DataDisks, sandbox.Config.DataDisks) {
 			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("snapshot VMM, image, or resource shape differs from the target sandbox"))
 		}

@@ -109,6 +109,7 @@ type recordData struct {
 	VMM               string               `json:"vmm"`
 	CPUs              uint32               `json:"cpus"`
 	Memory            int64                `json:"memory"`
+	SharedMemory      bool                 `json:"shared_memory,omitempty"`
 	Storage           int64                `json:"storage"`
 	DataDisks         []types.DataDiskSpec `json:"data_disks,omitempty"`
 	NICs              int                  `json:"nics,omitempty"`
@@ -462,7 +463,7 @@ func encode(snapshot types.Snapshot, ready bool) recordData {
 		SourceGeneration: snapshot.SourceGeneration,
 		ImageDigest:      snapshot.ImageDigest.String(), RegistryReference: snapshot.RegistryReference,
 		VMM:  string(snapshot.VMM),
-		CPUs: snapshot.Config.CPUs, Memory: snapshot.Config.Memory, Storage: snapshot.Config.Storage, DataDisks: snapshot.Config.DataDisks,
+		CPUs: snapshot.Config.CPUs, Memory: snapshot.Config.Memory, SharedMemory: snapshot.Config.SharedMemory, Storage: snapshot.Config.Storage, DataDisks: snapshot.Config.DataDisks,
 		NICs: snapshot.Config.NICs, NetworkName: snapshot.Config.NetworkName,
 		Size: snapshot.Size, CreatedAt: snapshot.CreatedAt.UTC(), LastAccessedAt: snapshot.LastAccessedAt.UTC(), Ready: ready,
 	}
@@ -487,7 +488,7 @@ func decodeSnapshot(record recordData) (types.Snapshot, error) {
 		ImageDigest: digest, RegistryReference: record.RegistryReference,
 		VMM: types.VMMType(record.VMM), Size: record.Size,
 		Config: types.SandboxConfig{
-			Name: record.SandboxName, CPUs: record.CPUs, Memory: record.Memory, Storage: record.Storage, DataDisks: record.DataDisks,
+			Name: record.SandboxName, CPUs: record.CPUs, Memory: record.Memory, SharedMemory: record.SharedMemory, Storage: record.Storage, DataDisks: record.DataDisks,
 			NICs: record.NICs, NetworkName: record.NetworkName,
 		},
 		CreatedAt: record.CreatedAt.UTC(), LastAccessedAt: record.LastAccessedAt.UTC(),

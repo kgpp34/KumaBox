@@ -61,7 +61,7 @@ func writeStatusDetailJSON(writer io.Writer, status core.SandboxStatus, devices 
 	encoder := json.NewEncoder(writer)
 	encoder.SetIndent("", "  ")
 	output := projectStatus(status)
-	if len(devices.Disks) > 0 || len(devices.Devices) > 0 {
+	if len(devices.Disks) > 0 || len(devices.FS) > 0 || len(devices.Devices) > 0 {
 		output.AttachedDevices = &devices
 	}
 	return encoder.Encode(output)

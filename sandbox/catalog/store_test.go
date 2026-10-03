@@ -71,7 +71,7 @@ func TestMarkCreatedAtomicallyPublishesResolvedNetwork(t *testing.T) {
 	record := types.Sandbox{
 		ID: id,
 		Config: types.SandboxConfig{
-			Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory,
+			Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory, SharedMemory: true,
 			Storage: types.DefaultSandboxStorage, NICs: 1,
 			DataDisks: []types.DataDiskSpec{{Name: "db", Size: types.MinDataDiskSize, FSType: "ext4", DirectIO: &directIO}},
 		},
@@ -104,7 +104,7 @@ func TestMarkCreatedAtomicallyPublishesResolvedNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Config.NetworkName != "bridge" || resolved.Network.Interfaces[0].IPv4.Address != "10.42.0.2" ||
+	if resolved.Config.NetworkName != "bridge" || !resolved.Config.SharedMemory || resolved.Network.Interfaces[0].IPv4.Address != "10.42.0.2" ||
 		len(resolved.Config.DataDisks) != 1 || resolved.Config.DataDisks[0].Name != "db" ||
 		resolved.Config.DataDisks[0].DirectIO == nil || *resolved.Config.DataDisks[0].DirectIO {
 		t.Fatalf("persisted network record = %+v", resolved)

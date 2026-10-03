@@ -15,10 +15,14 @@ const diskQueueSize = 512
 // reverses immutable layers.
 func buildArgs(plan vmm.LaunchPlan, apiSocket, vsock string) []string {
 	maximumCPUs := max(runtime.NumCPU(), int(plan.CPUs))
+	memory := fmt.Sprintf("size=%d", plan.Memory)
+	if plan.SharedMemory {
+		memory += ",shared=on"
+	}
 	args := []string{
 		"--api-socket", apiSocket,
 		"--cpus", fmt.Sprintf("boot=%d,max=%d", plan.CPUs, maximumCPUs),
-		"--memory", fmt.Sprintf("size=%d", plan.Memory),
+		"--memory", memory,
 		"--disk",
 	}
 	for _, disk := range plan.Disks {

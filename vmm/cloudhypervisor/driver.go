@@ -432,6 +432,9 @@ func (d *Driver) queryState(ctx context.Context, socket string) (string, error) 
 type vmInfo struct {
 	State  string `json:"state"`
 	Config struct {
+		Memory struct {
+			Shared bool `json:"shared"`
+		} `json:"memory"`
 		Console struct {
 			Mode string `json:"mode"`
 			File string `json:"file"`
@@ -443,9 +446,7 @@ type vmInfo struct {
 		} `json:"net"`
 		Disks   []vmDiskInfo      `json:"disks"`
 		Devices []vmPCIDeviceInfo `json:"devices"`
-		FS      []struct {
-			ID string `json:"id"`
-		} `json:"fs"`
+		FS      []vmFSInfo        `json:"fs"`
 	} `json:"config"`
 	DeviceTree map[string]json.RawMessage `json:"device_tree"`
 }
@@ -460,6 +461,12 @@ type vmDiskInfo struct {
 type vmPCIDeviceInfo struct {
 	ID   string `json:"id"`
 	Path string `json:"path"`
+}
+
+type vmFSInfo struct {
+	ID     string `json:"id"`
+	Tag    string `json:"tag"`
+	Socket string `json:"socket"`
 }
 
 // queryInfo performs one bounded vm.info request over the private Unix socket.

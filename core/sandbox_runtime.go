@@ -305,7 +305,7 @@ func (s *SandboxService) launchPlan(record types.Sandbox, image types.Image) (vm
 		disks = append(disks, vmm.Disk{Path: path, Serial: types.DataDiskSerial(spec.Name), DirectIO: spec.DirectIO})
 	}
 	return vmm.LaunchPlan{
-		SandboxID: record.ID, CPUs: record.Config.CPUs, Memory: record.Config.Memory,
+		SandboxID: record.ID, CPUs: record.Config.CPUs, Memory: record.Config.Memory, SharedMemory: record.Config.SharedMemory,
 		BootProfile: image.Boot.Profile, Kernel: kernel, Initrd: initrd, Cmdline: cmdline, Disks: disks,
 		Network: record.Network,
 	}, nil

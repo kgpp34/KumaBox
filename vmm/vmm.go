@@ -44,6 +44,8 @@ type LaunchPlan struct {
 	CPUs uint32
 	// Memory is guest RAM in bytes.
 	Memory int64
+	// SharedMemory enables the host-backed memory mapping needed by virtio-fs.
+	SharedMemory bool
 	// BootProfile selects the host/guest direct-boot contract.
 	BootProfile types.BootProfile
 	// Kernel is the verified direct-boot kernel artifact.

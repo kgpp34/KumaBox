@@ -59,6 +59,8 @@ type recordData struct {
 	CPUs uint32 `json:"cpus"`
 	// Memory is guest memory in bytes.
 	Memory int64 `json:"memory"`
+	// SharedMemory enables runtime virtio-fs on the captured VM shape.
+	SharedMemory bool `json:"shared_memory,omitempty"`
 	// Storage is logical COW capacity in bytes.
 	Storage int64 `json:"storage"`
 	// DataDisks are managed writable disks in attachment order.
@@ -646,7 +648,7 @@ func deleteRecord(ctx context.Context, writer metadata.Writer, record types.Sand
 func encode(record types.Sandbox) recordData {
 	data := recordData{
 		ID: record.ID.String(), Name: record.Config.Name, CPUs: record.Config.CPUs,
-		Memory: record.Config.Memory, Storage: record.Config.Storage, DataDisks: record.Config.DataDisks, NICs: record.Config.NICs,
+		Memory: record.Config.Memory, SharedMemory: record.Config.SharedMemory, Storage: record.Config.Storage, DataDisks: record.Config.DataDisks, NICs: record.Config.NICs,
 		NetworkName: record.Config.NetworkName,
 		ImageDigest: record.ImageDigest.String(), VMM: string(record.VMM), State: string(record.State),
 		Generation: record.Generation, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
@@ -679,7 +681,7 @@ func decode(raw []byte) (types.Sandbox, error) {
 	}
 	record := types.Sandbox{
 		ID: id, Config: types.SandboxConfig{
-			Name: data.Name, CPUs: data.CPUs, Memory: data.Memory, Storage: data.Storage, DataDisks: data.DataDisks,
+			Name: data.Name, CPUs: data.CPUs, Memory: data.Memory, SharedMemory: data.SharedMemory, Storage: data.Storage, DataDisks: data.DataDisks,
 			NICs: data.NICs, NetworkName: data.NetworkName,
 		},
 		ImageDigest: digest, VMM: types.VMMType(data.VMM), State: types.SandboxState(data.State), Generation: data.Generation,

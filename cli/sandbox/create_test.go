@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/core"
 	"github.com/kumabox/kumabox/errdefs"
@@ -170,6 +172,24 @@ func TestCreateCommandDefaultsToOneNIC(t *testing.T) {
 	flag := command.Flags().Lookup("nics")
 	if flag == nil || flag.DefValue != "1" {
 		t.Fatalf("--nics default = %+v, want 1", flag)
+	}
+}
+
+func TestCreateAndRunExposeSharedMemory(t *testing.T) {
+	for _, command := range []*cobra.Command{
+		NewCreateCommand(func() config.Config { return config.Config{} }),
+		NewRunCommand(func() config.Config { return config.Config{} }),
+	} {
+		flag := command.Flags().Lookup("shared-memory")
+		if flag == nil || flag.DefValue != "false" {
+			t.Fatalf("%s --shared-memory = %+v", command.Name(), flag)
+		}
+	}
+	options := defaultCreateOptions()
+	options.name, options.sharedMemory = "box", true
+	request, err := options.request("demo")
+	if err != nil || !request.Config.SharedMemory {
+		t.Fatalf("create shared-memory config = %+v, %v", request.Config, err)
 	}
 }
 

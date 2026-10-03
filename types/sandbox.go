@@ -221,6 +221,9 @@ type SandboxConfig struct {
 	CPUs uint32
 	// Memory is guest memory in bytes.
 	Memory int64
+	// SharedMemory enables host-backed guest RAM required by runtime virtio-fs.
+	// It is fixed for the lifetime of the sandbox and inherited by snapshots.
+	SharedMemory bool
 	// Storage is the logical size of the sparse ext4 COW disk in bytes.
 	Storage int64
 	// NICs is the current network interface count; zero disables networking.
