@@ -45,3 +45,41 @@ jobs:
 
       - name: Reject tracked local documentation
         run: test -z "$(git ls-files docs)"
+
+  sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Test KumaBox Python SDK
+        run: PYTHONPATH=sdk/python python -m unittest discover -s sdk/python/tests -v
+
+      - name: Test KumaBox TypeScript SDK
+        run: |
+          npm ci --prefix sdk/typescript
+          npm --prefix sdk/typescript test
+
+      - name: Test published E2B SDK compatibility
+        run: |
+          npm install --prefix /tmp/kumabox-e2b-node --no-audit --no-fund e2b@2.52.0
+          python -m pip install --target /tmp/kumabox-e2b-python e2b==2.52.0
+          KUMABOX_E2B_NODE_MODULE=/tmp/kumabox-e2b-node/node_modules/e2b \
+            KUMABOX_E2B_PYTHON_PATH=/tmp/kumabox-e2b-python \
+            go test ./api/e2b -run TestPublishedE2B -v

@@ -141,6 +141,7 @@ func newRootCommand() (*cobra.Command, error) {
 
 	root.AddCommand(doctorcmd.NewCommand())
 	root.AddCommand(newDaemonCommand(provideConfig))
+	root.AddCommand(newServeCommand(provideConfig))
 	root.AddCommand(newGCCommand(provideConfig))
 	root.AddCommand(imagecmd.NewCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewConsoleCommand(provideConfig))

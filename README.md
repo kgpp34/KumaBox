@@ -181,6 +181,59 @@ toolchain (Python, Node, browsers), extend
 [`oci-images/ubuntu/Dockerfile`](oci-images/ubuntu/Dockerfile),
 which already installs the matching `kumabox-agent`, kernel and initramfs.
 
+## Remote API and SDKs
+
+`kumabox serve` opens the same application services through an authenticated,
+versioned HTTP API. It binds to `127.0.0.1:8765` by default. Keep it on loopback
+and use an SSH tunnel or TLS reverse proxy for remote clients:
+
+```bash
+sudo sh -c 'umask 077; openssl rand -hex 32 > /etc/kumabox-api.token'
+sudo kumabox serve --token-file /etc/kumabox-api.token
+# On a client machine: ssh -L 8765:127.0.0.1:8765 user@kumabox-host
+```
+
+The Python and TypeScript SDKs live in `sdk/python` and `sdk/typescript`.
+Both expose `create`, `connect`, `commands.run`, lifecycle methods and snapshots.
+The image must already be imported or pulled on the host.
+Nonzero guest exits raise `CommandExitError` with captured output; pass
+`check=False` in Python or `{ check: false }` in TypeScript to inspect the exit code directly.
+Install the Python package with `python -m pip install ./sdk/python`. Build the
+TypeScript package with `npm ci --prefix sdk/typescript && npm run build --prefix sdk/typescript`,
+then install it into your application from `./sdk/typescript`.
+
+```python
+from kumabox import Client
+
+client = Client(token="YOUR_API_TOKEN")
+sandbox = client.create("my-image")
+print(sandbox.commands.run("uname -a").stdout)
+sandbox.stop()
+sandbox.kill()
+```
+
+```ts
+import { Client } from '@kumabox/sdk'
+
+const client = new Client({ token: process.env.KUMABOX_API_TOKEN! })
+const sandbox = await client.create('my-image')
+console.log((await sandbox.commands.run('uname -a')).stdout)
+await sandbox.stop()
+await sandbox.kill()
+```
+
+An **experimental E2B protocol adapter** also accepts control-plane create,
+connect, inspect, kill and snapshot calls (including creating a sandbox from a
+saved snapshot), plus foreground `commands.run` over envd's
+Connect JSON process stream. Point `E2B_API_URL` and `E2B_SANDBOX_URL` at the
+same tunneled API URL and set `E2B_API_KEY` to the server token. An E2B
+`templateID` is interpreted as a local KumaBox image reference; import an image
+with alias `base` for E2B's default `Sandbox.create()`. The adapter currently
+rejects TTL, metadata, environment setup, custom network policy, MCP, IAM,
+volume mounts, PTY, stdin and background process options. E2B filesystem,
+filesystem-only snapshots and pause/resume are not implemented yet, so this is **not full E2B SDK
+compatibility**.
+
 ## Core commands
 
 | Area | Commands |

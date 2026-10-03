@@ -175,6 +175,44 @@ sudo kumabox ps
 可以在 [`oci-images/ubuntu/Dockerfile`](oci-images/ubuntu/Dockerfile) 的基础上扩展。
 这个 Dockerfile 已经内置了配套的 `kumabox-agent`、内核和 initramfs。
 
+## 远程 API 与 SDK
+
+`kumabox serve` 将现有服务开放为带令牌认证的 HTTP API，默认只监听
+`127.0.0.1:8765`。远程访问请通过 SSH 隧道或 TLS 反向代理：
+
+```bash
+sudo sh -c 'umask 077; openssl rand -hex 32 > /etc/kumabox-api.token'
+sudo kumabox serve --token-file /etc/kumabox-api.token
+# 客户端机器：ssh -L 8765:127.0.0.1:8765 user@kumabox-host
+```
+
+`sdk/python` 和 `sdk/typescript` 提供 KumaBox SDK，支持创建、连接、执行命令、
+生命周期操作和快照。使用前需先在宿主机导入或拉取镜像。
+guest 命令非零退出时会抛出包含输出的 `CommandExitError`；Python 可传
+`check=False`、TypeScript 可传 `{ check: false }` 直接读取退出码。
+Python 包可用 `python -m pip install ./sdk/python` 安装；TypeScript 包先执行
+`npm ci --prefix sdk/typescript && npm run build --prefix sdk/typescript`，
+再从 `./sdk/typescript` 安装到应用中。
+
+```python
+from kumabox import Client
+
+client = Client(token="YOUR_API_TOKEN")
+sandbox = client.create("my-image")
+print(sandbox.commands.run("uname -a").stdout)
+sandbox.stop()
+sandbox.kill()
+```
+
+另外提供**实验性的 E2B 协议适配**：控制面支持创建、连接、查询、删除和快照（包括
+从快照创建沙箱），envd 的
+Connect JSON 流支持前台 `commands.run`。将 `E2B_API_URL` 与
+`E2B_SANDBOX_URL` 指向同一个 API 地址，`E2B_API_KEY` 设为服务端令牌。
+E2B 的 `templateID` 对应本地镜像引用；默认 `Sandbox.create()` 需要先把镜像
+导入为 `base`。目前尚不支持 TTL、metadata、环境变量初始化、自定义网络策略、
+MCP、IAM、卷挂载、PTY、stdin、后台进程、E2B 文件系统、仅文件系统快照与暂停/恢复，**不能将其视为
+完整 E2B SDK 兼容**。
+
 ## 常用命令
 
 | 领域 | 命令 |
