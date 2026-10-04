@@ -108,7 +108,11 @@ func spoolUpload(r *http.Request) (string, *os.File, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	cleanup := func() { _ = file.Close(); _ = os.Remove(file.Name()) }
+	cleanup := func() {
+		_ = file.Close()
+		//nolint:gosec // file.Name is the private temporary file returned by SpoolGuestUpload.
+		_ = os.Remove(file.Name())
+	}
 	if multipartReader != nil {
 		if extra, err := multipartReader.NextPart(); err != io.EOF {
 			if extra != nil {
@@ -136,6 +140,7 @@ func (h *handler) writeFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() {
 		_ = upload.Close()
+		//nolint:gosec // upload.Name is the private temporary file returned by SpoolGuestUpload.
 		_ = os.Remove(upload.Name())
 	}()
 	if err := api.WriteGuestFile(r.Context(), h.sandboxes, id, filePath, upload); err != nil {

@@ -37,10 +37,9 @@ type sandboxService struct {
 
 func TestPauseRestoreAndTimeoutSurviveAdapterRestart(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("KUMABOX_E2B_STATE_DIR", dir)
 	sandboxes := &sandboxService{}
 	snapshots := &snapshotService{owner: sandboxes}
-	handler, err := NewHandler(sandboxes, snapshots, testKey)
+	handler, err := NewHandler(sandboxes, snapshots, testKey, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +59,7 @@ func TestPauseRestoreAndTimeoutSurviveAdapterRestart(t *testing.T) {
 		t.Fatalf("pause = %d, state = %s: %s", response.Code, sandboxes.state, response.Body.String())
 	}
 	// A new handler must recover the pause snapshot and lease from API-owned state.
-	handler, err = NewHandler(sandboxes, snapshots, testKey)
+	handler, err = NewHandler(sandboxes, snapshots, testKey, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +84,7 @@ func TestPauseRestoreAndTimeoutSurviveAdapterRestart(t *testing.T) {
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("timeout = %d: %s", response.Code, response.Body.String())
 	}
-	store, err := openLeaseStore()
+	store, err := openLeaseStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,9 +95,9 @@ func TestPauseRestoreAndTimeoutSurviveAdapterRestart(t *testing.T) {
 }
 
 func TestStoppedSandboxIsNotReportedAsPausedOrColdStarted(t *testing.T) {
-	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
 	sandboxes := &sandboxService{}
-	handler, err := NewHandler(sandboxes, &snapshotService{}, testKey)
+	handler, err := NewHandler(sandboxes, &snapshotService{}, testKey, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,10 +124,10 @@ func TestStoppedSandboxIsNotReportedAsPausedOrColdStarted(t *testing.T) {
 }
 
 func TestCommittedHibernateErrorRetainsPauseSnapshot(t *testing.T) {
-	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
 	sandboxes := &sandboxService{}
 	snapshots := &snapshotService{owner: sandboxes, hibernateError: errors.New("report failed after stop")}
-	handler, err := NewHandler(sandboxes, snapshots, testKey)
+	handler, err := NewHandler(sandboxes, snapshots, testKey, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +145,7 @@ func TestCommittedHibernateErrorRetainsPauseSnapshot(t *testing.T) {
 	if response.Code == http.StatusNoContent {
 		t.Fatal("committed hibernate error was hidden")
 	}
-	store, err := openLeaseStore()
+	store, err := openLeaseStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,9 +156,9 @@ func TestCommittedHibernateErrorRetainsPauseSnapshot(t *testing.T) {
 }
 
 func TestExpiredSandboxIsRemoved(t *testing.T) {
-	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
 	sandboxes := &sandboxService{}
-	handler, err := NewHandler(sandboxes, &snapshotService{}, testKey)
+	handler, err := NewHandler(sandboxes, &snapshotService{}, testKey, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,10 +179,10 @@ func TestExpiredSandboxIsRemoved(t *testing.T) {
 }
 
 func TestExpiredAutoPauseRetainsSandboxAndSnapshot(t *testing.T) {
-	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
 	sandboxes := &sandboxService{}
 	snapshots := &snapshotService{owner: sandboxes}
-	handler, err := NewHandler(sandboxes, snapshots, testKey)
+	handler, err := NewHandler(sandboxes, snapshots, testKey, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +193,7 @@ func TestExpiredAutoPauseRetainsSandboxAndSnapshot(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("create = %d: %s", response.Code, response.Body.String())
 	}
-	store, err := openLeaseStore()
+	store, err := openLeaseStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,9 +215,9 @@ func TestExpiredAutoPauseRetainsSandboxAndSnapshot(t *testing.T) {
 }
 
 func TestFileTransportUsesGuestPathArgumentAndBinaryStdin(t *testing.T) {
-	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
 	sandboxes := &sandboxService{}
-	handler, err := NewHandler(sandboxes, &snapshotService{}, testKey)
+	handler, err := NewHandler(sandboxes, &snapshotService{}, testKey, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,9 +331,9 @@ func (s *sandboxService) Exec(_ context.Context, _ string, command types.Command
 }
 
 func TestCreateAndForegroundCommand(t *testing.T) {
-	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
 	service := &sandboxService{}
-	handler, err := NewHandler(service, &snapshotService{}, testKey)
+	handler, err := NewHandler(service, &snapshotService{}, testKey, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,8 +418,8 @@ func TestCreateAndForegroundCommand(t *testing.T) {
 }
 
 func TestUnsupportedCreateOptionsAreRejected(t *testing.T) {
-	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
-	handler, err := NewHandler(&sandboxService{}, &snapshotService{}, testKey)
+	dir := t.TempDir()
+	handler, err := NewHandler(&sandboxService{}, &snapshotService{}, testKey, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,9 +433,9 @@ func TestUnsupportedCreateOptionsAreRejected(t *testing.T) {
 }
 
 func TestSnapshotCaptureAndClone(t *testing.T) {
-	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
 	snapshots := &snapshotService{}
-	handler, err := NewHandler(&sandboxService{}, snapshots, testKey)
+	handler, err := NewHandler(&sandboxService{}, snapshots, testKey, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -465,12 +464,12 @@ func TestSnapshotCaptureAndClone(t *testing.T) {
 // This optional contract test runs the published E2B JS SDK, not a hand-built
 // request fixture. Set KUMABOX_E2B_NODE_MODULE to an installed e2b package path.
 func TestPublishedE2BSDK(t *testing.T) {
-	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
 	module := os.Getenv("KUMABOX_E2B_NODE_MODULE")
 	if module == "" {
 		t.Skip("published E2B SDK is not installed")
 	}
-	handler, err := NewHandler(&sandboxService{}, &snapshotService{}, testKey)
+	handler, err := NewHandler(&sandboxService{}, &snapshotService{}, testKey, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -488,12 +487,12 @@ func TestPublishedE2BSDK(t *testing.T) {
 }
 
 func TestPublishedE2BPythonSDK(t *testing.T) {
-	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
 	modulePath := os.Getenv("KUMABOX_E2B_PYTHON_PATH")
 	if modulePath == "" {
 		t.Skip("published E2B Python SDK is not installed")
 	}
-	handler, err := NewHandler(&sandboxService{}, &snapshotService{}, testKey)
+	handler, err := NewHandler(&sandboxService{}, &snapshotService{}, testKey, dir)
 	if err != nil {
 		t.Fatal(err)
 	}

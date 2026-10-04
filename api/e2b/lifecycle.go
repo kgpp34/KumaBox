@@ -247,15 +247,16 @@ func (h *handler) connectSandbox(ctx context.Context, id types.SandboxID, timeou
 	if err != nil {
 		return types.Sandbox{}, err
 	}
-	if policy.PausedSnapshot != "" && record.State == types.SandboxStateStopped {
+	switch {
+	case policy.PausedSnapshot != "" && record.State == types.SandboxStateStopped:
 		record, err = h.snapshots.Restore(ctx, id.String(), policy.PausedSnapshot.String())
 		if err != nil {
 			return record, err
 		}
 		policy.PausedSnapshot = ""
-	} else if record.State != types.SandboxStateRunning {
+	case record.State != types.SandboxStateRunning:
 		return types.Sandbox{}, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s is %s, not paused or running", id, record.State))
-	} else {
+	default:
 		// A prior Restore may have committed before its lease write failed.
 		policy.PausedSnapshot = ""
 	}

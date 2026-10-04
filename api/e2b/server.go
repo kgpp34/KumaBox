@@ -58,13 +58,14 @@ type handler struct {
 }
 
 // NewHandler exposes E2B create, connect, inspect, kill, health and foreground
-// process execution. Other E2B operations are intentionally not advertised.
-func NewHandler(sandboxes Sandboxes, snapshots Snapshots, token string) (http.Handler, error) {
+// process execution. stateDir is the API-owned lifecycle directory selected by
+// the host's configuration. Other E2B operations are intentionally not advertised.
+func NewHandler(sandboxes Sandboxes, snapshots Snapshots, token, stateDir string) (http.Handler, error) {
 	if sandboxes == nil || snapshots == nil || len(token) < 32 {
 		return nil, errors.New("E2B adapter requires sandbox and snapshot services and a strong API token")
 	}
 	h := &handler{sandboxes: sandboxes, snapshots: snapshots, token: []byte(token)}
-	leases, err := openLeaseStore()
+	leases, err := openLeaseStore(stateDir)
 	if err != nil {
 		return nil, fmt.Errorf("open E2B lifecycle state: %w", err)
 	}

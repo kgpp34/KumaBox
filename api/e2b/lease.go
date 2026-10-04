@@ -29,29 +29,22 @@ type lease struct {
 }
 
 // leaseStore persists E2B deadlines independently of the HTTP process. The
-// configured data root can be overridden when the KumaBox host uses a custom
-// root; an owner-only directory keeps E2B control data private.
+// caller provides the state directory from the host configuration; an
+// owner-only directory keeps E2B control data private.
 type leaseStore struct {
 	dir    string
 	mu     sync.Mutex
 	timers map[types.SandboxID]*time.Timer
 }
 
-func openLeaseStore() (*leaseStore, error) {
-	root := os.Getenv("KUMABOX_E2B_STATE_DIR")
-	if root == "" {
-		dataRoot := os.Getenv("KUMABOX_PATHS_DATA")
-		if dataRoot == "" {
-			dataRoot = storage.DefaultDataRoot
-		}
-		root = filepath.Join(dataRoot, "e2b")
-	}
+func openLeaseStore(root string) (*leaseStore, error) {
 	if !filepath.IsAbs(root) {
-		return nil, errors.New("KUMABOX_E2B_STATE_DIR must be absolute")
+		return nil, errors.New("E2B state directory must be absolute")
 	}
 	if err := storage.EnsureDir(root); err != nil {
 		return nil, err
 	}
+	//nolint:gosec // 0700 is an owner-only directory mode, not a file mode.
 	if err := os.Chmod(root, 0o700); err != nil {
 		return nil, fmt.Errorf("secure E2B lifecycle state directory: %w", err)
 	}
@@ -86,6 +79,7 @@ func (s *leaseStore) get(id types.SandboxID) (lease, bool, error) {
 	if err != nil {
 		return lease{}, false, err
 	}
+	//nolint:gosec // path is a validated sandbox UUID under the configured state directory.
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return lease{}, false, nil
@@ -125,6 +119,7 @@ func (s *leaseStore) put(id types.SandboxID, value lease) (returnErr error) {
 	if err := file.Close(); err != nil {
 		return err
 	}
+	//nolint:gosec // source is our CreateTemp file; destination is a validated sandbox UUID.
 	if err := os.Rename(file.Name(), path); err != nil {
 		return err
 	}
@@ -141,6 +136,7 @@ func (s *leaseStore) remove(id types.SandboxID) error {
 	if err != nil {
 		return err
 	}
+	//nolint:gosec // path is a validated sandbox UUID under the configured state directory.
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}

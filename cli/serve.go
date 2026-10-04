@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -59,7 +60,8 @@ func newServeCommand(provideConfig func() config.Config) *cobra.Command {
 			if len(content) > 4096 {
 				return errors.New("API token file is too large")
 			}
-			application, err := core.OpenApplication(command.Context(), provideConfig(), nil)
+			cfg := provideConfig()
+			application, err := core.OpenApplication(command.Context(), cfg, nil)
 			if err != nil {
 				return fmt.Errorf("open KumaBox application: %w", err)
 			}
@@ -73,13 +75,13 @@ func newServeCommand(provideConfig func() config.Config) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			e2bHandler, err := e2b.NewHandler(sandboxes, snapshots, strings.TrimSpace(string(content)), filepath.Join(cfg.Paths.Data, "e2b"))
+			if err != nil {
+				return err
+			}
 			listener, err := net.Listen("tcp", address)
 			if err != nil {
 				return fmt.Errorf("listen for API: %w", err)
-			}
-			e2bHandler, err := e2b.NewHandler(sandboxes, snapshots, strings.TrimSpace(string(content)))
-			if err != nil {
-				return err
 			}
 			routes := http.NewServeMux()
 			routes.Handle("/v1/", handler)

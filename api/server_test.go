@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -87,7 +88,7 @@ func TestNativeFileTransferPreservesBinaryContentAndGuestPath(t *testing.T) {
 	read.Header.Set("Authorization", "Bearer "+testToken)
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, read)
-	if response.Code != http.StatusOK || string(response.Body.Bytes()) != string([]byte{0, 1, 255}) {
+	if response.Code != http.StatusOK || !bytes.Equal(response.Body.Bytes(), []byte{0, 1, 255}) {
 		t.Fatalf("read = %d, content = %v", response.Code, response.Body.Bytes())
 	}
 	for _, command := range commands {
