@@ -68,6 +68,8 @@ func NewHandler(services Services, token string) (http.Handler, error) {
 	mux.HandleFunc("POST /v1/sandboxes/{ref}/start", h.startSandbox)
 	mux.HandleFunc("POST /v1/sandboxes/{ref}/stop", h.stopSandbox)
 	mux.HandleFunc("POST /v1/sandboxes/{ref}/exec", h.execSandbox)
+	mux.HandleFunc("GET /v1/sandboxes/{ref}/files", h.readSandboxFile)
+	mux.HandleFunc("POST /v1/sandboxes/{ref}/files", h.writeSandboxFile)
 	mux.HandleFunc("POST /v1/sandboxes/{ref}/restore", h.restoreSandbox)
 	mux.HandleFunc("GET /v1/snapshots", h.listSnapshots)
 	mux.HandleFunc("POST /v1/snapshots", h.saveSnapshot)

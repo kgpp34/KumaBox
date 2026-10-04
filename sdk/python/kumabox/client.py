@@ -121,6 +121,8 @@ class Sandbox:
         self.client = client
         self.data = data
         self.commands = Commands(self)
+        # Files use the native binary transfer endpoint.
+        self.files = Files(self)
 
     @property
     def sandbox_id(self) -> str:
@@ -215,6 +217,42 @@ class Commands:
                 else:
                     raise KumaBoxError("INVALID_STREAM", "unexpected command stream")
         raise KumaBoxError("TRUNCATED_STREAM", "command response ended without exit status")
+
+
+class Files:
+    """Read and write regular files through the sandbox's guest command channel."""
+
+    def __init__(self, sandbox: Sandbox):
+        self.sandbox = sandbox
+
+    def _url(self, path: str) -> str:
+        if not path.startswith("/") or "\x00" in path:
+            raise ValueError("file path must be absolute and contain no NUL bytes")
+        return (
+            self.sandbox.client.base_url
+            + f"/v1/sandboxes/{quote(self.sandbox.sandbox_id, safe='')}/files"
+            + f"?path={quote(path, safe='')}"
+        )
+
+    def read(self, path: str, *, format: str = "text") -> str | bytes:
+        """Return a file as UTF-8 text or exact bytes."""
+        if format not in ("text", "bytes"):
+            raise ValueError("format must be 'text' or 'bytes'")
+        request = Request(self._url(path), headers={"Authorization": f"Bearer {self.sandbox.client.token}"})
+        with _open_stream(request) as response:
+            data = response.read()
+        return data if format == "bytes" else data.decode("utf-8")
+
+    def write(self, path: str, data: str | bytes) -> dict[str, str]:
+        """Create or replace a guest file, creating parent directories."""
+        payload = data.encode("utf-8") if isinstance(data, str) else data
+        request = Request(
+            self._url(path), payload,
+            {"Authorization": f"Bearer {self.sandbox.client.token}", "Content-Type": "application/octet-stream"},
+            method="POST",
+        )
+        with _open_stream(request) as response:
+            return json.load(response)
 
 
 class Snapshot:

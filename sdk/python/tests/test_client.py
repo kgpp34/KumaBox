@@ -15,6 +15,19 @@ class Response(io.BytesIO):
 
 
 class ClientTest(unittest.TestCase):
+    def test_files_transfer_text_and_binary(self):
+        replies = [
+            Response(b'{"name":"sample.bin","path":"/tmp/sample.bin"}'),
+            Response(bytes([0, 1, 255])),
+        ]
+        with patch("kumabox.client.urlopen", side_effect=replies) as send:
+            sandbox = Sandbox(Client(token="secret"), {"id": "vm-1"})
+            info = sandbox.files.write("/tmp/sample.bin", bytes([0, 1, 255]))
+            data = sandbox.files.read("/tmp/sample.bin", format="bytes")
+        self.assertEqual(info["path"], "/tmp/sample.bin")
+        self.assertEqual(data, bytes([0, 1, 255]))
+        self.assertEqual(send.call_args_list[0].args[0].data, bytes([0, 1, 255]))
+
     def test_create_and_stream_command(self):
         frames = [
             {"stream": "stdout", "data": "aGVsbG8="},

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +24,7 @@ type fakeSandboxes struct {
 	record  types.Sandbox
 	stops   int
 	removes int
+	input   []byte
 }
 
 func (f *fakeSandboxes) Create(_ context.Context, req CreateSandboxInput) (types.Sandbox, error) {
@@ -51,8 +53,48 @@ func (f *fakeSandboxes) Remove(context.Context, string) (types.Sandbox, error) {
 	return f.record, nil
 }
 
-func (f *fakeSandboxes) Exec(_ context.Context, _ string, cmd types.Command, _ io.Reader, stdout, stderr io.Writer) (int, error) {
+func (f *fakeSandboxes) Exec(_ context.Context, _ string, cmd types.Command, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	if stdin != nil {
+		f.input, _ = io.ReadAll(stdin)
+	}
 	return f.exec(cmd, stdout, stderr)
+}
+
+func TestNativeFileTransferPreservesBinaryContentAndGuestPath(t *testing.T) {
+	guestPath := "/tmp/safe'; touch /tmp/unsafe"
+	var commands []types.Command
+	sandboxes := &fakeSandboxes{
+		record: types.Sandbox{State: types.SandboxStateRunning},
+		exec: func(cmd types.Command, stdout, _ io.Writer) (int, error) {
+			commands = append(commands, cmd)
+			if len(commands) == 3 {
+				_, _ = stdout.Write([]byte{0, 1, 255})
+			}
+			return 0, nil
+		},
+	}
+	handler := testHandler(t, sandboxes)
+	urlPath := "/v1/sandboxes/test/files?path=" + url.QueryEscape(guestPath)
+	write := httptest.NewRequest("POST", urlPath, strings.NewReader(string([]byte{0, 1, 255})))
+	write.Header.Set("Authorization", "Bearer "+testToken)
+	write.Header.Set("Content-Type", "application/octet-stream")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, write)
+	if response.Code != http.StatusOK || string(sandboxes.input) != string([]byte{0, 1, 255}) {
+		t.Fatalf("write = %d %s, input = %v", response.Code, response.Body.String(), sandboxes.input)
+	}
+	read := httptest.NewRequest("GET", urlPath, nil)
+	read.Header.Set("Authorization", "Bearer "+testToken)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, read)
+	if response.Code != http.StatusOK || string(response.Body.Bytes()) != string([]byte{0, 1, 255}) {
+		t.Fatalf("read = %d, content = %v", response.Code, response.Body.Bytes())
+	}
+	for _, command := range commands {
+		if command.Args[len(command.Args)-1] != guestPath {
+			t.Fatalf("path was not isolated as final argument: %+v", command.Args)
+		}
+	}
 }
 
 type fakeSnapshots struct{}

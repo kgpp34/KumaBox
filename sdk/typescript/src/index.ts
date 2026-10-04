@@ -79,14 +79,15 @@ export class Client {
     return response.json() as Promise<T>
   }
 
-  async fetch(method: string, path: string, body?: object): Promise<Response> {
+  async fetch(method: string, path: string, body?: object | Uint8Array): Promise<Response> {
+	const binary = body instanceof Uint8Array
     const response = await fetch(this.baseUrl + path, {
       method,
       headers: {
         Authorization: `Bearer ${this.token}`,
-        'Content-Type': 'application/json',
+        'Content-Type': binary ? 'application/octet-stream' : 'application/json',
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : binary ? new Blob([new Uint8Array(body as Uint8Array)]) : JSON.stringify(body),
     })
     if (!response.ok) {
       const failure = await response.json().catch(() => null) as
@@ -126,9 +127,11 @@ export class Client {
 /** A durable sandbox with lifecycle and command operations. */
 export class Sandbox {
   readonly commands: Commands
+	readonly files: Files
 
   constructor(readonly client: Client, public data: SandboxData) {
     this.commands = new Commands(this)
+	this.files = new Files(this)
   }
 
   get sandboxId(): string { return this.data.id }
@@ -168,6 +171,27 @@ export class Sandbox {
   async restore(snapshot: string): Promise<this> {
     this.data = await this.client.request<SandboxData>('POST', `/v1/sandboxes/${this.sandboxId}/restore`, { snapshot })
     return this
+  }
+}
+
+/** Binary-safe guest file transfers over the native KumaBox API. */
+export class Files {
+  constructor(readonly sandbox: Sandbox) {}
+
+  private route(path: string): string {
+    if (!path.startsWith('/') || path.includes('\0')) throw new Error('file path must be absolute and contain no NUL bytes')
+    return `/v1/sandboxes/${encodeURIComponent(this.sandbox.sandboxId)}/files?path=${encodeURIComponent(path)}`
+  }
+
+  async read(path: string, options: { format?: 'text' | 'bytes' } = {}): Promise<string | Uint8Array> {
+    const response = await this.sandbox.client.fetch('GET', this.route(path))
+    return options.format === 'bytes' ? new Uint8Array(await response.arrayBuffer()) : response.text()
+  }
+
+  async write(path: string, data: string | Uint8Array): Promise<{ name: string; path: string }> {
+    const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
+    const response = await this.sandbox.client.fetch('POST', this.route(path), bytes)
+    return response.json() as Promise<{ name: string; path: string }>
   }
 }
 

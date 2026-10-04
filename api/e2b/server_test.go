@@ -5,12 +5,17 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/kumabox/kumabox/api"
 	"github.com/kumabox/kumabox/types"
@@ -22,17 +27,260 @@ const (
 )
 
 type sandboxService struct {
-	created api.CreateSandboxInput
-	command types.Command
+	created  api.CreateSandboxInput
+	command  types.Command
+	commands []types.Command
+	stdin    []byte
+	state    types.SandboxState
+	removed  atomic.Bool
+}
+
+func TestPauseRestoreAndTimeoutSurviveAdapterRestart(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("KUMABOX_E2B_STATE_DIR", dir)
+	sandboxes := &sandboxService{}
+	snapshots := &snapshotService{owner: sandboxes}
+	handler, err := NewHandler(sandboxes, snapshots, testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest("POST", "/v2/sandboxes", strings.NewReader(`{"templateID":"ubuntu","timeout":60}`))
+	request.Header.Set("X-API-Key", testKey)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create = %d: %s", response.Code, response.Body.String())
+	}
+
+	request = httptest.NewRequest("POST", "/sandboxes/"+testID+"/pause", nil)
+	request.Header.Set("X-API-Key", testKey)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent || sandboxes.state != types.SandboxStateStopped {
+		t.Fatalf("pause = %d, state = %s: %s", response.Code, sandboxes.state, response.Body.String())
+	}
+	// A new handler must recover the pause snapshot and lease from API-owned state.
+	handler, err = NewHandler(sandboxes, snapshots, testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest("GET", "/sandboxes/"+testID, nil)
+	request.Header.Set("X-API-Key", testKey)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"state":"paused"`) {
+		t.Fatalf("inspect pause = %d: %s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest("POST", "/v2/sandboxes/"+testID+"/connect", nil)
+	request.Header.Set("X-API-Key", testKey)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || sandboxes.state != types.SandboxStateRunning {
+		t.Fatalf("restore = %d, state = %s: %s", response.Code, sandboxes.state, response.Body.String())
+	}
+	request = httptest.NewRequest("POST", "/sandboxes/"+testID+"/timeout", strings.NewReader(`{"timeout":120}`))
+	request.Header.Set("X-API-Key", testKey)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("timeout = %d: %s", response.Code, response.Body.String())
+	}
+	store, err := openLeaseStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, exists, err := store.get(testID)
+	if err != nil || !exists || policy.PausedSnapshot != "" || time.Until(policy.ExpiresAt) < 110*time.Second {
+		t.Fatalf("restored lease = %+v, exists = %t, err = %v", policy, exists, err)
+	}
+}
+
+func TestStoppedSandboxIsNotReportedAsPausedOrColdStarted(t *testing.T) {
+	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
+	sandboxes := &sandboxService{}
+	handler, err := NewHandler(sandboxes, &snapshotService{}, testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := httptest.NewRequest("POST", "/v2/sandboxes", strings.NewReader(`{"templateID":"ubuntu"}`))
+	create.Header.Set("X-API-Key", testKey)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, create)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create = %d: %s", response.Code, response.Body.String())
+	}
+	sandboxes.state = types.SandboxStateStopped
+	for _, operation := range []struct{ method, path string }{
+		{"GET", "/sandboxes/" + testID},
+		{"POST", "/v2/sandboxes/" + testID + "/connect"},
+	} {
+		request := httptest.NewRequest(operation.method, operation.path, nil)
+		request.Header.Set("X-API-Key", testKey)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusConflict {
+			t.Fatalf("%s %s = %d: %s", operation.method, operation.path, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestCommittedHibernateErrorRetainsPauseSnapshot(t *testing.T) {
+	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
+	sandboxes := &sandboxService{}
+	snapshots := &snapshotService{owner: sandboxes, hibernateError: errors.New("report failed after stop")}
+	handler, err := NewHandler(sandboxes, snapshots, testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest("POST", "/v2/sandboxes", strings.NewReader(`{"templateID":"ubuntu"}`))
+	request.Header.Set("X-API-Key", testKey)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create = %d: %s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest("POST", "/sandboxes/"+testID+"/pause", nil)
+	request.Header.Set("X-API-Key", testKey)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code == http.StatusNoContent {
+		t.Fatal("committed hibernate error was hidden")
+	}
+	store, err := openLeaseStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, exists, err := store.get(testID)
+	if err != nil || !exists || policy.PausedSnapshot == "" {
+		t.Fatalf("committed pause lease = %+v, exists = %t, err = %v", policy, exists, err)
+	}
+}
+
+func TestExpiredSandboxIsRemoved(t *testing.T) {
+	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
+	sandboxes := &sandboxService{}
+	handler, err := NewHandler(sandboxes, &snapshotService{}, testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest("POST", "/v2/sandboxes", strings.NewReader(`{"templateID":"ubuntu","timeout":1}`))
+	request.Header.Set("X-API-Key", testKey)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create = %d: %s", response.Code, response.Body.String())
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for !sandboxes.removed.Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !sandboxes.removed.Load() {
+		t.Fatal("sandbox was not removed after timeout")
+	}
+}
+
+func TestExpiredAutoPauseRetainsSandboxAndSnapshot(t *testing.T) {
+	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
+	sandboxes := &sandboxService{}
+	snapshots := &snapshotService{owner: sandboxes}
+	handler, err := NewHandler(sandboxes, snapshots, testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest("POST", "/v2/sandboxes", strings.NewReader(`{"templateID":"ubuntu","timeout":1,"autoPause":true}`))
+	request.Header.Set("X-API-Key", testKey)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create = %d: %s", response.Code, response.Body.String())
+	}
+	store, err := openLeaseStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		policy, exists, err := store.get(testID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if exists && policy.PausedSnapshot != "" {
+			if sandboxes.removed.Load() || !policy.ExpiresAt.IsZero() {
+				t.Fatalf("auto pause lease = %+v, removed = %t", policy, sandboxes.removed.Load())
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("sandbox was not auto-paused after timeout")
+}
+
+func TestFileTransportUsesGuestPathArgumentAndBinaryStdin(t *testing.T) {
+	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
+	sandboxes := &sandboxService{}
+	handler, err := NewHandler(sandboxes, &snapshotService{}, testKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := httptest.NewRequest("POST", "/v2/sandboxes", strings.NewReader(`{"templateID":"ubuntu"}`))
+	create.Header.Set("X-API-Key", testKey)
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, create)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create = %d: %s", created.Code, created.Body.String())
+	}
+	var credentials struct {
+		EnvdAccessToken string `json:"envdAccessToken"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &credentials); err != nil {
+		t.Fatal(err)
+	}
+	path := "/tmp/a'; touch /tmp/unwanted"
+	request := httptest.NewRequest("POST", "/files?path="+url.QueryEscape(path), bytes.NewReader([]byte{0, 1, 2, 255}))
+	request.Header.Set("Content-Type", "application/octet-stream")
+	request.Header.Set("E2b-Sandbox-Id", testID)
+	request.Header.Set("X-Access-Token", credentials.EnvdAccessToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !bytes.Equal(sandboxes.stdin, []byte{0, 1, 2, 255}) {
+		t.Fatalf("write = %d %s, stdin = %v", response.Code, response.Body.String(), sandboxes.stdin)
+	}
+	if got := sandboxes.command.Args[len(sandboxes.command.Args)-1]; got != path {
+		t.Fatalf("guest path argument = %q", got)
+	}
+	request = httptest.NewRequest("GET", "/files?path="+url.QueryEscape(path), nil)
+	request.Header.Set("E2b-Sandbox-Id", testID)
+	request.Header.Set("X-Access-Token", credentials.EnvdAccessToken)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Body.String() != "hello" {
+		t.Fatalf("read = %d, body = %q", response.Code, response.Body.String())
+	}
 }
 
 type snapshotService struct {
-	cloned string
-	name   string
+	cloned         string
+	name           string
+	owner          *sandboxService
+	hibernateError error
 }
 
 func (*snapshotService) Save(_ context.Context, req api.SaveSnapshotInput) (types.Snapshot, error) {
 	return types.Snapshot{ID: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", Name: req.Name, SandboxID: testID}, nil
+}
+
+func (s *snapshotService) Hibernate(_ context.Context, req api.SaveSnapshotInput) (types.Snapshot, error) {
+	if s.owner != nil {
+		s.owner.state = types.SandboxStateStopped
+	}
+	return types.Snapshot{ID: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", SandboxID: testID, Description: req.Description}, s.hibernateError
+}
+
+func (s *snapshotService) Restore(_ context.Context, _, _ string) (types.Sandbox, error) {
+	if s.owner != nil {
+		s.owner.state = types.SandboxStateRunning
+	}
+	return types.Sandbox{ID: testID, State: types.SandboxStateRunning}, nil
 }
 func (*snapshotService) List(context.Context) ([]types.Snapshot, error) { return nil, nil }
 func (*snapshotService) Remove(context.Context, string) (types.Snapshot, error) {
@@ -46,33 +294,45 @@ func (s *snapshotService) Clone(_ context.Context, ref, name string) (types.Sand
 
 func (s *sandboxService) Run(_ context.Context, req api.CreateSandboxInput) (types.Sandbox, error) {
 	s.created = req
+	s.state = types.SandboxStateRunning
 	return types.Sandbox{ID: testID, Config: req.Config, State: types.SandboxStateRunning}, nil
 }
 
-func (*sandboxService) Inspect(context.Context, string) (types.Sandbox, error) {
-	return types.Sandbox{ID: testID, State: types.SandboxStateRunning}, nil
+func (s *sandboxService) Inspect(context.Context, string) (types.Sandbox, error) {
+	state := s.state
+	if state == "" {
+		state = types.SandboxStateRunning
+	}
+	return types.Sandbox{ID: testID, State: state}, nil
 }
 
 func (*sandboxService) Start(context.Context, string) (types.Sandbox, error) {
 	return types.Sandbox{}, nil
 }
 
-func (*sandboxService) Stop(context.Context, string) (types.Sandbox, error) {
-	return types.Sandbox{}, nil
+func (s *sandboxService) Stop(context.Context, string) (types.Sandbox, error) {
+	s.state = types.SandboxStateStopped
+	return types.Sandbox{ID: testID, State: s.state}, nil
 }
 
-func (*sandboxService) Remove(context.Context, string) (types.Sandbox, error) {
-	return types.Sandbox{}, nil
+func (s *sandboxService) Remove(context.Context, string) (types.Sandbox, error) {
+	s.removed.Store(true)
+	return types.Sandbox{ID: testID}, nil
 }
 
-func (s *sandboxService) Exec(_ context.Context, _ string, command types.Command, _ io.Reader, stdout, stderr io.Writer) (int, error) {
+func (s *sandboxService) Exec(_ context.Context, _ string, command types.Command, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	s.command = command
+	s.commands = append(s.commands, command)
+	if stdin != nil {
+		s.stdin, _ = io.ReadAll(stdin)
+	}
 	_, _ = stdout.Write([]byte("hello"))
 	_, _ = stderr.Write([]byte("warning"))
 	return 0, nil
 }
 
 func TestCreateAndForegroundCommand(t *testing.T) {
+	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
 	service := &sandboxService{}
 	handler, err := NewHandler(service, &snapshotService{}, testKey)
 	if err != nil {
@@ -159,11 +419,12 @@ func TestCreateAndForegroundCommand(t *testing.T) {
 }
 
 func TestUnsupportedCreateOptionsAreRejected(t *testing.T) {
+	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
 	handler, err := NewHandler(&sandboxService{}, &snapshotService{}, testKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest("POST", "/v2/sandboxes", bytes.NewBufferString(`{"templateID":"ubuntu","timeout":300}`))
+	request := httptest.NewRequest("POST", "/v2/sandboxes", bytes.NewBufferString(`{"templateID":"ubuntu","metadata":{"x":"y"}}`))
 	request.Header.Set("X-API-Key", testKey)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -173,6 +434,7 @@ func TestUnsupportedCreateOptionsAreRejected(t *testing.T) {
 }
 
 func TestSnapshotCaptureAndClone(t *testing.T) {
+	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
 	snapshots := &snapshotService{}
 	handler, err := NewHandler(&sandboxService{}, snapshots, testKey)
 	if err != nil {
@@ -203,6 +465,7 @@ func TestSnapshotCaptureAndClone(t *testing.T) {
 // This optional contract test runs the published E2B JS SDK, not a hand-built
 // request fixture. Set KUMABOX_E2B_NODE_MODULE to an installed e2b package path.
 func TestPublishedE2BSDK(t *testing.T) {
+	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
 	module := os.Getenv("KUMABOX_E2B_NODE_MODULE")
 	if module == "" {
 		t.Skip("published E2B SDK is not installed")
@@ -225,6 +488,7 @@ func TestPublishedE2BSDK(t *testing.T) {
 }
 
 func TestPublishedE2BPythonSDK(t *testing.T) {
+	t.Setenv("KUMABOX_E2B_STATE_DIR", t.TempDir())
 	modulePath := os.Getenv("KUMABOX_E2B_PYTHON_PATH")
 	if modulePath == "" {
 		t.Skip("published E2B Python SDK is not installed")
