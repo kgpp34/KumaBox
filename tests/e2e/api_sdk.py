@@ -311,12 +311,12 @@ def main():
         venv = work / "venv"
         run("python3", "-m", "venv", venv)
         run(venv / "bin/python", "-m", "pip", "install",
-            repo / "sdk/python", "e2b==2.5.0")
+            repo / "sdk/python", "e2b==2.52.0")
         run("npm", "ci", "--prefix", repo / "sdk/typescript")
         run("npm", "run", "build", "--prefix", repo / "sdk/typescript")
         node_dir = work / "e2b-node"
         node_dir.mkdir()
-        run("npm", "install", "--prefix", node_dir, "--no-save", "e2b@2.6.2")
+        run("npm", "install", "--prefix", node_dir, "--no-save", "e2b@2.52.0")
 
         stage("Create temporary API key and launch dedicated local API")
         token = secrets.token_hex(32)
@@ -387,4 +387,4 @@ if __name__ == "__main__":
     elif len(sys.argv) == 1:
         main()
     else:
-        raise SystemExit("usage: python3 kumabox-full-e2e.py")
+        raise SystemExit("usage: python3 tests/e2e/api_sdk.py")
