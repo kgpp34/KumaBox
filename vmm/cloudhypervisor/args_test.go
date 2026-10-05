@@ -83,6 +83,54 @@ func TestQueryStateRequiresUnixSocketAndDecodesRunning(t *testing.T) {
 	}
 }
 
+func TestObserveProcessWaitsForVMCreation(t *testing.T) {
+	directory, err := os.MkdirTemp("/tmp", "kumabox-ch-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(directory); err != nil {
+			t.Error(err)
+		}
+	})
+	socket := filepath.Join(directory, "api.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status atomic.Int32
+	status.Store(http.StatusNotFound)
+	server := &http.Server{Handler: http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		if code := int(status.Load()); code != http.StatusOK {
+			writer.WriteHeader(code)
+			return
+		}
+		_, _ = writer.Write([]byte(`{"state":"Running"}`))
+	})}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() {
+		if err := server.Shutdown(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+
+	driver := &Driver{}
+	process := vmm.Process{APISocket: socket}
+	observation, err := driver.observeProcess(t.Context(), process)
+	if err != nil || observation.State != vmm.ProcessStarting {
+		t.Fatalf("404 observation = %+v, %v; want Starting", observation, err)
+	}
+	status.Store(http.StatusInternalServerError)
+	if _, err := driver.observeProcess(t.Context(), process); err == nil {
+		t.Fatal("500 response was accepted as a startup transition")
+	}
+	status.Store(http.StatusOK)
+	observation, err = driver.observeProcess(t.Context(), process)
+	if err != nil || observation.State != vmm.ProcessRunning {
+		t.Fatalf("Running observation = %+v, %v", observation, err)
+	}
+}
+
 func TestOpenConsolePTYRejectsUnmanagedOrRegularPaths(t *testing.T) {
 	regular := filepath.Join(t.TempDir(), "7")
 	if err := os.WriteFile(regular, []byte("not a PTY"), 0o600); err != nil {

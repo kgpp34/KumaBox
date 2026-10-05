@@ -183,6 +183,16 @@ func processCommandMatches(pid int, binary, apiSocket string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	return commandLineMatches(raw, binary, apiSocket)
+}
+
+// commandLineMatches distinguishes an unreadable, empty /proc command line
+// from a confirmed mismatch. The kernel can expose the PID and start time
+// before its command-line bytes are readable during a concurrent launch.
+func commandLineMatches(raw []byte, binary, apiSocket string) (bool, error) {
+	if len(raw) == 0 {
+		return false, errProcessIdentityPending
+	}
 	fields := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
 	if len(fields) == 0 || filepath.Base(fields[0]) != binary {
 		return false, nil

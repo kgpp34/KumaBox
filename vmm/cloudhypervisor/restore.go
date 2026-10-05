@@ -170,10 +170,10 @@ func (d *Driver) waitAPISocket(ctx context.Context, process vmm.Process) error {
 			return nil
 		}
 		located, exists, locateErr := d.Locate(ctx, process.SandboxID, process.Generation)
-		if locateErr != nil {
+		if locateErr != nil && !errors.Is(locateErr, errProcessIdentityPending) {
 			return locateErr
 		}
-		if !exists || located.PID != process.PID || located.StartTicks != process.StartTicks {
+		if (locateErr == nil && !exists) || located.PID != process.PID || located.StartTicks != process.StartTicks {
 			return errors.New("cloud-hypervisor restore process exited before its API socket became ready")
 		}
 		select {

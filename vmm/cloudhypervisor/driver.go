@@ -33,6 +33,14 @@ const (
 	maxAPIResponse        = 1 << 20
 )
 
+// errVMNotCreated is the vm.info response while direct boot is still creating
+// the VM. The API socket can accept requests before that transition completes.
+var errVMNotCreated = errors.New("cloud hypervisor VM is not created")
+
+// errProcessIdentityPending means /proc has the expected PID/start time but
+// has not exposed a command line yet. It must not be mistaken for process exit.
+var errProcessIdentityPending = errors.New("VMM process command line is not yet readable")
+
 // scopeManager is the cgroup capability consumed by this process adapter.
 type scopeManager interface {
 	Prepare(context.Context, types.SandboxID, uint32) (*os.File, error)
@@ -227,6 +235,14 @@ func (d *Driver) Locate(_ context.Context, id types.SandboxID, generation uint64
 	}
 	alive, err := verifyProcess(process)
 	if err != nil {
+		if errors.Is(err, errProcessIdentityPending) {
+			// Keep the captured identity for readiness polling, but do not
+			// expose it as a verified live process to other callers.
+			if process.Generation != generation {
+				return vmm.Process{}, false, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("live VMM belongs to Starting generation %d, expected %d", process.Generation, generation))
+			}
+			return process, false, err
+		}
 		return vmm.Process{}, false, err
 	}
 	if !alive {
@@ -242,15 +258,24 @@ func (d *Driver) Locate(_ context.Context, id types.SandboxID, generation uint64
 // to distinguish startup from readiness.
 func (d *Driver) Observe(ctx context.Context, id types.SandboxID, generation uint64) (vmm.Observation, error) {
 	process, exists, err := d.Locate(ctx, id, generation)
+	if errors.Is(err, errProcessIdentityPending) {
+		return vmm.Observation{State: vmm.ProcessStarting, Process: process}, nil
+	}
 	if err != nil {
 		return vmm.Observation{}, err
 	}
 	if !exists {
 		return vmm.Observation{State: vmm.ProcessAbsent}, nil
 	}
+	return d.observeProcess(ctx, process)
+}
+
+// observeProcess maps a live VMM's API response to lifecycle state. A 404 is a
+// normal pre-create state, while other API failures remain actionable errors.
+func (d *Driver) observeProcess(ctx context.Context, process vmm.Process) (vmm.Observation, error) {
 	state, err := d.queryState(ctx, process.APISocket)
 	if err != nil {
-		if socketUnavailable(err) {
+		if socketUnavailable(err) || errors.Is(err, errVMNotCreated) {
 			return vmm.Observation{State: vmm.ProcessStarting, Process: process}, nil
 		}
 		return vmm.Observation{}, err
@@ -487,6 +512,9 @@ func (d *Driver) queryInfo(ctx context.Context, socket string) (vmInfo, error) {
 	defer response.Body.Close() //nolint:errcheck // response decode error is authoritative
 	if response.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxAPIResponse))
+		if response.StatusCode == http.StatusNotFound {
+			return vmInfo{}, fmt.Errorf("cloud hypervisor vm.info returned HTTP %d: %w", response.StatusCode, errVMNotCreated)
+		}
 		return vmInfo{}, fmt.Errorf("cloud hypervisor vm.info returned HTTP %d", response.StatusCode)
 	}
 	var payload vmInfo

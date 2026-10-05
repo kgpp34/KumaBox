@@ -3,6 +3,7 @@
 package cloudhypervisor
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -14,6 +15,19 @@ import (
 	"github.com/kumabox/kumabox/types"
 	"github.com/kumabox/kumabox/vmm"
 )
+
+func TestCommandLineMatchesDistinguishesPendingIdentity(t *testing.T) {
+	const socket = "/run/kumabox/api.sock"
+	if match, err := commandLineMatches(nil, "cloud-hypervisor", socket); match || !errors.Is(err, errProcessIdentityPending) {
+		t.Fatalf("empty command line = %v, %v; want pending identity", match, err)
+	}
+	if match, err := commandLineMatches([]byte("cloud-hypervisor\x00--api-socket\x00"+socket+"\x00"), "cloud-hypervisor", socket); err != nil || !match {
+		t.Fatalf("complete command line = %v, %v; want match", match, err)
+	}
+	if match, err := commandLineMatches([]byte("other-vmm\x00--api-socket\x00"+socket+"\x00"), "cloud-hypervisor", socket); err != nil || match {
+		t.Fatalf("foreign command line = %v, %v; want mismatch", match, err)
+	}
+}
 
 func TestProcessIdentityHelper(t *testing.T) {
 	if os.Getenv("KUMABOX_PROCESS_HELPER") != "1" {
