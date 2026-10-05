@@ -49,6 +49,19 @@ func NewTransient(path string) *Lock {
 //	                   ^                  |
 //	                   +--- stale inode --+
 func (l *Lock) Lock(ctx context.Context) error {
+	return l.acquire(ctx, false)
+}
+
+// RLock holds a shared lease. Other readers may proceed while exclusive
+// operations, such as snapshot deletion, wait for all readers to finish.
+func (l *Lock) RLock(ctx context.Context) error {
+	if l.transient {
+		return errors.New("transient locks do not support shared leases")
+	}
+	return l.acquire(ctx, true)
+}
+
+func (l *Lock) acquire(ctx context.Context, shared bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -64,7 +77,13 @@ func (l *Lock) Lock(ctx context.Context) error {
 	}
 	for {
 		candidate := goflock.New(l.path)
-		ok, err := candidate.TryLockContext(ctx, retryInterval)
+		var ok bool
+		var err error
+		if shared {
+			ok, err = candidate.TryRLockContext(ctx, retryInterval)
+		} else {
+			ok, err = candidate.TryLockContext(ctx, retryInterval)
+		}
 		if err != nil || !ok {
 			closeErr := candidate.Close()
 			<-l.token

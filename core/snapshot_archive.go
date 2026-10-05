@@ -15,8 +15,8 @@ import (
 	"github.com/kumabox/kumabox/vmm"
 )
 
-// Export holds the snapshot operation lock while its immutable files stream to
-// the caller. A concurrent remove cannot delete an entry midway through tar.
+// Export holds a shared snapshot lease while its immutable files stream to the
+// caller. A concurrent remove cannot delete an entry midway through tar.
 func (s *SnapshotService) Export(ctx context.Context, reference string, output io.Writer, compress bool) (result types.Snapshot, returnErr error) {
 	if s == nil || s.applicationState == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || output == nil {
 		return types.Snapshot{}, errors.New("snapshot export service is not configured")
@@ -61,7 +61,7 @@ func (s *SnapshotService) withSnapshotDirectory(ctx context.Context, reference s
 		return types.Snapshot{}, err
 	}
 	lock := filelock.New(lockPath)
-	if err := lock.Lock(ctx); err != nil {
+	if err := lock.RLock(ctx); err != nil {
 		return types.Snapshot{}, err
 	}
 	defer func() { returnErr = errors.Join(returnErr, lock.Unlock(context.WithoutCancel(ctx))) }()

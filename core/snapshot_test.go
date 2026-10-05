@@ -579,6 +579,73 @@ func TestSaveSnapshotHoldsSnapshotLockDuringCapture(t *testing.T) {
 	}
 }
 
+// Two snapshot consumers may stream concurrently, while deletion waits until
+// neither can read the published files anymore.
+func TestSnapshotReadersShareLeaseAndDelayRemoval(t *testing.T) {
+	service, _, _ := newTestSnapshotService(t)
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.reporter = noOpSnapshotReporter{}
+	directory, err := service.paths.Dir(capture.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(filepath.Join(directory, "cow.raw"), capture.Config.Storage); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	readResults := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := service.withSnapshotDirectory(t.Context(), capture.ID.String(), func(types.Snapshot, string) error {
+				entered <- struct{}{}
+				<-release
+				return nil
+			})
+			readResults <- err
+		}()
+	}
+	for range 2 {
+		select {
+		case <-entered:
+		case err := <-readResults:
+			close(release)
+			t.Fatalf("snapshot read failed before acquiring lease: %v", err)
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatal("snapshot readers did not enter concurrently")
+		}
+	}
+	removeResult := make(chan error, 1)
+	go func() {
+		_, err := service.Remove(t.Context(), capture.ID.String())
+		removeResult <- err
+	}()
+	select {
+	case err := <-removeResult:
+		close(release)
+		t.Fatalf("removal finished while readers held leases: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	for range 2 {
+		if err := <-readResults; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := <-removeResult; err != nil {
+		t.Fatal(err)
+	}
+}
+
+type noOpSnapshotReporter struct{}
+
+func (noOpSnapshotReporter) Status(string) error            { return nil }
+func (noOpSnapshotReporter) Committed(types.Snapshot) error { return nil }
+
 func TestImportSnapshotHoldsSnapshotLockDuringExtraction(t *testing.T) {
 	service, _, _ := newTestSnapshotService(t)
 	path, err := service.paths.Lock(fixedSnapshotID)

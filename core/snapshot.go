@@ -534,7 +534,7 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 			return types.Sandbox{}, err
 		}
 		snapshotLock := filelock.New(snapshotLockPath)
-		if err := snapshotLock.Lock(ctx); err != nil {
+		if err := snapshotLock.RLock(ctx); err != nil {
 			return types.Sandbox{}, errdefs.WithContext(err, errdefs.ContextInfo{
 				Operation: "restore sandbox",
 				Entity:    sandboxReference,

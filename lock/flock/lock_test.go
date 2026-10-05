@@ -25,6 +25,54 @@ func TestLockSerializesInstances(t *testing.T) {
 	}
 }
 
+func TestSharedReadersBlockExclusiveWriter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "snapshot.lock")
+	first, second, writer := New(path), New(path), New(path)
+	if err := first.RLock(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.RLock(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := first.Unlock(t.Context()); err != nil {
+			t.Error(err)
+		}
+		if err := second.Unlock(t.Context()); err != nil {
+			t.Error(err)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	if err := writer.Lock(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("writer while readers hold leases = %v, want deadline", err)
+	}
+	if err := first.Unlock(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel = context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	if err := writer.Lock(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("writer while second reader holds lease = %v, want deadline", err)
+	}
+	if err := second.Unlock(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Lock(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := writer.Unlock(t.Context()); err != nil {
+			t.Error(err)
+		}
+	}()
+	ctx, cancel = context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	if err := first.RLock(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("reader while writer holds lock = %v, want deadline", err)
+	}
+}
+
 func TestTransientRemovesPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "init.lock")
 	lock := NewTransient(path)

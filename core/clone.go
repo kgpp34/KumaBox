@@ -44,8 +44,11 @@ func (s *SnapshotService) Clone(ctx context.Context, snapshotReference, name str
 // inherits the source resource shape while assigning a fresh identity, disks,
 // network allocation, and VMM process. Source artifacts stay read-only.
 //
-//	snapshot lock -> validate -> Create -> private writable disks -> Starting
-//	                                      -> rebind VMM -> guest network -> Running
+//	shared snapshot lease -> validate -> Create -> private writable disks
+//	                      -> rebind VMM -> guest network -> Running
+//
+// The read lease lasts through VMM restore so deletion cannot remove source
+// memory files before the clone has opened its private snapshot state.
 func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReference string, options CloneOptions) (result types.Sandbox, returnErr error) {
 	if s == nil || s.applicationState == nil || s.lifecycle == nil || s.snapshots == nil || s.runtimes == nil || s.reporter == nil || s.now == nil {
 		return types.Sandbox{}, errors.New("snapshot clone service is not configured")
@@ -83,7 +86,7 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 			return types.Sandbox{}, err
 		}
 		lock := filelock.New(lockPath)
-		if err := lock.Lock(ctx); err != nil {
+		if err := lock.RLock(ctx); err != nil {
 			return types.Sandbox{}, err
 		}
 		defer func() { returnErr = errors.Join(returnErr, lock.Unlock(context.WithoutCancel(ctx))) }()
