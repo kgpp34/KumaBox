@@ -1,0 +1,742 @@
+package core
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/kumabox/kumabox/config"
+	"github.com/kumabox/kumabox/errdefs"
+	filelock "github.com/kumabox/kumabox/lock/flock"
+	"github.com/kumabox/kumabox/metadata"
+	"github.com/kumabox/kumabox/snapshot"
+	snapshotcatalog "github.com/kumabox/kumabox/snapshot/catalog"
+	"github.com/kumabox/kumabox/storage"
+	"github.com/kumabox/kumabox/types"
+	"github.com/kumabox/kumabox/vmm"
+)
+
+type delayedReseedRuntime struct {
+	*fakeRuntime
+	failures int
+	calls    int
+}
+
+func (r *delayedReseedRuntime) DialVsock(context.Context, vmm.Process, uint32) (io.ReadWriteCloser, error) {
+	r.calls++
+	if r.calls <= r.failures {
+		return nil, errors.New("guest agent is starting")
+	}
+	return guestTestConnection(), nil
+}
+
+func TestReseedRetriesStartingGuestWithoutFixedDelay(t *testing.T) {
+	runtime := &delayedReseedRuntime{fakeRuntime: &fakeRuntime{}, failures: 2}
+	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer cancel()
+	if err := reseedProcess(ctx, runtime, vmm.Process{}, true); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.calls != 3 {
+		t.Fatalf("vsock attempts = %d, want 3", runtime.calls)
+	}
+}
+
+func TestReseedStopsRetryingWhenCanceled(t *testing.T) {
+	runtime := &delayedReseedRuntime{fakeRuntime: &fakeRuntime{}, failures: 100}
+	ctx, cancel := context.WithTimeout(t.Context(), 80*time.Millisecond)
+	defer cancel()
+	if err := reseedProcess(ctx, runtime, vmm.Process{}, true); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("reseed error = %v, want deadline exceeded", err)
+	}
+	if runtime.calls < 2 {
+		t.Fatalf("vsock attempts = %d, want a retry", runtime.calls)
+	}
+}
+
+func TestImportRejectsCorruptStreamWithoutPublishing(t *testing.T) {
+	service, _, _ := newTestSnapshotService(t)
+	if _, err := service.Import(t.Context(), bytes.NewBufferString("not a snapshot"), "bad", ""); err == nil {
+		t.Fatal("invalid archive was accepted")
+	}
+	entries, err := os.ReadDir(service.paths.StagingDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("failed import left staging entries: %v", entries)
+	}
+	listed, err := service.List(t.Context())
+	if err != nil || len(listed) != 0 {
+		t.Fatalf("failed import published snapshots: %+v, %v", listed, err)
+	}
+}
+
+var fixedSnapshotID = types.SnapshotID("223e4567-e89b-42d3-a456-426614174000")
+
+type fakeSnapshotReporter struct {
+	steps      *[]string
+	failStatus string
+	failure    error
+}
+
+func (r fakeSnapshotReporter) Status(status string) error {
+	*r.steps = append(*r.steps, "snapshot-status:"+status)
+	if status == r.failStatus {
+		return r.failure
+	}
+	return nil
+}
+
+func (r fakeSnapshotReporter) Committed(types.Snapshot) error {
+	*r.steps = append(*r.steps, "snapshot-report")
+	return nil
+}
+
+func newTestSnapshotService(t *testing.T) (*SnapshotService, *SandboxService, *[]string) {
+	t.Helper()
+	sandboxService, steps := newTestSandboxService(t, nil)
+	if _, err := sandboxService.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config: types.SandboxConfig{
+			Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory,
+			Storage: types.DefaultSandboxStorage,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	catalog := sandboxService.dependencies.catalog.(*fakeCatalog)
+	catalog.record.State = types.SandboxStateRunning
+	catalog.record.Generation = 4
+	testRuntime(t, sandboxService).observation = vmm.Observation{
+		State: vmm.ProcessRunning,
+		Process: vmm.Process{
+			PID: 42, StartTicks: 10, BootID: "boot", SandboxID: fixedID,
+			Generation: 3, Binary: "cloud-hypervisor", APISocket: "/run/kumabox/api.sock",
+		},
+	}
+	testRuntime(t, sandboxService).vsockFactory = guestTestConnection
+	sandboxDir, err := sandboxService.dependencies.paths.Dir(fixedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.EnsureDir(sandboxDir); err != nil {
+		t.Fatal(err)
+	}
+	cow, err := sandboxService.dependencies.paths.COW(fixedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cow, []byte("live-cow"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	roots := storage.Roots{
+		Data: filepath.Join(t.TempDir(), "data"), Run: filepath.Join(t.TempDir(), "run"), Log: filepath.Join(t.TempDir(), "log"),
+	}
+	paths, err := snapshot.NewPaths(roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := paths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	memory, err := metadata.NewMemory(snapshotcatalog.Collections())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &SnapshotService{
+		applicationState: &applicationState{
+			configuration: config.Default(),
+			paths:         paths, sandboxPaths: sandboxService.dependencies.paths,
+			sandboxes: catalog, snapshots: snapshotcatalog.New(memory), runtimes: sandboxService.dependencies.runtimes,
+			now: func() time.Time { return time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC) }, store: memory,
+			lifecycle: sandboxService, images: sandboxService.dependencies.images,
+			disks: sandboxService.dependencies.disks, networks: sandboxService.dependencies.networks,
+			dnsServers: sandboxService.dependencies.dnsServers,
+		},
+		reporter: fakeSnapshotReporter{steps: steps}, newID: func() (types.SnapshotID, error) { return fixedSnapshotID, nil },
+	}
+	return service, sandboxService, steps
+}
+
+func TestRestoreStopsRunningSandboxAndResumesSnapshot(t *testing.T) {
+	service, sandboxService, steps := newTestSnapshotService(t)
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "checkpoint"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessedAt := capture.LastAccessedAt.Add(time.Hour)
+	service.now = func() time.Time { return accessedAt }
+	*steps = nil
+	record, err := service.Restore(t.Context(), "box", capture.ID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State != types.SandboxStateRunning || record.Generation != 8 {
+		t.Fatalf("restored sandbox = %+v", record)
+	}
+	updated, err := service.snapshots.Resolve(t.Context(), capture.ID.String())
+	if err != nil || !updated.LastAccessedAt.Equal(accessedAt) {
+		t.Fatalf("restore access time = %s, %v", updated.LastAccessedAt, err)
+	}
+	plan := testRuntime(t, sandboxService).restorePlan
+	if plan.SandboxID != fixedID || plan.Generation != 7 || plan.SnapshotDir == "" {
+		t.Fatalf("restore plan = %+v", plan)
+	}
+	wantSequence := []string{"stopping", "stop", "stopped", "starting", "restore", "running"}
+	position := 0
+	for _, step := range *steps {
+		if position < len(wantSequence) && step == wantSequence[position] {
+			position++
+		}
+	}
+	if position != len(wantSequence) {
+		t.Fatalf("restore steps = %v, missing sequence %v", *steps, wantSequence)
+	}
+}
+
+func TestRestoreReplacesCOWAndManagedDataDiskTogether(t *testing.T) {
+	service, sandboxService, _ := newTestSnapshotService(t)
+	spec := types.DataDiskSpec{Name: "db", Size: types.MinDataDiskSize, FSType: "none"}
+	catalog := sandboxService.dependencies.catalog.(*fakeCatalog)
+	catalog.record.Config.DataDisks = []types.DataDiskSpec{spec}
+	dataPath, err := sandboxService.dependencies.paths.DataDisk(fixedID, spec.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(dataPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := errors.Join(file.Truncate(spec.Size), file.Close()); err != nil {
+		t.Fatal(err)
+	}
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dataPath, []byte("changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Restore(t.Context(), "box", capture.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dataPath)
+	if err != nil || info.Size() != spec.Size {
+		t.Fatalf("restored data disk = %+v, %v", info, err)
+	}
+	backup, err := sandboxService.dependencies.paths.RestoreBackup(fixedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(backup); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("restore backup remains: %v", err)
+	}
+}
+
+func TestRestoreReseedRejectionKeepsRestoredSandboxRunning(t *testing.T) {
+	service, sandboxService, _ := newTestSnapshotService(t)
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	testRuntime(t, sandboxService).vsockFactory = rejectedReseedTestConnection
+	restored, err := service.Restore(t.Context(), "box", capture.ID.String())
+	if err == nil || restored.State != types.SandboxStateRunning {
+		t.Fatalf("restore = %+v, %v", restored, err)
+	}
+	var classified *errdefs.Error
+	if !errors.As(err, &classified) || !classified.Committed {
+		t.Fatalf("reseed failure did not report committed restore: %v", err)
+	}
+	current := sandboxService.dependencies.catalog.(*fakeCatalog).record
+	if current.State != types.SandboxStateRunning {
+		t.Fatalf("reseed failure discarded running VM: %+v", current)
+	}
+}
+
+func TestListForSandboxResolvesNameBeforeFiltering(t *testing.T) {
+	service, _, _ := newTestSnapshotService(t)
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := capture
+	foreign.ID = types.SnapshotID("423e4567-e89b-42d3-a456-426614174000")
+	foreign.SandboxID = types.SandboxID("323e4567-e89b-42d3-a456-426614174000")
+	if err := service.snapshots.Reserve(t.Context(), foreign); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.snapshots.Commit(t.Context(), foreign.ID, 1, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := service.ListForSandbox(t.Context(), "box")
+	if err != nil || len(listed) != 1 || listed[0].ID != capture.ID {
+		t.Fatalf("filtered snapshots = %+v, %v", listed, err)
+	}
+}
+
+func TestDirectoryRestoreForceStillRequiresCompatibleImageAndShape(t *testing.T) {
+	_, sandbox, _ := newTestSnapshotService(t)
+	record := sandbox.dependencies.catalog.(*fakeCatalog).record
+	capture := types.Snapshot{
+		SandboxID:   types.SandboxID("323e4567-e89b-42d3-a456-426614174000"),
+		ImageDigest: record.ImageDigest, VMM: record.VMM, Config: record.Config,
+	}
+	if err := validateRestoreSource(record, capture, RestoreOptions{SourceDirectory: "/capture"}); err == nil {
+		t.Fatal("foreign snapshot accepted without force")
+	}
+	if err := validateRestoreSource(record, capture, RestoreOptions{SourceDirectory: "/capture", Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	capture.Config.Memory *= 2
+	if err := validateRestoreSource(record, capture, RestoreOptions{SourceDirectory: "/capture", Force: true}); err == nil {
+		t.Fatal("incompatible memory accepted with force")
+	}
+	capture.Config.Memory = record.Config.Memory
+	capture.Config.SharedMemory = !record.Config.SharedMemory
+	if err := validateRestoreSource(record, capture, RestoreOptions{SourceDirectory: "/capture", Force: true}); err == nil {
+		t.Fatal("incompatible shared-memory mode accepted with force")
+	}
+}
+
+func TestHibernatePersistsBeforeStoppingAndRestores(t *testing.T) {
+	service, sandboxService, steps := newTestSnapshotService(t)
+	*steps = nil
+	capture, err := service.Hibernate(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "nap"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capture.Name != "nap" || capture.SandboxID != fixedID {
+		t.Fatalf("snapshot = %+v", capture)
+	}
+	record := sandboxService.dependencies.catalog.(*fakeCatalog).record
+	if record.State != types.SandboxStateStopped || record.Generation != 6 {
+		t.Fatalf("hibernated sandbox = %+v", record)
+	}
+	wantSequence := []string{"pause", "snapshot", "stopping", "stop", "cleanup", "stopped", "snapshot-report"}
+	position := 0
+	for _, step := range *steps {
+		if position < len(wantSequence) && step == wantSequence[position] {
+			position++
+		}
+	}
+	if position != len(wantSequence) {
+		t.Fatalf("hibernate steps = %v, missing sequence %v", *steps, wantSequence)
+	}
+	listed, err := service.List(t.Context())
+	if err != nil || len(listed) != 1 || listed[0].ID != capture.ID {
+		t.Fatalf("List = %+v, %v", listed, err)
+	}
+	resumed, err := service.Restore(t.Context(), "box", "nap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.State != types.SandboxStateRunning || resumed.Generation != 8 {
+		t.Fatalf("restored sandbox = %+v", resumed)
+	}
+}
+
+func TestHibernatePersistenceFailureResumesRunningSandbox(t *testing.T) {
+	service, sandboxService, steps := newTestSnapshotService(t)
+	failure := errors.New("cannot publish capture")
+	service.reporter = fakeSnapshotReporter{steps: steps, failStatus: "publishing snapshot artifacts", failure: failure}
+	*steps = nil
+	if _, err := service.Hibernate(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "retry"}); !errors.Is(err, failure) {
+		t.Fatalf("Hibernate error = %v", err)
+	}
+	record := sandboxService.dependencies.catalog.(*fakeCatalog).record
+	if record.State != types.SandboxStateRunning || record.Generation != 4 {
+		t.Fatalf("failed hibernate changed sandbox = %+v", record)
+	}
+	if len(*steps) < 2 || (*steps)[len(*steps)-1] != "resume" {
+		t.Fatalf("failed hibernate did not resume: %v", *steps)
+	}
+	listed, err := service.List(t.Context())
+	if err != nil || len(listed) != 0 {
+		t.Fatalf("List after failure = %+v, %v", listed, err)
+	}
+}
+
+func TestHibernatePostPublishFailureReleasesSnapshotName(t *testing.T) {
+	service, sandboxService, steps := newTestSnapshotService(t)
+	failure := errors.New("metadata unavailable")
+	service.reporter = fakeSnapshotReporter{steps: steps, failStatus: "committing snapshot metadata", failure: failure}
+	if _, err := service.Hibernate(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "retry"}); !errors.Is(err, failure) {
+		t.Fatalf("Hibernate error = %v", err)
+	}
+	if record := sandboxService.dependencies.catalog.(*fakeCatalog).record; record.State != types.SandboxStateRunning {
+		t.Fatalf("failed hibernate changed sandbox = %+v", record)
+	}
+	if (*steps)[len(*steps)-1] != "resume" {
+		t.Fatalf("failed hibernate did not resume: %v", *steps)
+	}
+	if _, err := os.Stat(filepath.Join(service.paths.DataDir(), fixedSnapshotID.String())); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed hibernate left published artifacts: %v", err)
+	}
+	service.reporter = fakeSnapshotReporter{steps: steps}
+	if _, err := service.Hibernate(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "retry"}); err != nil {
+		t.Fatalf("same name could not be retried: %v", err)
+	}
+}
+
+func TestHibernateStopFailureRetainsStoppingAndSnapshot(t *testing.T) {
+	service, sandboxService, steps := newTestSnapshotService(t)
+	failure := errors.New("termination failed")
+	testRuntime(t, sandboxService).stopErr = failure
+	*steps = nil
+	capture, err := service.Hibernate(t.Context(), SaveSnapshotRequest{SandboxReference: "box"})
+	if !errors.Is(err, failure) || capture.ID != fixedSnapshotID {
+		t.Fatalf("Hibernate = %+v, %v", capture, err)
+	}
+	record := sandboxService.dependencies.catalog.(*fakeCatalog).record
+	if record.State != types.SandboxStateStopping || record.Generation != 5 {
+		t.Fatalf("failed termination state = %+v", record)
+	}
+	for _, step := range *steps {
+		if step == "resume" {
+			t.Fatalf("termination failure attempted resume: %v", *steps)
+		}
+	}
+	listed, listErr := service.List(t.Context())
+	if listErr != nil || len(listed) != 1 || listed[0].ID != capture.ID {
+		t.Fatalf("durable snapshot = %+v, %v", listed, listErr)
+	}
+	testRuntime(t, sandboxService).stopErr = nil
+	stopped, err := sandboxService.Stop(t.Context(), "box")
+	if err != nil || stopped.State != types.SandboxStateStopped {
+		t.Fatalf("retry stop = %+v, %v", stopped, err)
+	}
+}
+
+func TestRestoreFailureRetainsErrorSandbox(t *testing.T) {
+	service, sandboxService, _ := newTestSnapshotService(t)
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("restore failed")
+	testRuntime(t, sandboxService).restoreErr = failure
+	if _, err := service.Restore(t.Context(), "box", capture.ID.String()); !errors.Is(err, failure) {
+		t.Fatalf("Restore error = %v", err)
+	}
+	record := sandboxService.dependencies.catalog.(*fakeCatalog).record
+	if record.State != types.SandboxStateError || record.Failure == nil || record.Failure.Phase != "restore VMM" {
+		t.Fatalf("retained sandbox = %+v", record)
+	}
+}
+
+func TestRestoreRejectsMissingCOWBeforeStoppingSandbox(t *testing.T) {
+	service, sandboxService, steps := newTestSnapshotService(t)
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotCOW, err := service.paths.COW(capture.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(snapshotCOW); err != nil {
+		t.Fatal(err)
+	}
+	*steps = nil
+	if _, err := service.Restore(t.Context(), "box", capture.ID.String()); err == nil {
+		t.Fatal("Restore accepted a snapshot without its writable disk")
+	}
+	record := sandboxService.dependencies.catalog.(*fakeCatalog).record
+	if record.State != types.SandboxStateRunning || record.Generation != 4 {
+		t.Fatalf("sandbox changed before snapshot validation: %+v", record)
+	}
+	for _, step := range *steps {
+		if step == "stopping" || step == "stop" {
+			t.Fatalf("restore stopped the sandbox before validation: %v", *steps)
+		}
+	}
+}
+
+func TestRestoreRecoversRetainedErrorSandbox(t *testing.T) {
+	service, sandboxService, steps := newTestSnapshotService(t)
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := sandboxService.dependencies.catalog.(*fakeCatalog)
+	catalog.record.State = types.SandboxStateError
+	catalog.record.Generation = 5
+	catalog.record.Failure = &types.SandboxFailure{Phase: "previous start", Message: "failed"}
+	testRuntime(t, sandboxService).observation = vmm.Observation{State: vmm.ProcessAbsent}
+	*steps = nil
+	record, err := service.Restore(t.Context(), "box", capture.ID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State != types.SandboxStateRunning || record.Generation != 7 || record.Failure != nil {
+		t.Fatalf("restored sandbox = %+v", record)
+	}
+	wantSequence := []string{"cleanup", "starting", "restore", "running"}
+	position := 0
+	for _, step := range *steps {
+		if position < len(wantSequence) && step == wantSequence[position] {
+			position++
+		}
+	}
+	if position != len(wantSequence) {
+		t.Fatalf("restore steps = %v, missing sequence %v", *steps, wantSequence)
+	}
+}
+
+func TestSaveSnapshotPublishesCompleteCapture(t *testing.T) {
+	service, sandboxService, _ := newTestSnapshotService(t)
+	record, err := service.Save(t.Context(), SaveSnapshotRequest{
+		SandboxReference: "box", Name: "checkpoint/one", Description: "before upgrade",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.ID != fixedSnapshotID || record.SandboxID != fixedID || record.Name != "checkpoint/one" || record.Size != 5 {
+		t.Fatalf("snapshot = %+v", record)
+	}
+	directory, err := service.paths.Dir(record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"config.json", "cow.raw"} {
+		if _, err := os.Stat(filepath.Join(directory, name)); err != nil {
+			t.Fatalf("snapshot artifact %s: %v", name, err)
+		}
+	}
+	plan := testRuntime(t, sandboxService).snapshotPlan
+	if plan.Process.Generation != 3 || plan.Destination == "" || len(plan.WritableFiles) != 1 {
+		t.Fatalf("snapshot plan = %+v", plan)
+	}
+	listed, err := service.List(t.Context())
+	if err != nil || len(listed) != 1 || listed[0].ID != record.ID {
+		t.Fatalf("List = %+v, %v", listed, err)
+	}
+}
+
+func TestSaveSnapshotIncludesManagedDataDisks(t *testing.T) {
+	service, sandboxService, _ := newTestSnapshotService(t)
+	catalog := sandboxService.dependencies.catalog.(*fakeCatalog)
+	catalog.record.Config.DataDisks = []types.DataDiskSpec{{Name: "db", Size: types.MinDataDiskSize, FSType: "ext4"}}
+	dataPath, err := sandboxService.dependencies.paths.DataDisk(fixedID, "db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dataPath, []byte("live-data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := testRuntime(t, sandboxService).snapshotPlan
+	if len(plan.WritableFiles) != 2 || filepath.Base(plan.WritableFiles[1].Source) != "data-db.raw" ||
+		filepath.Base(plan.WritableFiles[1].Destination) != "data-db.raw" {
+		t.Fatalf("capture writable files = %+v", plan.WritableFiles)
+	}
+	artifactDir, err := service.paths.Dir(capture.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(artifactDir, "data-db.raw")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSnapshotReadRefreshesAccessTime(t *testing.T) {
+	service, _, _ := newTestSnapshotService(t)
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "exported"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessedAt := capture.LastAccessedAt.Add(time.Hour)
+	service.now = func() time.Time { return accessedAt }
+	directory, err := service.paths.Dir(capture.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(filepath.Join(directory, "cow.raw"), capture.Config.Storage); err != nil {
+		t.Fatal(err)
+	}
+	used := false
+	if _, err := service.withSnapshotDirectory(t.Context(), capture.ID.String(), func(types.Snapshot, string) error {
+		used = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := service.snapshots.Resolve(t.Context(), capture.ID.String())
+	if err != nil || !updated.LastAccessedAt.Equal(accessedAt) || !used {
+		t.Fatalf("snapshot read access time = %s used=%t error=%v", updated.LastAccessedAt, used, err)
+	}
+}
+
+type snapshotLockProbeReporter struct {
+	t     *testing.T
+	path  string
+	stage string
+	seen  bool
+}
+
+func (r *snapshotLockProbeReporter) Status(stage string) error {
+	if stage != r.stage {
+		return nil
+	}
+	r.seen = true
+	probe := filelock.New(r.path)
+	acquired, err := probe.TryLock(r.t.Context())
+	if err != nil {
+		return err
+	}
+	if acquired {
+		_ = probe.Unlock(r.t.Context())
+		r.t.Fatal("snapshot capture did not hold the snapshot operation lock")
+	}
+	return nil
+}
+
+func (*snapshotLockProbeReporter) Committed(types.Snapshot) error { return nil }
+
+func TestSaveSnapshotHoldsSnapshotLockDuringCapture(t *testing.T) {
+	service, _, _ := newTestSnapshotService(t)
+	path, err := service.paths.Lock(fixedSnapshotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reporter := &snapshotLockProbeReporter{t: t, path: path, stage: "capturing VMM and writable disk"}
+	service.reporter = reporter
+	if _, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box"}); err != nil {
+		t.Fatal(err)
+	}
+	if !reporter.seen {
+		t.Fatal("snapshot capture stage was not reached")
+	}
+}
+
+// Two snapshot consumers may stream concurrently, while deletion waits until
+// neither can read the published files anymore.
+func TestSnapshotReadersShareLeaseAndDelayRemoval(t *testing.T) {
+	service, _, _ := newTestSnapshotService(t)
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.reporter = noOpSnapshotReporter{}
+	directory, err := service.paths.Dir(capture.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(filepath.Join(directory, "cow.raw"), capture.Config.Storage); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	readResults := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := service.withSnapshotDirectory(t.Context(), capture.ID.String(), func(types.Snapshot, string) error {
+				entered <- struct{}{}
+				<-release
+				return nil
+			})
+			readResults <- err
+		}()
+	}
+	for range 2 {
+		select {
+		case <-entered:
+		case err := <-readResults:
+			close(release)
+			t.Fatalf("snapshot read failed before acquiring lease: %v", err)
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatal("snapshot readers did not enter concurrently")
+		}
+	}
+	removeResult := make(chan error, 1)
+	go func() {
+		_, err := service.Remove(t.Context(), capture.ID.String())
+		removeResult <- err
+	}()
+	select {
+	case err := <-removeResult:
+		close(release)
+		t.Fatalf("removal finished while readers held leases: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	for range 2 {
+		if err := <-readResults; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := <-removeResult; err != nil {
+		t.Fatal(err)
+	}
+}
+
+type noOpSnapshotReporter struct{}
+
+func (noOpSnapshotReporter) Status(string) error            { return nil }
+func (noOpSnapshotReporter) Committed(types.Snapshot) error { return nil }
+
+func TestImportSnapshotHoldsSnapshotLockDuringExtraction(t *testing.T) {
+	service, _, _ := newTestSnapshotService(t)
+	path, err := service.paths.Lock(fixedSnapshotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reporter := &snapshotLockProbeReporter{t: t, path: path, stage: "extracting and checking snapshot archive"}
+	service.reporter = reporter
+	if _, err := service.Import(t.Context(), bytes.NewBufferString("invalid archive"), "", ""); err == nil {
+		t.Fatal("invalid archive was accepted")
+	}
+	if !reporter.seen {
+		t.Fatal("snapshot extraction stage was not reached")
+	}
+}
+
+func TestSaveSnapshotFailureCleansReservationAndStage(t *testing.T) {
+	service, sandboxService, _ := newTestSnapshotService(t)
+	failure := errors.New("capture failed")
+	testRuntime(t, sandboxService).snapshotErr = failure
+	request := SaveSnapshotRequest{SandboxReference: "box", Name: "retryable"}
+	if _, err := service.Save(t.Context(), request); !errors.Is(err, failure) {
+		t.Fatalf("Save error = %v", err)
+	}
+	if records, err := service.List(t.Context()); err != nil || len(records) != 0 {
+		t.Fatalf("List after failure = %+v, %v", records, err)
+	}
+	stage, err := service.paths.Stage(fixedSnapshotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stage); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("snapshot stage remains: %v", err)
+	}
+	testRuntime(t, sandboxService).snapshotErr = nil
+	if _, err := service.Save(t.Context(), request); err != nil {
+		t.Fatalf("retry after compensation: %v", err)
+	}
+}
+
+func TestRemoveSnapshotDeletesArtifactsAndName(t *testing.T) {
+	service, _, _ := newTestSnapshotService(t)
+	record, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "remove-me"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, err := service.Remove(t.Context(), "remove-me")
+	if err != nil || removed.ID != record.ID {
+		t.Fatalf("Remove = %+v, %v", removed, err)
+	}
+	if _, err := service.Inspect(t.Context(), "remove-me"); err == nil {
+		t.Fatal("removed snapshot still resolves")
+	}
+}

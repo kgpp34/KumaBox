@@ -1,0 +1,150 @@
+#!/bin/sh
+# Assemble the image root without waiting for a device manager or module loader.
+set -eu
+PATH=/bin
+export PATH
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+
+fail() {
+	printf 'KumaBox boot: %s\n' "$*" >/dev/console
+	exit 1
+}
+
+layers=
+cow=
+hostname=
+timeout=10
+for argument in $(cat /proc/cmdline); do
+	case "$argument" in
+		kumabox.layers=*) layers=${argument#kumabox.layers=} ;;
+		kumabox.cow=*) cow=${argument#kumabox.cow=} ;;
+		kumabox.hostname=*) hostname=${argument#kumabox.hostname=} ;;
+		kumabox.timeout=*) timeout=${argument#kumabox.timeout=} ;;
+	esac
+done
+[ -n "$layers" ] && [ -n "$cow" ] && [ -n "$hostname" ] || fail 'missing root disk parameters'
+case "$layers$cow$hostname" in *[!A-Za-z0-9_.,-]*) fail 'invalid root disk parameters' ;; esac
+case "$layers" in ,*|*,|*,,*) fail 'empty layer serial' ;; esac
+case "$cow" in .|..) fail 'invalid writable disk serial' ;; esac
+case "$timeout" in ''|*[!0-9]*) fail 'invalid device timeout' ;; esac
+[ "$timeout" -gt 0 ] && [ "$timeout" -le 120 ] || fail 'device timeout out of range'
+hostname "$hostname"
+
+# Device names change with attachment order. Resolve the stable virtio serial.
+find_device() {
+	wanted=$1
+	attempt=0
+	limit=$((timeout * 500))
+	while [ "$attempt" -lt "$limit" ]; do
+		for sysdev in /sys/block/*; do
+			[ -d "$sysdev" ] || continue
+			value=
+			if [ -r "$sysdev/serial" ]; then
+				read -r value <"$sysdev/serial" || true
+			elif [ -r "$sysdev/device/serial" ]; then
+				read -r value <"$sysdev/device/serial" || true
+			fi
+			if [ "$value" = "$wanted" ]; then
+				printf '/dev/%s\n' "${sysdev##*/}"
+				return 0
+			fi
+		done
+		sleep 0.002
+		attempt=$((attempt + 1))
+	done
+	return 1
+}
+
+mkdir -p /layers /cow /newroot
+lowerdirs=
+old_ifs=$IFS
+IFS=,
+for serial in $layers; do
+	case "$serial" in .|..) fail 'invalid layer serial' ;; esac
+	device=$(find_device "$serial") || fail "missing layer $serial"
+	mkdir -p "/layers/$serial"
+	mount -t erofs -o ro "$device" "/layers/$serial" || fail "mount layer $serial"
+	if [ -n "$lowerdirs" ]; then
+		lowerdirs="$lowerdirs:/layers/$serial"
+	else
+		lowerdirs="/layers/$serial"
+	fi
+done
+IFS=$old_ifs
+
+cow_device=$(find_device "$cow") || fail "missing writable disk $cow"
+mount -t ext4 -o noatime "$cow_device" /cow || fail 'mount writable disk'
+mkdir -p /cow/upper /cow/work
+mount -t overlay overlay -o "lowerdir=$lowerdirs,upperdir=/cow/upper,workdir=/cow/work" /newroot || fail 'mount root overlay'
+mkdir -p /newroot/dev /newroot/proc /newroot/sys /newroot/run /newroot/etc
+rm -f /newroot/etc/machine-id
+: >/newroot/etc/machine-id
+printf '%s\n' "$hostname" >/newroot/etc/hostname
+
+resolver=/newroot/etc/resolv.conf
+if [ ! -L "$resolver" ] && [ ! -s "$resolver" ]; then
+	rm -f "$resolver"
+	ln -s /run/systemd/resolve/stub-resolv.conf "$resolver"
+fi
+
+# Persist the host-assigned address by MAC; networkd applies it after handoff.
+for argument in $(cat /proc/cmdline); do
+	case "$argument" in
+		ip=*)
+			old_ifs=$IFS
+			IFS=:
+			set -- ${argument#ip=}
+			IFS=$old_ifs
+			address=${1:-}
+			gateway=${3:-}
+			mask=${4:-}
+			interface=${6:-}
+			dns0=${8:-}
+			dns1=${9:-}
+			[ -n "$address" ] && [ -n "$mask" ] && [ -n "$interface" ] || fail 'invalid static network'
+			case "$interface" in *[!A-Za-z0-9_.-]*|.|..) fail 'invalid interface name' ;; esac
+			attempt=0
+			while [ ! -r "/sys/class/net/$interface/address" ] && [ "$attempt" -lt 100 ]; do
+				sleep 0.002
+				attempt=$((attempt + 1))
+			done
+			[ -r "/sys/class/net/$interface/address" ] || fail "missing interface $interface"
+			read -r mac <"/sys/class/net/$interface/address" || true
+			prefix=0
+			old_ifs=$IFS
+			IFS=.
+			set -- $mask
+			IFS=$old_ifs
+			[ "$#" -eq 4 ] || fail 'invalid network mask'
+			for octet in "$@"; do
+				case "$octet" in
+					255) prefix=$((prefix + 8)) ;;
+					254) prefix=$((prefix + 7)) ;;
+					252) prefix=$((prefix + 6)) ;;
+					248) prefix=$((prefix + 5)) ;;
+					240) prefix=$((prefix + 4)) ;;
+					224) prefix=$((prefix + 3)) ;;
+					192) prefix=$((prefix + 2)) ;;
+					128) prefix=$((prefix + 1)) ;;
+					0) ;;
+					*) fail 'invalid network mask' ;;
+				esac
+			done
+			mkdir -p /newroot/etc/systemd/network
+			{
+				printf '[Match]\nMACAddress=%s\n\n[Network]\nAddress=%s/%s\n' "$mac" "$address" "$prefix"
+				[ -z "$gateway" ] || [ "$gateway" = 0.0.0.0 ] || printf 'Gateway=%s\n' "$gateway"
+				[ -z "$dns0" ] || [ "$dns0" = 0.0.0.0 ] || printf 'DNS=%s\n' "$dns0"
+				[ -z "$dns1" ] || [ "$dns1" = 0.0.0.0 ] || printf 'DNS=%s\n' "$dns1"
+			} >"/newroot/etc/systemd/network/10-kumabox-$interface.network"
+			;;
+	esac
+done
+
+mount --move /dev /newroot/dev
+mount --move /proc /newroot/proc
+mount --move /sys /newroot/sys
+exec switch_root /newroot /sbin/init
