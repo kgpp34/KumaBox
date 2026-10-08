@@ -180,6 +180,19 @@ sudo kumabox ps
 可以在 [`oci-images/ubuntu/Dockerfile`](oci-images/ubuntu/Dockerfile) 的基础上扩展。
 这个 Dockerfile 已经内置了配套的 `kumabox-agent`、内核和 initramfs。
 
+如果 Linux guest 不依赖可加载的内核模块，可以从同一份源码构建单层快速启动镜像：
+
+```bash
+docker build -f oci-images/ubuntu/Dockerfile -t kumabox/ubuntu:24.04 .
+docker build -f oci-images/fastboot/Dockerfile.boot -t kumabox/boot:fast .
+docker build -f oci-images/fastboot/Dockerfile.image -t kumabox/ubuntu:fast .
+docker save kumabox/ubuntu:fast -o /tmp/kumabox-ubuntu-fast.tar
+sudo kumabox image import ubuntu-fast /tmp/kumabox-ubuntu-fast.tar --format docker
+```
+
+快速镜像使用内建驱动的独立内核和 initramfs；需要内核模块或直通驱动的负载仍使用
+通用 Ubuntu 镜像。
+
 ## 远程 API 与 SDK
 
 `kumabox serve` 将现有服务开放为带令牌认证的 HTTP API，默认只监听

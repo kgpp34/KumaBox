@@ -187,6 +187,20 @@ toolchain (Python, Node, browsers), extend
 [`oci-images/ubuntu/Dockerfile`](oci-images/ubuntu/Dockerfile),
 which already installs the matching `kumabox-agent`, kernel and initramfs.
 
+For latency-sensitive Linux guests that do not need loadable kernel modules,
+build the optional single-layer fast-boot image from the same source tree:
+
+```bash
+docker build -f oci-images/ubuntu/Dockerfile -t kumabox/ubuntu:24.04 .
+docker build -f oci-images/fastboot/Dockerfile.boot -t kumabox/boot:fast .
+docker build -f oci-images/fastboot/Dockerfile.image -t kumabox/ubuntu:fast .
+docker save kumabox/ubuntu:fast -o /tmp/kumabox-ubuntu-fast.tar
+sudo kumabox image import ubuntu-fast /tmp/kumabox-ubuntu-fast.tar --format docker
+```
+
+The fast profile has its own built-in kernel and initramfs; use the general
+Ubuntu image for workloads that require kernel modules or passthrough drivers.
+
 ## Remote API and SDKs
 
 `kumabox serve` opens the same application services through an authenticated,
