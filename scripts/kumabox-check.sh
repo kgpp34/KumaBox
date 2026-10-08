@@ -114,6 +114,7 @@ generate_cni_conflist() {
       "mtu": ${host_mtu},
       "isGateway": true,
       "ipMasq": true,
+      "ipMasqBackend": "nftables",
       "hairpinMode": true,
       "ipam": {
         "type": "host-local",
@@ -141,6 +142,7 @@ bin_to_pkg() {
     case "$1" in
         mkfs.erofs) echo "erofs-utils" ;;
         mkfs.ext4)  echo "e2fsprogs" ;;
+        nft)        echo "nftables" ;;
         *)          echo "" ;;
     esac
 }
@@ -356,6 +358,17 @@ else
     fail "$CNI_CONFLIST does not exist"
     if $FIX; then
         generate_cni_conflist
+    fi
+fi
+
+# The CNI bridge plugin must use the same masquerade backend for ADD and DEL.
+# An explicit nftables backend also avoids a per-sandbox iptables rule scan.
+if [ -f "$CNI_CONFLIST" ]; then
+    if grep -Eq '"ipMasqBackend"[[:space:]]*:[[:space:]]*"nftables"' "$CNI_CONFLIST"; then
+        check_binary nft
+    elif grep -Eq '"ipMasq"[[:space:]]*:[[:space:]]*true' "$CNI_CONFLIST" &&
+        ! grep -Eq '"ipMasqBackend"[[:space:]]*:' "$CNI_CONFLIST"; then
+        warn "$CNI_CONFLIST uses implicit masquerade backend; set ipMasqBackend explicitly to avoid ADD/DEL using different rule sets"
     fi
 fi
 

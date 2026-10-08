@@ -2,7 +2,9 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,6 +20,44 @@ import (
 	"github.com/kumabox/kumabox/types"
 	"github.com/kumabox/kumabox/vmm"
 )
+
+type delayedReseedRuntime struct {
+	*fakeRuntime
+	failures int
+	calls    int
+}
+
+func (r *delayedReseedRuntime) DialVsock(context.Context, vmm.Process, uint32) (io.ReadWriteCloser, error) {
+	r.calls++
+	if r.calls <= r.failures {
+		return nil, errors.New("guest agent is starting")
+	}
+	return guestTestConnection(), nil
+}
+
+func TestReseedRetriesStartingGuestWithoutFixedDelay(t *testing.T) {
+	runtime := &delayedReseedRuntime{fakeRuntime: &fakeRuntime{}, failures: 2}
+	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer cancel()
+	if err := reseedProcess(ctx, runtime, vmm.Process{}, true); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.calls != 3 {
+		t.Fatalf("vsock attempts = %d, want 3", runtime.calls)
+	}
+}
+
+func TestReseedStopsRetryingWhenCanceled(t *testing.T) {
+	runtime := &delayedReseedRuntime{fakeRuntime: &fakeRuntime{}, failures: 100}
+	ctx, cancel := context.WithTimeout(t.Context(), 80*time.Millisecond)
+	defer cancel()
+	if err := reseedProcess(ctx, runtime, vmm.Process{}, true); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("reseed error = %v, want deadline exceeded", err)
+	}
+	if runtime.calls < 2 {
+		t.Fatalf("vsock attempts = %d, want a retry", runtime.calls)
+	}
+}
 
 func TestImportRejectsCorruptStreamWithoutPublishing(t *testing.T) {
 	service, _, _ := newTestSnapshotService(t)

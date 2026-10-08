@@ -100,6 +100,7 @@ sudo kumabox exec my-vm -- uname -a
 # 5. 一次预热，无限分叉
 sudo kumabox snapshot save my-vm --name base
 sudo kumabox clone base --name fresh
+sudo kumabox net fresh --configure
 sudo kumabox exec fresh -- hostname
 
 # 6. 清理
@@ -110,6 +111,10 @@ sudo kumabox rm my-vm
 sudo kumabox snapshot rm base
 sudo kumabox image remove ghcr.io/kgpp34/kumabox/ubuntu:24.04
 ```
+
+`clone` 在虚拟机恢复运行后返回。随后执行 `net SANDBOX --configure`，把新主机名和
+已分配的网卡配置应用到 guest；也可以使用 `clone --wait-network`，在返回前完成此步骤。
+默认路径会在独立进程中更新 guest 熵和 machine ID。
 
 主机端和 guest 端的产物需要配套使用。对可复现性有要求时，请固定带版本号的 guest 标签
 （例如 `24.04-v0.1.0`）或 OCI digest。单独执行 `sudo kumabox-check` 会做一次只读的主机检查。

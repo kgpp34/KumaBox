@@ -13,9 +13,8 @@ import (
 )
 
 const (
-	reseedAttempts = 3
-	reseedDelay    = 2 * time.Second
-	reseedTimeout  = 4 * time.Second
+	reseedRetryInterval = 25 * time.Millisecond
+	reseedTimeout       = 8 * time.Second
 )
 
 // Reseed refreshes a running guest's random pool through its host-only agent
@@ -43,28 +42,24 @@ func reseedProcess(ctx context.Context, backend vmm.Backend, process vmm.Process
 	if _, err := rand.Read(entropy); err != nil {
 		return fmt.Errorf("generate host entropy: %w", err)
 	}
+	retryCtx, cancel := context.WithTimeout(ctx, reseedTimeout)
+	defer cancel()
 	var dialErr error
-	for attempt := range reseedAttempts {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		attemptCtx, cancel := context.WithTimeout(ctx, reseedTimeout)
-		connection, err := backend.DialVsock(attemptCtx, process, agent.Port)
+	for {
+		connection, err := backend.DialVsock(retryCtx, process, agent.Port)
 		if err == nil {
-			err = agent.Reseed(attemptCtx, connection, entropy, machineID)
+			err = agent.Reseed(retryCtx, connection, entropy, machineID)
 			closeErr := connection.Close()
-			cancel()
 			return errors.Join(err, closeErr)
 		}
 		dialErr = err
-		cancel()
-		if attempt+1 < reseedAttempts {
-			select {
-			case <-ctx.Done():
+		select {
+		case <-retryCtx.Done():
+			if ctx.Err() != nil {
 				return ctx.Err()
-			case <-time.After(reseedDelay):
 			}
+			return fmt.Errorf("connect guest agent: %w", errors.Join(dialErr, retryCtx.Err()))
+		case <-time.After(reseedRetryInterval):
 		}
 	}
-	return fmt.Errorf("connect guest agent: %w", dialErr)
 }

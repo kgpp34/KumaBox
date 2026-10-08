@@ -1,7 +1,9 @@
 [Unit]
 Description=KumaBox guest agent
 Documentation=https://github.com/kumabox/kumabox
-After=systemd-modules-load.service
+# Accept vsock work as soon as the root filesystem reaches sysinit.
+DefaultDependencies=no
+Before=basic.target
 
 [Service]
 Type=simple
@@ -17,4 +19,4 @@ SyslogIdentifier=kumabox-agent
 LimitNOFILE=65536
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=sysinit.target

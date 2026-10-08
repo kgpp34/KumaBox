@@ -1,0 +1,22 @@
+# syntax=docker/dockerfile:1.7
+
+ARG BASE_IMAGE=kumabox/ubuntu:24.04
+ARG BOOT_IMAGE=kumabox/boot:fast
+FROM ${BOOT_IMAGE} AS boot
+FROM ${BASE_IMAGE} AS root
+
+# This profile has a built-in kernel. Keep the general image for workloads
+# that need modules or host-specific passthrough drivers.
+RUN set -eu; \
+    rm -rf /lib/modules/* /boot/vmlinuz-* /boot/initrd.img-*; \
+    sed -i '/^ExecStartPre=-\/sbin\/modprobe /d' \
+      /etc/systemd/system/kumabox-agent.service
+COPY --from=boot /boot/vmlinuz-fast /boot/vmlinuz-fast
+COPY --from=boot /boot/initrd.img-fast /boot/initrd.img-fast
+
+# Copying the assembled root into scratch creates one OCI filesystem layer.
+# One EROFS layer means fewer virtio block devices during a cold boot.
+FROM scratch
+LABEL io.kumabox.boot.profile="overlay-v1"
+COPY --from=root / /
+CMD ["/sbin/init"]

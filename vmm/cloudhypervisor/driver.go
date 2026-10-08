@@ -28,9 +28,11 @@ import (
 
 const (
 	defaultStartupTimeout = 10 * time.Second
-	probeInterval         = 50 * time.Millisecond
-	probeTimeout          = 500 * time.Millisecond
-	maxAPIResponse        = 1 << 20
+	// A 50 ms poll consumed a large fraction of an otherwise ready clone.
+	// Both probes are bounded by startupTimeout, including when the VMM exits.
+	probeInterval  = 5 * time.Millisecond
+	probeTimeout   = 500 * time.Millisecond
+	maxAPIResponse = 1 << 20
 )
 
 // errVMNotCreated is the vm.info response while direct boot is still creating

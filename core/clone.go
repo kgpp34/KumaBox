@@ -33,6 +33,13 @@ type CloneOptions struct {
 	NetworkName string
 	// DataDisks are new disks attached to the clone after snapshot restoration.
 	DataDisks []types.DataDiskSpec
+	// WaitForNetwork applies the clone's new guest identity and NIC settings
+	// before returning. By default, clone returns after VMM resume, matching
+	// the explicit post-clone guest configuration workflow.
+	WaitForNetwork bool
+	// SkipReseed delegates post-resume entropy and machine-ID renewal to the
+	// caller. It is used when a persistent child process performs reseed.
+	SkipReseed bool
 }
 
 // Clone preserves the ordinary local-image workflow for callers without options.
@@ -220,12 +227,20 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	if err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "clone VMM", err, process)
 	}
-	if err := s.reporter.Status("configuring guest identity and network"); err != nil {
-		return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, process)
+	var reseedErr error
+	if !options.SkipReseed {
+		if err := s.reporter.Status("reseed cloned guest"); err != nil {
+			return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, process)
+		}
+		reseedErr = reseedProcess(ctx, backend, process, true)
 	}
-	reseedErr := reseedProcess(ctx, backend, process, true)
-	if err := s.configureCloneGuest(ctx, backend, process, starting); err != nil {
-		return starting, s.lifecycle.failStart(ctx, backend, starting, "configure guest", err, process)
+	if options.WaitForNetwork {
+		if err := s.reporter.Status("configuring guest identity and network"); err != nil {
+			return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, process)
+		}
+		if err := s.configureCloneGuest(ctx, backend, process, starting); err != nil {
+			return starting, s.lifecycle.failStart(ctx, backend, starting, "configure guest", err, process)
+		}
 	}
 	running, err := s.sandboxes.MarkRunning(ctx, starting.ID, starting.Generation, s.now().UTC())
 	if err != nil {
@@ -299,7 +314,7 @@ func (s *SnapshotService) ensureCloneImage(ctx context.Context, capture types.Sn
 	return nil
 }
 
-const guestAgentConnectRetryInterval = 250 * time.Millisecond
+const guestAgentConnectRetryInterval = 25 * time.Millisecond
 
 // configureCloneGuest applies the new MAC/IP map over vsock, which remains
 // available even before the clone has a working guest network.

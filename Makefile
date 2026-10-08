@@ -82,6 +82,7 @@ doctor-check: ## Check host and guest shell script syntax
 	bash -n scripts/kumabox-check.sh
 	sh -n oci-images/ubuntu/overlay.sh
 	sh -n oci-images/ubuntu/network.sh
+	sh -n oci-images/fastboot/init
 
 race: ## Run all Go tests with race detection
 	go test -race ./...

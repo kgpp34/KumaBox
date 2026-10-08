@@ -14,6 +14,44 @@ import (
 	"github.com/kumabox/kumabox/vmm"
 )
 
+// NetConfigure applies the recorded guest identity and NIC settings to a
+// running sandbox. Clones can call this after the fast restore path returns.
+func (s *SandboxService) NetConfigure(ctx context.Context, reference string) (result types.Sandbox, returnErr error) {
+	if s == nil || s.dependencies.catalog == nil || s.dependencies.runtimes.Len() == 0 {
+		return types.Sandbox{}, errors.New("sandbox service is not configured")
+	}
+	if reference == "" {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("SANDBOX must not be empty"))
+	}
+	record, unlock, err := s.lockExistingSandbox(ctx, sandboxLockRequest{
+		reference: reference, operation: "configure sandbox network", retryHint: "retry network configuration",
+	})
+	if err != nil {
+		return types.Sandbox{}, err
+	}
+	defer func() { returnErr = errors.Join(returnErr, unlock()) }()
+	if record.State != types.SandboxStateRunning || record.Generation < 2 {
+		return record, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s is %s, not running", record.ID, record.State))
+	}
+	backend, err := s.dependencies.runtimes.Backend(record.VMM)
+	if err != nil {
+		return record, err
+	}
+	process, exists, err := backend.Locate(ctx, record.ID, record.Generation-1)
+	if err != nil {
+		return record, err
+	}
+	if !exists {
+		return record, errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, errors.New("running sandbox VMM is absent"))
+	}
+	if err := configureGuestNetwork(ctx, backend, process, record, s.dependencies.dnsServers); err != nil {
+		return record, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "configure sandbox network", Entity: reference, Phase: "configure guest", Action: "retry network configuration",
+		})
+	}
+	return record, nil
+}
+
 // NetResize changes a running sandbox's NIC count one slot at a time. The
 // operation lock spans CNI, VMM, guest and metadata work; retries first sweep
 // allocations beyond the durable count left by an interrupted addition.

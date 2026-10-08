@@ -84,7 +84,7 @@ RUN set -eu; \
         '[DHCPv4]' 'ClientIdentifier=mac' \
         > /etc/systemd/network/20-kumabox.network \
     && test -x /usr/local/bin/kumabox-agent \
-    && test -L /etc/systemd/system/multi-user.target.wants/kumabox-agent.service \
+    && test -L /etc/systemd/system/sysinit.target.wants/kumabox-agent.service \
     && rm -rf /var/lib/apt/lists/* /usr/local/lib/kumabox
 
 CMD ["/sbin/init"]

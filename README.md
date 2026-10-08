@@ -102,6 +102,7 @@ sudo kumabox exec my-vm -- uname -a
 # 5. Warm once, fork many
 sudo kumabox snapshot save my-vm --name base
 sudo kumabox clone base --name fresh
+sudo kumabox net fresh --configure
 sudo kumabox exec fresh -- hostname
 sudo kumabox snapshot export base --output base.tar
 
@@ -113,6 +114,11 @@ sudo kumabox rm my-vm
 sudo kumabox snapshot rm base
 sudo kumabox image remove ghcr.io/kgpp34/kumabox/ubuntu:24.04
 ```
+
+`clone` returns after the VM resumes. Run `net SANDBOX --configure` to apply
+the clone's hostname and allocated NIC settings in the guest, or use
+`clone --wait-network` to include that step before the command returns. The
+default path renews guest entropy and machine ID in a detached process.
 
 Host and guest artifacts are a matched release pair. Pin a versioned guest tag
 such as `24.04-v0.1.0`, or an OCI digest, when reproducibility matters.
