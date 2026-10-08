@@ -80,6 +80,13 @@ restore; newer compatible versions can use copy-on-write memory restore.
 
 You need Linux amd64 or arm64 with `/dev/kvm`, and root.
 
+Preview releases provide a Linux amd64 archive containing `kumabox` and
+`kumabox-check`, plus a matching Ubuntu guest image. Download the archive and
+`SHA256SUMS` from the [GitHub release](https://github.com/kgpp34/KumaBox/releases),
+verify them with `sha256sum -c SHA256SUMS`, then extract and install both files.
+Use the guest image tag named in that release; host and guest artifacts must
+come from the same version. The source-build path below remains available.
+
 ```bash
 # 1. Build and install
 git clone https://github.com/kgpp34/KumaBox.git && cd KumaBox

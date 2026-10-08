@@ -5,6 +5,9 @@ FROM --platform=$BUILDPLATFORM golang:1.24.4-bookworm AS agent-builder
 
 ARG TARGETARCH
 ARG GOPROXY=https://proxy.golang.org,direct
+ARG KUMABOX_VERSION=dev
+ARG KUMABOX_COMMIT=unknown
+ARG KUMABOX_BUILD_TIME=unknown
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY agent ./agent
@@ -15,13 +18,22 @@ COPY cmd/kumabox-agent ./cmd/kumabox-agent
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" GOPROXY="$GOPROXY" \
-    go build -mod=readonly -trimpath -ldflags='-s -w' -o /out/kumabox-agent ./cmd/kumabox-agent
+    go build -mod=readonly -trimpath \
+    -ldflags="-s -w -X github.com/kumabox/kumabox/version.Version=$KUMABOX_VERSION -X github.com/kumabox/kumabox/version.Commit=$KUMABOX_COMMIT -X github.com/kumabox/kumabox/version.BuildTime=$KUMABOX_BUILD_TIME" \
+    -o /out/kumabox-agent ./cmd/kumabox-agent
 
 # Pin UBUNTU_IMAGE to a digest in release automation. Keeping it configurable
 # also makes local architecture-specific acceptance builds straightforward.
 FROM ${UBUNTU_IMAGE}
 
 LABEL io.kumabox.boot.profile="overlay-v1"
+ARG KUMABOX_VERSION=dev
+ARG KUMABOX_COMMIT=unknown
+ARG KUMABOX_BUILD_TIME=unknown
+LABEL org.opencontainers.image.version="$KUMABOX_VERSION" \
+      org.opencontainers.image.revision="$KUMABOX_COMMIT" \
+      org.opencontainers.image.created="$KUMABOX_BUILD_TIME" \
+      org.opencontainers.image.source="https://github.com/kgpp34/KumaBox"
 
 ENV DEBIAN_FRONTEND=noninteractive
 

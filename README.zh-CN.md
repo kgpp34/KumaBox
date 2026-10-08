@@ -78,6 +78,12 @@ Agent 天生就会重试、分支和探索。准备环境的成本只需要付�
 
 需要一台 amd64 或 arm64 的 Linux 主机，能访问 `/dev/kvm`，并具备 root 权限。
 
+预发布版提供包含 `kumabox` 和 `kumabox-check` 的 Linux amd64 压缩包，以及
+与其版本对应的 Ubuntu guest 镜像。从 [GitHub Release](https://github.com/kgpp34/KumaBox/releases)
+下载压缩包和 `SHA256SUMS`，先运行 `sha256sum -c SHA256SUMS`，再解压并安装。
+请使用该 Release 指定的 guest 镜像版本；宿主机程序和 guest 镜像应来自同一版本。
+下面仍保留源码构建步骤。
+
 ```bash
 # 1. 构建并安装
 git clone https://github.com/kgpp34/KumaBox.git && cd KumaBox
