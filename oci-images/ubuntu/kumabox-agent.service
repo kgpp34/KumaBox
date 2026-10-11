@@ -1,20 +1,24 @@
 [Unit]
-Description=KumaBox agent (vsock command exec)
+Description=KumaBox guest agent
 Documentation=https://github.com/kumabox/kumabox
+# Boot-time tmpfiles cleanup must finish before accepting guest file writes.
+# Otherwise its --remove pass can delete an in-flight upload under /tmp.
+DefaultDependencies=no
+After=systemd-tmpfiles-setup.service
+Before=basic.target
 
 [Service]
 Type=simple
 User=root
 Group=root
-ExecStartPre=-/sbin/modprobe vhost_vsock
+ExecStartPre=-/sbin/modprobe vmw_vsock_virtio_transport
 ExecStart=/usr/local/bin/kumabox-agent serve
-Environment=AGENT_LOG_LEVEL=info
 Restart=always
 RestartSec=2s
-StandardOutput=journal+console
-StandardError=journal+console
+StandardOutput=journal
+StandardError=journal
 SyslogIdentifier=kumabox-agent
 LimitNOFILE=65536
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=sysinit.target

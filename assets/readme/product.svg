@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" width="1200" height="520" role="img" aria-label="Product shape: callers, interfaces, and what one KumaBox sandbox gives you">
+<title>Product shape: callers, interfaces, and what one KumaBox sandbox gives you</title>
+<defs>
+  <pattern id="iso" width="40" height="23.094" patternUnits="userSpaceOnUse">
+    <path d="M0 0 L40 23.094 M40 0 L0 23.094" stroke="#ffffff" stroke-opacity="0.028" stroke-width="1"/>
+  </pattern>
+  <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#F5B83D" stop-opacity="0.35"/>
+    <stop offset="100%" stop-color="#F5B83D" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="vignette" cx="30%" cy="20%" r="90%">
+    <stop offset="0%" stop-color="#22324A"/>
+    <stop offset="100%" stop-color="#172233"/>
+  </radialGradient>
+  <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="#6F8FAF"/>
+  </marker>
+  <marker id="arrH" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="#F5B83D"/>
+  </marker>
+</defs>
+<style>
+  text { font-family: 'Inter','Segoe UI','SF Pro Text',-apple-system,'Helvetica Neue',Arial,sans-serif; }
+  .mono { font-family: 'JetBrains Mono','SFMono-Regular',Menlo,Consolas,'DejaVu Sans Mono',monospace; }
+  .flow { stroke-dasharray: 6 8; animation: flow 1.6s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -28; } }
+  
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+<rect x="0" y="0" width="1200" height="520" rx="20" fill="url(#vignette)"/>
+<rect x="0" y="0" width="1200" height="520" rx="20" fill="url(#iso)"/>
+<rect x="0.5" y="0.5" width="1199" height="519" rx="20" fill="none" stroke="#34485F"/>
+<text x="48" y="58" font-size="26" fill="#E8EEF5" font-weight="700" text-anchor="start" >What KumaBox is</text>
+<text x="48" y="88" font-size="16" fill="#98AABF" font-weight="400" text-anchor="start" >A sandbox runtime you install on one Linux box. Anything that can run a command can drive it.</text>
+<text x="48" y="140" font-size="14" fill="#98AABF" font-weight="600" text-anchor="start" >Who drives it</text>
+<rect x="48" y="156" width="268" height="44" rx="22" fill="#243449" stroke="#34485F" stroke-width="1.2" />
+<text x="182" y="184" font-size="15" fill="#E8EEF5" font-weight="500" text-anchor="middle" >Coding agents</text>
+<rect x="48" y="214" width="268" height="44" rx="22" fill="#243449" stroke="#34485F" stroke-width="1.2" />
+<text x="182" y="242" font-size="15" fill="#E8EEF5" font-weight="500" text-anchor="middle" >Agent frameworks</text>
+<rect x="48" y="272" width="268" height="44" rx="22" fill="#243449" stroke="#34485F" stroke-width="1.2" />
+<text x="182" y="300" font-size="15" fill="#E8EEF5" font-weight="500" text-anchor="middle" >RL and eval harnesses</text>
+<rect x="48" y="330" width="268" height="44" rx="22" fill="#243449" stroke="#34485F" stroke-width="1.2" />
+<text x="182" y="358" font-size="15" fill="#E8EEF5" font-weight="500" text-anchor="middle" >CI and batch jobs</text>
+<rect x="48" y="388" width="268" height="44" rx="22" fill="#243449" stroke="#34485F" stroke-width="1.2" />
+<text x="182" y="416" font-size="15" fill="#E8EEF5" font-weight="500" text-anchor="middle" >You, at a terminal</text>
+<text x="404" y="140" font-size="14" fill="#98AABF" font-weight="600" text-anchor="start" >How it is driven</text>
+<rect x="404" y="156" width="336" height="132" rx="12" fill="#1F2D40" stroke="#F5B83D" stroke-width="1.8" />
+<text x="426" y="192" font-size="20" fill="#E8EEF5" font-weight="700" text-anchor="start" class="mono" >kumabox CLI</text>
+<text x="718" y="190" font-size="12.5" fill="#F5B83D" font-weight="600" text-anchor="end" >available now</text>
+<text x="426" y="222" font-size="13.5" fill="#98AABF" font-weight="400" text-anchor="start" >Human output, or --json for machines</text>
+<text x="426" y="244" font-size="13.5" fill="#98AABF" font-weight="400" text-anchor="start" >Streams stdout, stderr and exit codes</text>
+<text x="426" y="266" font-size="13.5" fill="#98AABF" font-weight="400" text-anchor="start" >Dry-run launch plans via kumabox debug</text>
+<text x="404" y="318" font-size="13" fill="#98AABF" font-weight="600" text-anchor="start" >Planned</text>
+<rect x="404" y="330" width="336" height="42" rx="10" fill="none" stroke="#4E6E8E" stroke-width="1.2" stroke-dasharray="5 5" />
+<text x="426" y="357" font-size="14.5" fill="#98AABF" font-weight="500" text-anchor="start" >Go SDK</text>
+<rect x="404" y="382" width="336" height="42" rx="10" fill="none" stroke="#4E6E8E" stroke-width="1.2" stroke-dasharray="5 5" />
+<text x="426" y="409" font-size="14.5" fill="#98AABF" font-weight="500" text-anchor="start" >HTTP API, E2B-compatible</text>
+<rect x="404" y="434" width="336" height="42" rx="10" fill="none" stroke="#4E6E8E" stroke-width="1.2" stroke-dasharray="5 5" />
+<text x="426" y="461" font-size="14.5" fill="#98AABF" font-weight="500" text-anchor="start" >MCP server for tool use</text>
+<text x="820" y="140" font-size="14" fill="#98AABF" font-weight="600" text-anchor="start" >What each sandbox gets</text>
+<rect x="820" y="156" width="332" height="322" rx="12" fill="#1F2D40" stroke="#6F8FAF" stroke-width="1.6" />
+<g ><polygon points="846.948,190 866,201.0 866,226.3 846.948,215.3" fill="#1F2D40" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="885.052,190 866,201.0 866,226.3 885.052,215.3" fill="#4E6E8E" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/><polygon points="866,179.0 885.052,190 866,201.0 846.948,190" fill="#6F8FAF" stroke="#0F1826" stroke-width="2" stroke-linejoin="round"/></g>
+<text x="904" y="204" font-size="18" fill="#E8EEF5" font-weight="700" text-anchor="start" >one microVM</text>
+<path d="M846 257 l5 5 l9 -10" stroke="#F5B83D" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="870" y="262" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >Its own guest kernel behind KVM</text>
+<path d="M846 293 l5 5 l9 -10" stroke="#F5B83D" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="870" y="298" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >OCI rootfs + private writable disk</text>
+<path d="M846 329 l5 5 l9 -10" stroke="#F5B83D" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="870" y="334" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >Own network namespace and IP</text>
+<path d="M846 365 l5 5 l9 -10" stroke="#F5B83D" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="870" y="370" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >exec with env, workdir, stdin, TTY</text>
+<path d="M846 401 l5 5 l9 -10" stroke="#F5B83D" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="870" y="406" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >Snapshot, clone, hibernate, restore</text>
+<path d="M846 437 l5 5 l9 -10" stroke="#F5B83D" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="870" y="442" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >Opt-in data disks, virtio-fs, VFIO</text>
+<line x1="324" y1="222" x2="394" y2="222" stroke="#6F8FAF" stroke-width="2" stroke-linecap="round" marker-end="url(#arr)"/>
+<line x1="748" y1="222" x2="810" y2="222" stroke="#6F8FAF" stroke-width="2" stroke-linecap="round" marker-end="url(#arr)"/>
+</svg>
