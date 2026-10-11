@@ -1,8 +1,10 @@
 [Unit]
 Description=KumaBox guest agent
 Documentation=https://github.com/kumabox/kumabox
-# Accept vsock work as soon as the root filesystem reaches sysinit.
+# Boot-time tmpfiles cleanup must finish before accepting guest file writes.
+# Otherwise its --remove pass can delete an in-flight upload under /tmp.
 DefaultDependencies=no
+After=systemd-tmpfiles-setup.service
 Before=basic.target
 
 [Service]

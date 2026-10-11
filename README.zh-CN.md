@@ -183,6 +183,18 @@ sudo kumabox file rm my-vm /tmp/workspace --recursive
 递归删除需要显式传入 `--recursive`，不跟随最终符号链接，禁止以根目录为删除目标。
 操作使用 guest agent 的权限，也能访问共享进 guest 的挂载点。本批未修改 SDK 和 HTTP API。
 
+在 Linux/KVM 主机上，可针对已导入、包含最新 agent 的镜像运行端到端测试：
+
+```bash
+sudo python3 tests/e2e/guest_operations.py \
+  --image my-updated-image --commit "$(git rev-parse --short HEAD)"
+```
+
+脚本会创建并清理自己的无网卡、单网卡测试沙箱，检查文件传输、上传取消、权限、目录分批返回、
+符号链接、后台进程及重启后的文件保留。`--commit` 应与镜像内 agent 的构建版本对应。
+可用 `--root-dir`、`--run-dir`、`--log-dir` 隔离测试状态，此时须先将镜像导入对应的 root。
+报告默认保存到 `/tmp/kumabox-guest-e2e.json`。
+
 ### 在 Agent 中调用
 
 `exec` 直接输出 guest 命令的 stdout 和 stderr，并保留 guest 命令的退出码。

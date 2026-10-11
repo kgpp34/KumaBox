@@ -228,6 +228,20 @@ Recursive removal requires `--recursive`, does not follow final symlinks, and
 rejects the root directory. These operations run with the guest agent's authority
 and can access mounts shared into the guest. SDK/HTTP file endpoints are unchanged.
 
+On a Linux/KVM host, test an imported image containing the current agent with:
+
+```bash
+sudo python3 tests/e2e/guest_operations.py \
+  --image my-updated-image --commit "$(git rev-parse --short HEAD)"
+```
+
+This creates and removes its own test sandboxes with 0 and 1 NIC. It checks file
+transfers, cancelled uploads, permissions, directory batches, links, background
+commands and stop/start persistence. `--commit` must identify the agent build in
+the image. Dedicated `--root-dir`, `--run-dir` and `--log-dir` isolate test metadata;
+the image must be imported into that root first. The JSON report defaults to
+`/tmp/kumabox-guest-e2e.json`.
+
 ### Drive it from an agent
 
 `exec` streams guest output and preserves the guest command's exit code.
