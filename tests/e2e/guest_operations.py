@@ -248,18 +248,22 @@ class GuestTests:
         # on the sandbox's writable root filesystem outside temporary paths.
         persistent = "/root/kumabox-agent-e2e-persistent"
         self.file("write", persistent, data=b"persisted")
+        # stop terminates the VMM rather than shutting the guest OS down. The
+        # file API promises atomic visibility, not persistence after power loss.
+        self.guest("sync")
         self.call("stop", self.name, "--json")
         self.file("read", persistent, expect=None)
         self.call("start", self.name, "--json")
         deadline = time.monotonic() + 60
         while True:
             try:
-                assert self.file("read", persistent, timeout=5) == b"persisted"
+                self.guest("/bin/true", timeout=5)
                 break
             except (RuntimeError, subprocess.TimeoutExpired):
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(0.25)
+        assert self.file("read", persistent) == b"persisted"
 
     def cleanup(self):
         failures = []
@@ -287,7 +291,7 @@ class GuestTests:
                     ("invalid paths, devices, FIFO and modes", self.invalid_requests),
                     ("SIGINT upload abort keeps original and removes staging", self.cancelled_upload),
                     ("cwd/user/env, detached jobs, attach/logs/list/kill", self.process_options),
-                    ("stop/start retains guest files", self.restart_persists_files),
+                    ("guest sync then stop/start retains files", self.restart_persists_files),
                 ):
                     self.check(f"{name} ({nics} NIC)", action)
         except Exception as error:

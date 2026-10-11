@@ -237,7 +237,7 @@ sudo python3 tests/e2e/guest_operations.py \
 
 This creates and removes its own test sandboxes with 0 and 1 NIC. It checks file
 transfers, cancelled uploads, permissions, directory batches, links, background
-commands and stop/start persistence. `--commit` must identify the agent build in
+commands and stop/start persistence after guest `sync`. `--commit` must identify the agent build in
 the image. Dedicated `--root-dir`, `--run-dir` and `--log-dir` isolate test metadata;
 the image must be imported into that root first. The JSON report defaults to
 `/tmp/kumabox-guest-e2e.json`.

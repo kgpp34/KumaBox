@@ -191,7 +191,7 @@ sudo python3 tests/e2e/guest_operations.py \
 ```
 
 脚本会创建并清理自己的无网卡、单网卡测试沙箱，检查文件传输、上传取消、权限、目录分批返回、
-符号链接、后台进程及重启后的文件保留。`--commit` 应与镜像内 agent 的构建版本对应。
+符号链接、后台进程及 guest `sync` 后强制停止并重启的文件保留。`--commit` 应与镜像内 agent 的构建版本对应。
 可用 `--root-dir`、`--run-dir`、`--log-dir` 隔离测试状态，此时须先将镜像导入对应的 root。
 报告默认保存到 `/tmp/kumabox-guest-e2e.json`。
 
