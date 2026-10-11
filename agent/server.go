@@ -121,6 +121,10 @@ func (s *Server) handle(ctx context.Context, connection net.Conn) {
 		s.runCommand(ctx, connection, decoder, encoder, first)
 	case MessageSpawn, MessageProcesses, MessageSignal, MessageLogs, MessageAttach:
 		s.handleProcess(ctx, connection, decoder, encoder, first)
+	case MessageFileRead, MessageFileWrite, MessageFileList, MessageFileStat, MessageFileMkdir, MessageFileRemove, MessageFileRename:
+		if err := serveFile(ctx, decoder, encoder, first); err != nil {
+			fileFailure(encoder, err)
+		}
 	case MessageReseed:
 		if err := reseedGuest(first.Data, first.RegenMachineID); err != nil {
 			_ = encoder.sendError("reseed: %v", err)

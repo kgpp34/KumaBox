@@ -193,6 +193,41 @@ Graceful agent shutdown terminates its commands; a restart clears the table. If 
 spawn response is lost, list commands before retrying: the command may already
 be running. SDK and HTTP process-management endpoints are not included yet.
 
+### Guest files
+
+The `file` commands require a running sandbox with the updated guest agent.
+They operate through vsock, including when the sandbox has no network card.
+`fs attach/detach/list` continues to manage virtio-fs shares.
+
+```bash
+sudo kumabox file mkdir my-vm /tmp/workspace --parents
+printf 'print("hello from guest")\n' > /tmp/hello.py
+sudo kumabox file write my-vm /tmp/workspace/hello.py /tmp/hello.py --mode 0644
+sudo kumabox file ls my-vm /tmp/workspace
+sudo kumabox file stat my-vm /tmp/workspace/hello.py
+sudo kumabox file read my-vm /tmp/workspace/hello.py
+printf 'updated\n' | sudo kumabox file write my-vm /tmp/workspace/result.txt
+sudo kumabox file mv my-vm /tmp/workspace/result.txt /tmp/workspace/final.txt
+sudo kumabox file rm my-vm /tmp/workspace --recursive
+```
+
+Paths must be canonical absolute guest paths. Reads stream regular files;
+symlinks to regular files are followed, while directories, devices and FIFOs
+are rejected. `stat` reports the symlink itself. Writes reject symlink targets,
+stage in the destination directory, then atomically replace the target after a
+complete transfer. Existing file permissions are preserved unless `--mode` is
+set; new files default to 0600 and new directories to 0700. Replacement changes
+the inode; ownership, extended attributes and hard-link relationships are not
+preserved. This is not an fsync durability guarantee across guest crashes.
+
+Transfers use bounded chunks without loading the full file into memory.
+Directory listings stream batches in filesystem order; `--json` prints an array.
+A nonzero exit can mean a partial read/listing. If an upload's final response is
+lost, inspect the destination before retrying because it may already be committed.
+Recursive removal requires `--recursive`, does not follow final symlinks, and
+rejects the root directory. These operations run with the guest agent's authority
+and can access mounts shared into the guest. SDK/HTTP file endpoints are unchanged.
+
 ### Drive it from an agent
 
 `exec` streams guest output and preserves the guest command's exit code.
@@ -299,6 +334,7 @@ compatibility**.
 | --- | --- |
 | VM lifecycle | `run`, `create`, `start`, `stop`, `rm`, `ps`, `inspect` |
 | Guest access | `exec`, `console`, `logs`, `reseed`, `process ls/kill/logs/attach` |
+| Guest files | `file ls/stat/read/write/mkdir/rm/mv` |
 | Images | `image pull`, `image import`, `image inspect`, `image ls`, `image verify`, `image remove` |
 | Snapshots | `snapshot save`, `snapshot ls`, `snapshot inspect`, `snapshot export`, `snapshot import`, `snapshot rm`, `restore`, `clone`, `hibernate` |
 | Network and devices | `net`, `disk attach/detach`, `fs attach/detach/list`, `device attach/detach` |

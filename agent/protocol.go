@@ -33,6 +33,19 @@ const (
 	MessageAttach    = "process_attach"
 	MessageGap       = "output_gap"
 	MessageDone      = "done"
+	// Guest filesystem requests use streamed binary data and metadata frames.
+	MessageFileRead    = "file_read"
+	MessageFileWrite   = "file_write"
+	MessageFileList    = "file_list"
+	MessageFileStat    = "file_stat"
+	MessageFileMkdir   = "file_mkdir"
+	MessageFileRemove  = "file_remove"
+	MessageFileRename  = "file_rename"
+	MessageFileInfo    = "file_info"
+	MessageFileEntries = "file_entries"
+	MessageFileData    = "file_data"
+	MessageFileEnd     = "file_end"
+	MessageFileReady   = "file_ready"
 	// MessageReseed mixes fresh host entropy into the guest random pool.
 	MessageReseed = "reseed"
 	// MessageConfigureNetwork applies host-assigned guest identity and NIC settings.
@@ -55,6 +68,7 @@ const (
 	initialFrameBuffer = 64 * 1024
 	maximumFrameSize   = 8 * 1024 * 1024
 	streamChunkSize    = 32 * 1024
+	fileListBatchSize  = 128
 )
 
 var errTerminalMessageSent = errors.New("terminal agent message already sent")
@@ -62,6 +76,14 @@ var errTerminalMessageSent = errors.New("terminal agent message already sent")
 // Message is the protocol union carried by each NDJSON frame. Fields
 // unrelated to Type remain empty and are omitted from the wire representation.
 type Message struct {
+	// Path and Destination refer exclusively to paths inside the guest.
+	Path        string           `json:"path,omitempty"`
+	Destination string           `json:"destination,omitempty"`
+	Mode        *uint32          `json:"mode,omitempty"`
+	Parents     bool             `json:"parents,omitempty"`
+	Recursive   bool             `json:"recursive,omitempty"`
+	File        *types.FileInfo  `json:"file,omitempty"`
+	Entries     []types.FileInfo `json:"entries,omitempty"`
 	// Type selects the fields and transition represented by this message.
 	Type string `json:"type"`
 	// Argv contains the executable and arguments for MessageExec.
@@ -187,4 +209,48 @@ func (w *framedWriter) err() error {
 		return *err
 	}
 	return nil
+}
+
+// RemoteError preserves structured guest failures for application adapters.
+type RemoteError struct {
+	Code    string
+	Message string
+}
+
+func (e *RemoteError) Error() string { return "guest agent: " + e.Message }
+
+// exchange owns one bounded request/stream exchange. Cancellation closes
+// the transport, unblocking both a slow response read and a blocked request write.
+func exchange(ctx context.Context, connection io.ReadWriteCloser, request Message, receive func(Message) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
+	defer stop()
+	defer connection.Close() //nolint:errcheck // one operation owns the transport
+	if err := NewEncoder(connection).Encode(request); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("send agent request: %w", err)
+	}
+	decoder := NewDecoder(connection)
+	for {
+		message, err := decoder.Decode()
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("read agent response: %w", err)
+		}
+		if message.Type == MessageError {
+			return &RemoteError{Code: message.Code, Message: message.Message}
+		}
+		if err := receive(message); err != nil {
+			return err
+		}
+		if message.Type == MessageDone {
+			return nil
+		}
+	}
 }

@@ -154,6 +154,35 @@ sudo kumabox rm share-vm
 停止或重启后，需要重新启动 `virtiofsd` 并再次 attach。执行 `snapshot save` 或
 `hibernate` 前，要先在 guest 内卸载并 detach。
 
+### 操作 guest 文件
+
+以下命令需要运行中的沙箱和更新后的 guest agent；只更新宿主机二进制不会更新已有
+guest。文件操作走 vsock，无网卡沙箱也可以使用。`fs attach/detach/list` 仍用于管理
+virtio-fs 共享，`file` 管理 guest 文件内容。
+
+```bash
+sudo kumabox file mkdir my-vm /tmp/workspace --parents
+printf 'hello\n' > /tmp/hello.txt
+sudo kumabox file write my-vm /tmp/workspace/hello.txt /tmp/hello.txt --mode 0644
+sudo kumabox file ls my-vm /tmp/workspace --json
+sudo kumabox file stat my-vm /tmp/workspace/hello.txt
+sudo kumabox file read my-vm /tmp/workspace/hello.txt
+printf 'updated\n' | sudo kumabox file write my-vm /tmp/workspace/result.txt
+sudo kumabox file mv my-vm /tmp/workspace/result.txt /tmp/workspace/final.txt
+sudo kumabox file rm my-vm /tmp/workspace --recursive
+```
+
+路径必须是规范的 guest 绝对路径。读取只接受普通文件，可以跟随指向普通文件的符号链接；
+`stat` 返回链接本身的信息。写入拒绝符号链接目标，先写同目录临时文件，传输完整后再原子替换，
+传输未完成时中断会保留原文件。默认保留已有文件的权限，新文件使用 0600，也可用 `--mode` 指定权限；
+新目录使用 0700。替换会生成新 inode，不保留旧文件的属主、扩展属性和硬链接关系，
+也不保证 guest 崩溃后的 fsync 持久性。
+
+文件分块传输，目录分批返回，不在内存中缓存全部内容。目录按文件系统顺序输出，失败时可能
+已经输出部分内容，应检查退出码。上传完成响应丢失时，文件可能已经提交，重试前应检查目标。
+递归删除需要显式传入 `--recursive`，不跟随最终符号链接，禁止以根目录为删除目标。
+操作使用 guest agent 的权限，也能访问共享进 guest 的挂载点。本批未修改 SDK 和 HTTP API。
+
 ### 在 Agent 中调用
 
 `exec` 直接输出 guest 命令的 stdout 和 stderr，并保留 guest 命令的退出码。
@@ -243,6 +272,7 @@ MCP、IAM、卷挂载、PTY、stdin、后台进程、E2B 文件系统、仅文�
 | --- | --- |
 | VM 生命周期 | `run`、`create`、`start`、`stop`、`rm`、`ps`、`inspect` |
 | Guest 访问 | `exec`、`console`、`logs`、`reseed` |
+| Guest 文件 | `file ls/stat/read/write/mkdir/rm/mv` |
 | 镜像 | `image pull`、`image import`、`image inspect`、`image ls`、`image verify`、`image remove` |
 | 快照 | `snapshot save`、`snapshot ls`、`snapshot inspect`、`snapshot export`、`snapshot import`、`snapshot rm`、`restore`、`clone`、`hibernate` |
 | 网络与设备 | `net`、`disk attach/detach`、`fs attach/detach/list`、`device attach/detach` |

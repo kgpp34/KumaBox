@@ -68,7 +68,7 @@ func NewExecCommand(configuration configProvider) *cobra.Command {
 					return err
 				}
 				if asJSON {
-					return writeProcessJSON(command.OutOrStdout(), process)
+					return writeGuestJSON(command.OutOrStdout(), process)
 				}
 				_, err = fmt.Fprintln(command.OutOrStdout(), process.ID)
 				return err

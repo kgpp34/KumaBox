@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"errors"
 	"io"
 
 	"github.com/kumabox/kumabox/agent"
@@ -81,36 +80,4 @@ func validateProcessRequest(id string, signal types.ProcessSignal) error {
 		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
 	}
 	return nil
-}
-
-// withGuestAgent resolves an exact live VMM generation for every call. It owns
-// the transport and consistently maps remote failures at the application boundary.
-func (s *SandboxService) withGuestAgent(ctx context.Context, reference, operation string, run func(io.ReadWriteCloser) error) error {
-	backend, process, err := s.locateRunning(ctx, reference, operation)
-	if err != nil {
-		return err
-	}
-	connection, err := backend.DialVsock(ctx, process, agent.Port)
-	if err != nil {
-		return errdefs.WithContext(err, errdefs.ContextInfo{Operation: operation, Entity: reference, Phase: "connect guest agent", Action: "the guest agent may still be starting; retry shortly or inspect its service"})
-	}
-	defer connection.Close() //nolint:errcheck // completed read/write transport
-	err = run(connection)
-	if err == nil {
-		return nil
-	}
-	var remote *agent.RemoteError
-	if errors.As(err, &remote) {
-		class, code := errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable
-		switch remote.Code {
-		case "INVALID_ARGUMENT":
-			class, code = errdefs.ClassInvalid, errdefs.CodeInvalidArgument
-		case "NOT_FOUND":
-			class, code = errdefs.ClassNotFound, errdefs.CodeNotFound
-		case "CONFLICT":
-			class, code = errdefs.ClassConflict, errdefs.CodeStateConflict
-		}
-		err = errdefs.New(class, code, err)
-	}
-	return errdefs.WithContext(err, errdefs.ContextInfo{Operation: operation, Entity: reference, Phase: "guest process operation", Action: "inspect guest processes; ensure the image includes the current agent"})
 }
