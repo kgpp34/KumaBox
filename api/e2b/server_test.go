@@ -32,6 +32,7 @@ type sandboxService struct {
 	commands []types.Command
 	stdin    []byte
 	state    types.SandboxState
+	records  []types.Sandbox
 	removed  atomic.Bool
 }
 
@@ -43,7 +44,7 @@ func TestPauseRestoreAndTimeoutSurviveAdapterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest("POST", "/v2/sandboxes", strings.NewReader(`{"templateID":"ubuntu","timeout":60}`))
+	request := httptest.NewRequest("POST", "/v2/sandboxes", strings.NewReader(`{"templateID":"ubuntu","timeout":60,"metadata":{"project":"persisted"},"envVars":{"DEFAULT":"retained"}}`))
 	request.Header.Set("X-API-Key", testKey)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -70,12 +71,18 @@ func TestPauseRestoreAndTimeoutSurviveAdapterRestart(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"state":"paused"`) {
 		t.Fatalf("inspect pause = %d: %s", response.Code, response.Body.String())
 	}
+	if !strings.Contains(response.Body.String(), `"project":"persisted"`) || !strings.Contains(response.Body.String(), `"templateID":"ubuntu"`) {
+		t.Fatalf("lost creation metadata: %s", response.Body.String())
+	}
 	request = httptest.NewRequest("POST", "/v2/sandboxes/"+testID+"/connect", nil)
 	request.Header.Set("X-API-Key", testKey)
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || sandboxes.state != types.SandboxStateRunning {
 		t.Fatalf("restore = %d, state = %s: %s", response.Code, sandboxes.state, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"templateID":"ubuntu"`) {
+		t.Fatalf("connect lost template: %s", response.Body.String())
 	}
 	request = httptest.NewRequest("POST", "/sandboxes/"+testID+"/timeout", strings.NewReader(`{"timeout":120}`))
 	request.Header.Set("X-API-Key", testKey)
@@ -91,6 +98,9 @@ func TestPauseRestoreAndTimeoutSurviveAdapterRestart(t *testing.T) {
 	policy, exists, err := store.get(testID)
 	if err != nil || !exists || policy.PausedSnapshot != "" || time.Until(policy.ExpiresAt) < 110*time.Second {
 		t.Fatalf("restored lease = %+v, exists = %t, err = %v", policy, exists, err)
+	}
+	if policy.EnvVars["DEFAULT"] != "retained" || policy.Metadata["project"] != "persisted" {
+		t.Fatalf("pause/resume lost command defaults or metadata: %+v", policy)
 	}
 }
 
@@ -305,6 +315,14 @@ func (s *sandboxService) Inspect(context.Context, string) (types.Sandbox, error)
 	return types.Sandbox{ID: testID, State: state}, nil
 }
 
+func (s *sandboxService) List(ctx context.Context, _ bool) ([]types.Sandbox, error) {
+	if s.records != nil {
+		return s.records, nil
+	}
+	record, err := s.Inspect(ctx, testID)
+	return []types.Sandbox{record}, err
+}
+
 func (*sandboxService) Start(context.Context, string) (types.Sandbox, error) {
 	return types.Sandbox{}, nil
 }
@@ -419,11 +437,12 @@ func TestCreateAndForegroundCommand(t *testing.T) {
 
 func TestUnsupportedCreateOptionsAreRejected(t *testing.T) {
 	dir := t.TempDir()
-	handler, err := NewHandler(&sandboxService{}, &snapshotService{}, testKey, dir)
+	service := &sandboxService{}
+	handler, err := NewHandler(service, &snapshotService{}, testKey, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest("POST", "/v2/sandboxes", bytes.NewBufferString(`{"templateID":"ubuntu","metadata":{"x":"y"}}`))
+	request := httptest.NewRequest("POST", "/v2/sandboxes", bytes.NewBufferString(`{"templateID":"ubuntu","network":{"allowInternetAccess":false}}`))
 	request.Header.Set("X-API-Key", testKey)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -469,7 +488,8 @@ func TestPublishedE2BSDK(t *testing.T) {
 	if module == "" {
 		t.Skip("published E2B SDK is not installed")
 	}
-	handler, err := NewHandler(&sandboxService{}, &snapshotService{}, testKey, dir)
+	service := &sandboxService{}
+	handler, err := NewHandler(service, &snapshotService{}, testKey, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,6 +504,7 @@ func TestPublishedE2BSDK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("E2B SDK: %v\n%s", err, output)
 	}
+	checkSDKEnvironment(t, service)
 }
 
 func TestPublishedE2BPythonSDK(t *testing.T) {
@@ -492,7 +513,8 @@ func TestPublishedE2BPythonSDK(t *testing.T) {
 	if modulePath == "" {
 		t.Skip("published E2B Python SDK is not installed")
 	}
-	handler, err := NewHandler(&sandboxService{}, &snapshotService{}, testKey, dir)
+	service := &sandboxService{}
+	handler, err := NewHandler(service, &snapshotService{}, testKey, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,5 +528,22 @@ func TestPublishedE2BPythonSDK(t *testing.T) {
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("E2B Python SDK: %v\n%s", err, output)
+	}
+	checkSDKEnvironment(t, service)
+}
+
+func checkSDKEnvironment(t *testing.T, service *sandboxService) {
+	t.Helper()
+	if len(service.commands) != 2 {
+		t.Fatalf("SDK executed %d commands, want 2", len(service.commands))
+	}
+	for index, command := range service.commands {
+		want := "command"
+		if index == 1 {
+			want = "base"
+		}
+		if command.Env["DEFAULT"] != "base" || command.Env["OVERRIDE"] != want {
+			t.Fatalf("SDK command %d has incorrect environment: %+v", index, command.Env)
+		}
 	}
 }

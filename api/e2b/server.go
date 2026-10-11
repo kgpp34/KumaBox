@@ -32,6 +32,7 @@ const maxBody = 1 << 20
 // Sandboxes is the application capability needed by the E2B adapter.
 type Sandboxes interface {
 	Run(context.Context, api.CreateSandboxInput) (types.Sandbox, error)
+	List(context.Context, bool) ([]types.Sandbox, error)
 	Inspect(context.Context, string) (types.Sandbox, error)
 	Start(context.Context, string) (types.Sandbox, error)
 	Stop(context.Context, string) (types.Sandbox, error)
@@ -57,9 +58,9 @@ type handler struct {
 	leases    *leaseStore
 }
 
-// NewHandler exposes E2B create, connect, inspect, kill, health and foreground
-// process execution. stateDir is the API-owned lifecycle directory selected by
-// the host's configuration. Other E2B operations are intentionally not advertised.
+// NewHandler exposes the supported E2B control, file and foreground process
+// protocols. stateDir holds API-owned leases, metadata and command environment
+// defaults; it must be private to the API server.
 func NewHandler(sandboxes Sandboxes, snapshots Snapshots, token, stateDir string) (http.Handler, error) {
 	if sandboxes == nil || snapshots == nil || len(token) < 32 {
 		return nil, errors.New("E2B adapter requires sandbox and snapshot services and a strong API token")
@@ -75,6 +76,7 @@ func NewHandler(sandboxes Sandboxes, snapshots Snapshots, token, stateDir string
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v2/sandboxes", h.create)
+	mux.HandleFunc("GET /v2/sandboxes", h.listSandboxes)
 	mux.HandleFunc("POST /v2/sandboxes/{id}/connect", h.connect)
 	mux.HandleFunc("POST /sandboxes/{id}/pause", h.pause)
 	mux.HandleFunc("POST /sandboxes/{id}/resume", h.resume)
@@ -181,8 +183,14 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		failure(w, http.StatusBadRequest, "invalid_argument", "templateID is required; use an imported KumaBox image alias")
 		return
 	}
-	if len(input.Metadata) != 0 || len(input.EnvVars) != 0 || len(input.Network) != 0 || len(input.MCP) != 0 || len(input.IAM) != 0 || len(input.Volumes) != 0 {
-		failure(w, http.StatusNotImplemented, "unimplemented", "E2B metadata, envs, network policy, MCP, IAM and volume mounts are not supported by this adapter")
+	if len(input.Network) != 0 || len(input.MCP) != 0 || len(input.IAM) != 0 || len(input.Volumes) != 0 {
+		failure(w, http.StatusNotImplemented, "unimplemented", "E2B network policy, MCP, IAM and volume mounts are not supported by this adapter")
+		return
+	}
+	// Validate command defaults before allocating a sandbox, using the same
+	// environment contract as execution through the native guest agent.
+	if err := (types.Command{Args: []string{"/bin/true"}, Env: input.EnvVars}).Validate(); err != nil {
+		failure(w, http.StatusBadRequest, "invalid_argument", err.Error())
 		return
 	}
 	timeout := defaultTimeout
@@ -218,7 +226,10 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		serviceFailure(w, err)
 		return
 	}
-	policy := lease{ExpiresAt: time.Now().UTC().Add(timeout), AutoPause: input.AutoPause != nil && *input.AutoPause}
+	policy := lease{
+		ExpiresAt: time.Now().UTC().Add(timeout), AutoPause: input.AutoPause != nil && *input.AutoPause,
+		TemplateID: input.TemplateID, Metadata: input.Metadata, EnvVars: input.EnvVars,
+	}
 	if err := h.leases.put(record.ID, policy); err != nil {
 		// A sandbox without its expiry policy must not escape as an E2B resource.
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
@@ -336,7 +347,12 @@ func (h *handler) connectWithStatus(w http.ResponseWriter, r *http.Request, stat
 		serviceFailure(w, err)
 		return
 	}
-	jsonResponse(w, status, h.sandbox(record, record.ImageDigest.String()))
+	policy, _, err := h.leases.get(record.ID)
+	if err != nil {
+		serviceFailure(w, err)
+		return
+	}
+	jsonResponse(w, status, h.sandbox(record, policy.template(record)))
 }
 
 func (h *handler) inspect(w http.ResponseWriter, r *http.Request) {
@@ -354,25 +370,13 @@ func (h *handler) inspect(w http.ResponseWriter, r *http.Request) {
 		failure(w, http.StatusNotFound, "not_found", "E2B sandbox lease not found")
 		return
 	}
-	state := "running"
-	if record.State == types.SandboxStateStopped && policy.PausedSnapshot != "" {
-		state = "paused"
-	} else if record.State != types.SandboxStateRunning {
+	if policy.state(record) == "" {
 		failure(w, http.StatusConflict, "state_conflict", "sandbox is not running or paused")
 		return
 	}
-	endAt := policy.ExpiresAt
-	if endAt.IsZero() {
-		endAt = record.UpdatedAt
-	}
-	jsonResponse(w, http.StatusOK, map[string]any{
-		"sandboxID": record.ID.String(), "templateID": record.ImageDigest.String(),
-		"clientID": "", "envdVersion": "0.1.0", "envdAccessToken": h.envdToken(record.ID.String()),
-		"startedAt": record.CreatedAt, "endAt": endAt,
-		"state": state, "cpuCount": record.Config.CPUs,
-		"memoryMB": record.Config.Memory / (1 << 20), "diskSizeMB": record.Config.Storage / (1 << 20),
-		"metadata": map[string]string{},
-	})
+	info := sandboxInfo(record, policy)
+	info["envdAccessToken"] = h.envdToken(record.ID.String())
+	jsonResponse(w, http.StatusOK, info)
 }
 
 func (h *handler) kill(w http.ResponseWriter, r *http.Request) {
@@ -511,7 +515,21 @@ func (h *handler) processStart(w http.ResponseWriter, r *http.Request) {
 		failure(w, http.StatusNotImplemented, "unimplemented", "only foreground commands without PTY, stdin or custom cwd are supported")
 		return
 	}
-	command := types.Command{Args: append([]string{input.Process.Cmd}, input.Process.Args...), Env: input.Process.Envs}
+	id, err := types.ParseSandboxID(r.Header.Get("E2b-Sandbox-Id"))
+	if err != nil {
+		failure(w, http.StatusBadRequest, "invalid_argument", err.Error())
+		return
+	}
+	policy, exists, err := h.leases.get(id)
+	if err != nil {
+		serviceFailure(w, err)
+		return
+	}
+	if !exists {
+		failure(w, http.StatusNotFound, "not_found", "E2B sandbox lease not found")
+		return
+	}
+	command := types.Command{Args: append([]string{input.Process.Cmd}, input.Process.Args...), Env: policy.commandEnv(id, input.Process.Envs)}
 	if err := command.Validate(); err != nil {
 		failure(w, http.StatusBadRequest, "invalid_argument", err.Error())
 		return

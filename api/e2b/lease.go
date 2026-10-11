@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,10 +23,22 @@ const defaultTimeout = 300 * time.Second
 // lease is API-owned lifecycle policy. Native KumaBox sandboxes have no lease.
 // Keeping it outside the sandbox aggregate avoids changing its state machine.
 type lease struct {
+	TemplateID        string             `json:"template_id,omitempty"`
+	Metadata          map[string]string  `json:"metadata,omitempty"`
+	EnvVars           map[string]string  `json:"env_vars,omitempty"`
 	ExpiresAt         time.Time          `json:"expires_at"`
 	AutoPause         bool               `json:"auto_pause,omitempty"`
 	PausedSnapshot    types.SnapshotID   `json:"paused_snapshot,omitempty"`
 	RetainedSnapshots []types.SnapshotID `json:"retained_snapshots,omitempty"`
+}
+
+// commandEnv applies defaults to SDK-started processes, not the guest's system
+// services. Per-command values override defaults without changing the lease.
+func (p lease) commandEnv(id types.SandboxID, overrides map[string]string) map[string]string {
+	env := map[string]string{"E2B_SANDBOX": "true", "E2B_SANDBOX_ID": id.String(), "E2B_TEMPLATE_ID": p.TemplateID}
+	maps.Copy(env, p.EnvVars)
+	maps.Copy(env, overrides)
+	return env
 }
 
 // leaseStore persists E2B deadlines independently of the HTTP process. The

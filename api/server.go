@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
@@ -308,6 +309,16 @@ func (h *handler) execSandbox(w http.ResponseWriter, r *http.Request) {
 		invalidRequest(w, fmt.Errorf("stdin must be base64: %w", err))
 		return
 	}
+	ctx := r.Context()
+	if request.TimeoutMS != nil {
+		if *request.TimeoutMS <= 0 || *request.TimeoutMS > 86_400_000 {
+			invalidRequest(w, errors.New("timeout_ms must be between 1 and 86400000"))
+			return
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(*request.TimeoutMS)*time.Millisecond)
+		defer cancel()
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeFailure(w, http.StatusInternalServerError, Error{Code: string(errdefs.CodeInternal), Message: "streaming unavailable"})
@@ -321,7 +332,12 @@ func (h *handler) execSandbox(w http.ResponseWriter, r *http.Request) {
 	shared := &sync.Mutex{}
 	stdout := &eventWriter{mu: shared, encoder: encoder, flusher: flusher, stream: "stdout"}
 	stderr := &eventWriter{mu: shared, encoder: encoder, flusher: flusher, stream: "stderr"}
-	exitCode, runErr := h.services.Sandboxes.Exec(r.Context(), r.PathValue("ref"), command, bytes.NewReader(input), stdout, stderr)
+	exitCode, runErr := h.services.Sandboxes.Exec(ctx, r.PathValue("ref"), command, bytes.NewReader(input), stdout, stderr)
+	// A closed agent transport can report an I/O error during cancellation.
+	// The request deadline is authoritative for the terminal API event.
+	if ctx.Err() != nil {
+		runErr = ctx.Err()
+	}
 	shared.Lock()
 	defer shared.Unlock()
 	if runErr != nil {
@@ -334,6 +350,12 @@ func (h *handler) execSandbox(w http.ResponseWriter, r *http.Request) {
 }
 
 func errorForStream(err error) Error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return Error{Code: "COMMAND_TIMEOUT", Message: "guest command execution deadline exceeded"}
+	}
+	if errors.Is(err, context.Canceled) {
+		return Error{Code: "COMMAND_CANCELED", Message: "guest command request canceled"}
+	}
 	var classified *errdefs.Error
 	if errors.As(err, &classified) {
 		return Error{Code: string(classified.Code), Message: err.Error(), Committed: classified.Committed}

@@ -97,6 +97,9 @@ type ExecRequest struct {
 	Args  []string          `json:"args"`
 	Env   map[string]string `json:"env,omitempty"`
 	Stdin string            `json:"stdin,omitempty"`
+	// TimeoutMS bounds guest execution, including connecting to the agent.
+	// Omission preserves the request's existing cancellation/deadline policy.
+	TimeoutMS *int64 `json:"timeout_ms,omitempty"`
 }
 
 // ExecEvent is one NDJSON output frame. Data is base64 for lossless byte streams.

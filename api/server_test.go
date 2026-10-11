@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
@@ -20,12 +21,13 @@ import (
 const testToken = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 type fakeSandboxes struct {
-	create  func(CreateSandboxInput) (types.Sandbox, error)
-	exec    func(types.Command, io.Writer, io.Writer) (int, error)
-	record  types.Sandbox
-	stops   int
-	removes int
-	input   []byte
+	create      func(CreateSandboxInput) (types.Sandbox, error)
+	exec        func(types.Command, io.Writer, io.Writer) (int, error)
+	execContext func(context.Context) (int, error)
+	record      types.Sandbox
+	stops       int
+	removes     int
+	input       []byte
 }
 
 func (f *fakeSandboxes) Create(_ context.Context, req CreateSandboxInput) (types.Sandbox, error) {
@@ -54,9 +56,12 @@ func (f *fakeSandboxes) Remove(context.Context, string) (types.Sandbox, error) {
 	return f.record, nil
 }
 
-func (f *fakeSandboxes) Exec(_ context.Context, _ string, cmd types.Command, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+func (f *fakeSandboxes) Exec(ctx context.Context, _ string, cmd types.Command, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	if stdin != nil {
 		f.input, _ = io.ReadAll(stdin)
+	}
+	if f.execContext != nil {
+		return f.execContext(ctx)
 	}
 	return f.exec(cmd, stdout, stderr)
 }
@@ -216,6 +221,73 @@ func TestExecFramesRemainValidWithConcurrentWriters(t *testing.T) {
 	}
 	if count != 41 {
 		t.Fatalf("frames = %d, want 41", count)
+	}
+}
+
+func TestExecDeadlinesAndCancellation(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		body           string
+		parentDeadline bool
+		cancelParent   bool
+		code           string
+	}{
+		{"execution deadline", `{"args":["sleep","10"],"timeout_ms":5}`, false, false, "COMMAND_TIMEOUT"},
+		{"parent deadline", `{"args":["sleep","10"],"timeout_ms":86400000}`, true, false, "COMMAND_TIMEOUT"},
+		{"client cancellation", `{"args":["sleep","10"]}`, false, true, "COMMAND_CANCELED"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			parent := context.Background()
+			var cancel context.CancelFunc
+			if test.parentDeadline {
+				parent, cancel = context.WithTimeout(parent, 5*time.Millisecond)
+			} else {
+				parent, cancel = context.WithCancel(parent)
+			}
+			defer cancel()
+			if test.cancelParent {
+				cancel()
+			}
+			called := false
+			handler := testHandler(t, &fakeSandboxes{execContext: func(ctx context.Context) (int, error) {
+				called = true
+				select {
+				case <-ctx.Done():
+					// Agent transport closure may surface as I/O rather than ctx.Err.
+					return 0, io.ErrClosedPipe
+				case <-time.After(time.Second):
+					t.Fatal("request cancellation did not reach execution")
+					return 0, nil
+				}
+			}})
+			request := apiRequest("POST", "/v1/sandboxes/test/exec", test.body, testToken).WithContext(parent)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			var terminal ExecEvent
+			if err := json.Unmarshal(response.Body.Bytes(), &terminal); err != nil {
+				t.Fatal(err)
+			}
+			if !called || response.Code != http.StatusOK || terminal.ExitCode != nil || terminal.Error == nil || terminal.Error.Code != test.code {
+				t.Fatalf("terminal event = %+v, body = %s", terminal, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestExecRejectsInvalidTimeoutBeforeExecution(t *testing.T) {
+	for _, raw := range []string{"0", "-1", "86400001", "9223372036854775807", "1.5"} {
+		t.Run(raw, func(t *testing.T) {
+			called := false
+			handler := testHandler(t, &fakeSandboxes{execContext: func(context.Context) (int, error) {
+				called = true
+				return 0, nil
+			}})
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, apiRequest("POST", "/v1/sandboxes/test/exec", `{"args":["true"],"timeout_ms":`+raw+`}`, testToken))
+			if response.Code != http.StatusBadRequest || called {
+				t.Fatalf("status = %d, called = %t", response.Code, called)
+			}
+		})
 	}
 }
 
