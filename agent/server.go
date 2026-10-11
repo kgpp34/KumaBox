@@ -7,18 +7,19 @@ import (
 	"io"
 	"log"
 	"net"
-	"os"
 	"os/exec"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kumabox/kumabox/types"
 )
 
 const processWaitDelay = 2 * time.Second
 
-// Server accepts independent agent sessions. Each connection executes exactly
-// one operation and owns one child-process tree.
+// Server accepts one operation per connection. Foreground commands belong to
+// their connections; detached commands belong to the server's bounded table.
 type Server struct {
 	listener net.Listener
 	logger   *log.Logger
@@ -26,6 +27,8 @@ type Server struct {
 	mu          sync.Mutex
 	connections map[net.Conn]struct{}
 	closed      bool
+	processes   *processManager
+	closeDone   chan struct{}
 }
 
 // NewServer constructs a guest agent around listener. A nil logger discards
@@ -37,11 +40,12 @@ func NewServer(listener net.Listener, logger *log.Logger) (*Server, error) {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
-	return &Server{listener: listener, logger: logger, connections: make(map[net.Conn]struct{})}, nil
+	return &Server{listener: listener, logger: logger, connections: make(map[net.Conn]struct{}), processes: newProcessManager(), closeDone: make(chan struct{})}, nil
 }
 
 // Serve handles sessions until ctx is canceled or the listener fails.
 func (s *Server) Serve(ctx context.Context) error {
+	defer s.Close() //nolint:errcheck // active sessions and process ownership are always released
 	stop := context.AfterFunc(ctx, func() { _ = s.Close() })
 	defer stop()
 
@@ -74,6 +78,9 @@ func (s *Server) Close() error {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
+		if s.closeDone != nil {
+			<-s.closeDone
+		}
 		return nil
 	}
 	s.closed = true
@@ -86,6 +93,12 @@ func (s *Server) Close() error {
 	err := s.listener.Close()
 	for _, connection := range connections {
 		err = errors.Join(err, connection.Close())
+	}
+	if s.processes != nil {
+		s.processes.close()
+	}
+	if s.closeDone != nil {
+		close(s.closeDone)
 	}
 	return err
 }
@@ -104,8 +117,10 @@ func (s *Server) handle(ctx context.Context, connection net.Conn) {
 		return
 	}
 	switch first.Type {
-	case MessageExec:
+	case MessageExec, MessageExecV2:
 		s.runCommand(ctx, connection, decoder, encoder, first)
+	case MessageSpawn, MessageProcesses, MessageSignal, MessageLogs, MessageAttach:
+		s.handleProcess(ctx, connection, decoder, encoder, first)
 	case MessageReseed:
 		if err := reseedGuest(first.Data, first.RegenMachineID); err != nil {
 			_ = encoder.sendError("reseed: %v", err)
@@ -128,30 +143,17 @@ func (s *Server) handle(ctx context.Context, connection net.Conn) {
 }
 
 func (s *Server) runCommand(parent context.Context, connection net.Conn, decoder *Decoder, encoder *Encoder, request Message) {
-	if len(request.Argv) == 0 || request.Argv[0] == "" {
-		_ = encoder.sendError("exec: argv is empty")
+	if err := request.command().Validate(); err != nil {
+		_ = encoder.sendError("exec: %v", err)
 		return
-	}
-	for key, value := range request.Env {
-		if key == "" || strings.ContainsAny(key, "=\x00") || strings.IndexByte(value, 0) >= 0 {
-			_ = encoder.sendError("exec: invalid environment variable %q", key)
-			return
-		}
-	}
-	for _, argument := range request.Argv {
-		if strings.IndexByte(argument, 0) >= 0 {
-			_ = encoder.sendError("exec: command arguments contain a NUL byte")
-			return
-		}
 	}
 
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	command := exec.CommandContext(ctx, request.Argv[0], request.Argv[1:]...) //nolint:gosec // argv comes from the owner-only host channel and is never passed through a shell
-	command.WaitDelay = processWaitDelay
-	configureProcess(command)
-	if len(request.Env) > 0 {
-		command.Env = mergeEnvironment(os.Environ(), request.Env)
+	if err := prepareCommand(command, request); err != nil {
+		_ = encoder.sendError("exec: %v", err)
+		return
 	}
 	input, err := command.StdinPipe()
 	if err != nil {
@@ -166,13 +168,6 @@ func (s *Server) runCommand(parent context.Context, connection net.Conn, decoder
 		_ = encoder.sendError("exec: start %s: %v", request.Argv[0], err)
 		return
 	}
-	if err := encoder.Encode(Message{Type: MessageStarted, PID: command.Process.Pid}); err != nil {
-		cancel()
-		_ = command.Wait()
-		_ = input.Close()
-		return
-	}
-
 	inputDone := make(chan error, 1)
 	go func() {
 		inputErr := receiveInput(ctx, decoder, input)
@@ -181,6 +176,13 @@ func (s *Server) runCommand(parent context.Context, connection net.Conn, decoder
 		}
 		inputDone <- inputErr
 	}()
+	if err := encoder.Encode(Message{Type: MessageStarted, PID: command.Process.Pid}); err != nil {
+		cancel()
+		_ = command.Wait()
+		_ = connection.SetReadDeadline(time.Now())
+		<-inputDone
+		return
+	}
 	waitErr := command.Wait()
 	cancel()
 	_ = connection.SetReadDeadline(time.Now())
@@ -209,6 +211,33 @@ func (s *Server) runCommand(parent context.Context, connection net.Conn, decoder
 	if err := encoder.Encode(Message{Type: MessageExit, ExitCode: exitCode}); err != nil {
 		s.logger.Printf("send command exit: %v", err)
 	}
+}
+
+func (m Message) command() types.Command {
+	return types.Command{Args: m.Argv, Env: m.Env, Cwd: m.Cwd, User: m.User}
+}
+
+// prepareCommand is shared by foreground and detached execution. Identity is
+// configured using OS credentials, never a shell or su wrapper. Explicit env
+// overrides take precedence over the selected user's HOME/USER/LOGNAME.
+func prepareCommand(command *exec.Cmd, request Message) error {
+	if err := request.command().Validate(); err != nil {
+		return err
+	}
+	configureProcess(command)
+	command.WaitDelay = processWaitDelay
+	command.Dir = request.Cwd
+	defaults, err := configureIdentity(command, request.User)
+	if err != nil {
+		return fmt.Errorf("select guest user: %w", err)
+	}
+	if len(defaults) > 0 {
+		command.Env = mergeEnvironment(command.Environ(), defaults)
+	}
+	if len(request.Env) > 0 {
+		command.Env = mergeEnvironment(command.Environ(), request.Env)
+	}
+	return nil
 }
 
 // mergeEnvironment removes inherited values that the request overrides and
@@ -250,7 +279,10 @@ func receiveInput(ctx context.Context, decoder *Decoder, input io.WriteCloser) e
 		}
 		switch message.Type {
 		case MessageStdinClose:
-			return nil
+			if inputOpen {
+				_ = input.Close()
+				inputOpen = false
+			}
 		case MessageStdin:
 			if len(message.Data) == 0 || !inputOpen {
 				continue

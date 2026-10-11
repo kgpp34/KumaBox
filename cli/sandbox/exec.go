@@ -29,16 +29,24 @@ func (e *commandExitError) Silent() bool  { return true }
 func NewExecCommand(configuration configProvider) *cobra.Command {
 	var environment []string
 	var interactive bool
+	var detach, asJSON bool
+	var cwd, user string
 	command := &cobra.Command{
 		Use:   "exec [flags] SANDBOX -- COMMAND [ARGS...]",
 		Short: "run a command inside a running sandbox",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
+			if detach && interactive {
+				return invalidFlag("detach", errors.New("cannot be combined with --interactive; background stdin is closed"))
+			}
+			if asJSON && !detach {
+				return invalidFlag("json", errors.New("requires --detach"))
+			}
 			environmentMap, err := parseEnvironment(environment)
 			if err != nil {
 				return invalidFlag("env", err)
 			}
-			invocation := types.Command{Args: append([]string(nil), args[1:]...), Env: environmentMap}
+			invocation := types.Command{Args: append([]string(nil), args[1:]...), Env: environmentMap, Cwd: cwd, User: user}
 			if err := invocation.Validate(); err != nil {
 				return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
 			}
@@ -54,6 +62,17 @@ func NewExecCommand(configuration configProvider) *cobra.Command {
 					Action:    "retry the command",
 				}))
 			}()
+			if detach {
+				process, err := service.Spawn(command.Context(), args[0], invocation)
+				if err != nil {
+					return err
+				}
+				if asJSON {
+					return writeProcessJSON(command.OutOrStdout(), process)
+				}
+				_, err = fmt.Fprintln(command.OutOrStdout(), process.ID)
+				return err
+			}
 			var input io.Reader
 			if interactive {
 				input = command.InOrStdin()
@@ -70,6 +89,10 @@ func NewExecCommand(configuration configProvider) *cobra.Command {
 	}
 	command.Flags().StringArrayVarP(&environment, "env", "e", nil, "set a guest environment variable in KEY=VALUE form (repeatable)")
 	command.Flags().BoolVarP(&interactive, "interactive", "i", false, "attach stdin to the guest command")
+	command.Flags().StringVar(&cwd, "cwd", "", "absolute guest working directory")
+	command.Flags().StringVarP(&user, "user", "u", "", "existing guest username or numeric UID")
+	command.Flags().BoolVarP(&detach, "detach", "d", false, "start an agent-owned background command and print its process ID")
+	command.Flags().BoolVar(&asJSON, "json", false, "print background process information as JSON (requires --detach)")
 	return command
 }
 

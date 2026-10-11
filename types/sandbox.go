@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -279,10 +280,20 @@ type Command struct {
 	Args []string
 	// Env contains caller-provided environment overrides by variable name.
 	Env map[string]string
+	// Cwd selects an absolute guest working directory. Empty inherits the agent's directory.
+	Cwd string
+	// User selects an existing guest username or numeric UID. Empty inherits the agent identity.
+	User string
 }
 
 // Validate rejects malformed commands before a guest-agent connection opens.
 func (c Command) Validate() error {
+	if c.Cwd != "" && (!filepath.IsAbs(c.Cwd) || strings.IndexByte(c.Cwd, 0) >= 0) {
+		return errors.New("working directory must be an absolute path without NUL bytes")
+	}
+	if strings.ContainsAny(c.User, ":\x00\r\n") {
+		return errors.New("user must be a guest username or UID without ':' or control characters")
+	}
 	if len(c.Args) == 0 || c.Args[0] == "" {
 		return errors.New("COMMAND must not be empty")
 	}

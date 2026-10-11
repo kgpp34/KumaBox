@@ -70,3 +70,25 @@ func TestExecCommandRejectsEnvironmentBeforeOpeningService(t *testing.T) {
 		t.Fatalf("exec error code = %q, %v", code, ok)
 	}
 }
+
+func TestExecRejectsInvalidProcessOptionsBeforeOpeningService(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		flags []string
+	}{
+		{name: "relative cwd", flags: []string{"--cwd", "relative"}},
+		{name: "user group syntax", flags: []string{"--user", "user:group"}},
+		{name: "detached stdin", flags: []string{"--detach", "--interactive"}},
+		{name: "foreground JSON", flags: []string{"--json"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			command := NewExecCommand(func() config.Config { t.Fatal("invalid request opened metadata"); return config.Config{} })
+			args := append([]string{"box"}, test.flags...)
+			command.SetArgs(append(args, "--", "true"))
+			command.SilenceUsage, command.SilenceErrors = true, true
+			if err := command.ExecuteContext(t.Context()); err == nil {
+				t.Fatal("invalid command accepted")
+			}
+		})
+	}
+}

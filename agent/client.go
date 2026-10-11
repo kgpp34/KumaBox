@@ -25,15 +25,24 @@ func Run(ctx context.Context, connection io.ReadWriteCloser, command types.Comma
 
 	encoder := NewEncoder(connection)
 	decoder := NewDecoder(connection)
-	if err := encoder.Encode(Message{Type: MessageExec, Argv: command.Args, Env: command.Env}); err != nil {
+	kind := MessageExec
+	if command.Cwd != "" || command.User != "" {
+		kind = MessageExecV2
+	}
+	if err := encoder.Encode(Message{Type: kind, Argv: command.Args, Env: command.Env, Cwd: command.Cwd, User: command.User}); err != nil {
 		return 0, fmt.Errorf("send exec frame: %w", err)
 	}
 
 	var inputError atomic.Pointer[error]
 	if stdin == nil {
-		if err := encoder.Encode(Message{Type: MessageStdinClose}); err != nil {
-			return 0, fmt.Errorf("close guest stdin: %w", err)
-		}
+		// Read responses concurrently: a validation/start failure can arrive
+		// before the guest begins reading stdin, even on an unbuffered transport.
+		inputDone := make(chan struct{})
+		go func() {
+			defer close(inputDone)
+			_ = encoder.Encode(Message{Type: MessageStdinClose})
+		}()
+		defer func() { _ = connection.Close(); <-inputDone }()
 	} else {
 		go sendInput(stdin, encoder, &inputError, cancel)
 	}

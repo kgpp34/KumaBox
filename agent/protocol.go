@@ -12,6 +12,8 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+
+	"github.com/kumabox/kumabox/types"
 )
 
 const (
@@ -20,6 +22,17 @@ const (
 
 	// MessageExec starts one command session.
 	MessageExec = "exec"
+	// MessageExecV2 prevents old agents silently ignoring cwd or user selection.
+	MessageExecV2 = "exec_v2"
+	// Background commands are owned by the agent rather than their connection.
+	MessageSpawn     = "spawn"
+	MessageProcesses = "processes"
+	MessageProcess   = "process"
+	MessageSignal    = "signal"
+	MessageLogs      = "process_logs"
+	MessageAttach    = "process_attach"
+	MessageGap       = "output_gap"
+	MessageDone      = "done"
 	// MessageReseed mixes fresh host entropy into the guest random pool.
 	MessageReseed = "reseed"
 	// MessageConfigureNetwork applies host-assigned guest identity and NIC settings.
@@ -54,7 +67,17 @@ type Message struct {
 	// Argv contains the executable and arguments for MessageExec.
 	Argv []string `json:"argv,omitempty"`
 	// Env contains environment overrides for MessageExec.
-	Env map[string]string `json:"env,omitempty"`
+	Env  map[string]string `json:"env,omitempty"`
+	Cwd  string            `json:"cwd,omitempty"`
+	User string            `json:"user,omitempty"`
+	// ProcessID is an opaque agent-owned handle, distinct from the OS PID.
+	ProcessID string              `json:"process_id,omitempty"`
+	Signal    types.ProcessSignal `json:"signal,omitempty"`
+	Process   *types.ProcessInfo  `json:"process,omitempty"`
+	// Cursor identifies an output frame; requests resume strictly after it.
+	Cursor uint64 `json:"cursor,omitempty"`
+	// Code classifies new operation failures without parsing diagnostic text.
+	Code string `json:"code,omitempty"`
 	// Data carries stdin, stdout, stderr, or entropy bytes.
 	Data []byte `json:"data,omitempty"`
 	// PID identifies a process reported by MessageStarted.
@@ -131,7 +154,7 @@ func (e *Encoder) sendError(format string, args ...any) error {
 }
 
 func terminalMessage(messageType string) bool {
-	return messageType == MessageExit || messageType == MessageError
+	return messageType == MessageExit || messageType == MessageError || messageType == MessageDone
 }
 
 // framedWriter converts process output writes into bounded protocol frames.

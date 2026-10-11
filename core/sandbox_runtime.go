@@ -664,28 +664,14 @@ func (s *SandboxService) Exec(ctx context.Context, reference string, command typ
 	if err := command.Validate(); err != nil {
 		return 0, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
 	}
-	backend, process, err := s.locateRunning(ctx, reference, "execute sandbox command")
+	exitCode := 0
+	err := s.withGuestAgent(ctx, reference, "execute sandbox command", func(connection io.ReadWriteCloser) error {
+		var err error
+		exitCode, err = agent.Run(ctx, connection, command, stdin, stdout, stderr)
+		return err
+	})
 	if err != nil {
 		return 0, err
-	}
-	connection, err := backend.DialVsock(ctx, process, agent.Port)
-	if err != nil {
-		return 0, errdefs.WithContext(err, errdefs.ContextInfo{
-			Operation: "execute sandbox command",
-			Entity:    reference,
-			Phase:     "connect guest agent",
-			Action:    "the guest agent may still be starting; retry shortly or inspect its service",
-		})
-	}
-	defer connection.Close() //nolint:errcheck // closing a completed read/write session cannot change the guest command result
-	exitCode, err := agent.Run(ctx, connection, command, stdin, stdout, stderr)
-	if err != nil {
-		return 0, errdefs.WithContext(err, errdefs.ContextInfo{
-			Operation: "execute sandbox command",
-			Entity:    reference,
-			Phase:     "run guest command",
-			Action:    "inspect the guest agent and retry",
-		})
 	}
 	return exitCode, nil
 }

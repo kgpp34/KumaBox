@@ -42,7 +42,7 @@ Each sandbox is a real machine:
 - **Hardware isolation.** A dedicated guest kernel behind KVM, with one Cloud Hypervisor process per VM.
 - **OCI in, microVM out.** Digest-pinned OCI images become shared, read-only EROFS layers plus a private copy-on-write disk per VM.
 - **Real networking.** A network namespace per VM, multiqueue TAP and CNI, with multiple NICs at creation.
-- **Guest execution without SSH.** `exec` over vsock with streamed stdout and stderr, optional stdin and environment variables, and real exit codes.
+- **Guest execution without SSH.** `exec` over vsock with streamed stdout and stderr, optional stdin, environment, working directory and guest user. Detached commands remain manageable after disconnect through `process ls/kill/logs/attach`.
 - **Snapshots as first-class artifacts.** Save a running VM, restore or hibernate it, clone it with a fresh network identity, or export and import it as a portable archive.
 - **Runtime devices.** Attach external raw disks, virtio-fs shares and VFIO PCI devices to a running Cloud Hypervisor VM.
 - **Built to be scripted.** Lifecycle commands offer JSON output and `inspect` returns indented JSON.
@@ -161,6 +161,38 @@ sudo kumabox rm share-vm
 current VM process; after stop or restart, start a fresh `virtiofsd` and attach
 again. Unmount and detach it before `snapshot save` or `hibernate`.
 
+### Background commands
+
+These commands require a guest image containing the updated `kumabox-agent`;
+upgrading only the host binary does not upgrade an existing guest. Older agents
+reject execution options they cannot honor instead of silently ignoring the
+requested user or working directory.
+
+```bash
+sudo kumabox exec --cwd /tmp --user root my-vm -- pwd
+process_id=$(sudo kumabox exec --detach --cwd /tmp my-vm -- sh -c \
+  'echo started; sleep 10; echo finished')
+sudo kumabox process ls my-vm --json
+sudo kumabox process logs my-vm "$process_id"
+sudo kumabox process attach my-vm "$process_id"
+sudo kumabox process ls my-vm --all --json
+```
+
+`process attach` replays retained output and follows until the command exits;
+Ctrl-C detaches without killing it. `process kill my-vm "$process_id"` sends
+TERM; `--signal KILL` forces termination. On Linux signals target the command's
+process group. Background stdin is closed, and attach is output-only, not a PTY.
+When the command exits, remaining members of its process group are terminated.
+Use an existing guest username or UID with `--user`; this does not create users.
+
+Each guest agent allows 64 running background commands and retains at most 128
+process records, evicting the oldest exited records when needed. Each command
+retains up to 256 KiB / 256 output frames; overwritten output is reported
+explicitly. These records are in guest memory, not a durable host task database.
+Graceful agent shutdown terminates its commands; a restart clears the table. If a
+spawn response is lost, list commands before retrying: the command may already
+be running. SDK and HTTP process-management endpoints are not included yet.
+
 ### Drive it from an agent
 
 `exec` streams guest output and preserves the guest command's exit code.
@@ -266,7 +298,7 @@ compatibility**.
 | Area | Commands |
 | --- | --- |
 | VM lifecycle | `run`, `create`, `start`, `stop`, `rm`, `ps`, `inspect` |
-| Guest access | `exec`, `console`, `logs`, `reseed` |
+| Guest access | `exec`, `console`, `logs`, `reseed`, `process ls/kill/logs/attach` |
 | Images | `image pull`, `image import`, `image inspect`, `image ls`, `image verify`, `image remove` |
 | Snapshots | `snapshot save`, `snapshot ls`, `snapshot inspect`, `snapshot export`, `snapshot import`, `snapshot rm`, `restore`, `clone`, `hibernate` |
 | Network and devices | `net`, `disk attach/detach`, `fs attach/detach/list`, `device attach/detach` |
