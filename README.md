@@ -228,7 +228,7 @@ Recursive removal requires `--recursive`, does not follow final symlinks, and
 rejects the root directory. These operations run with the guest agent's authority
 and can access mounts shared into the guest. SDK/HTTP file endpoints are unchanged.
 
-On a Linux/KVM host, test an imported image containing the current agent with:
+On a Linux/KVM host, test an imported Ubuntu/systemd image containing the current agent with:
 
 ```bash
 sudo python3 tests/e2e/guest_operations.py \

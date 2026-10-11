@@ -110,7 +110,7 @@ func WriteFile(ctx context.Context, connection io.ReadWriteCloser, path string, 
 	if input == nil {
 		return errors.New("file write requires an input reader")
 	}
-	closeIO := func() { _ = input.Close(); _ = connection.Close() }
+	closeIO := func() { _ = connection.Close(); _ = input.Close() }
 	stop := context.AfterFunc(ctx, closeIO)
 	defer stop()
 	defer closeIO()

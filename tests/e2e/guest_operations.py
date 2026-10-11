@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise guest files and background commands through a real Linux/KVM VM.
 
-Run as root with an already imported image containing the current guest agent.
+Run as root with an imported Ubuntu/systemd image containing the current agent.
 Only sandboxes created by this invocation are stopped and removed. Use dedicated
 --root-dir/--run-dir/--log-dir to isolate metadata from normal workloads.
 """
@@ -244,13 +244,17 @@ class GuestTests:
         self.call("process", "kill", self.name, "123", expect=None)
 
     def restart_persists_files(self):
+        # Ubuntu intentionally clears /tmp on every boot. Persistence belongs
+        # on the sandbox's writable root filesystem outside temporary paths.
+        persistent = "/root/kumabox-agent-e2e-persistent"
+        self.file("write", persistent, data=b"persisted")
         self.call("stop", self.name, "--json")
-        self.file("read", self.workspace + "/target", expect=None)
+        self.file("read", persistent, expect=None)
         self.call("start", self.name, "--json")
         deadline = time.monotonic() + 60
         while True:
             try:
-                assert self.file("read", self.workspace + "/target", timeout=5) == b"source"
+                assert self.file("read", persistent, timeout=5) == b"persisted"
                 break
             except (RuntimeError, subprocess.TimeoutExpired):
                 if time.monotonic() >= deadline:

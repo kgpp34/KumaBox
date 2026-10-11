@@ -7,9 +7,11 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"sync"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/unix"
 
 	"github.com/kumabox/kumabox/core"
 	"github.com/kumabox/kumabox/types"
@@ -82,7 +84,11 @@ func newFileWrite(configuration configProvider) *cobra.Command {
 				options.Mode = &value
 			}
 			return withGuestService(command, configuration, func(service *core.SandboxService) error {
-				input, err := fileInput(command, args)
+				source := "-"
+				if len(args) > 2 {
+					source = args[2]
+				}
+				input, err := fileInput(command, source)
 				if err != nil {
 					return err
 				}
@@ -96,14 +102,62 @@ func newFileWrite(configuration configProvider) *cobra.Command {
 	return command
 }
 
-func fileInput(command *cobra.Command, args []string) (io.ReadCloser, error) {
-	if len(args) == 3 && args[2] != "-" {
-		return os.Open(args[2]) //nolint:gosec // explicit owner-selected local upload source
+func fileInput(command *cobra.Command, source string) (io.ReadCloser, error) {
+	if source != "-" {
+		return os.Open(source) //nolint:gosec // explicit owner-selected local upload source
+	}
+	if input, ok := command.InOrStdin().(*os.File); ok {
+		return pollableFileInput(input)
 	}
 	if input, ok := command.InOrStdin().(io.ReadCloser); ok {
 		return input, nil
 	}
 	return io.NopCloser(command.InOrStdin()), nil
+}
+
+// uploadInput owns a pollable duplicate of inherited stdin. Unlike an os.File
+// created around a blocking inherited fd, Close can interrupt its pending Read.
+// Descriptor flags are shared with stdin and are restored after the read stops.
+type uploadInput struct {
+	*os.File
+	once     sync.Once
+	restore  func() error
+	closeErr error
+}
+
+func (input *uploadInput) Close() error {
+	input.once.Do(func() {
+		input.closeErr = errors.Join(input.File.Close(), input.restore())
+	})
+	return input.closeErr
+}
+
+func pollableFileInput(source *os.File) (io.ReadCloser, error) {
+	raw, err := source.SyscallConn()
+	if err != nil {
+		return nil, err
+	}
+	descriptor, flags := -1, 0
+	var controlErr error
+	err = raw.Control(func(fd uintptr) {
+		flags, controlErr = unix.FcntlInt(fd, unix.F_GETFL, 0)
+		if controlErr == nil {
+			descriptor, controlErr = unix.FcntlInt(fd, unix.F_DUPFD_CLOEXEC, 0)
+		}
+	})
+	if err := errors.Join(err, controlErr); err != nil {
+		return nil, err
+	}
+	if err := unix.SetNonblock(descriptor, true); err != nil {
+		return nil, errors.Join(err, unix.Close(descriptor))
+	}
+	input := &uploadInput{File: os.NewFile(uintptr(descriptor), source.Name())}
+	input.restore = func() error {
+		var restoreErr error
+		err := raw.Control(func(fd uintptr) { _, restoreErr = unix.FcntlInt(fd, unix.F_SETFL, flags) })
+		return errors.Join(err, restoreErr)
+	}
+	return input, nil
 }
 
 func newFileMutation(configuration configProvider, verb string) *cobra.Command {

@@ -4,8 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/types"
@@ -31,6 +36,64 @@ func TestFileCLIRejectsInvalidPathsBeforeOpeningService(t *testing.T) {
 		if err := command.ExecuteContext(t.Context()); err == nil {
 			t.Errorf("accepted %v", args)
 		}
+	}
+}
+
+func TestFileUploadInheritedStdinCanBeCancelled(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close() //nolint:errcheck
+	defer writer.Close() //nolint:errcheck
+	// Fd returns a blocking descriptor, matching stdin inherited from a shell.
+	fd := reader.Fd()
+	before, err := unix.FcntlInt(fd, unix.F_GETFL, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := NewFileCommand(nil)
+	command.SetIn(reader)
+	input, err := fileInput(command, "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close() //nolint:errcheck
+	deadline, ok := input.(interface{ SetReadDeadline(time.Time) error })
+	if !ok {
+		t.Fatal("inherited stdin has no cancellable read")
+	}
+	if err := deadline.SetReadDeadline(time.Now()); err != nil {
+		t.Fatalf("inherited stdin still performs blocking syscalls: %v", err)
+	}
+	_, err = input.Read(make([]byte, 1))
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("read deadline = %v", err)
+	}
+	if err := deadline.SetReadDeadline(time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := io.Copy(io.Discard, input); done <- err }()
+	closed := make(chan error, 1)
+	go func() { closed <- input.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		_ = writer.Close()
+		t.Fatal("close did not cancel inherited stdin")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("cancelled stdin reader leaked")
+	}
+	after, err := unix.FcntlInt(fd, unix.F_GETFL, 0)
+	if err != nil || after != before {
+		t.Fatalf("stdin flags not restored: before=%d after=%d err=%v", before, after, err)
 	}
 }
 

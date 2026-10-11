@@ -183,7 +183,7 @@ sudo kumabox file rm my-vm /tmp/workspace --recursive
 递归删除需要显式传入 `--recursive`，不跟随最终符号链接，禁止以根目录为删除目标。
 操作使用 guest agent 的权限，也能访问共享进 guest 的挂载点。本批未修改 SDK 和 HTTP API。
 
-在 Linux/KVM 主机上，可针对已导入、包含最新 agent 的镜像运行端到端测试：
+在 Linux/KVM 主机上，可针对已导入、使用 systemd 且包含最新 agent 的 Ubuntu 镜像运行端到端测试：
 
 ```bash
 sudo python3 tests/e2e/guest_operations.py \
