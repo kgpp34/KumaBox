@@ -153,6 +153,7 @@ func newRootCommand() (*cobra.Command, error) {
 	root.AddCommand(sandboxcmd.NewExecCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewProcessCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewFileCommand(provideConfig))
+	root.AddCommand(sandboxcmd.NewForwardCommand(provideConfig))
 	root.AddCommand(snapshotcmd.NewHibernateCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewInspectCommand(provideConfig))
 	root.AddCommand(sandboxcmd.NewListCommand(provideConfig))

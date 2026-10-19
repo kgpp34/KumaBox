@@ -117,6 +117,10 @@ func (s *Server) handle(ctx context.Context, connection net.Conn) {
 		return
 	}
 	switch first.Type {
+	case MessagePortForward:
+		if err := servePort(ctx, connection, decoder, encoder, first.Port); err != nil {
+			s.logger.Printf("forward guest port: %v", err)
+		}
 	case MessageExec, MessageExecV2:
 		s.runCommand(ctx, connection, decoder, encoder, first)
 	case MessageSpawn, MessageProcesses, MessageSignal, MessageLogs, MessageAttach:

@@ -119,11 +119,11 @@ func WriteFile(ctx context.Context, connection io.ReadWriteCloser, path string, 
 	}
 	encoder, decoder := NewEncoder(connection), NewDecoder(connection)
 	if err := encoder.Encode(request); err != nil {
-		return fileTransferError(ctx, err)
+		return contextIOError(ctx, err)
 	}
 	ready, err := decoder.Decode()
 	if err != nil {
-		return fileTransferError(ctx, err)
+		return contextIOError(ctx, err)
 	}
 	if ready.Type == MessageError {
 		return &RemoteError{Code: ready.Code, Message: ready.Message}
@@ -160,13 +160,6 @@ func WriteFile(ctx context.Context, connection io.ReadWriteCloser, path string, 
 		return fmt.Errorf("unexpected file completion %q", response.Type)
 	}
 	return nil
-}
-
-func fileTransferError(ctx context.Context, err error) error {
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	return err
 }
 
 func sendFile(encoder *Encoder, input io.Reader) error {

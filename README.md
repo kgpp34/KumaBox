@@ -193,6 +193,40 @@ Graceful agent shutdown terminates its commands; a restart clears the table. If 
 spawn response is lost, list commands before retrying: the command may already
 be running. SDK and HTTP process-management endpoints are not included yet.
 
+### Forward a guest service
+
+`forward` connects a host loopback TCP port to `127.0.0.1` inside a running
+sandbox through vsock. It works with `--nics 0` as well as networked guests.
+For example, with Python installed in the guest:
+
+```bash
+sudo kumabox exec --detach my-vm -- python3 -m http.server 8000 --bind 127.0.0.1
+sudo kumabox forward my-vm 8080:8000
+# In another host terminal:
+curl http://127.0.0.1:8080/
+```
+
+HTTP, WebSocket and other TCP protocols pass through unchanged, including TCP
+half-close. TCP writes stalled for 30 seconds close the connection; otherwise
+idle connections have no timeout. Ctrl-C closes the listener and its active connections, leaving the
+guest service running. A stopped VM closes active streams; the listener stays
+available for the same sandbox ID after restart. Removing and recreating a
+sandbox under the same name does not redirect an existing forward to the new VM.
+
+Use `0:8000 --json` to allocate a free local port and print its address, or
+`--address ::1` for an IPv6 host loopback listener. Listening is restricted to
+loopback IPs, with at most 64 simultaneous connections per command. The initial
+message confirms the host listener; guest-service connection errors are reported
+on stderr per connection. The image must contain the updated agent. Existing
+images need rebuilding or updating; replacing only the host binary is insufficient.
+
+On a Linux/KVM test host, an image containing Python 3 and the matching agent
+can run the HTTP, WebSocket, concurrency, half-close and cleanup checks with:
+
+```bash
+sudo python3 tests/e2e/port_forward.py --image my-updated-image --commit AGENT_BUILD_ID
+```
+
 ### Guest files
 
 The `file` commands require a running sandbox with the updated guest agent.
@@ -330,24 +364,22 @@ await sandbox.stop()
 await sandbox.kill()
 ```
 
-An **experimental E2B protocol adapter** also accepts control-plane create,
-connect, inspect, kill and snapshot calls (including creating a sandbox from a
-saved snapshot), plus foreground `commands.run` over envd's
-Connect JSON process stream. Point `E2B_API_URL` and `E2B_SANDBOX_URL` at the
-same tunneled API URL and set `E2B_API_KEY` to the server token. An E2B
-`templateID` is interpreted as a local KumaBox image reference; import an image
-with alias `base` for E2B's default `Sandbox.create()`. The adapter currently
-rejects TTL, metadata, environment setup, custom network policy, MCP, IAM,
-volume mounts, PTY, stdin and background process options. E2B filesystem,
-filesystem-only snapshots and pause/resume are not implemented yet, so this is **not full E2B SDK
-compatibility**.
+An **experimental E2B protocol adapter** also accepts create, connect, inspect,
+list, kill and snapshot calls, foreground commands, regular-file read/write,
+metadata, environment defaults, TTL and pause/resume. Point `E2B_API_URL` and
+`E2B_SANDBOX_URL` at the same tunneled API URL and set `E2B_API_KEY` to the server
+token. An E2B `templateID` refers to a local image or saved snapshot; import an
+image with alias `base` for the default `Sandbox.create()`. This is **not full
+E2B SDK compatibility**: native CLI process management and forwarding are not
+exposed through that adapter. See the [adapter's supported calls and limits](api/e2b/README.md)
+for the tested protocol versions and remaining gaps.
 
 ## Core commands
 
 | Area | Commands |
 | --- | --- |
 | VM lifecycle | `run`, `create`, `start`, `stop`, `rm`, `ps`, `inspect` |
-| Guest access | `exec`, `console`, `logs`, `reseed`, `process ls/kill/logs/attach` |
+| Guest access | `exec`, `console`, `logs`, `forward`, `reseed`, `process ls/kill/logs/attach` |
 | Guest files | `file ls/stat/read/write/mkdir/rm/mv` |
 | Images | `image pull`, `image import`, `image inspect`, `image ls`, `image verify`, `image remove` |
 | Snapshots | `snapshot save`, `snapshot ls`, `snapshot inspect`, `snapshot export`, `snapshot import`, `snapshot rm`, `restore`, `clone`, `hibernate` |

@@ -240,6 +240,34 @@ sudo kumabox image import ubuntu-fast /tmp/kumabox-ubuntu-fast.tar --format dock
 快速镜像使用内建驱动的独立内核和 initramfs；需要内核模块或直通驱动的负载仍使用
 通用 Ubuntu 镜像。
 
+## 访问沙箱里的服务
+
+`forward` 通过 vsock 将宿主机回环 TCP 端口转发到沙箱内部的 `127.0.0.1`。
+0 网卡沙箱也可以使用。以安装了 Python 的 guest 为例：
+
+```bash
+sudo kumabox exec --detach my-vm -- python3 -m http.server 8000 --bind 127.0.0.1
+sudo kumabox forward my-vm 8080:8000
+# 在宿主机另一个终端执行：
+curl http://127.0.0.1:8080/
+```
+
+支持 HTTP、WebSocket 和其他 TCP 协议，保留双向半关闭语义。单次 TCP 写入阻塞超过
+30 秒会断开连接；没有数据传输的空闲连接不受此超时限制。Ctrl-C 会关闭本地监听及
+活动连接，guest 服务继续运行。沙箱停止会断开活动连接，本地监听保留，可在同一沙箱重启后
+接受新连接；同名沙箱删除重建后，不会接管原来的转发。
+
+`0:8000 --json` 会分配空闲的本地端口并输出监听地址；`--address ::1` 可监听 IPv6
+回环地址。仅允许回环 IP，每条命令最多同时转发 64 个连接。首次输出表示本地监听已建立，
+不代表 guest 服务已就绪；单个连接失败会写入 stderr。需要包含新版 agent 的镜像，
+只替换宿主机二进制不会升级已有 guest。
+
+包含 Python 3 和对应 agent 的镜像可在 Linux/KVM 测试机运行完整转发测试：
+
+```bash
+sudo python3 tests/e2e/port_forward.py --image my-updated-image --commit AGENT_BUILD_ID
+```
+
 ## 远程 API 与 SDK
 
 `kumabox serve` 将现有服务开放为带令牌认证的 HTTP API，默认只监听
@@ -269,21 +297,20 @@ sandbox.stop()
 sandbox.kill()
 ```
 
-另外提供**实验性的 E2B 协议适配**：控制面支持创建、连接、查询、删除和快照（包括
-从快照创建沙箱），envd 的
-Connect JSON 流支持前台 `commands.run`。将 `E2B_API_URL` 与
-`E2B_SANDBOX_URL` 指向同一个 API 地址，`E2B_API_KEY` 设为服务端令牌。
-E2B 的 `templateID` 对应本地镜像引用；默认 `Sandbox.create()` 需要先把镜像
-导入为 `base`。目前尚不支持 TTL、metadata、环境变量初始化、自定义网络策略、
-MCP、IAM、卷挂载、PTY、stdin、后台进程、E2B 文件系统、仅文件系统快照与暂停/恢复，**不能将其视为
-完整 E2B SDK 兼容**。
+另外提供**实验性的 E2B 协议适配**，支持创建、连接、查询、列表、删除、快照、
+前台命令、普通文件读写、metadata、环境变量默认值、TTL 及暂停恢复。
+将 `E2B_API_URL` 与 `E2B_SANDBOX_URL` 指向同一个 API 地址，`E2B_API_KEY`
+设为服务端令牌。`templateID` 对应本地镜像或已有快照；默认 `Sandbox.create()`
+需要先把镜像导入为 `base`。这仍然**不是完整 E2B SDK 兼容**，本地 CLI 的进程管理
+和端口转发尚未接入该适配层。已验证的协议版本、具体支持范围和限制见
+[E2B 适配说明](api/e2b/README.md)。
 
 ## 常用命令
 
 | 领域 | 命令 |
 | --- | --- |
 | VM 生命周期 | `run`、`create`、`start`、`stop`、`rm`、`ps`、`inspect` |
-| Guest 访问 | `exec`、`console`、`logs`、`reseed` |
+| Guest 访问 | `exec`、`console`、`logs`、`forward`、`reseed`、`process ls/kill/logs/attach` |
 | Guest 文件 | `file ls/stat/read/write/mkdir/rm/mv` |
 | 镜像 | `image pull`、`image import`、`image inspect`、`image ls`、`image verify`、`image remove` |
 | 快照 | `snapshot save`、`snapshot ls`、`snapshot inspect`、`snapshot export`、`snapshot import`、`snapshot rm`、`restore`、`clone`、`hibernate` |

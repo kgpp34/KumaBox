@@ -46,6 +46,11 @@ const (
 	MessageFileData    = "file_data"
 	MessageFileEnd     = "file_end"
 	MessageFileReady   = "file_ready"
+	// Port forwarding carries TCP bytes and independent directional EOFs.
+	MessagePortForward = "port_forward"
+	MessagePortReady   = "port_ready"
+	MessagePortData    = "port_data"
+	MessagePortEnd     = "port_end"
 	// MessageReseed mixes fresh host entropy into the guest random pool.
 	MessageReseed = "reseed"
 	// MessageConfigureNetwork applies host-assigned guest identity and NIC settings.
@@ -76,6 +81,8 @@ var errTerminalMessageSent = errors.New("terminal agent message already sent")
 // Message is the protocol union carried by each NDJSON frame. Fields
 // unrelated to Type remain empty and are omitted from the wire representation.
 type Message struct {
+	// Port is a guest IPv4 loopback TCP port, never a host or arbitrary address.
+	Port uint32 `json:"port,omitempty"`
 	// Path and Destination refer exclusively to paths inside the guest.
 	Path        string           `json:"path,omitempty"`
 	Destination string           `json:"destination,omitempty"`
@@ -253,4 +260,12 @@ func exchange(ctx context.Context, connection io.ReadWriteCloser, request Messag
 			return nil
 		}
 	}
+}
+
+// contextIOError preserves caller cancellation when closing a transport unblocks I/O.
+func contextIOError(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }

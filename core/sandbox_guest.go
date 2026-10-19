@@ -4,11 +4,26 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 
 	"github.com/kumabox/kumabox/agent"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
 )
+
+// ForwardPort relays one local TCP connection to a guest loopback service.
+// It releases the sandbox lock before streaming, allowing stop and removal to
+// proceed. The guest transport is bound to the exact observed VMM generation.
+// After validation local is closed on every return path.
+func (s *SandboxService) ForwardPort(ctx context.Context, reference string, port uint16, local net.Conn) error {
+	if port == 0 || local == nil {
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("a guest TCP port and local connection are required"))
+	}
+	defer local.Close() //nolint:errcheck // connection-scoped operation
+	return s.withGuestAgent(ctx, reference, "forward guest port", func(connection io.ReadWriteCloser) error {
+		return agent.ForwardPort(ctx, connection, port, local)
+	})
+}
 
 // StatFile reads metadata for a guest entry without following its final symlink.
 func (s *SandboxService) StatFile(ctx context.Context, reference, path string) (types.FileInfo, error) {

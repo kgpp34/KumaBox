@@ -85,8 +85,17 @@ class GuestTests:
         # A reachable agent must not race later boot-time /tmp removal.
         assert self.guest("systemctl", "is-active", "systemd-tmpfiles-setup.service").strip() == b"active"
         if nics:
-            assert b"eth0" in self.guest("ip", "-br", "-4", "addr")
-            assert b"default" in self.guest("ip", "-4", "route")
+            # Agent readiness is independent of networkd configuring the NIC.
+            # Wait for the actual network state rather than racing first boot.
+            deadline = time.monotonic() + 15
+            while True:
+                addresses = self.guest("ip", "-br", "-4", "addr")
+                routes = self.guest("ip", "-4", "route")
+                if b"eth0" in addresses and b"default" in routes:
+                    break
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"guest network not ready: addresses={addresses!r}, routes={routes!r}")
+                time.sleep(0.05)
         self.file("mkdir", self.workspace, "--parents")
 
     def round_trip(self):

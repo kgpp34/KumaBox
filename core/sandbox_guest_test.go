@@ -31,6 +31,21 @@ func TestGuestFileRequestsValidateBeforeAccessingRuntime(t *testing.T) {
 	}
 }
 
+func TestForwardPortValidationAndRuntimeFailureCloseLocalConnection(t *testing.T) {
+	var service *SandboxService
+	if err := service.ForwardPort(t.Context(), "box", 0, nil); err == nil {
+		t.Fatal("zero port accepted")
+	}
+	local, peer := net.Pipe()
+	defer func() { _ = peer.Close() }()
+	if err := service.ForwardPort(t.Context(), "box", 80, local); err == nil {
+		t.Fatal("unconfigured runtime accepted")
+	}
+	if _, err := peer.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("local stream was not closed after runtime failure: %v", err)
+	}
+}
+
 func TestGuestFileResolvesLiveGenerationAndMapsRemoteError(t *testing.T) {
 	service, steps := newTestSandboxService(t, nil)
 	_, err := service.Create(t.Context(), CreateSandboxRequest{ImageReference: "demo", Config: types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage}})
