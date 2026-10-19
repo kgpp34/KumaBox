@@ -27,7 +27,7 @@ func (d *Driver) Clone(ctx context.Context, plan vmm.ClonePlan) (vmm.Process, er
 	if err := plan.Validate(); err != nil {
 		return vmm.Process{}, err
 	}
-	if err := d.ValidateRestore(ctx, plan.SnapshotDir); err != nil {
+	if err := d.ValidateRestore(ctx, plan.SnapshotDir, plan.MemoryMode); err != nil {
 		return vmm.Process{}, err
 	}
 	if err := d.paths.Prepare(plan.SandboxID); err != nil {
@@ -58,9 +58,8 @@ func (d *Driver) Clone(ctx context.Context, plan vmm.ClonePlan) (vmm.Process, er
 	if err != nil {
 		return vmm.Process{}, err
 	}
-	memoryMode := d.cloneMemoryMode(ctx, filepath.Join(privateDir, "config.json"))
 	plan.SnapshotDir = privateDir
-	return d.restore(ctx, plan.RestorePlan, memoryMode, func(ctx context.Context, _ string) error {
+	return d.restore(ctx, plan.RestorePlan, func(ctx context.Context, _ string) error {
 		if err := d.swapCloneNets(ctx, apiSocket, oldNets, plan.Network.Interfaces); err != nil {
 			return err
 		}

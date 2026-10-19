@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -173,7 +174,7 @@ func TestRestoreStopsRunningSandboxAndResumesSnapshot(t *testing.T) {
 	accessedAt := capture.LastAccessedAt.Add(time.Hour)
 	service.now = func() time.Time { return accessedAt }
 	*steps = nil
-	record, err := service.Restore(t.Context(), "box", capture.ID.String())
+	record, err := service.RestoreWithOptions(t.Context(), "box", capture.ID.String(), RestoreOptions{MemoryMode: types.MemoryRestoreOnDemand})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +186,7 @@ func TestRestoreStopsRunningSandboxAndResumesSnapshot(t *testing.T) {
 		t.Fatalf("restore access time = %s, %v", updated.LastAccessedAt, err)
 	}
 	plan := testRuntime(t, sandboxService).restorePlan
-	if plan.SandboxID != fixedID || plan.Generation != 7 || plan.SnapshotDir == "" {
+	if plan.SandboxID != fixedID || plan.Generation != 7 || plan.SnapshotDir == "" || plan.MemoryMode != types.MemoryRestoreOnDemand {
 		t.Fatalf("restore plan = %+v", plan)
 	}
 	wantSequence := []string{"stopping", "stop", "stopped", "starting", "restore", "running"}
@@ -197,6 +198,24 @@ func TestRestoreStopsRunningSandboxAndResumesSnapshot(t *testing.T) {
 	}
 	if position != len(wantSequence) {
 		t.Fatalf("restore steps = %v, missing sequence %v", *steps, wantSequence)
+	}
+}
+
+func TestRestoreRejectsUnsupportedMemoryModeBeforeStopping(t *testing.T) {
+	service, sandboxes, steps := newTestSnapshotService(t)
+	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "checkpoint"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, errors.New("unsupported memory mode"))
+	testRuntime(t, sandboxes).validateRestoreErr = failure
+	*steps = nil
+	_, err = service.RestoreWithOptions(t.Context(), "box", capture.ID.String(), RestoreOptions{MemoryMode: types.MemoryRestoreMmap})
+	if !errors.Is(err, failure) {
+		t.Fatalf("restore preflight = %v, want %v", err, failure)
+	}
+	if slices.Contains(*steps, "stop") || slices.Contains(*steps, "starting") {
+		t.Fatalf("unsupported memory mode changed live VM: %v", *steps)
 	}
 }
 

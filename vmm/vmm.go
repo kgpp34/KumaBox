@@ -252,6 +252,9 @@ func (p SnapshotPlan) Validate() error {
 
 // Validate rejects incomplete restore ownership before a process is launched.
 func (p RestorePlan) Validate() error {
+	if err := p.MemoryMode.Validate(); err != nil {
+		return err
+	}
 	if _, err := types.ParseSandboxID(p.SandboxID.String()); err != nil {
 		return err
 	}

@@ -26,3 +26,15 @@ func TestRestoreRejectsAmbiguousSourceBeforeOpeningService(t *testing.T) {
 		}
 	}
 }
+
+func TestRestoreRejectsInvalidMemoryModeBeforeOpeningService(t *testing.T) {
+	command := NewRestoreCommand(func() config.Config {
+		t.Fatal("invalid memory mode opened service")
+		return config.Config{}
+	})
+	command.SetArgs([]string{"box", "checkpoint", "--restore-mode", "invalid"})
+	command.SilenceUsage, command.SilenceErrors = true, true
+	if err := command.ExecuteContext(t.Context()); err == nil || !strings.Contains(err.Error(), "--restore-mode") {
+		t.Fatalf("restore memory mode error = %v", err)
+	}
+}

@@ -36,3 +36,15 @@ func TestCloneValidatesNewDataDiskBeforeOpeningService(t *testing.T) {
 		t.Fatalf("clone data disk error = %v", err)
 	}
 }
+
+func TestCloneRejectsInvalidRestoreModeBeforeOpeningService(t *testing.T) {
+	command := NewCloneCommand(func() config.Config {
+		t.Fatal("invalid memory mode opened service")
+		return config.Config{}
+	})
+	command.SetArgs([]string{"checkpoint", "--name", "copy", "--restore-mode", "invalid"})
+	command.SilenceUsage, command.SilenceErrors = true, true
+	if err := command.ExecuteContext(t.Context()); err == nil || !strings.Contains(err.Error(), "--restore-mode") {
+		t.Fatalf("clone memory mode error = %v", err)
+	}
+}

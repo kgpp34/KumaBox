@@ -7,6 +7,7 @@ import (
 
 	"github.com/kumabox/kumabox/core"
 	"github.com/kumabox/kumabox/errdefs"
+	"github.com/kumabox/kumabox/types"
 )
 
 // NewRestoreCommand builds the top-level native snapshot restore command.
@@ -15,10 +16,14 @@ func NewRestoreCommand(configuration configProvider) *cobra.Command {
 	var fromDir string
 	var force bool
 	var pull bool
+	var memoryMode string
 	command := &cobra.Command{
 		Use:   "restore SANDBOX [SNAPSHOT]",
 		Short: "restore a sandbox to a saved snapshot",
 		Args: func(command *cobra.Command, args []string) error {
+			if err := types.MemoryRestoreMode(memoryMode).Validate(); err != nil {
+				return invalidFlag("restore-mode", err)
+			}
 			if err := cobra.RangeArgs(1, 2)(command, args); err != nil {
 				return err
 			}
@@ -54,7 +59,9 @@ func NewRestoreCommand(configuration configProvider) *cobra.Command {
 					Committed: committed,
 				}))
 			}()
-			record, err := service.RestoreWithOptions(command.Context(), args[0], reference, core.RestoreOptions{SourceDirectory: fromDir, Force: force, Pull: pull})
+			record, err := service.RestoreWithOptions(command.Context(), args[0], reference, core.RestoreOptions{
+				SourceDirectory: fromDir, Force: force, Pull: pull, MemoryMode: types.MemoryRestoreMode(memoryMode),
+			})
 			if err != nil {
 				return err
 			}
@@ -72,6 +79,7 @@ func NewRestoreCommand(configuration configProvider) *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&fromDir, "from-dir", "", "restore from a portable snapshot directory")
+	command.Flags().StringVar(&memoryMode, "restore-mode", "auto", "memory loading: auto, copy, ondemand, or mmap (requires a compatible monitor and private memory)")
 	command.Flags().BoolVar(&force, "force", false, "allow a directory snapshot from another sandbox with a compatible image and resource shape")
 	command.Flags().BoolVar(&pull, "pull", false, "pull the snapshot's pinned registry image if absent")
 	command.Flags().BoolVar(&asJSON, "json", false, "print the restored sandbox as indented JSON")

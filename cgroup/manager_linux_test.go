@@ -24,7 +24,7 @@ func TestWriteCPULimitsConvergesExistingScope(t *testing.T) {
 		}
 	}
 	for _, cpus := range []uint32{2, 20_000} {
-		if err := writeCPULimits(directory, cpus); err != nil {
+		if err := writeCPULimits(directory, cpus, false); err != nil {
 			t.Fatal(err)
 		}
 		weight, err := os.ReadFile(filepath.Join(directory, "cpu.weight"))
@@ -42,6 +42,44 @@ func TestWriteCPULimitsConvergesExistingScope(t *testing.T) {
 		if string(weight) != wantWeight || string(maximum) != wantMaximum {
 			t.Fatalf("CPUs %d: weight=%q max=%q", cpus, weight, maximum)
 		}
+	}
+}
+
+func TestApplyLimitConvergesProvisioningQuotaAndHonorsCancellation(t *testing.T) {
+	manager := &Manager{parent: t.TempDir()}
+	directory, err := manager.scopeDir(testID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(directory, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]string{"cpu.max": "max 100000", "cpu.weight": "1"} {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writeCPULimits(directory, 2, true); err != nil {
+		t.Fatal(err)
+	}
+	provisioning, err := os.ReadFile(filepath.Join(directory, "cpu.max"))
+	if err != nil || string(provisioning) != "max 100000" {
+		t.Fatalf("provisioning limit = %q, %v", provisioning, err)
+	}
+	if err := manager.ApplyLimit(t.Context(), testID, 2); err != nil {
+		t.Fatal(err)
+	}
+	maximum, err := os.ReadFile(filepath.Join(directory, "cpu.max"))
+	if err != nil || string(maximum) != "200000 100000" {
+		t.Fatalf("runtime limit = %q, %v", maximum, err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := manager.ApplyLimit(ctx, testID, 1); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled limit = %v", err)
+	}
+	if err := manager.ApplyLimit(t.Context(), testID, 0); err == nil {
+		t.Fatal("accepted zero CPUs")
 	}
 }
 

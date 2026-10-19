@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -46,6 +47,8 @@ var errProcessIdentityPending = errors.New("VMM process command line is not yet 
 // scopeManager is the cgroup capability consumed by this process adapter.
 type scopeManager interface {
 	Prepare(context.Context, types.SandboxID, uint32) (*os.File, error)
+	PrepareRestore(context.Context, types.SandboxID, uint32) (*os.File, error)
+	ApplyLimit(context.Context, types.SandboxID, uint32) error
 	PIDs(types.SandboxID) ([]int, error)
 	Remove(context.Context, types.SandboxID) error
 }
@@ -76,6 +79,11 @@ type Driver struct {
 	stopGrace time.Duration
 	// abortGrace bounds cleanup of a launch that never committed Running.
 	abortGrace time.Duration
+	// memorySupport caches successful capability probes for this driver's fixed
+	// monitor binary. Failed or canceled probes must remain retryable.
+	memorySupportMu    sync.Mutex
+	memorySupportKnown bool
+	memorySupportMode  string
 }
 
 var _ vmm.Backend = (*Driver)(nil)

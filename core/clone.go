@@ -27,6 +27,8 @@ type CloneOptions struct {
 	Pull bool
 	// SourceDirectory selects a portable directory instead of a catalog snapshot.
 	SourceDirectory string
+	// MemoryMode overrides automatic native memory restoration for this clone.
+	MemoryMode types.MemoryRestoreMode
 	// NICs overrides the captured interface count, including zero.
 	NICs *int
 	// NetworkName selects another CNI network for the new interfaces.
@@ -62,6 +64,9 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	}
 	if options.Name == "" || (snapshotReference == "") == (options.SourceDirectory == "") {
 		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("exactly one of SNAPSHOT or --from-dir, plus --name, is required"))
+	}
+	if err := options.MemoryMode.Validate(); err != nil {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
 	}
 	var capture types.Snapshot
 	var snapshotDir string
@@ -142,7 +147,13 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 		return types.Sandbox{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err)
 	}
 	if validator, ok := backend.(vmm.RestoreValidator); ok {
-		if err := validator.ValidateRestore(ctx, snapshotDir); err != nil {
+		if err := validator.ValidateRestore(ctx, snapshotDir, options.MemoryMode); err != nil {
+			if ctx.Err() != nil {
+				return types.Sandbox{}, ctx.Err()
+			}
+			if _, classified := errdefs.CodeOf(err); classified {
+				return types.Sandbox{}, err
+			}
 			return types.Sandbox{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err)
 		}
 	}
@@ -219,7 +230,7 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	process, err := cloner.Clone(ctx, vmm.ClonePlan{
 		RestorePlan: vmm.RestorePlan{
 			SandboxID: starting.ID, Generation: starting.Generation, CPUs: starting.Config.CPUs,
-			SnapshotDir: snapshotDir, Network: starting.Network,
+			SnapshotDir: snapshotDir, Network: starting.Network, MemoryMode: options.MemoryMode,
 		}, WritableDisk: liveCOW, ImageDisks: imageDisks,
 		DataDisks: dataDisks[:inheritedCount], NewDataDisks: dataDisks[inheritedCount:],
 		Kernel: launch.Kernel, Initrd: launch.Initrd,

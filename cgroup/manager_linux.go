@@ -45,7 +45,20 @@ func writeControl(directory, name, value string) error {
 
 // Prepare creates or converges a CPU-controlled leaf and opens it for
 // CLONE_INTO_CGROUP. Reusing an empty leaf makes interrupted starts retryable.
-func (m *Manager) Prepare(_ context.Context, id types.SandboxID, cpus uint32) (*os.File, error) {
+func (m *Manager) Prepare(ctx context.Context, id types.SandboxID, cpus uint32) (*os.File, error) {
+	return m.prepare(ctx, id, cpus, false)
+}
+
+// PrepareRestore leaves CPU bandwidth unlimited while a paused VM loads its
+// snapshot. The caller must ApplyLimit before resuming any guest execution.
+func (m *Manager) PrepareRestore(ctx context.Context, id types.SandboxID, cpus uint32) (*os.File, error) {
+	return m.prepare(ctx, id, cpus, true)
+}
+
+func (m *Manager) prepare(ctx context.Context, id types.SandboxID, cpus uint32, restoring bool) (*os.File, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if m == nil || m.parent == "" {
 		return nil, errors.New("cgroup manager is not configured")
 	}
@@ -62,7 +75,7 @@ func (m *Manager) Prepare(_ context.Context, id types.SandboxID, cpus uint32) (*
 	if err := os.Mkdir(directory, 0o750); err != nil && !errors.Is(err, fs.ErrExist) {
 		return nil, fmt.Errorf("create cgroup scope: %w", err)
 	}
-	if err := writeCPULimits(directory, cpus); err != nil {
+	if err := writeCPULimits(directory, cpus, restoring); err != nil {
 		return nil, err
 	}
 	scope, err := os.Open(directory) //nolint:gosec // directory derives from fixed parent and validated UUID
@@ -72,14 +85,33 @@ func (m *Manager) Prepare(_ context.Context, id types.SandboxID, cpus uint32) (*
 	return scope, nil
 }
 
+// ApplyLimit restores the runtime CPU ceiling after provisioning. A failed
+// write must prevent vm.resume; the paused VMM is then reclaimed by its owner.
+func (m *Manager) ApplyLimit(ctx context.Context, id types.SandboxID, cpus uint32) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if cpus == 0 {
+		return errors.New("cgroup vCPU count must be positive")
+	}
+	directory, err := m.scopeDir(id)
+	if err != nil {
+		return err
+	}
+	return writeCPULimits(directory, cpus, false)
+}
+
 // writeCPULimits converges retryable scope controls before process placement.
-func writeCPULimits(directory string, cpus uint32) error {
+func writeCPULimits(directory string, cpus uint32, restoring bool) error {
 	weight := min(int(cpus), 10_000)
 	if err := writeControl(directory, "cpu.weight", strconv.Itoa(weight)); err != nil {
 		return err
 	}
-	quota := int64(cpus) * cpuPeriodMicros
-	if err := writeControl(directory, "cpu.max", fmt.Sprintf("%d %d", quota, cpuPeriodMicros)); err != nil {
+	maximum := fmt.Sprintf("%d %d", int64(cpus)*cpuPeriodMicros, cpuPeriodMicros)
+	if restoring {
+		maximum = fmt.Sprintf("max %d", cpuPeriodMicros)
+	}
+	if err := writeControl(directory, "cpu.max", maximum); err != nil {
 		return err
 	}
 	return nil

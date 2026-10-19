@@ -293,25 +293,30 @@ func (f fakeReporter) Committed(types.Sandbox) error {
 }
 
 type fakeRuntime struct {
-	typ           types.VMMType
-	steps         *[]string
-	observation   vmm.Observation
-	preflightErr  error
-	launchErr     error
-	stopErr       error
-	plan          vmm.LaunchPlan
-	console       io.ReadWriteCloser
-	vsock         io.ReadWriteCloser
-	vsockFactory  func() io.ReadWriteCloser
-	logs          string
-	logsErr       error
-	removeLogsErr error
-	logOptions    vmm.LogOptions
-	snapshotPlan  vmm.SnapshotPlan
-	snapshotErr   error
-	hibernatePlan vmm.SnapshotPlan
-	restorePlan   vmm.RestorePlan
-	restoreErr    error
+	typ                types.VMMType
+	steps              *[]string
+	observation        vmm.Observation
+	preflightErr       error
+	launchErr          error
+	stopErr            error
+	plan               vmm.LaunchPlan
+	console            io.ReadWriteCloser
+	vsock              io.ReadWriteCloser
+	vsockFactory       func() io.ReadWriteCloser
+	logs               string
+	logsErr            error
+	removeLogsErr      error
+	logOptions         vmm.LogOptions
+	snapshotPlan       vmm.SnapshotPlan
+	snapshotErr        error
+	hibernatePlan      vmm.SnapshotPlan
+	restorePlan        vmm.RestorePlan
+	restoreErr         error
+	validateRestoreErr error
+}
+
+func (f *fakeRuntime) ValidateRestore(context.Context, string, types.MemoryRestoreMode) error {
+	return f.validateRestoreErr
 }
 
 func (f *fakeRuntime) Snapshot(_ context.Context, plan vmm.SnapshotPlan) error {

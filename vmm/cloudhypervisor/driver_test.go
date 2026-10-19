@@ -168,7 +168,12 @@ type cleanupScope struct {
 func (*cleanupScope) Prepare(context.Context, types.SandboxID, uint32) (*os.File, error) {
 	return nil, errors.New("not used")
 }
-func (*cleanupScope) PIDs(types.SandboxID) ([]int, error) { return nil, nil }
+
+func (*cleanupScope) PrepareRestore(context.Context, types.SandboxID, uint32) (*os.File, error) {
+	return nil, errors.New("not used")
+}
+func (*cleanupScope) ApplyLimit(context.Context, types.SandboxID, uint32) error { return nil }
+func (*cleanupScope) PIDs(types.SandboxID) ([]int, error)                       { return nil, nil }
 func (s *cleanupScope) Remove(context.Context, types.SandboxID) error {
 	s.removals++
 	return s.removeErr

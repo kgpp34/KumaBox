@@ -16,9 +16,11 @@ func TestManagerOperationsRequireLinux(t *testing.T) {
 	}
 	id := types.SandboxID("123e4567-e89b-42d3-a456-426614174000")
 	_, prepareErr := manager.Prepare(t.Context(), id, 2)
+	_, restoreErr := manager.PrepareRestore(t.Context(), id, 2)
+	limitErr := manager.ApplyLimit(t.Context(), id, 2)
 	_, pidsErr := manager.PIDs(id)
 	removeErr := manager.Remove(t.Context(), id)
-	for operation, err := range map[string]error{"Prepare": prepareErr, "PIDs": pidsErr, "Remove": removeErr} {
+	for operation, err := range map[string]error{"Prepare": prepareErr, "PrepareRestore": restoreErr, "ApplyLimit": limitErr, "PIDs": pidsErr, "Remove": removeErr} {
 		if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeHostIncompatible {
 			t.Fatalf("%s error = %v", operation, err)
 		}

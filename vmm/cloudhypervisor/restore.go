@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kumabox/kumabox/errdefs"
+	"github.com/kumabox/kumabox/types"
 	"github.com/kumabox/kumabox/vmm"
 )
 
@@ -23,7 +24,7 @@ var (
 
 // ValidateRestore checks the native files Cloud Hypervisor requires before a
 // caller stops the current sandbox process.
-func (*Driver) ValidateRestore(_ context.Context, directory string) error {
+func (d *Driver) ValidateRestore(ctx context.Context, directory string, mode types.MemoryRestoreMode) error {
 	for _, name := range []string{"config.json", "state.json"} {
 		path := filepath.Join(directory, name)
 		info, err := os.Lstat(path)
@@ -53,7 +54,8 @@ func (*Driver) ValidateRestore(_ context.Context, directory string) error {
 				return err
 			}
 			if info.Mode().IsRegular() && info.Size() > 0 {
-				return nil
+				_, err := d.restoreMemoryMode(ctx, filepath.Join(directory, "config.json"), mode)
+				return err
 			}
 		}
 	}
@@ -65,16 +67,20 @@ func (*Driver) ValidateRestore(_ context.Context, directory string) error {
 //
 //	runtime dirs -> API-only process -> vm.restore -> vm.resume -> Running
 func (d *Driver) Restore(ctx context.Context, plan vmm.RestorePlan) (result vmm.Process, returnErr error) {
-	return d.restore(ctx, plan, "", nil)
+	return d.restore(ctx, plan, nil)
 }
 
 // restore owns the shared process lifecycle. Clone supplies a paused-state
 // device swap; ordinary restore resumes the snapshot without changing devices.
-func (d *Driver) restore(ctx context.Context, plan vmm.RestorePlan, memoryMode string, beforeResume func(context.Context, string) error) (result vmm.Process, returnErr error) {
+func (d *Driver) restore(ctx context.Context, plan vmm.RestorePlan, beforeResume func(context.Context, string) error) (result vmm.Process, returnErr error) {
 	if err := plan.Validate(); err != nil {
 		return vmm.Process{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
 	}
 	if err := d.Preflight(); err != nil {
+		return vmm.Process{}, err
+	}
+	memoryMode, err := d.restoreMemoryMode(ctx, filepath.Join(plan.SnapshotDir, "config.json"), plan.MemoryMode)
+	if err != nil {
 		return vmm.Process{}, err
 	}
 	if err := d.paths.Prepare(plan.SandboxID); err != nil {
@@ -101,7 +107,7 @@ func (d *Driver) restore(ctx context.Context, plan vmm.RestorePlan, memoryMode s
 	if err := d.paths.WriteCmdline(plan.SandboxID, diagnosticCommand(d.binary, args)); err != nil {
 		return vmm.Process{}, err
 	}
-	scope, err := d.scopes.Prepare(ctx, plan.SandboxID, plan.CPUs)
+	scope, err := d.scopes.PrepareRestore(ctx, plan.SandboxID, plan.CPUs)
 	if err != nil {
 		return vmm.Process{}, err
 	}
@@ -129,25 +135,40 @@ func (d *Driver) restore(ctx context.Context, plan vmm.RestorePlan, memoryMode s
 	if err := d.waitAPISocket(ctx, result); err != nil {
 		return result, err
 	}
-	payload, err := restorePayload(plan.SnapshotDir, memoryMode)
-	if err != nil {
+	if err := d.loadAndResume(ctx, plan, apiSocket, memoryMode, beforeResume); err != nil {
 		return result, err
-	}
-	if err := d.snapshotAction(ctx, apiSocket, "vm.restore", payload, snapshotTimeout); err != nil {
-		return result, fmt.Errorf("restore cloud-hypervisor state: %w", err)
-	}
-	if beforeResume != nil {
-		if err := beforeResume(ctx, apiSocket); err != nil {
-			return result, fmt.Errorf("replace restored devices: %w", err)
-		}
-	}
-	if err := d.snapshotAction(ctx, apiSocket, "vm.resume", nil, d.startupTimeout); err != nil {
-		return result, fmt.Errorf("resume restored cloud-hypervisor: %w", err)
 	}
 	if err := d.WaitReady(ctx, result); err != nil {
 		return result, err
 	}
 	return result, nil
+}
+
+// loadAndResume keeps the guest paused through memory load and device changes.
+// The runtime CPU ceiling is mandatory before the first resumed instruction.
+//
+//	load memory -> rebind devices -> apply CPU limit -> resume
+//	                any failure leaves the VM paused for launch cleanup
+func (d *Driver) loadAndResume(ctx context.Context, plan vmm.RestorePlan, apiSocket, memoryMode string, beforeResume func(context.Context, string) error) error {
+	payload, err := restorePayload(plan.SnapshotDir, memoryMode)
+	if err != nil {
+		return err
+	}
+	if err := d.snapshotAction(ctx, apiSocket, "vm.restore", payload, snapshotTimeout); err != nil {
+		return fmt.Errorf("restore cloud-hypervisor state: %w", err)
+	}
+	if beforeResume != nil {
+		if err := beforeResume(ctx, apiSocket); err != nil {
+			return fmt.Errorf("replace restored devices: %w", err)
+		}
+	}
+	if err := d.scopes.ApplyLimit(ctx, plan.SandboxID, plan.CPUs); err != nil {
+		return fmt.Errorf("apply restored CPU limit: %w", err)
+	}
+	if err := d.snapshotAction(ctx, apiSocket, "vm.resume", nil, d.startupTimeout); err != nil {
+		return fmt.Errorf("resume restored cloud-hypervisor: %w", err)
+	}
+	return nil
 }
 
 func restorePayload(directory, memoryMode string) ([]byte, error) {

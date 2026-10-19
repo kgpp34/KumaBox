@@ -122,6 +122,19 @@ sudo kumabox snapshot rm base
 sudo kumabox image remove ghcr.io/kgpp34/kumabox/ubuntu:24.04
 ```
 
+Both `clone` and `restore` accept `--restore-mode auto|copy|ondemand|mmap`.
+Automatic selection uses mmap when the monitor and captured memory support it,
+otherwise eager copy. On-demand paging is opt-in to avoid first-touch tail
+latency under the runtime CPU ceiling. Explicit lazy modes require a compatible
+monitor and plain private memory, and are checked before stopping a restore target.
+During restore, the VMM loads memory without the guest CPU ceiling; the normal
+ceiling is applied before the guest resumes.
+
+Directories supplied with `--from-dir` must be immutable: do not overwrite their
+files while they are in use. Same-filesystem clones share immutable memory files
+by hard link while keeping writable disks and configuration private. A
+cross-filesystem transfer copies the memory instead.
+
 `clone` returns after the VM resumes. Run `net SANDBOX --configure` to apply
 the clone's hostname and allocated NIC settings in the guest, or use
 `clone --wait-network` to include that step before the command returns. The

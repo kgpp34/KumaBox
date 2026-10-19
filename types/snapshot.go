@@ -10,6 +10,31 @@ import (
 
 var validSnapshotName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,62}$`)
 
+// MemoryRestoreMode selects how a VMM loads captured guest RAM. It is launch
+// policy, not snapshot identity, and is never inherited from the source VM.
+type MemoryRestoreMode string
+
+const (
+	// MemoryRestoreAuto selects a compatible mode for the captured memory.
+	MemoryRestoreAuto MemoryRestoreMode = "auto"
+	// MemoryRestoreCopy loads all captured RAM before resuming the guest.
+	MemoryRestoreCopy MemoryRestoreMode = "copy"
+	// MemoryRestoreOnDemand loads pages on their first guest access.
+	MemoryRestoreOnDemand MemoryRestoreMode = "ondemand"
+	// MemoryRestoreMmap shares clean snapshot pages through private mappings.
+	MemoryRestoreMmap MemoryRestoreMode = "mmap"
+)
+
+// Validate accepts the zero value as automatic selection for existing callers.
+func (m MemoryRestoreMode) Validate() error {
+	switch m {
+	case "", MemoryRestoreAuto, MemoryRestoreCopy, MemoryRestoreOnDemand, MemoryRestoreMmap:
+		return nil
+	default:
+		return fmt.Errorf("invalid memory restore mode %q: use auto, copy, ondemand, or mmap", m)
+	}
+}
+
 // SnapshotID is the immutable UUIDv4 identity of one captured sandbox state.
 type SnapshotID string
 

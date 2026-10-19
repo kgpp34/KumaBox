@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 
 	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/types"
@@ -79,9 +81,11 @@ func WriteDirectory(ctx context.Context, source, destination string, record type
 	return file.Sync()
 }
 
-// StageDirectory checks an exported directory and reflinks its files into a
-// private destination. A caller may remove the destination after clone setup;
-// the VMM's private hard links retain their own memory-file references.
+// StageDirectory validates an immutable exported directory and stages private
+// metadata and writable disks. Immutable memory is hard-linked on the same
+// filesystem so sibling clones share page cache, or copied across filesystems.
+// The source may be unlinked afterwards, but must never be modified in place.
+// The VMM's own hard links retain memory after staging cleanup.
 func StageDirectory(ctx context.Context, source, destination string) (types.Snapshot, error) {
 	manifestPath := filepath.Join(source, archiveManifest)
 	info, err := os.Lstat(manifestPath)
@@ -139,7 +143,7 @@ func StageDirectory(ctx context.Context, source, destination string) (types.Snap
 			return types.Snapshot{}, fmt.Errorf("unexpected snapshot directory entry %q", entry.Name())
 		}
 		from, to := filepath.Join(source, entry.Name()), filepath.Join(destination, entry.Name())
-		if err := storage.CloneFile(to, from); err != nil {
+		if err := stageDirectoryFile(to, from, entry.Name()); err != nil {
 			return types.Snapshot{}, err
 		}
 		copied, err := os.Lstat(to)
@@ -148,4 +152,20 @@ func StageDirectory(ctx context.Context, source, destination string) (types.Snap
 		}
 	}
 	return envelope.Snapshot, nil
+}
+
+// stageDirectoryFile only shares immutable native memory. Config and disk
+// copies must remain private because restore rewrites them. Cross-filesystem
+// fallback owns its data instead of leaving a source-dependent symlink.
+func stageDirectoryFile(destination, source, name string) error {
+	if strings.HasPrefix(name, "memory-range") {
+		err := os.Link(source, destination)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, syscall.EXDEV) && !errors.Is(err, syscall.EPERM) && !errors.Is(err, syscall.ENOTSUP) {
+			return err
+		}
+	}
+	return storage.CloneFile(destination, source)
 }

@@ -20,6 +20,16 @@ func (*Manager) Prepare(context.Context, types.SandboxID, uint32) (*os.File, err
 	return nil, unsupported()
 }
 
+// PrepareRestore rejects snapshot provisioning on non-Linux hosts.
+func (*Manager) PrepareRestore(context.Context, types.SandboxID, uint32) (*os.File, error) {
+	return nil, unsupported()
+}
+
+// ApplyLimit rejects runtime CPU policy changes on non-Linux hosts.
+func (*Manager) ApplyLimit(context.Context, types.SandboxID, uint32) error {
+	return unsupported()
+}
+
 // PIDs rejects process ownership inspection on non-Linux hosts.
 func (*Manager) PIDs(types.SandboxID) ([]int, error) { return nil, unsupported() }
 

@@ -113,6 +113,8 @@ type RestorePlan struct {
 	CPUs uint32
 	// SnapshotDir contains native VMM state with already restored writable disks.
 	SnapshotDir string
+	// MemoryMode selects memory loading independently of source guest shape.
+	MemoryMode types.MemoryRestoreMode
 	// Network supplies the recovered namespace and stable TAP identities.
 	Network types.NetworkSetup
 }
@@ -149,7 +151,7 @@ type Cloner interface {
 // RestoreValidator optionally validates native snapshot files before a running
 // sandbox is stopped for restore.
 type RestoreValidator interface {
-	ValidateRestore(context.Context, string) error
+	ValidateRestore(context.Context, string, types.MemoryRestoreMode) error
 }
 
 // Registry is an immutable routing table from durable VMM identities to their

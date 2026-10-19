@@ -1,6 +1,6 @@
 // Package cgroup owns the minimal cgroup v2 scope used to contain each VMM.
-// CPU admission and placement policies remain outside this package until the
-// capacity phase; start currently applies weight and a vCPU-sized hard quota.
+// Normal launches apply a vCPU-sized quota immediately. Snapshot restoration
+// defers that quota until memory loading finishes, before the guest resumes.
 package cgroup
 
 import (

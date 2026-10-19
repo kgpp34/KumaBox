@@ -475,6 +475,8 @@ func (s *SnapshotService) Remove(ctx context.Context, reference string) (result 
 // RestoreOptions selects an external capture and whether a different source
 // sandbox identity may be restored into the target.
 type RestoreOptions struct {
+	// MemoryMode overrides automatic native memory restoration for this launch.
+	MemoryMode types.MemoryRestoreMode
 	// SourceDirectory selects a portable capture instead of a catalog snapshot.
 	SourceDirectory string
 	// Force accepts a different source sandbox identity if the shape matches.
@@ -503,6 +505,9 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 	}
 	if sandboxReference == "" || (snapshotReference == "") == (options.SourceDirectory == "") || (options.Force && options.SourceDirectory == "") {
 		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("provide SANDBOX and exactly one of SNAPSHOT or --from-dir; --force requires --from-dir"))
+	}
+	if err := options.MemoryMode.Validate(); err != nil {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
 	}
 	if err := s.reporter.Status("resolving snapshot and sandbox"); err != nil {
 		return types.Sandbox{}, err
@@ -581,7 +586,13 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 		return record, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err)
 	}
 	if validator, ok := backend.(vmm.RestoreValidator); ok {
-		if err := validator.ValidateRestore(ctx, snapshotDir); err != nil {
+		if err := validator.ValidateRestore(ctx, snapshotDir, options.MemoryMode); err != nil {
+			if ctx.Err() != nil {
+				return record, ctx.Err()
+			}
+			if _, classified := errdefs.CodeOf(err); classified {
+				return record, err
+			}
 			return record, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err)
 		}
 	}
@@ -773,7 +784,7 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 	}
 	plan := vmm.RestorePlan{
 		SandboxID: starting.ID, Generation: starting.Generation, CPUs: starting.Config.CPUs,
-		SnapshotDir: snapshotDir, Network: starting.Network,
+		SnapshotDir: snapshotDir, Network: starting.Network, MemoryMode: options.MemoryMode,
 	}
 	var process vmm.Process
 	if options.SourceDirectory == "" {

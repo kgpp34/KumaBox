@@ -118,6 +118,17 @@ sudo kumabox snapshot rm base
 sudo kumabox image remove ghcr.io/kgpp34/kumabox/ubuntu:24.04
 ```
 
+`clone` 和 `restore` 都支持 `--restore-mode auto|copy|ondemand|mmap`。
+默认在已安装的 VMM 和快照内存类型都支持时使用 mmap，否则使用完整复制。
+ondemand 按需加载需要显式选择，避免首次访问内存时在运行期配额下出现长尾。
+显式选择延迟加载或 mmap 需要兼容的 VMM 和普通私有内存；恢复前会先检查，
+避免因模式不支持而停止原沙箱。恢复时的内存加载暂不受 guest CPU 配额限制，
+在恢复 guest 执行前再施加正常配额。
+
+`--from-dir` 的源目录必须保持不可变，使用期间不要覆盖里面的文件。
+同一文件系统内通过硬链接共享不可变内存文件，可写磁盘和配置仍然独立；
+跨文件系统时会复制内存文件。
+
 `clone` 在虚拟机恢复运行后返回。随后执行 `net SANDBOX --configure`，把新主机名和
 已分配的网卡配置应用到 guest；也可以使用 `clone --wait-network`，在返回前完成此步骤。
 默认路径会在独立进程中更新 guest 熵和 machine ID。
