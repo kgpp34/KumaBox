@@ -35,7 +35,7 @@ type Sandboxes interface {
 	List(context.Context, bool) ([]types.Sandbox, error)
 	Inspect(context.Context, string) (types.Sandbox, error)
 	Start(context.Context, string) (types.Sandbox, error)
-	Stop(context.Context, string) (types.Sandbox, error)
+	Stop(context.Context, string, types.StopOptions) (types.Sandbox, error)
 	Remove(context.Context, string) (types.Sandbox, error)
 	Exec(context.Context, string, types.Command, io.Reader, io.Writer, io.Writer) (int, error)
 }
@@ -234,7 +234,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		// A sandbox without its expiry policy must not escape as an E2B resource.
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
 		defer cancel()
-		_, stopErr := h.sandboxes.Stop(cleanupCtx, record.ID.String())
+		_, stopErr := h.sandboxes.Stop(cleanupCtx, record.ID.String(), types.StopOptions{Force: true})
 		_, removeErr := h.sandboxes.Remove(cleanupCtx, record.ID.String())
 		serviceFailure(w, errors.Join(fmt.Errorf("persist E2B lease: %w", err), stopErr, removeErr))
 		return

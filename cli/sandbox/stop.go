@@ -3,6 +3,8 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"math"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -14,15 +16,21 @@ import (
 // NewStopCommand builds the top-level sandbox stop command.
 func NewStopCommand(configuration configProvider) *cobra.Command {
 	asJSON := false
+	force := false
+	timeoutSeconds := int64(0)
 	command := &cobra.Command{
 		Use:   "stop SANDBOX...",
-		Short: "stop a running or interrupted sandbox",
+		Short: "shut down a sandbox, escalating to force termination on timeout",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
+			if timeoutSeconds < 0 || timeoutSeconds > math.MaxInt64/int64(time.Second) {
+				return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("--timeout must be non-negative seconds within the supported duration range"))
+			}
+			options := types.StopOptions{Force: force, Timeout: time.Duration(timeoutSeconds) * time.Second}
 			if len(args) > 1 {
 				return runSandboxBatch(command, configuration, args, "stop sandbox", asJSON, false,
 					func(ctx context.Context, service *core.SandboxService, reference string) (types.Sandbox, error) {
-						return service.Stop(ctx, reference)
+						return service.StopWithOptions(ctx, reference, options)
 					})
 			}
 			reference := args[0]
@@ -46,7 +54,7 @@ func NewStopCommand(configuration configProvider) *cobra.Command {
 					Committed: committed,
 				}))
 			}()
-			record, err := service.Stop(command.Context(), reference)
+			record, err := service.StopWithOptions(command.Context(), reference, options)
 			if err != nil {
 				return err
 			}
@@ -64,5 +72,7 @@ func NewStopCommand(configuration configProvider) *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&asJSON, "json", false, "print the stopped sandbox as indented JSON")
+	command.Flags().BoolVarP(&force, "force", "f", false, "skip guest shutdown and begin VMM termination immediately")
+	command.Flags().Int64Var(&timeoutSeconds, "timeout", 0, "guest shutdown timeout in seconds (0 uses sandbox.stop_timeout; ignored with --force)")
 	return command
 }

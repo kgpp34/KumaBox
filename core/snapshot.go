@@ -690,7 +690,7 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 		if err := s.reporter.Status("stopping current sandbox runtime"); err != nil {
 			return types.Sandbox{}, err
 		}
-		if _, err := s.lifecycle.Stop(ctx, record.ID.String()); err != nil {
+		if _, err := s.lifecycle.StopWithOptions(ctx, record.ID.String(), types.StopOptions{Force: true}); err != nil {
 			return types.Sandbox{}, errdefs.WithContext(err, errdefs.ContextInfo{
 				Operation: "restore sandbox",
 				Entity:    sandboxReference,

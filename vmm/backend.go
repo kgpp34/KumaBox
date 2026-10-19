@@ -23,7 +23,8 @@ type Backend interface {
 	WaitReady(context.Context, Process) error
 	Launch(context.Context, LaunchPlan) (Process, error)
 	Abort(context.Context, Process) error
-	Stop(context.Context, Process) error
+	// Stop requests guest shutdown unless forced, then proves the owned process exited.
+	Stop(context.Context, Process, types.StopOptions) error
 	Console(context.Context, Process) (io.ReadWriteCloser, error)
 	DialVsock(context.Context, Process, uint32) (io.ReadWriteCloser, error)
 	Logs(context.Context, types.SandboxID, LogOptions, io.Writer) error

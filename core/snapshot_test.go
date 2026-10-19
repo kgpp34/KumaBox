@@ -186,6 +186,9 @@ func TestRestoreStopsRunningSandboxAndResumesSnapshot(t *testing.T) {
 		t.Fatalf("restore access time = %s, %v", updated.LastAccessedAt, err)
 	}
 	plan := testRuntime(t, sandboxService).restorePlan
+	if !testRuntime(t, sandboxService).stopOptions.Force {
+		t.Fatal("restore entered the guest shutdown window")
+	}
 	if plan.SandboxID != fixedID || plan.Generation != 7 || plan.SnapshotDir == "" || plan.MemoryMode != types.MemoryRestoreOnDemand {
 		t.Fatalf("restore plan = %+v", plan)
 	}

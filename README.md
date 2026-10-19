@@ -122,6 +122,20 @@ sudo kumabox snapshot rm base
 sudo kumabox image remove ghcr.io/kgpp34/kumabox/ubuntu:24.04
 ```
 
+`stop` requests ACPI guest shutdown and waits up to 30 seconds by default.
+Use `stop my-vm --timeout 10` to set that window in seconds, or
+`stop my-vm --force` to skip it. `--timeout 0` uses `sandbox.stop_timeout`
+(also configurable through `KUMABOX_SANDBOX_STOP_TIMEOUT`, e.g. `10s`).
+If the guest ignores ACPI or exceeds its window, the runtime force-terminates
+the owned VMM with TERM, then KILL after `vmm.cloud_hypervisor.stop_grace`.
+Guest power-event handling must be ready for a normal shutdown; agent readiness
+alone does not prove that. Cancelling stop retains a retryable state rather than
+escalating after cancellation; retry with `stop --force` if necessary.
+Writable root and managed data disks survive stop/start without a snapshot.
+Force termination can lose guest writes that have not reached disk. Restore,
+hibernate, HTTP deletion and E2B kill/expiry cleanup explicitly skip the guest
+shutdown window; they do not incur a new 30-second wait.
+
 Both `clone` and `restore` accept `--restore-mode auto|copy|ondemand|mmap`.
 Automatic selection uses mmap when the monitor and captured memory support it,
 otherwise eager copy. On-demand paging is opt-in to avoid first-touch tail

@@ -142,3 +142,20 @@ func TestNetworkConfigParsesDNSAndScope(t *testing.T) {
 		t.Fatal("invalid DNS server was accepted")
 	}
 }
+
+func TestStopTimeoutConfiguration(t *testing.T) {
+	if got := Default().Sandbox.StopTimeout; got != 30*time.Second {
+		t.Fatalf("default stop timeout = %s", got)
+	}
+	t.Setenv("KUMABOX_SANDBOX_STOP_TIMEOUT", "1500ms")
+	configuration, err := NewLoader().Load("")
+	if err != nil || configuration.Sandbox.StopTimeout != 1500*time.Millisecond {
+		t.Fatalf("configured stop timeout = %s, %v", configuration.Sandbox.StopTimeout, err)
+	}
+	for _, value := range []time.Duration{0, -time.Second} {
+		configuration.Sandbox.StopTimeout = value
+		if err := configuration.Validate(); err == nil {
+			t.Fatalf("accepted stop timeout %s", value)
+		}
+	}
+}

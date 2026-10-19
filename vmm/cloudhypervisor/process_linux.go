@@ -125,6 +125,9 @@ func verifyProcess(process vmm.Process) (bool, error) {
 // terminateProcess opens a pidfd before identity checks, closing the PID-reuse
 // race between verification and signal delivery.
 func terminateProcess(ctx context.Context, process vmm.Process, grace time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	handle, err := os.FindProcess(process.PID)
 	if err != nil {
 		return err
@@ -140,8 +143,15 @@ func terminateProcess(ctx context.Context, process vmm.Process, grace time.Durat
 	if err := handle.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return err
 	}
-	if waitProcess(ctx, handle, grace) == nil {
+	err = waitProcess(ctx, handle, grace)
+	if err == nil {
 		return nil
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if !errors.Is(err, errProcessExitTimeout) {
+		return err
 	}
 	if err := handle.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return err
@@ -149,12 +159,40 @@ func terminateProcess(ctx context.Context, process vmm.Process, grace time.Durat
 	return waitProcess(ctx, handle, time.Second)
 }
 
+// waitProcessExit observes a pidfd after checking its durable identity. An absent
+// or reused PID is already stopped from this sandbox's point of view.
+func waitProcessExit(ctx context.Context, process vmm.Process, timeout time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	handle, err := os.FindProcess(process.PID)
+	if err != nil {
+		return err
+	}
+	defer handle.Release() //nolint:errcheck // closing a pidfd cannot change process state
+	match, err := verifyProcess(process)
+	// A process exiting between ACPI acknowledgement and this check may expose
+	// an empty command line. Observe its pidfd without sending any signal.
+	if errors.Is(err, errProcessIdentityPending) {
+		return waitProcess(ctx, handle, timeout)
+	}
+	if err != nil || !match {
+		return err
+	}
+	return waitProcess(ctx, handle, timeout)
+}
+
+var errProcessExitTimeout = errors.New("timed out waiting for VMM process exit")
+
 func waitProcess(ctx context.Context, process *os.Process, timeout time.Duration) error {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := process.Signal(syscall.Signal(0)); errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
 			return nil
 		} else if err != nil && !errors.Is(err, syscall.EPERM) {
@@ -164,7 +202,7 @@ func waitProcess(ctx context.Context, process *os.Process, timeout time.Duration
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
-			return errors.New("timed out waiting for VMM process exit")
+			return errProcessExitTimeout
 		case <-ticker.C:
 		}
 	}

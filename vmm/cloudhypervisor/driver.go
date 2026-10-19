@@ -350,9 +350,15 @@ func (d *Driver) Abort(ctx context.Context, process vmm.Process) error {
 	return d.Cleanup(ctx, process.SandboxID)
 }
 
-// Stop mirrors Cloud Hypervisor direct-boot shutdown semantics: vm.shutdown is
-// advisory, while identity-checked TERM and KILL provide the completion guarantee.
-func (d *Driver) Stop(ctx context.Context, process vmm.Process) error {
+// Stop first sends an ACPI power-button event unless forced. The guest window
+// is separate from TERM/KILL grace; caller cancellation never triggers escalation.
+func (d *Driver) Stop(ctx context.Context, process vmm.Process, options types.StopOptions) error {
+	if err := options.Validate(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := process.Validate(); err != nil {
 		return err
 	}
@@ -362,6 +368,24 @@ func (d *Driver) Stop(ctx context.Context, process vmm.Process) error {
 	}
 	if !alive {
 		return nil
+	}
+	if !options.Force {
+		timeout := options.Timeout
+		if timeout == 0 {
+			timeout = types.DefaultStopTimeout
+		}
+		shutdownCtx, cancel := context.WithTimeout(ctx, timeout)
+		err := d.snapshotAction(shutdownCtx, process.APISocket, "vm.power-button", nil, probeTimeout)
+		if err == nil {
+			err = waitProcessExit(shutdownCtx, process, timeout)
+		}
+		cancel()
+		if err == nil {
+			return nil
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	_ = d.requestShutdown(ctx, process.APISocket)
 	return terminateProcess(ctx, process, d.stopGrace)

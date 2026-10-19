@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kumabox/kumabox/agent"
 	"github.com/kumabox/kumabox/errdefs"
@@ -636,5 +637,42 @@ func TestExecUsesExactRunningGenerationAndStreamsResult(t *testing.T) {
 	}
 	if got := strings.Join(*steps, ","); got != "resolve,resolve,locate,vsock" {
 		t.Fatalf("exec steps = %q", got)
+	}
+}
+
+func TestStopWithOptionsPassesExplicitAndDefaultPolicy(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		options types.StopOptions
+		want    types.StopOptions
+	}{
+		{name: "default", want: types.StopOptions{Timeout: 17 * time.Second}},
+		{name: "override", options: types.StopOptions{Timeout: time.Second}, want: types.StopOptions{Timeout: time.Second}},
+		{name: "force", options: types.StopOptions{Force: true}, want: types.StopOptions{Force: true, Timeout: 17 * time.Second}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service, _ := newTestSandboxService(t, nil)
+			service.dependencies.stopTimeout = 17 * time.Second
+			catalog := service.dependencies.catalog.(*fakeCatalog)
+			catalog.record = types.Sandbox{ID: fixedID, VMM: types.VMMCloudHypervisor, State: types.SandboxStateRunning, Generation: 4}
+			backend := testRuntime(t, service)
+			backend.observation = vmm.Observation{State: vmm.ProcessRunning, Process: vmm.Process{PID: 42}}
+			record, err := service.StopWithOptions(t.Context(), fixedID.String(), test.options)
+			if err != nil || record.State != types.SandboxStateStopped {
+				t.Fatalf("stop = %+v, %v", record, err)
+			}
+			if backend.stopOptions != test.want {
+				t.Fatalf("backend options = %+v; want %+v", backend.stopOptions, test.want)
+			}
+		})
+	}
+}
+
+func TestStopRejectsInvalidPolicyBeforeLockOrStateChange(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	*steps = nil
+	_, err := service.StopWithOptions(t.Context(), "box", types.StopOptions{Timeout: -time.Second})
+	if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeInvalidArgument || len(*steps) != 0 {
+		t.Fatalf("invalid stop = %v; steps=%v", err, *steps)
 	}
 }

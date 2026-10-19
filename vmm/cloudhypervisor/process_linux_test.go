@@ -3,11 +3,17 @@
 package cloudhypervisor
 
 import (
+	"context"
 	"errors"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -157,5 +163,102 @@ func startProcessHelper(t *testing.T, ignoreTerm bool, apiSocket string) (*exec.
 			t.Fatal("helper process did not become ready")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestTerminateProcessCancellationDoesNotEscalate(t *testing.T) {
+	command, _ := startProcessHelper(t, true, "/run/kumabox/api.sock")
+	process, err := captureProcess(command.Process.Pid, "123e4567-e89b-42d3-a456-426614174000", 3, filepath.Base(os.Args[0]), "/run/kumabox/api.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+	defer cancel()
+	if err := terminateProcess(ctx, process, time.Minute); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("terminate = %v", err)
+	}
+	if alive, err := verifyProcess(process); err != nil || !alive {
+		t.Fatalf("cancellation killed owned process: alive=%v, err=%v", alive, err)
+	}
+}
+
+func TestStopShutdownPolicyAndCancellation(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		force      bool
+		powerExit  bool
+		powerError bool
+		cancel     bool
+		mismatch   bool
+		want       []string
+	}{
+		{name: "normal guest exit", powerExit: true, want: []string{"vm.power-button"}},
+		{name: "guest timeout escalates", want: []string{"vm.power-button", "vm.shutdown"}},
+		{name: "force skips ACPI", force: true, want: []string{"vm.shutdown"}},
+		{name: "ACPI unavailable escalates", powerError: true, want: []string{"vm.power-button", "vm.shutdown"}},
+		{name: "caller cancellation preserves process", cancel: true, want: []string{"vm.power-button"}},
+		{name: "foreign generation is never signalled", mismatch: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			socket := filepath.Join(t.TempDir(), "api.sock")
+			command, _ := startProcessHelper(t, !test.powerExit, socket)
+			process, err := captureProcess(command.Process.Pid, "123e4567-e89b-42d3-a456-426614174000", 3, filepath.Base(os.Args[0]), socket)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.mismatch {
+				process.StartTicks++
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var mu sync.Mutex
+			var actions []string
+			listener, err := net.Listen("unix", socket)
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				action := strings.TrimPrefix(r.URL.Path, "/api/v1/")
+				mu.Lock()
+				actions = append(actions, action)
+				mu.Unlock()
+				if action == "vm.power-button" {
+					switch {
+					case test.powerError:
+						w.WriteHeader(http.StatusNotImplemented)
+						return
+					case test.powerExit:
+						_ = command.Process.Signal(syscall.SIGTERM)
+					case test.cancel:
+						cancel()
+					}
+				}
+				w.WriteHeader(http.StatusNoContent)
+			})}
+			go func() { _ = server.Serve(listener) }()
+			t.Cleanup(func() { _ = server.Close() })
+			driver := &Driver{stopGrace: 30 * time.Millisecond}
+			err = driver.Stop(ctx, process, types.StopOptions{Force: test.force, Timeout: 50 * time.Millisecond})
+			if test.cancel {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("stop cancellation = %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			got := slices.Clone(actions)
+			mu.Unlock()
+			if !slices.Equal(got, test.want) {
+				t.Fatalf("actions = %v; want %v", got, test.want)
+			}
+			if test.cancel || test.mismatch {
+				if err := command.Process.Signal(syscall.Signal(0)); err != nil {
+					t.Fatalf("cancelled stop or foreign identity killed process: %v", err)
+				}
+			} else if err := command.Process.Signal(syscall.Signal(0)); !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
+				t.Fatalf("stop returned before process exit: %v", err)
+			}
+		})
 	}
 }

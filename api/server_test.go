@@ -26,6 +26,7 @@ type fakeSandboxes struct {
 	execContext func(context.Context) (int, error)
 	record      types.Sandbox
 	stops       int
+	stopOptions types.StopOptions
 	removes     int
 	input       []byte
 }
@@ -46,8 +47,9 @@ func (*fakeSandboxes) Start(context.Context, string) (types.Sandbox, error) {
 	return types.Sandbox{}, nil
 }
 
-func (f *fakeSandboxes) Stop(context.Context, string) (types.Sandbox, error) {
+func (f *fakeSandboxes) Stop(_ context.Context, _ string, options types.StopOptions) (types.Sandbox, error) {
 	f.stops++
+	f.stopOptions = options
 	return f.record, nil
 }
 
@@ -296,7 +298,7 @@ func TestDeleteStopsRunningSandboxBeforeRemoval(t *testing.T) {
 	handler := testHandler(t, service)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, apiRequest("DELETE", "/v1/sandboxes/test", "", testToken))
-	if response.Code != http.StatusOK || service.stops != 1 || service.removes != 1 {
+	if response.Code != http.StatusOK || service.stops != 1 || !service.stopOptions.Force || service.removes != 1 {
 		t.Fatalf("delete = %d, stops = %d, removes = %d", response.Code, service.stops, service.removes)
 	}
 }

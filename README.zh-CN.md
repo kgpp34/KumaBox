@@ -118,6 +118,17 @@ sudo kumabox snapshot rm base
 sudo kumabox image remove ghcr.io/kgpp34/kumabox/ubuntu:24.04
 ```
 
+`stop` 默认请求 ACPI 正常关机，最多等待 30 秒。`stop my-vm --timeout 10`
+指定等待秒数，`stop my-vm --force` 跳过正常关机窗口。`--timeout 0` 使用
+`sandbox.stop_timeout` 配置，也可以通过 `KUMABOX_SANDBOX_STOP_TIMEOUT=10s` 设置。
+guest 不处理 ACPI 或等待超时后，运行时会对确认身份的 VMM 发 TERM，再按
+`vmm.cloud_hypervisor.stop_grace` 升级到 KILL。正常关机需要 guest 的电源事件
+处理服务已就绪，agent 可执行命令并不代表该服务已经就绪。取消 stop 会保留可重试状态，
+不会因取消而继续升级 KILL；需要时可用 `stop --force` 重试。
+可写根盘和托管数据盘在 stop/start 之间保留，不需要制作快照；强停仍可能丢失 guest
+尚未写入磁盘的数据。恢复、休眠、HTTP 删除及 E2B kill/过期清理显式跳过正常关机窗口，
+不会因此增加 30 秒等待。
+
 `clone` 和 `restore` 都支持 `--restore-mode auto|copy|ondemand|mmap`。
 默认在已安装的 VMM 和快照内存类型都支持时使用 mmap，否则使用完整复制。
 ondemand 按需加载需要显式选择，避免首次访问内存时在运行期配额下出现长尾。

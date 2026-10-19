@@ -104,7 +104,7 @@ func (s *SandboxService) reconcileSandbox(ctx context.Context, observed types.Sa
 			return "", false, nil
 		}
 		if record.State == types.SandboxStateStopping && observation.State != vmm.ProcessAbsent {
-			if err := backend.Stop(ctx, observation.Process); err != nil {
+			if err := backend.Stop(ctx, observation.Process, types.StopOptions{Force: true}); err != nil {
 				return "", false, err
 			}
 		}

@@ -327,7 +327,10 @@ func (*sandboxService) Start(context.Context, string) (types.Sandbox, error) {
 	return types.Sandbox{}, nil
 }
 
-func (s *sandboxService) Stop(context.Context, string) (types.Sandbox, error) {
+func (s *sandboxService) Stop(_ context.Context, _ string, options types.StopOptions) (types.Sandbox, error) {
+	if !options.Force {
+		return types.Sandbox{}, errors.New("E2B kill must force stop")
+	}
 	s.state = types.SandboxStateStopped
 	return types.Sandbox{ID: testID, State: s.state}, nil
 }

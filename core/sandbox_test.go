@@ -299,6 +299,7 @@ type fakeRuntime struct {
 	preflightErr       error
 	launchErr          error
 	stopErr            error
+	stopOptions        types.StopOptions
 	plan               vmm.LaunchPlan
 	console            io.ReadWriteCloser
 	vsock              io.ReadWriteCloser
@@ -361,7 +362,7 @@ func (f *fakeRuntime) Hibernate(ctx context.Context, plan vmm.SnapshotPlan, pers
 		*f.steps = append(*f.steps, "resume")
 		return err
 	}
-	return f.Stop(ctx, plan.Process)
+	return f.Stop(ctx, plan.Process, types.StopOptions{Force: true})
 }
 
 func (f *fakeRuntime) Restore(_ context.Context, plan vmm.RestorePlan) (vmm.Process, error) {
@@ -425,7 +426,8 @@ func (f *fakeRuntime) Abort(context.Context, vmm.Process) error {
 	return nil
 }
 
-func (f *fakeRuntime) Stop(context.Context, vmm.Process) error {
+func (f *fakeRuntime) Stop(_ context.Context, _ vmm.Process, options types.StopOptions) error {
+	f.stopOptions = options
 	*f.steps = append(*f.steps, "stop")
 	return f.stopErr
 }
@@ -557,7 +559,7 @@ func newTestSandboxService(t *testing.T, diskError error) (*SandboxService, *[]s
 		paths: paths, imagePaths: imagePaths, images: fakeGuard{image: image, steps: &steps},
 		catalog: catalog, disks: fakeDisk{steps: &steps, prepare: diskError},
 		networks: networks, runtimes: runtimes,
-		defaultVMM: types.VMMCloudHypervisor, cleanupTimeout: 10 * time.Second,
+		defaultVMM: types.VMMCloudHypervisor, cleanupTimeout: 10 * time.Second, stopTimeout: types.DefaultStopTimeout,
 		defaultNetwork: types.NetworkBackendCNI,
 		reporter:       fakeReporter{steps: &steps},
 		newID:          func() (types.SandboxID, error) { return fixedID, nil },
@@ -619,6 +621,7 @@ func TestNewSandboxServiceValidatesNamedDependencies(t *testing.T) {
 		{name: "disk backend", mutate: func(dependencies *sandboxDependencies) { dependencies.disks = nil }},
 		{name: "network provider", mutate: func(dependencies *sandboxDependencies) { dependencies.networks = nil }},
 		{name: "VMM registry", mutate: func(dependencies *sandboxDependencies) { dependencies.runtimes = nil }},
+		{name: "stop timeout", mutate: func(dependencies *sandboxDependencies) { dependencies.stopTimeout = 0 }},
 		{name: "cleanup timeout", mutate: func(dependencies *sandboxDependencies) { dependencies.cleanupTimeout = 0 }},
 		{name: "default VMM", mutate: func(dependencies *sandboxDependencies) { dependencies.defaultVMM = types.VMMFirecracker }},
 		{name: "default network", mutate: func(dependencies *sandboxDependencies) { dependencies.defaultNetwork = "missing" }},

@@ -17,6 +17,8 @@ import (
 )
 
 const (
+	// DefaultStopTimeout is the guest's normal shutdown window before force termination.
+	DefaultStopTimeout = 30 * time.Second
 	// DefaultSandboxCPUs is the default virtual CPU count.
 	DefaultSandboxCPUs uint32 = 2
 	// DefaultSandboxMemory is one gibibyte.
@@ -36,6 +38,23 @@ const (
 	// MaxDataDisks bounds devices and snapshot artifacts per sandbox.
 	MaxDataDisks = 32
 )
+
+// StopOptions separates guest shutdown policy from host process termination.
+// Zero Timeout uses configured policy; Force skips the guest shutdown window.
+type StopOptions struct {
+	// Force skips guest shutdown and immediately begins identity-checked termination.
+	Force bool
+	// Timeout bounds guest shutdown only, not lock acquisition or runtime cleanup.
+	Timeout time.Duration
+}
+
+// Validate rejects invalid policy before a stop operation changes durable state.
+func (o StopOptions) Validate() error {
+	if o.Timeout < 0 {
+		return errors.New("stop timeout must not be negative")
+	}
+	return nil
+}
 
 var (
 	validSandboxName  = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)

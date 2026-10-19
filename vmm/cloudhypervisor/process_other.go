@@ -32,3 +32,5 @@ func identifyProcess(int, types.SandboxID, uint64, string, string) (vmm.Process,
 func verifyProcess(vmm.Process) (bool, error) { return false, errLinuxRequired }
 
 func terminateProcess(context.Context, vmm.Process, time.Duration) error { return errLinuxRequired }
+
+func waitProcessExit(context.Context, vmm.Process, time.Duration) error { return errLinuxRequired }

@@ -34,8 +34,8 @@ func (a apiSandboxService) Start(ctx context.Context, ref string) (types.Sandbox
 	return a.service.Start(ctx, ref)
 }
 
-func (a apiSandboxService) Stop(ctx context.Context, ref string) (types.Sandbox, error) {
-	return a.service.Stop(ctx, ref)
+func (a apiSandboxService) Stop(ctx context.Context, ref string, options types.StopOptions) (types.Sandbox, error) {
+	return a.service.StopWithOptions(ctx, ref, options)
 }
 
 func (a apiSandboxService) Remove(ctx context.Context, ref string) (types.Sandbox, error) {

@@ -371,18 +371,30 @@ func (s *SandboxService) failStart(ctx context.Context, backend vmm.Backend, sta
 	})
 }
 
-// Stop terminates the exact VMM process owned by one sandbox and commits
-// Stopped only after process absence and runtime cleanup are proven.
-//
-//	Running + live VMM -> Stopping -> TERM -> grace -> KILL -> cleanup -> Stopped
-//	Starting/Stopping  ----- retry resumes the owned process generation -----^
-//	Running + no VMM  --------------------- cleanup ------------------------^
+// Stop requests normal guest shutdown using configured policy.
 func (s *SandboxService) Stop(ctx context.Context, reference string) (result types.Sandbox, returnErr error) {
+	return s.StopWithOptions(ctx, reference, types.StopOptions{})
+}
+
+// StopWithOptions commits Stopped only after process absence and cleanup are proven.
+// Cancellation retains ownership so stop or reconciliation can retry safely.
+//
+//	Running -> Stopping -> guest shutdown -> timeout -> TERM -> grace -> KILL
+//	                            |                       ^                |
+//	                            +-- exited --+   Force -+                |
+//	                                        +------ cleanup -> Stopped <-+
+func (s *SandboxService) StopWithOptions(ctx context.Context, reference string, options types.StopOptions) (result types.Sandbox, returnErr error) {
+	if err := options.Validate(); err != nil {
+		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+	}
 	if s == nil || s.dependencies.catalog == nil || s.dependencies.networks == nil || s.dependencies.runtimes.Len() == 0 || s.dependencies.reporter == nil || s.dependencies.now == nil {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")
 	}
 	if reference == "" {
 		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("SANDBOX must not be empty"))
+	}
+	if options.Timeout == 0 {
+		options.Timeout = s.dependencies.stopTimeout
 	}
 	if err := s.dependencies.reporter.Status("resolving sandbox"); err != nil {
 		return types.Sandbox{}, err
@@ -482,7 +494,7 @@ func (s *SandboxService) Stop(ctx context.Context, reference string) (result typ
 				Committed: committed,
 			})
 		}
-		if err := backend.Stop(ctx, process); err != nil {
+		if err := backend.Stop(ctx, process, options); err != nil {
 			return record, errdefs.WithContext(err, errdefs.ContextInfo{
 				Operation: "stop sandbox",
 				Entity:    reference,

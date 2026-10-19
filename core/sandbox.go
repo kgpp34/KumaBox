@@ -92,6 +92,8 @@ type sandboxDependencies struct {
 	defaultVMM types.VMMType
 	// cleanupTimeout bounds compensation that outlives caller cancellation.
 	cleanupTimeout time.Duration
+	// stopTimeout is the default graceful guest shutdown window.
+	stopTimeout time.Duration
 	// dnsServers are rendered into static guest boot network parameters.
 	dnsServers []string
 	// reporter emits progress independently of command results.
@@ -116,6 +118,9 @@ func newSandboxService(dependencies sandboxDependencies) (*SandboxService, error
 	}
 	if dependencies.cleanupTimeout <= 0 {
 		return nil, errors.New("sandbox cleanup timeout must be positive")
+	}
+	if dependencies.stopTimeout <= 0 {
+		return nil, errors.New("sandbox stop timeout must be positive")
 	}
 	if _, err := dependencies.runtimes.Backend(dependencies.defaultVMM); err != nil {
 		return nil, err
@@ -204,6 +209,7 @@ func OpenSandbox(ctx context.Context, configuration config.Config, reporter Sand
 		catalog: sandboxCatalog, disks: disks, networks: networks, runtimes: runtimes, reporter: reporter,
 		store: store, defaultVMM: defaultVMM, defaultNetwork: types.NetworkBackendCNI,
 		cleanupTimeout: max(configuration.Sandbox.CleanupTimeout, configuration.Network.CleanupTimeout),
+		stopTimeout:    configuration.Sandbox.StopTimeout,
 		dnsServers:     dnsServers,
 	})
 	if err != nil {

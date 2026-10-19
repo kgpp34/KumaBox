@@ -24,10 +24,10 @@ func (registryBackend) Locate(context.Context, types.SandboxID, uint64) (Process
 func (registryBackend) Observe(context.Context, types.SandboxID, uint64) (Observation, error) {
 	return Observation{}, nil
 }
-func (registryBackend) WaitReady(context.Context, Process) error            { return nil }
-func (registryBackend) Launch(context.Context, LaunchPlan) (Process, error) { return Process{}, nil }
-func (registryBackend) Abort(context.Context, Process) error                { return nil }
-func (registryBackend) Stop(context.Context, Process) error                 { return nil }
+func (registryBackend) WaitReady(context.Context, Process) error               { return nil }
+func (registryBackend) Launch(context.Context, LaunchPlan) (Process, error)    { return Process{}, nil }
+func (registryBackend) Abort(context.Context, Process) error                   { return nil }
+func (registryBackend) Stop(context.Context, Process, types.StopOptions) error { return nil }
 func (registryBackend) Console(context.Context, Process) (io.ReadWriteCloser, error) {
 	return nil, nil
 }

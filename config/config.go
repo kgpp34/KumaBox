@@ -67,6 +67,8 @@ type Sandbox struct {
 	Ext4Binary string `mapstructure:"ext4_binary"`
 	// CleanupTimeout bounds failure compensation after caller cancellation.
 	CleanupTimeout time.Duration `mapstructure:"cleanup_timeout"`
+	// StopTimeout is the default guest shutdown window before force termination.
+	StopTimeout time.Duration `mapstructure:"stop_timeout"`
 }
 
 // Network contains host networking policy shared by provider implementations.
@@ -154,7 +156,7 @@ func Default() Config {
 			LayerSize: 8 << 30, UnpackedSize: 16 << 30, BootSize: 512 << 20, ArchiveSize: 32 << 30,
 		},
 		Metadata: Metadata{BusyTimeout: 50 * time.Millisecond, RetryLimit: 5 * time.Second},
-		Sandbox:  Sandbox{Ext4Binary: "mkfs.ext4", CleanupTimeout: 10 * time.Second},
+		Sandbox:  Sandbox{Ext4Binary: "mkfs.ext4", CleanupTimeout: 10 * time.Second, StopTimeout: types.DefaultStopTimeout},
 		Network: Network{
 			CNI: CNI{ConfDir: "/etc/cni/net.d", BinDir: "/opt/cni/bin"},
 			DNS: "8.8.8.8,1.1.1.1", CleanupTimeout: 30 * time.Second, GuestAgentTimeout: 20 * time.Second,
@@ -188,8 +190,8 @@ func (c *Config) Validate() error {
 	if c.Metadata.BusyTimeout <= 0 || c.Metadata.RetryLimit <= 0 {
 		return errors.New("metadata timeouts must be positive")
 	}
-	if strings.TrimSpace(c.Sandbox.Ext4Binary) == "" || c.Sandbox.CleanupTimeout <= 0 {
-		return errors.New("sandbox requires an ext4 binary and positive cleanup timeout")
+	if strings.TrimSpace(c.Sandbox.Ext4Binary) == "" || c.Sandbox.CleanupTimeout <= 0 || c.Sandbox.StopTimeout <= 0 {
+		return errors.New("sandbox requires an ext4 binary and positive cleanup and stop timeouts")
 	}
 	if !filepath.IsAbs(c.Network.CNI.ConfDir) || !filepath.IsAbs(c.Network.CNI.BinDir) {
 		return errors.New("network CNI configuration and binary directories must be absolute")
@@ -247,6 +249,7 @@ func NewLoader() *Loader {
 		"images.boot_size": defaults.Images.BootSize, "images.archive_size": defaults.Images.ArchiveSize,
 		"metadata.busy_timeout": defaults.Metadata.BusyTimeout, "metadata.retry_limit": defaults.Metadata.RetryLimit,
 		"sandbox.ext4_binary": defaults.Sandbox.Ext4Binary, "sandbox.cleanup_timeout": defaults.Sandbox.CleanupTimeout,
+		"sandbox.stop_timeout": defaults.Sandbox.StopTimeout,
 		"network.cni.conf_dir": defaults.Network.CNI.ConfDir, "network.cni.bin_dir": defaults.Network.CNI.BinDir,
 		"network.dns": defaults.Network.DNS, "network.scope": defaults.Network.Scope,
 		"network.cleanup_timeout": defaults.Network.CleanupTimeout, "network.guest_agent_timeout": defaults.Network.GuestAgentTimeout,

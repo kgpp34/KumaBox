@@ -12,6 +12,7 @@ import (
 
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/storage"
+	"github.com/kumabox/kumabox/types"
 	"github.com/kumabox/kumabox/vmm"
 )
 
@@ -67,7 +68,7 @@ func (d *Driver) Hibernate(ctx context.Context, plan vmm.SnapshotPlan, persist f
 		return err
 	}
 	shouldResume = false
-	return d.Stop(ctx, plan.Process)
+	return d.Stop(ctx, plan.Process, types.StopOptions{Force: true})
 }
 
 func (d *Driver) pauseForCapture(ctx context.Context, plan vmm.SnapshotPlan) error {

@@ -29,7 +29,7 @@ type SandboxService interface {
 	List(context.Context, bool) ([]types.Sandbox, error)
 	Inspect(context.Context, string) (types.Sandbox, error)
 	Start(context.Context, string) (types.Sandbox, error)
-	Stop(context.Context, string) (types.Sandbox, error)
+	Stop(context.Context, string, types.StopOptions) (types.Sandbox, error)
 	Remove(context.Context, string) (types.Sandbox, error)
 	Exec(context.Context, string, types.Command, io.Reader, io.Writer, io.Writer) (int, error)
 }
@@ -244,7 +244,7 @@ func (h *handler) removeSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if current.State == types.SandboxStateRunning {
-		if _, err := h.services.Sandboxes.Stop(r.Context(), ref); err != nil {
+		if _, err := h.services.Sandboxes.Stop(r.Context(), ref, types.StopOptions{Force: true}); err != nil {
 			domainFailure(w, err)
 			return
 		}
@@ -267,7 +267,7 @@ func (h *handler) startSandbox(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) stopSandbox(w http.ResponseWriter, r *http.Request) {
-	record, err := h.services.Sandboxes.Stop(r.Context(), r.PathValue("ref"))
+	record, err := h.services.Sandboxes.Stop(r.Context(), r.PathValue("ref"), types.StopOptions{})
 	if err != nil {
 		domainFailure(w, err)
 		return

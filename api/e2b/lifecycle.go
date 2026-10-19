@@ -208,7 +208,7 @@ func (h *handler) killSandbox(ctx context.Context, id types.SandboxID, policy le
 		return err
 	}
 	if record.State == types.SandboxStateRunning {
-		if _, err := h.sandboxes.Stop(ctx, id.String()); err != nil {
+		if _, err := h.sandboxes.Stop(ctx, id.String(), types.StopOptions{Force: true}); err != nil {
 			return err
 		}
 	}
