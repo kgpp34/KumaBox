@@ -1,0 +1,508 @@
+// Package catalog persists snapshot identities, optional names, and publication
+// state. Artifact capture and removal remain in the snapshot and core packages.
+package catalog
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/kumabox/kumabox/errdefs"
+	"github.com/kumabox/kumabox/metadata"
+	"github.com/kumabox/kumabox/types"
+)
+
+const (
+	// CollectionSnapshots stores ready and pending records by immutable ID.
+	CollectionSnapshots metadata.Collection = "snapshots"
+	// CollectionNames maps optional human-readable names to snapshot IDs.
+	CollectionNames metadata.Collection = "snapshot_names"
+)
+
+// Collections declares the record sets required by this adapter.
+func Collections() []metadata.Collection {
+	return []metadata.Collection{CollectionSnapshots, CollectionNames}
+}
+
+// Store adapts shared metadata transactions to snapshot persistence.
+type Store struct{ store metadata.Store }
+
+// New constructs a snapshot catalog without taking ownership of the engine.
+func New(store metadata.Store) *Store { return &Store{store: store} }
+
+// State exposes only the publication facts needed by crash recovery. Snapshot
+// payloads remain private to this persistence adapter.
+type State struct {
+	ID       types.SnapshotID
+	Ready    bool
+	Deleting bool
+}
+
+// States returns every snapshot reservation, including pending and deleting
+// records that ordinary List intentionally hides.
+func (s *Store) States(ctx context.Context) ([]State, error) {
+	if s == nil || s.store == nil {
+		return nil, errors.New("snapshot catalog is not configured")
+	}
+	states := make([]State, 0)
+	err := s.store.View(ctx, func(reader metadata.Reader) error {
+		return reader.Scan(ctx, CollectionSnapshots, func(key string, raw []byte) error {
+			record, err := decode(raw)
+			if err != nil {
+				return err
+			}
+			if record.ID != key {
+				return corrupt(errors.New("snapshot record key differs from ID"))
+			}
+			id, err := types.ParseSnapshotID(key)
+			if err != nil {
+				return corrupt(err)
+			}
+			states = append(states, State{ID: id, Ready: record.Ready, Deleting: record.Deleting})
+			return nil
+		})
+	})
+	return states, err
+}
+
+// State returns the current publication state for a specific snapshot ID.
+func (s *Store) State(ctx context.Context, id types.SnapshotID) (State, bool, error) {
+	if s == nil || s.store == nil {
+		return State{}, false, errors.New("snapshot catalog is not configured")
+	}
+	if _, err := types.ParseSnapshotID(id.String()); err != nil {
+		return State{}, false, err
+	}
+	var state State
+	var found bool
+	err := s.store.View(ctx, func(reader metadata.Reader) error {
+		raw, exists, err := reader.Get(ctx, CollectionSnapshots, id.String())
+		if err != nil || !exists {
+			return err
+		}
+		record, err := decode(raw)
+		if err != nil {
+			return err
+		}
+		if record.ID != id.String() {
+			return corrupt(errors.New("snapshot record key differs from ID"))
+		}
+		state, found = State{ID: id, Ready: record.Ready, Deleting: record.Deleting}, true
+		return nil
+	})
+	return state, found, err
+}
+
+type recordData struct {
+	ID                string               `json:"id"`
+	Name              string               `json:"name,omitempty"`
+	Description       string               `json:"description,omitempty"`
+	SandboxID         string               `json:"sandbox_id"`
+	SandboxName       string               `json:"sandbox_name"`
+	SourceGeneration  uint64               `json:"source_generation"`
+	ImageDigest       string               `json:"image_digest"`
+	RegistryReference string               `json:"registry_reference,omitempty"`
+	VMM               string               `json:"vmm"`
+	CPUs              uint32               `json:"cpus"`
+	Memory            int64                `json:"memory"`
+	SharedMemory      bool                 `json:"shared_memory,omitempty"`
+	Storage           int64                `json:"storage"`
+	DataDisks         []types.DataDiskSpec `json:"data_disks,omitempty"`
+	NICs              int                  `json:"nics,omitempty"`
+	NetworkName       string               `json:"network_name,omitempty"`
+	Size              int64                `json:"size"`
+	CreatedAt         time.Time            `json:"created_at"`
+	LastAccessedAt    time.Time            `json:"last_accessed_at,omitzero"`
+	Ready             bool                 `json:"ready"`
+	Deleting          bool                 `json:"deleting,omitempty"`
+}
+
+type nameData struct {
+	ID string `json:"id"`
+}
+
+// Usage checks whether any retained snapshot still pins an image manifest.
+// It runs inside the image removal transaction, including pending imports and
+// deleting records whose artifact cleanup has not finished.
+type Usage struct{}
+
+// InUse reads the snapshot collection without opening a nested transaction.
+func (Usage) InUse(ctx context.Context, reader metadata.Reader, digest types.Digest) (bool, error) {
+	used := false
+	err := reader.Scan(ctx, CollectionSnapshots, func(_ string, raw []byte) error {
+		record, err := decode(raw)
+		if err != nil {
+			return err
+		}
+		if record.ImageDigest == digest.String() {
+			used = true
+		}
+		return nil
+	})
+	return used, err
+}
+
+// Reserve atomically holds an ID and optional name before large capture I/O.
+func (s *Store) Reserve(ctx context.Context, snapshot types.Snapshot) error {
+	if s == nil || s.store == nil {
+		return errors.New("snapshot catalog is not configured")
+	}
+	if err := snapshot.Validate(); err != nil {
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+	}
+	err := s.store.Update(ctx, func(writer metadata.Writer) error {
+		if _, exists, err := writer.Get(ctx, CollectionSnapshots, snapshot.ID.String()); err != nil {
+			return err
+		} else if exists {
+			return errdefs.New(errdefs.ClassConflict, errdefs.CodeNameTaken, fmt.Errorf("snapshot ID %s already exists", snapshot.ID))
+		}
+		if snapshot.Name != "" {
+			if _, exists, err := writer.Get(ctx, CollectionNames, snapshot.Name); err != nil {
+				return err
+			} else if exists {
+				return errdefs.New(errdefs.ClassConflict, errdefs.CodeNameTaken, fmt.Errorf("snapshot name %q already exists", snapshot.Name))
+			}
+			rawName, err := json.Marshal(nameData{ID: snapshot.ID.String()})
+			if err != nil {
+				return err
+			}
+			if err := writer.Put(ctx, CollectionNames, snapshot.Name, rawName); err != nil {
+				return err
+			}
+		}
+		raw, err := json.Marshal(encode(snapshot, false))
+		if err != nil {
+			return err
+		}
+		return writer.Put(ctx, CollectionSnapshots, snapshot.ID.String(), raw)
+	})
+	return errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "save snapshot",
+		Entity:    snapshot.Name,
+		Phase:     "reserve",
+		Action:    "choose another snapshot name",
+	})
+}
+
+// Commit publishes size and readiness after artifacts are atomically visible.
+func (s *Store) Commit(ctx context.Context, id types.SnapshotID, size int64, accessedAt time.Time) (types.Snapshot, error) {
+	if accessedAt.IsZero() {
+		return types.Snapshot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("snapshot access time must be set"))
+	}
+	var result types.Snapshot
+	err := s.store.Update(ctx, func(writer metadata.Writer) error {
+		record, err := load(ctx, writer, id)
+		if err != nil {
+			return err
+		}
+		if record.Ready {
+			result, err = decodeSnapshot(record)
+			if err != nil {
+				return err
+			}
+			return nil
+		}
+		record.Size = size
+		record.LastAccessedAt = accessedAt.UTC()
+		result, err = decodeSnapshot(record)
+		if err != nil {
+			return err
+		}
+		record.Ready = true
+		raw, err := json.Marshal(record)
+		if err != nil {
+			return err
+		}
+		if err := writer.Put(ctx, CollectionSnapshots, id.String(), raw); err != nil {
+			return err
+		}
+		return nil
+	})
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "save snapshot",
+		Entity:    id.String(),
+		Phase:     "commit",
+		Action:    "inspect snapshot storage before retrying",
+		Committed: true,
+	})
+}
+
+// Touch records a successful snapshot use. Callers hold the snapshot operation
+// lock; an already started use may finish even if a remover has marked deleting
+// while waiting for that same lock.
+func (s *Store) Touch(ctx context.Context, id types.SnapshotID, accessedAt time.Time) (types.Snapshot, error) {
+	if accessedAt.IsZero() {
+		return types.Snapshot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("snapshot access time must be set"))
+	}
+	var result types.Snapshot
+	err := s.store.Update(ctx, func(writer metadata.Writer) error {
+		record, err := load(ctx, writer, id)
+		if err != nil {
+			return err
+		}
+		if !record.Ready {
+			return notFound(id.String())
+		}
+		current := record.LastAccessedAt
+		if current.IsZero() {
+			current = record.CreatedAt
+		}
+		if current.Before(accessedAt) {
+			record.LastAccessedAt = accessedAt.UTC()
+			raw, err := json.Marshal(record)
+			if err != nil {
+				return err
+			}
+			if err := writer.Put(ctx, CollectionSnapshots, id.String(), raw); err != nil {
+				return err
+			}
+		}
+		result, err = decodeSnapshot(record)
+		return err
+	})
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "access snapshot",
+		Entity:    id.String(),
+		Phase:     "metadata",
+		Action:    "retry the snapshot operation",
+	})
+}
+
+// Forget releases a pending reservation during pre-publication compensation.
+func (s *Store) Forget(ctx context.Context, id types.SnapshotID) error {
+	err := s.store.Update(ctx, func(writer metadata.Writer) error {
+		record, err := load(ctx, writer, id)
+		if err != nil {
+			return err
+		}
+		if record.Ready {
+			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("ready snapshot cannot be forgotten"))
+		}
+		if record.Name != "" {
+			if err := writer.Delete(ctx, CollectionNames, record.Name); err != nil {
+				return err
+			}
+		}
+		return writer.Delete(ctx, CollectionSnapshots, id.String())
+	})
+	return err
+}
+
+// Resolve returns one ready snapshot by exact name or complete ID.
+func (s *Store) Resolve(ctx context.Context, reference string) (types.Snapshot, error) {
+	if s == nil || s.store == nil {
+		return types.Snapshot{}, errors.New("snapshot catalog is not configured")
+	}
+	var result types.Snapshot
+	err := s.store.View(ctx, func(reader metadata.Reader) error {
+		record, err := resolve(ctx, reader, reference)
+		if err != nil {
+			return err
+		}
+		if !record.Ready || record.Deleting {
+			return notFound(reference)
+		}
+		result, err = decodeSnapshot(record)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "resolve snapshot",
+		Entity:    reference,
+		Phase:     "metadata",
+		Action:    "check the snapshot name or ID",
+	})
+}
+
+// List returns ready snapshots ordered newest first.
+func (s *Store) List(ctx context.Context) ([]types.Snapshot, error) {
+	var result []types.Snapshot
+	err := s.store.View(ctx, func(reader metadata.Reader) error {
+		return reader.Scan(ctx, CollectionSnapshots, func(id string, raw []byte) error {
+			record, err := decode(raw)
+			if err != nil {
+				return err
+			}
+			if record.ID != id {
+				return corrupt(errors.New("snapshot record key differs from ID"))
+			}
+			if record.Ready && !record.Deleting {
+				snapshot, err := decodeSnapshot(record)
+				if err != nil {
+					return err
+				}
+				result = append(result, snapshot)
+			}
+			return nil
+		})
+	})
+	slices.SortFunc(result, func(left, right types.Snapshot) int {
+		if order := right.CreatedAt.Compare(left.CreatedAt); order != 0 {
+			return order
+		}
+		return strings.Compare(left.ID.String(), right.ID.String())
+	})
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{Operation: "list snapshots", Entity: "", Phase: "metadata", Action: "inspect snapshot metadata"})
+}
+
+// BeginDelete records durable deletion intent and returns the artifact owner.
+func (s *Store) BeginDelete(ctx context.Context, reference string) (types.Snapshot, error) {
+	var result types.Snapshot
+	err := s.store.Update(ctx, func(writer metadata.Writer) error {
+		record, err := resolve(ctx, writer, reference)
+		if err != nil {
+			return err
+		}
+		if !record.Ready {
+			return notFound(reference)
+		}
+		result, err = decodeSnapshot(record)
+		if err != nil {
+			return err
+		}
+		if record.Deleting {
+			return nil
+		}
+		record.Deleting = true
+		raw, err := json.Marshal(record)
+		if err != nil {
+			return err
+		}
+		return writer.Put(ctx, CollectionSnapshots, record.ID, raw)
+	})
+	return result, errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "remove snapshot",
+		Entity:    reference,
+		Phase:     "mark deleting",
+		Action:    "retry snapshot removal",
+	})
+}
+
+// FinalizeDelete releases metadata and the optional name after artifacts are absent.
+func (s *Store) FinalizeDelete(ctx context.Context, id types.SnapshotID) error {
+	err := s.store.Update(ctx, func(writer metadata.Writer) error {
+		record, err := load(ctx, writer, id)
+		if err != nil {
+			return err
+		}
+		if !record.Deleting {
+			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("snapshot is not deleting"))
+		}
+		if record.Name != "" {
+			if err := writer.Delete(ctx, CollectionNames, record.Name); err != nil {
+				return err
+			}
+		}
+		return writer.Delete(ctx, CollectionSnapshots, id.String())
+	})
+	return errdefs.WithContext(err, errdefs.ContextInfo{
+		Operation: "remove snapshot",
+		Entity:    id.String(),
+		Phase:     "finalize",
+		Action:    "retry snapshot removal",
+		Committed: true,
+	})
+}
+
+func resolve(ctx context.Context, reader metadata.Reader, reference string) (recordData, error) {
+	if reference == "" {
+		return recordData{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("SNAPSHOT must not be empty"))
+	}
+	if raw, exists, err := reader.Get(ctx, CollectionNames, reference); err != nil {
+		return recordData{}, err
+	} else if exists {
+		var name nameData
+		if err := json.Unmarshal(raw, &name); err != nil || name.ID == "" {
+			return recordData{}, corrupt(errors.New("invalid snapshot name binding"))
+		}
+		id, err := types.ParseSnapshotID(name.ID)
+		if err != nil {
+			return recordData{}, corrupt(err)
+		}
+		return load(ctx, reader, id)
+	}
+	id, err := types.ParseSnapshotID(reference)
+	if err != nil {
+		return recordData{}, notFound(reference)
+	}
+	return load(ctx, reader, id)
+}
+
+func load(ctx context.Context, reader metadata.Reader, id types.SnapshotID) (recordData, error) {
+	raw, exists, err := reader.Get(ctx, CollectionSnapshots, id.String())
+	if err != nil {
+		return recordData{}, err
+	}
+	if !exists {
+		return recordData{}, notFound(id.String())
+	}
+	return decode(raw)
+}
+
+func decode(raw []byte) (recordData, error) {
+	var record recordData
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return recordData{}, corrupt(err)
+	}
+	if _, err := decodeSnapshot(record); err != nil {
+		return recordData{}, corrupt(err)
+	}
+	return record, nil
+}
+
+func encode(snapshot types.Snapshot, ready bool) recordData {
+	return recordData{
+		ID: snapshot.ID.String(), Name: snapshot.Name, Description: snapshot.Description,
+		SandboxID: snapshot.SandboxID.String(), SandboxName: snapshot.Config.Name,
+		SourceGeneration: snapshot.SourceGeneration,
+		ImageDigest:      snapshot.ImageDigest.String(), RegistryReference: snapshot.RegistryReference,
+		VMM:  string(snapshot.VMM),
+		CPUs: snapshot.Config.CPUs, Memory: snapshot.Config.Memory, SharedMemory: snapshot.Config.SharedMemory, Storage: snapshot.Config.Storage, DataDisks: snapshot.Config.DataDisks,
+		NICs: snapshot.Config.NICs, NetworkName: snapshot.Config.NetworkName,
+		Size: snapshot.Size, CreatedAt: snapshot.CreatedAt.UTC(), LastAccessedAt: snapshot.LastAccessedAt.UTC(), Ready: ready,
+	}
+}
+
+func decodeSnapshot(record recordData) (types.Snapshot, error) {
+	id, err := types.ParseSnapshotID(record.ID)
+	if err != nil {
+		return types.Snapshot{}, err
+	}
+	sandboxID, err := types.ParseSandboxID(record.SandboxID)
+	if err != nil {
+		return types.Snapshot{}, err
+	}
+	digest, err := types.ParseDigest(record.ImageDigest)
+	if err != nil {
+		return types.Snapshot{}, err
+	}
+	result := types.Snapshot{
+		ID: id, Name: record.Name, Description: record.Description,
+		SandboxID: sandboxID, SourceGeneration: record.SourceGeneration,
+		ImageDigest: digest, RegistryReference: record.RegistryReference,
+		VMM: types.VMMType(record.VMM), Size: record.Size,
+		Config: types.SandboxConfig{
+			Name: record.SandboxName, CPUs: record.CPUs, Memory: record.Memory, SharedMemory: record.SharedMemory, Storage: record.Storage, DataDisks: record.DataDisks,
+			NICs: record.NICs, NetworkName: record.NetworkName,
+		},
+		CreatedAt: record.CreatedAt.UTC(), LastAccessedAt: record.LastAccessedAt.UTC(),
+	}
+	if result.LastAccessedAt.IsZero() {
+		result.LastAccessedAt = result.CreatedAt
+	}
+	return result, result.Validate()
+}
+
+func notFound(reference string) error {
+	return errdefs.New(errdefs.ClassNotFound, errdefs.CodeNotFound, fmt.Errorf("snapshot %q was not found", reference))
+}
+
+func corrupt(cause error) error {
+	return errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, cause)
+}

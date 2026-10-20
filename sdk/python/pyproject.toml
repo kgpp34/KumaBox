@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kumabox"
+version = "0.1.0"
+description = "Python client for the KumaBox sandbox API"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+include = ["kumabox*"]
+
+[tool.setuptools.package-data]
+kumabox = ["py.typed"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true

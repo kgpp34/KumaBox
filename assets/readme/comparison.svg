@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 664" width="1200" height="664" role="img" aria-label="What you operate to get hardware-isolated sandboxes: KumaBox vs CubeSandbox vs self-hosted E2B">
+<title>What you operate to get hardware-isolated sandboxes: KumaBox vs CubeSandbox vs self-hosted E2B</title>
+<defs>
+  <pattern id="iso" width="40" height="23.094" patternUnits="userSpaceOnUse">
+    <path d="M0 0 L40 23.094 M40 0 L0 23.094" stroke="#ffffff" stroke-opacity="0.028" stroke-width="1"/>
+  </pattern>
+  <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#F5B83D" stop-opacity="0.35"/>
+    <stop offset="100%" stop-color="#F5B83D" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="vignette" cx="30%" cy="20%" r="90%">
+    <stop offset="0%" stop-color="#22324A"/>
+    <stop offset="100%" stop-color="#172233"/>
+  </radialGradient>
+  <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="#6F8FAF"/>
+  </marker>
+  <marker id="arrH" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="#F5B83D"/>
+  </marker>
+</defs>
+<style>
+  text { font-family: 'Inter','Segoe UI','SF Pro Text',-apple-system,'Helvetica Neue',Arial,sans-serif; }
+  .mono { font-family: 'JetBrains Mono','SFMono-Regular',Menlo,Consolas,'DejaVu Sans Mono',monospace; }
+  .flow { stroke-dasharray: 6 8; animation: flow 1.6s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -28; } }
+  
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+<rect x="0" y="0" width="1200" height="664" rx="20" fill="url(#vignette)"/>
+<rect x="0" y="0" width="1200" height="664" rx="20" fill="url(#iso)"/>
+<rect x="0.5" y="0.5" width="1199" height="663" rx="20" fill="none" stroke="#34485F"/>
+<text x="48" y="58" font-size="26" fill="#E8EEF5" font-weight="700" text-anchor="start" >What you run on one host to get one kernel per task</text>
+<text x="48" y="88" font-size="16" fill="#98AABF" font-weight="400" text-anchor="start" >Taller stacks buy multi-tenant APIs, scheduling and dashboards. KumaBox keeps only what a single host needs.</text>
+<text x="48" y="146" font-size="19" fill="#F5B83D" font-weight="700" text-anchor="start" >KumaBox</text>
+<text x="392" y="146" font-size="13" fill="#98AABF" font-weight="400" text-anchor="end" >MIT, Go</text>
+<line x1="48" y1="158" x2="392" y2="158" stroke="#34485F"/>
+<rect x="48" y="504" width="344" height="44" rx="9" fill="#243449" stroke="#34485F" stroke-width="1.1" />
+<text x="64" y="532" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >Linux + KVM, amd64 or arm64</text>
+<rect x="48" y="452" width="344" height="44" rx="9" fill="#243449" stroke="#34485F" stroke-width="1.1" />
+<text x="64" y="480" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >cloud-hypervisor + CNI plugins</text>
+<rect x="48" y="400" width="344" height="44" rx="9" fill="#2B2A22" stroke="#F5B83D" stroke-width="1.4" />
+<text x="64" y="428" font-size="14" fill="#F5B83D" font-weight="600" text-anchor="start" class="mono" >kumabox, one binary</text>
+<path d="M220.0 382 L 220.0 272" stroke="#F5B83D" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3 6"/>
+<text x="220.0" y="258" font-size="17" fill="#F5B83D" font-weight="700" text-anchor="middle" >That's the whole stack.</text>
+<text x="48" y="578" font-size="13.5" fill="#E8EEF5" font-weight="400" text-anchor="start" >No database, no cluster manager,</text>
+<text x="48" y="598" font-size="13.5" fill="#E8EEF5" font-weight="400" text-anchor="start" >no resident daemon.</text>
+<text x="428" y="146" font-size="19" fill="#E8EEF5" font-weight="700" text-anchor="start" >CubeSandbox, one-click node</text>
+<text x="772" y="146" font-size="13" fill="#98AABF" font-weight="400" text-anchor="end" >Apache-2.0</text>
+<line x1="428" y1="158" x2="772" y2="158" stroke="#34485F"/>
+<rect x="428" y="504" width="344" height="44" rx="9" fill="#1F2D40" stroke="#34485F" stroke-width="1.1" />
+<text x="444" y="532" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >Linux + KVM, x86_64 or ARM64</text>
+<rect x="428" y="452" width="344" height="44" rx="9" fill="#243449" stroke="#34485F" stroke-width="1.1" />
+<text x="444" y="480" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >CubeHypervisor + CubeShim</text>
+<rect x="428" y="400" width="344" height="44" rx="9" fill="#1F2D40" stroke="#34485F" stroke-width="1.1" />
+<text x="444" y="428" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >Cubelet + CubeVS eBPF network</text>
+<rect x="428" y="348" width="344" height="44" rx="9" fill="#243449" stroke="#34485F" stroke-width="1.1" />
+<text x="444" y="376" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >CubeMaster + lifecycle manager</text>
+<rect x="428" y="296" width="344" height="44" rx="9" fill="#1F2D40" stroke="#34485F" stroke-width="1.1" />
+<text x="444" y="324" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >CubeAPI, CubeProxy, CubeEgress</text>
+<rect x="428" y="244" width="344" height="44" rx="9" fill="#243449" stroke="#34485F" stroke-width="1.1" />
+<text x="444" y="272" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >MySQL, Redis, MinIO</text>
+<rect x="428" y="192" width="344" height="44" rx="9" fill="#1F2D40" stroke="#34485F" stroke-width="1.1" />
+<text x="444" y="220" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >Web UI + CubeOps</text>
+<text x="428" y="578" font-size="13.5" fill="#98AABF" font-weight="400" text-anchor="start" >Full sandbox service with E2B API.</text>
+<text x="428" y="598" font-size="13.5" fill="#98AABF" font-weight="400" text-anchor="start" >Terraform or Kubernetes for clusters.</text>
+<text x="808" y="146" font-size="19" fill="#E8EEF5" font-weight="700" text-anchor="start" >E2B Embed, one machine</text>
+<text x="1152" y="146" font-size="13" fill="#98AABF" font-weight="400" text-anchor="end" >Apache-2.0, Go</text>
+<line x1="808" y1="158" x2="1152" y2="158" stroke="#34485F"/>
+<rect x="808" y="504" width="344" height="44" rx="9" fill="#1F2D40" stroke="#34485F" stroke-width="1.1" />
+<text x="824" y="532" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >Linux + KVM + Docker Compose</text>
+<rect x="808" y="452" width="344" height="44" rx="9" fill="#243449" stroke="#34485F" stroke-width="1.1" />
+<text x="824" y="480" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >Firecracker VMM</text>
+<rect x="808" y="400" width="344" height="44" rx="9" fill="#1F2D40" stroke="#34485F" stroke-width="1.1" />
+<text x="824" y="428" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >Orchestrator + template builder</text>
+<rect x="808" y="348" width="344" height="44" rx="9" fill="#243449" stroke="#34485F" stroke-width="1.1" />
+<text x="824" y="376" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >API server + client proxy</text>
+<rect x="808" y="296" width="344" height="44" rx="9" fill="#1F2D40" stroke="#34485F" stroke-width="1.1" />
+<text x="824" y="324" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >PostgreSQL, Redis, ClickHouse</text>
+<rect x="808" y="244" width="344" height="44" rx="9" fill="#243449" stroke="#34485F" stroke-width="1.1" />
+<text x="824" y="272" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >Dashboard + log pipeline</text>
+<text x="808" y="578" font-size="13.5" fill="#98AABF" font-weight="400" text-anchor="start" >Same runtime as E2B Cloud.</text>
+<text x="808" y="598" font-size="13.5" fill="#98AABF" font-weight="400" text-anchor="start" >Terraform or Kubernetes for more nodes.</text>
+<text x="1152" y="646" font-size="11.5" fill="#98AABF" font-weight="400" text-anchor="end" >Single-host install footprint, from each project's repository and deploy files, September 2026.</text>
+</svg>
