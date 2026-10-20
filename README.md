@@ -7,6 +7,8 @@
   <img src="https://img.shields.io/badge/Go-1.24.4%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.24.4+">
   <img src="https://img.shields.io/badge/platform-Linux%20amd64%20%7C%20arm64-FCC624?logo=linux&logoColor=black" alt="Linux amd64 | arm64">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
+  <a href="https://github.com/kgpp34/KumaBox/stargazers"><img src="https://img.shields.io/github/stars/kgpp34/KumaBox?style=flat-square&logo=github" alt="Stars"></a>
+  <a href="https://github.com/kgpp34/KumaBox/network/members"><img src="https://img.shields.io/github/forks/kgpp34/KumaBox?style=flat-square&logo=github" alt="Forks"></a>
 </p>
 
 <p align="center">
