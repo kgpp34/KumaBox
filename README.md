@@ -23,10 +23,10 @@ files nobody reviewed. Running that on a shared kernel is a bet. KumaBox gives
 every task its own **KVM microVM** with its own kernel, disk and network
 namespace, and gets you from an OCI image to a running sandbox in one command.
 
-> [!WARNING]
-> KumaBox is under active development. The CLI, metadata schema and snapshot
-> format are not yet covered by a stability guarantee. Use disposable Linux/KVM
-> hosts until the first stable release.
+> [!NOTE]
+> v0.1.0 is the first regular release of the single-host runtime. KumaBox is still
+> in the 0.x series; review release notes and snapshot compatibility before
+> upgrading. The E2B protocol adapter remains experimental.
 
 ## What KumaBox is
 
@@ -75,8 +75,8 @@ cleanup must be retried.
 Agents retry, branch and explore. Pay the setup cost once: boot, install
 dependencies, warm caches. Capture a **running snapshot** of memory and disks,
 then `clone` it for every attempt. Each clone gets a private writable disk,
-network identity and hostname. Cloud Hypervisor v53 uses on-demand memory
-restore; newer compatible versions can use copy-on-write memory restore.
+network identity and hostname. Cloud Hypervisor v53 can use opt-in on-demand
+memory restore; newer compatible versions can use copy-on-write memory restore.
 
 ## Quick start
 
@@ -492,10 +492,12 @@ and across a fleet.
 - [x] OCI to EROFS images, CNI networking, guest exec over vsock
 - [x] Running snapshots, clone, restore, hibernate, export and import
 - [x] Hotplug data disks, virtio-fs shares and VFIO PCI devices
-- [ ] Daemon mode with an HTTP API
+- [x] Authenticated HTTP API and runtime reconciliation
 - [ ] Multi-node control plane and scheduling
-- [ ] Go, Python and TypeScript SDKs
-- [ ] E2B-compatible API, so existing E2B code can point at KumaBox
+- [x] In-repository Python and TypeScript SDKs
+- [ ] Publish independently versioned Python and TypeScript SDK packages
+- [x] Experimental E2B protocol adapter with a documented compatibility subset
+- [ ] Complete the remaining E2B compatibility surface
 - [ ] MCP server, so agents can create and drive sandboxes as tools
 - [ ] Warm pools and published clone-latency benchmarks
 - [ ] Per-sandbox egress policy

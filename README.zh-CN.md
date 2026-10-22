@@ -26,9 +26,9 @@ AI Agent 会写代码、装依赖、发起网络连接，还会读写没人审�
 本质上是在赌运气。KumaBox 为每个任务分配一台独立的 **KVM microVM**：独立的内核、独立的磁盘、
 独立的网络命名空间。从 OCI 镜像到一个可用的沙箱，只需要一条命令。
 
-> [!WARNING]
-> KumaBox 仍在快速迭代中。CLI、元数据格式和快照格式暂不承诺向后兼容。
-> 在首个稳定版发布之前，请在可随时重建的 Linux/KVM 主机上使用。
+> [!NOTE]
+> v0.1.0 是单机运行时的首个正式发布版本。项目仍处于 0.x 阶段，升级前请阅读
+> Release Notes 和快照兼容性说明。E2B 协议适配仍为实验性能力。
 
 ## KumaBox 是什么
 
@@ -73,14 +73,14 @@ KumaBox 是一个**面向 AI Agent 和不可信工作负载的 microVM 沙箱运
 
 Agent 天生就会重试、分支和探索。准备环境的成本只需要付一次：启动、安装依赖、预热缓存。
 然后对内存和磁盘打一个**运行态快照**，每次尝试都从它 `clone` 出一台新沙箱。
-每个克隆都会获得自己的可写磁盘、网络身份和主机名。Cloud Hypervisor v53 使用按需内存恢复；
+每个克隆都会获得自己的可写磁盘、网络身份和主机名。Cloud Hypervisor v53 可显式选择按需内存恢复；
 更新的兼容版本可以使用写时复制内存恢复。
 
 ## 快速开始
 
 需要一台 amd64 或 arm64 的 Linux 主机，能访问 `/dev/kvm`，并具备 root 权限。
 
-预发布版提供包含 `kumabox` 和 `kumabox-check` 的 Linux amd64 压缩包，以及
+Release 提供包含 `kumabox` 和 `kumabox-check` 的 Linux amd64 压缩包，以及
 与其版本对应的 Ubuntu guest 镜像。从 [GitHub Release](https://github.com/kgpp34/KumaBox/releases)
 下载压缩包和 `SHA256SUMS`，先运行 `sha256sum -c SHA256SUMS`，再解压并安装。
 请使用该 Release 指定的 guest 镜像版本；宿主机程序和 guest 镜像应来自同一版本。
@@ -409,10 +409,12 @@ KumaBox 自底向上构建这一目标。先在每台主机上做好一个正确
 - [x] OCI 转 EROFS 镜像、CNI 网络、基于 vsock 的 guest 命令执行
 - [x] 运行态快照、克隆、恢复、休眠、导出与导入
 - [x] 热插拔磁盘、virtio-fs 和 VFIO PCI 设备
-- [ ] 带 HTTP API 的 daemon 模式
+- [x] 带认证的 HTTP API 与运行状态回收
 - [ ] 多节点控制面与调度
-- [ ] Go、Python、TypeScript SDK
-- [ ] E2B 兼容 API，让现有 E2B 代码可以直接切换到 KumaBox
+- [x] 仓库内 Python、TypeScript SDK
+- [ ] 独立版本的 Python、TypeScript SDK 包发布
+- [x] 实验性 E2B 协议适配，明确已支持的兼容范围
+- [ ] 补齐其余 E2B 协议兼容能力
 - [ ] MCP server，让 Agent 以工具的形式创建和操作沙箱
 - [ ] 预热池，以及公开的克隆延迟基准测试
 - [ ] 按沙箱粒度的出网策略
