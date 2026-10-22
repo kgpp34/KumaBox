@@ -315,3 +315,60 @@ func TestNetResizeRetriesAfterHostRemovalFailure(t *testing.T) {
 		t.Fatalf("retry result = %+v, %v", record, err)
 	}
 }
+
+func TestGuestNetworkScriptUsesExecResultOnNonIdempotentTransport(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		code int
+	}{
+		{name: "success"},
+		{name: "guest failure", code: 23},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = listener.Close() })
+			served := make(chan error, 1)
+			go func() {
+				guest, err := listener.Accept()
+				if err != nil {
+					served <- err
+					return
+				}
+				defer guest.Close() //nolint:errcheck // test-owned socket
+				_ = guest.SetDeadline(time.Now().Add(5 * time.Second))
+				decoder := agent.NewDecoder(guest)
+				request, err := decoder.Decode()
+				if err == nil && request.Type != agent.MessageExec {
+					err = fmt.Errorf("unexpected first request %q", request.Type)
+				}
+				if err == nil {
+					_, err = decoder.Decode()
+				}
+				if err == nil {
+					err = agent.NewEncoder(guest).Encode(agent.Message{Type: agent.MessageExit, ExitCode: test.code})
+				}
+				served <- err
+			}()
+			host, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = host.Close() })
+			var steps []string
+			runtime := &fakeRuntime{steps: &steps, vsockFactory: func() io.ReadWriteCloser { return host }}
+			err = runGuestNetworkScript(t.Context(), runtime, vmm.Process{}, "true")
+			if test.code == 0 && err != nil {
+				t.Fatalf("successful guest script failed during transport cleanup: %v", err)
+			}
+			if test.code != 0 && (err == nil || !strings.Contains(err.Error(), "23")) {
+				t.Fatalf("guest exit status was lost: %v", err)
+			}
+			if err := <-served; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
