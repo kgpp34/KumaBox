@@ -46,7 +46,7 @@ KumaBox 是一个**面向 AI Agent 和不可信工作负载的 microVM 沙箱运
 - **硬件级隔离。** 每个沙箱运行在 KVM 之上的独立 guest 内核里，每台 VM 对应一个独立的 Cloud Hypervisor 进程。
 - **OCI 进，microVM 出。** 按 digest 固定的 OCI 镜像被转换成共享、只读的 EROFS 层，再为每台 VM 叠加一块私有的写时复制磁盘。
 - **真实的网络。** 每台 VM 拥有独立的网络命名空间，通过 CNI 使用多队列 TAP 和 tc redirect。支持多网卡，也支持在线调整网卡。
-- **无需 SSH 即可执行命令。** `exec` 走 vsock 通道，支持流式 stdout / stderr、stdin、环境变量、工作目录、TTY，并返回真实的退出码。
+- **无需 SSH 即可执行命令。** `exec` 走 vsock 通道，支持流式 stdout / stderr、stdin、环境变量、工作目录和用户选择，并返回真实的退出码。交互式终端通过 `console` 使用。
 - **快照是一等公民。** 支持运行态快照、导出、导入、原地恢复、休眠，以及以全新身份克隆。
 - **按需使用真实设备。** 运行中的 Cloud Hypervisor 沙箱可热插拔外部数据盘、virtio-fs 共享目录和 VFIO PCI 设备。
 - **为脚本化而生。** 生命周期命令提供 `--json` 输出，`inspect` 返回带缩进的 JSON。
