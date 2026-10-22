@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -83,6 +84,9 @@ func (d *Driver) restore(ctx context.Context, plan vmm.RestorePlan, beforeResume
 	if err != nil {
 		return vmm.Process{}, err
 	}
+	if plan.MemoryMode == types.MemoryRestoreMmap && memoryMode == "" {
+		slog.WarnContext(ctx, "mmap restore requires private memory without hugepages; using eager copy", "sandbox", plan.SandboxID)
+	}
 	if err := d.paths.Prepare(plan.SandboxID); err != nil {
 		return vmm.Process{}, err
 	}
@@ -107,7 +111,7 @@ func (d *Driver) restore(ctx context.Context, plan vmm.RestorePlan, beforeResume
 	if err := d.paths.WriteCmdline(plan.SandboxID, diagnosticCommand(d.binary, args)); err != nil {
 		return vmm.Process{}, err
 	}
-	scope, err := d.scopes.PrepareRestore(ctx, plan.SandboxID, plan.CPUs)
+	scope, err := d.scopes.PrepareRestore(ctx, plan.SandboxID, plan.CPUs, plan.CPUPolicy)
 	if err != nil {
 		return vmm.Process{}, err
 	}
@@ -162,7 +166,7 @@ func (d *Driver) loadAndResume(ctx context.Context, plan vmm.RestorePlan, apiSoc
 			return fmt.Errorf("replace restored devices: %w", err)
 		}
 	}
-	if err := d.scopes.ApplyLimit(ctx, plan.SandboxID, plan.CPUs); err != nil {
+	if err := d.scopes.ApplyLimit(ctx, plan.SandboxID, plan.CPUs, plan.CPUPolicy); err != nil {
 		return fmt.Errorf("apply restored CPU limit: %w", err)
 	}
 	if err := d.snapshotAction(ctx, apiSocket, "vm.resume", nil, d.startupTimeout); err != nil {

@@ -167,10 +167,14 @@ func newTestSnapshotService(t *testing.T) (*SnapshotService, *SandboxService, *[
 
 func TestRestoreStopsRunningSandboxAndResumesSnapshot(t *testing.T) {
 	service, sandboxService, steps := newTestSnapshotService(t)
+	catalog := sandboxService.dependencies.catalog.(*fakeCatalog)
+	catalog.record.Config.CPUPolicy = types.CPUPolicy{Weight: 17, CPUSet: "0-1"}
 	capture, err := service.Save(t.Context(), SaveSnapshotRequest{SandboxReference: "box", Name: "checkpoint"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	targetPolicy := types.CPUPolicy{Weight: 37, CPUSet: "2-3", BurstUS: -1}
+	catalog.record.Config.CPUPolicy = targetPolicy
 	accessedAt := capture.LastAccessedAt.Add(time.Hour)
 	service.now = func() time.Time { return accessedAt }
 	*steps = nil
@@ -189,7 +193,7 @@ func TestRestoreStopsRunningSandboxAndResumesSnapshot(t *testing.T) {
 	if !testRuntime(t, sandboxService).stopOptions.Force {
 		t.Fatal("restore entered the guest shutdown window")
 	}
-	if plan.SandboxID != fixedID || plan.Generation != 7 || plan.SnapshotDir == "" || plan.MemoryMode != types.MemoryRestoreOnDemand {
+	if plan.SandboxID != fixedID || plan.Generation != 7 || plan.SnapshotDir == "" || plan.MemoryMode != types.MemoryRestoreOnDemand || plan.CPUPolicy != targetPolicy || record.Config.CPUPolicy != targetPolicy {
 		t.Fatalf("restore plan = %+v", plan)
 	}
 	wantSequence := []string{"stopping", "stop", "stopped", "starting", "restore", "running"}

@@ -225,3 +225,26 @@ func TestBuildArgsEnablesSharedMemoryOnlyWhenRequested(t *testing.T) {
 		t.Fatalf("shared memory argument = %v", args)
 	}
 }
+
+func TestMemoryBackingAndBalloonArguments(t *testing.T) {
+	for _, test := range []struct {
+		name                           string
+		huge, merge, shared, noBalloon bool
+		memory                         string
+	}{
+		{name: "hugetlb", huge: true, memory: "size=536870912,hugepages=on"},
+		{name: "ksm", merge: true, memory: "size=536870912,mergeable=on"},
+		{name: "shared hugetlb", huge: true, shared: true, memory: "size=536870912,shared=on,hugepages=on"},
+		{name: "no balloon", noBalloon: true, memory: "size=536870912"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			args := buildArgs(vmm.LaunchPlan{CPUs: 2, Memory: 512 << 20, HugePages: test.huge, Mergeable: test.merge, SharedMemory: test.shared, NoBalloon: test.noBalloon}, "/api", "/vsock")
+			if index := slices.Index(args, "--memory"); index < 0 || args[index+1] != test.memory {
+				t.Fatalf("memory arguments: %v", args)
+			}
+			if slices.Contains(args, "--balloon") == test.noBalloon {
+				t.Fatalf("balloon arguments: %v", args)
+			}
+		})
+	}
+}

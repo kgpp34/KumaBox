@@ -39,11 +39,11 @@ func TestRestorePayloadIncludesSelectedMemoryMode(t *testing.T) {
 
 type resumeScope struct {
 	cleanupScope
-	apply func(context.Context, types.SandboxID, uint32) error
+	apply func(context.Context, types.SandboxID, uint32, types.CPUPolicy) error
 }
 
-func (s *resumeScope) ApplyLimit(ctx context.Context, id types.SandboxID, cpus uint32) error {
-	return s.apply(ctx, id, cpus)
+func (s *resumeScope) ApplyLimit(ctx context.Context, id types.SandboxID, cpus uint32, policy types.CPUPolicy) error {
+	return s.apply(ctx, id, cpus, policy)
 }
 
 func TestRestoreNeverResumesBeforeRuntimeLimit(t *testing.T) {
@@ -90,12 +90,12 @@ func TestRestoreNeverResumesBeforeRuntimeLimit(t *testing.T) {
 			failure := errors.New("injected failure")
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			plan := vmm.RestorePlan{SandboxID: "123e4567-e89b-42d3-a456-426614174000", CPUs: 2, SnapshotDir: "/snapshot"}
-			scopes := &resumeScope{apply: func(ctx context.Context, id types.SandboxID, cpus uint32) error {
+			plan := vmm.RestorePlan{SandboxID: "123e4567-e89b-42d3-a456-426614174000", CPUs: 2, CPUPolicy: types.CPUPolicy{Weight: 37, CPUSet: "2-3"}, SnapshotDir: "/snapshot"}
+			scopes := &resumeScope{apply: func(ctx context.Context, id types.SandboxID, cpus uint32, policy types.CPUPolicy) error {
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				if id != plan.SandboxID || cpus != plan.CPUs {
+				if id != plan.SandboxID || cpus != plan.CPUs || policy != plan.CPUPolicy {
 					t.Errorf("CPU policy applied to wrong target: %s, %d", id, cpus)
 				}
 				events <- "limit"

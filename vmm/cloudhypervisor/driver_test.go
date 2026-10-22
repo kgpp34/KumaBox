@@ -165,15 +165,18 @@ type cleanupScope struct {
 	removals  int
 }
 
-func (*cleanupScope) Prepare(context.Context, types.SandboxID, uint32) (*os.File, error) {
+func (*cleanupScope) Prepare(context.Context, types.SandboxID, uint32, types.CPUPolicy) (*os.File, error) {
 	return nil, errors.New("not used")
 }
 
-func (*cleanupScope) PrepareRestore(context.Context, types.SandboxID, uint32) (*os.File, error) {
+func (*cleanupScope) PrepareRestore(context.Context, types.SandboxID, uint32, types.CPUPolicy) (*os.File, error) {
 	return nil, errors.New("not used")
 }
-func (*cleanupScope) ApplyLimit(context.Context, types.SandboxID, uint32) error { return nil }
-func (*cleanupScope) PIDs(types.SandboxID) ([]int, error)                       { return nil, nil }
+
+func (*cleanupScope) ApplyLimit(context.Context, types.SandboxID, uint32, types.CPUPolicy) error {
+	return nil
+}
+func (*cleanupScope) PIDs(types.SandboxID) ([]int, error) { return nil, nil }
 func (s *cleanupScope) Remove(context.Context, types.SandboxID) error {
 	s.removals++
 	return s.removeErr

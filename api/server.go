@@ -176,7 +176,8 @@ func (h *handler) createSandbox(w http.ResponseWriter, r *http.Request) {
 	config := types.SandboxConfig{
 		Name: request.Name, CPUs: types.DefaultSandboxCPUs, Memory: types.DefaultSandboxMemory,
 		Storage: types.DefaultSandboxStorage, NICs: 1, NetworkName: request.Network,
-		SharedMemory: request.SharedMemory,
+		SharedMemory: request.SharedMemory, CPUPolicy: request.CPUPolicy,
+		HugePages: request.HugePages, Mergeable: request.Mergeable, NoBalloon: request.NoBalloon,
 	}
 	if config.Name == "" {
 		id, err := types.NewSandboxID()

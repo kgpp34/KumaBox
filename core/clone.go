@@ -23,6 +23,8 @@ import (
 type CloneOptions struct {
 	// Name is the required identity assigned to the new sandbox.
 	Name string
+	// CPUPolicy replaces source-host scheduling with the clone request.
+	CPUPolicy types.CPUPolicy
 	// Pull fetches a missing registry image by the snapshot's exact digest.
 	Pull bool
 	// SourceDirectory selects a portable directory instead of a catalog snapshot.
@@ -113,6 +115,7 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	}
 	config := capture.Config
 	config.Name = options.Name
+	config.CPUPolicy = options.CPUPolicy
 	var err error
 	config.DataDisks, err = types.ResolveDataDisks(capture.Config.DataDisks, options.DataDisks)
 	if err != nil {
@@ -229,7 +232,7 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	inheritedCount := len(capture.Config.DataDisks)
 	process, err := cloner.Clone(ctx, vmm.ClonePlan{
 		RestorePlan: vmm.RestorePlan{
-			SandboxID: starting.ID, Generation: starting.Generation, CPUs: starting.Config.CPUs,
+			SandboxID: starting.ID, Generation: starting.Generation, CPUs: starting.Config.CPUs, CPUPolicy: starting.Config.CPUPolicy,
 			SnapshotDir: snapshotDir, Network: starting.Network, MemoryMode: options.MemoryMode,
 		}, WritableDisk: liveCOW, ImageDisks: imageDisks,
 		DataDisks: dataDisks[:inheritedCount], NewDataDisks: dataDisks[inheritedCount:],

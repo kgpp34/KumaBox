@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -16,7 +17,12 @@ import (
 	"github.com/kumabox/kumabox/vmm"
 )
 
-const snapshotTimeout = 10 * time.Minute
+const (
+	snapshotTimeout      = 10 * time.Minute
+	balloonPollInterval  = 100 * time.Millisecond
+	balloonStallTimeout  = 2 * time.Second
+	balloonSettleTimeout = time.Minute
+)
 
 var (
 	_ vmm.Snapshotter = (*Driver)(nil)
@@ -26,8 +32,8 @@ var (
 // Snapshot pauses the exact owned process, captures native VMM state and every
 // writable disk, then resumes the guest even when capture fails.
 //
-//	verify -> pause -> native state -> writable disks -> resume
-//	             \----------- any error -----------/
+//	verify -> settle balloon -> pause -> native state -> writable disks -> resume
+//	                             \----------- any error -----------/
 func (d *Driver) Snapshot(ctx context.Context, plan vmm.SnapshotPlan) (returnErr error) {
 	if err := d.pauseForCapture(ctx, plan); err != nil {
 		return err
@@ -89,8 +95,44 @@ func (d *Driver) pauseForCapture(ctx context.Context, plan vmm.SnapshotPlan) err
 	if err := refuseExternalDevices(info); err != nil {
 		return err
 	}
+	if err := d.waitBalloonSettled(ctx, plan.Process, info); err != nil {
+		return err
+	}
 	if err := d.snapshotAction(ctx, plan.Process.APISocket, "vm.pause", nil, probeTimeout); err != nil {
 		return fmt.Errorf("pause cloud-hypervisor: %w", err)
+	}
+	return nil
+}
+
+// waitBalloonSettled lets guest reclaim finish before pausing it. A stalled
+// guest still has a valid snapshot: after two seconds without progress (or a
+// minute overall), capture the actual RAM rather than blocking indefinitely.
+func (d *Driver) waitBalloonSettled(ctx context.Context, process vmm.Process, info vmInfo) error {
+	if info.Config.Balloon == nil || info.MemoryActualSize == 0 {
+		return nil
+	}
+	target := info.Config.Memory.Size - info.Config.Balloon.Size
+	started, progress := time.Now(), time.Now()
+	ticker := time.NewTicker(balloonPollInterval)
+	defer ticker.Stop()
+	for actual := info.MemoryActualSize; actual > target; {
+		if time.Since(progress) >= balloonStallTimeout || time.Since(started) >= balloonSettleTimeout {
+			slog.WarnContext(ctx, "balloon reclaim has not reached its target; capturing current memory", "sandbox", process.SandboxID, "actual", actual, "target", target)
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+		current, err := d.liveInfo(ctx, process)
+		if err != nil {
+			return err
+		}
+		if current.MemoryActualSize < actual {
+			progress = time.Now()
+		}
+		actual = current.MemoryActualSize
 	}
 	return nil
 }

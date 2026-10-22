@@ -25,7 +25,8 @@ var versionPattern = regexp.MustCompile(`\bv([0-9]+)\.`)
 // restoreMemoryMode applies one policy to in-place restore and clone. Automatic
 // selection uses mmap when available, otherwise eager copy. Userfaultfd demand
 // paging stays opt-in because first-touch work can worsen runtime tail latency;
-// explicit lazy modes fail preflight when their requirements cannot be met.
+// unsupported monitors fail explicit lazy requests during preflight. Shared or
+// hugepage backing falls back from mmap to eager copy, preserving its backing.
 func (d *Driver) restoreMemoryMode(ctx context.Context, configPath string, requested types.MemoryRestoreMode) (string, error) {
 	if err := requested.Validate(); err != nil {
 		return "", err
@@ -58,7 +59,10 @@ func (d *Driver) restoreMemoryMode(ctx context.Context, configPath string, reque
 		}
 	}
 	if !private {
-		if requested == types.MemoryRestoreMmap || requested == types.MemoryRestoreOnDemand {
+		if requested == types.MemoryRestoreMmap {
+			return "", nil
+		}
+		if requested == types.MemoryRestoreOnDemand {
 			return "", errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, errors.New("lazy memory restore requires plain private guest memory; use --restore-mode copy"))
 		}
 		return "", nil

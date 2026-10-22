@@ -61,6 +61,14 @@ type recordData struct {
 	Memory int64 `json:"memory"`
 	// SharedMemory enables runtime virtio-fs on the captured VM shape.
 	SharedMemory bool `json:"shared_memory,omitempty"`
+	// CPUPolicy records host scheduling policy separately from guest shape.
+	CPUPolicy types.CPUPolicy `json:"cpu_policy,omitzero"`
+	// HugePages selects hugetlb-backed guest memory.
+	HugePages bool `json:"hugepages,omitempty"`
+	// Mergeable opts private guest memory into host KSM.
+	Mergeable bool `json:"mergeable,omitempty"`
+	// NoBalloon omits the default balloon device.
+	NoBalloon bool `json:"no_balloon,omitempty"`
 	// Storage is logical COW capacity in bytes.
 	Storage int64 `json:"storage"`
 	// DataDisks are managed writable disks in attachment order.
@@ -648,7 +656,7 @@ func deleteRecord(ctx context.Context, writer metadata.Writer, record types.Sand
 func encode(record types.Sandbox) recordData {
 	data := recordData{
 		ID: record.ID.String(), Name: record.Config.Name, CPUs: record.Config.CPUs,
-		Memory: record.Config.Memory, SharedMemory: record.Config.SharedMemory, Storage: record.Config.Storage, DataDisks: record.Config.DataDisks, NICs: record.Config.NICs,
+		Memory: record.Config.Memory, SharedMemory: record.Config.SharedMemory, CPUPolicy: record.Config.CPUPolicy, HugePages: record.Config.HugePages, Mergeable: record.Config.Mergeable, NoBalloon: record.Config.NoBalloon, Storage: record.Config.Storage, DataDisks: record.Config.DataDisks, NICs: record.Config.NICs,
 		NetworkName: record.Config.NetworkName,
 		ImageDigest: record.ImageDigest.String(), VMM: string(record.VMM), State: string(record.State),
 		Generation: record.Generation, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
@@ -681,7 +689,7 @@ func decode(raw []byte) (types.Sandbox, error) {
 	}
 	record := types.Sandbox{
 		ID: id, Config: types.SandboxConfig{
-			Name: data.Name, CPUs: data.CPUs, Memory: data.Memory, SharedMemory: data.SharedMemory, Storage: data.Storage, DataDisks: data.DataDisks,
+			Name: data.Name, CPUs: data.CPUs, Memory: data.Memory, SharedMemory: data.SharedMemory, CPUPolicy: data.CPUPolicy, HugePages: data.HugePages, Mergeable: data.Mergeable, NoBalloon: data.NoBalloon, Storage: data.Storage, DataDisks: data.DataDisks,
 			NICs: data.NICs, NetworkName: data.NetworkName,
 		},
 		ImageDigest: digest, VMM: types.VMMType(data.VMM), State: types.SandboxState(data.State), Generation: data.Generation,

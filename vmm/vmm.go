@@ -42,10 +42,18 @@ type LaunchPlan struct {
 	Generation uint64
 	// CPUs is the number of boot vCPUs.
 	CPUs uint32
+	// CPUPolicy is host scheduling policy for this launch.
+	CPUPolicy types.CPUPolicy
 	// Memory is guest RAM in bytes.
 	Memory int64
 	// SharedMemory enables the host-backed memory mapping needed by virtio-fs.
 	SharedMemory bool
+	// HugePages selects hugetlb-backed guest RAM.
+	HugePages bool
+	// Mergeable enables KSM for private guest RAM.
+	Mergeable bool
+	// NoBalloon omits the default 25-percent balloon device.
+	NoBalloon bool
 	// BootProfile selects the host/guest direct-boot contract.
 	BootProfile types.BootProfile
 	// Kernel is the verified direct-boot kernel artifact.
@@ -68,6 +76,12 @@ func (p LaunchPlan) Validate() error {
 	}
 	if p.Generation == 0 || p.CPUs == 0 || p.Memory <= 0 {
 		return errors.New("launch generation, CPUs, and memory must be positive")
+	}
+	if _, err := p.CPUPolicy.Resolve(p.CPUs); err != nil {
+		return err
+	}
+	if p.Mergeable && (p.SharedMemory || p.HugePages) {
+		return errors.New("mergeable requires private memory without hugepages or shared-memory")
 	}
 	if p.BootProfile != types.BootProfileOverlayV1 {
 		return fmt.Errorf("unsupported boot profile %q", p.BootProfile)
@@ -260,6 +274,9 @@ func (p RestorePlan) Validate() error {
 	}
 	if p.Generation == 0 || p.CPUs == 0 || !filepath.IsAbs(p.SnapshotDir) {
 		return errors.New("restore plan requires generation, CPUs, and an absolute snapshot directory")
+	}
+	if _, err := p.CPUPolicy.Resolve(p.CPUs); err != nil {
+		return err
 	}
 	return p.Network.Validate()
 }

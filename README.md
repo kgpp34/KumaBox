@@ -142,7 +142,8 @@ Both `clone` and `restore` accept `--restore-mode auto|copy|ondemand|mmap`.
 Automatic selection uses mmap when the monitor and captured memory support it,
 otherwise eager copy. On-demand paging is opt-in to avoid first-touch tail
 latency under the runtime CPU ceiling. Explicit lazy modes require a compatible
-monitor and plain private memory, and are checked before stopping a restore target.
+monitor. Hugepage or shared backing falls back from mmap to eager copy; ondemand
+requires plain private memory. These checks run before stopping a restore target.
 During restore, the VMM loads memory without the guest CPU ceiling; the normal
 ceiling is applied before the guest resumes.
 
@@ -159,6 +160,42 @@ default path renews guest entropy and machine ID in a detached process.
 Host and guest artifacts are a matched release pair. Pin a versioned guest tag
 such as `24.04-v0.1.0`, or an OCI digest, when reproducibility matters.
 `sudo kumabox-check` alone performs a read-only host audit.
+
+### CPU scheduling and guest memory
+
+`create` and `run` accept host CPU policy separately from `--cpus` (guest topology):
+
+```bash
+sudo kumabox create ghcr.io/kgpp34/kumabox/ubuntu:24.04 --name limited \
+  --cpus 2 --cpu-weight 100 --cpu-quota-us 150000 --cpu-period-us 100000 \
+  --cpu-burst-us -1 --cpuset-cpus 2-3
+```
+
+The example grants 150ms of CPU time per 100ms window across host CPUs 2 and 3,
+with no saved burst credit. CPU IDs must belong to the host's effective cpuset;
+this is explicit placement, not automatic pinning. Defaults are weight = vCPU
+count, period = 100000us, quota = vCPU count × period, and burst credit = quota.
+This changes the previous strict default: use `--cpu-burst-us -1` to disable
+bursting. Old kernels without burst support degrade the derived default only;
+explicit positive burst settings require kernel support. `clone` accepts the same CPU
+flags and derives fresh defaults, never inheriting a source-host cpuset. Restore
+keeps the target policy; its weight and placement apply during memory loading,
+and its quota and burst apply before the guest resumes.
+
+Memory options are fixed at creation and inherited by snapshots and clones:
+
+| Flag | Behavior |
+| --- | --- |
+| `--hugepages` | Uses a host hugetlb pool reserved by the operator. Insufficient pages fail launch; snapshot memory restores by eager copy, including explicit mmap requests. |
+| `--mergeable` | Marks private guest RAM for KSM. Cannot combine with hugepages or shared memory. The operator must enable and tune the host KSM scanner; the runtime does not change it. |
+| `--no-balloon` | Omits the balloon device. Otherwise the initial balloon target reclaims 25% of configured RAM, with deflate-on-OOM and free-page reporting enabled. |
+
+Before snapshot capture, the guest gets time to settle its balloon target while
+still running. Reclaim that makes no progress for 2 seconds (or exceeds 1 minute
+overall) logs a warning and capture continues with the current memory. These
+options trade CPU work, memory density and restore latency; they are not
+unconditional performance improvements. The HTTP create endpoint accepts
+`cpu_policy`, `hugepages`, `mergeable` and `no_balloon` as JSON fields.
 
 ### Share a host directory with virtio-fs
 

@@ -306,6 +306,7 @@ func (s *SandboxService) launchPlan(record types.Sandbox, image types.Image) (vm
 	}
 	return vmm.LaunchPlan{
 		SandboxID: record.ID, CPUs: record.Config.CPUs, Memory: record.Config.Memory, SharedMemory: record.Config.SharedMemory,
+		CPUPolicy: record.Config.CPUPolicy, HugePages: record.Config.HugePages, Mergeable: record.Config.Mergeable, NoBalloon: record.Config.NoBalloon,
 		BootProfile: image.Boot.Profile, Kernel: kernel, Initrd: initrd, Cmdline: cmdline, Disks: disks,
 		Network: record.Network,
 	}, nil

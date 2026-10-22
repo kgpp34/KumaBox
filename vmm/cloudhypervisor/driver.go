@@ -46,9 +46,9 @@ var errProcessIdentityPending = errors.New("VMM process command line is not yet 
 
 // scopeManager is the cgroup capability consumed by this process adapter.
 type scopeManager interface {
-	Prepare(context.Context, types.SandboxID, uint32) (*os.File, error)
-	PrepareRestore(context.Context, types.SandboxID, uint32) (*os.File, error)
-	ApplyLimit(context.Context, types.SandboxID, uint32) error
+	Prepare(context.Context, types.SandboxID, uint32, types.CPUPolicy) (*os.File, error)
+	PrepareRestore(context.Context, types.SandboxID, uint32, types.CPUPolicy) (*os.File, error)
+	ApplyLimit(context.Context, types.SandboxID, uint32, types.CPUPolicy) error
 	PIDs(types.SandboxID) ([]int, error)
 	Remove(context.Context, types.SandboxID) error
 }
@@ -174,7 +174,7 @@ func (d *Driver) Launch(ctx context.Context, plan vmm.LaunchPlan) (result vmm.Pr
 		return vmm.Process{}, err
 	}
 
-	scope, err := d.scopes.Prepare(ctx, plan.SandboxID, plan.CPUs)
+	scope, err := d.scopes.Prepare(ctx, plan.SandboxID, plan.CPUs, plan.CPUPolicy)
 	if err != nil {
 		return vmm.Process{}, err
 	}
@@ -489,11 +489,17 @@ func (d *Driver) queryState(ctx context.Context, socket string) (string, error) 
 
 // vmInfo contains the readiness and console facts consumed from vm.info.
 type vmInfo struct {
-	State  string `json:"state"`
-	Config struct {
+	State string `json:"state"`
+	// MemoryActualSize excludes pages currently reclaimed by the balloon.
+	MemoryActualSize int64 `json:"memory_actual_size"`
+	Config           struct {
 		Memory struct {
-			Shared bool `json:"shared"`
+			Shared bool  `json:"shared"`
+			Size   int64 `json:"size"`
 		} `json:"memory"`
+		Balloon *struct {
+			Size int64 `json:"size"`
+		} `json:"balloon"`
 		Console struct {
 			Mode string `json:"mode"`
 			File string `json:"file"`

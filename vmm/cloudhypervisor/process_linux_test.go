@@ -5,6 +5,7 @@ package cloudhypervisor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -14,10 +15,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/types"
 	"github.com/kumabox/kumabox/vmm"
 )
@@ -260,5 +263,67 @@ func TestStopShutdownPolicyAndCancellation(t *testing.T) {
 				t.Fatalf("stop returned before process exit: %v", err)
 			}
 		})
+	}
+}
+
+func TestSnapshotWaitsForBalloonBeforePausingGuest(t *testing.T) {
+	base := t.TempDir()
+	paths, err := vmm.NewPaths(storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := types.SandboxID("123e4567-e89b-42d3-a456-426614174000")
+	if err := paths.Prepare(id); err != nil {
+		t.Fatal(err)
+	}
+	socketDir, err := os.MkdirTemp("/tmp", "kb-balloon-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socket := filepath.Join(socketDir, "api.sock")
+	command, _ := startProcessHelper(t, false, socket)
+	process, err := captureProcess(command.Process.Pid, id, 3, filepath.Base(os.Args[0]), socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := paths.WriteProcess(process); err != nil {
+		t.Fatal(err)
+	}
+	var probes atomic.Int32
+	var paused atomic.Bool
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/vm.info":
+			actual := 512 << 20
+			if probes.Add(1) >= 7 {
+				actual = 384 << 20
+			}
+			_, _ = fmt.Fprintf(w, `{"state":"Running","memory_actual_size":%d,"config":{"memory":{"size":536870912},"balloon":{"size":134217728}}}`, actual)
+		case "/api/v1/vm.pause":
+			if probes.Load() < 7 {
+				t.Error("guest paused before reclaim completed")
+			}
+			paused.Store(true)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	})}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	driver := &Driver{paths: paths, scopes: &cleanupScope{}}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	plan := vmm.SnapshotPlan{Process: process, Destination: "/capture", WritableFiles: []vmm.SnapshotFile{{Source: "/live/cow.raw", Destination: "/capture/cow.raw"}}}
+	if err := driver.pauseForCapture(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	if !paused.Load() {
+		t.Fatal("settled guest was not paused for capture")
 	}
 }

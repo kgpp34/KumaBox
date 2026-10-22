@@ -16,17 +16,17 @@ func unsupported() error {
 }
 
 // Prepare rejects VMM launch on non-Linux development hosts.
-func (*Manager) Prepare(context.Context, types.SandboxID, uint32) (*os.File, error) {
+func (*Manager) Prepare(context.Context, types.SandboxID, uint32, types.CPUPolicy) (*os.File, error) {
 	return nil, unsupported()
 }
 
 // PrepareRestore rejects snapshot provisioning on non-Linux hosts.
-func (*Manager) PrepareRestore(context.Context, types.SandboxID, uint32) (*os.File, error) {
+func (*Manager) PrepareRestore(context.Context, types.SandboxID, uint32, types.CPUPolicy) (*os.File, error) {
 	return nil, unsupported()
 }
 
 // ApplyLimit rejects runtime CPU policy changes on non-Linux hosts.
-func (*Manager) ApplyLimit(context.Context, types.SandboxID, uint32) error {
+func (*Manager) ApplyLimit(context.Context, types.SandboxID, uint32, types.CPUPolicy) error {
 	return unsupported()
 }
 

@@ -134,7 +134,8 @@ guest 不处理 ACPI 或等待超时后，运行时会对确认身份的 VMM 发
 `clone` 和 `restore` 都支持 `--restore-mode auto|copy|ondemand|mmap`。
 默认在已安装的 VMM 和快照内存类型都支持时使用 mmap，否则使用完整复制。
 ondemand 按需加载需要显式选择，避免首次访问内存时在运行期配额下出现长尾。
-显式选择延迟加载或 mmap 需要兼容的 VMM 和普通私有内存；恢复前会先检查，
+显式选择延迟加载或 mmap 需要兼容的 VMM。大页或共享内存请求 mmap 时降级为完整复制，
+ondemand 则要求普通私有内存；恢复前会先检查，
 避免因模式不支持而停止原沙箱。恢复时的内存加载暂不受 guest CPU 配额限制，
 在恢复 guest 执行前再施加正常配额。
 
@@ -148,6 +149,36 @@ ondemand 按需加载需要显式选择，避免首次访问内存时在运行�
 
 主机端和 guest 端的产物需要配套使用。对可复现性有要求时，请固定带版本号的 guest 标签
 （例如 `24.04-v0.1.0`）或 OCI digest。单独执行 `sudo kumabox-check` 会做一次只读的主机检查。
+
+### CPU 调度与 guest 内存
+
+`create`、`run` 可以单独指定宿主机 CPU 策略，`--cpus` 仍表示 guest 看见的虚拟 CPU 数量：
+
+```bash
+sudo kumabox create ghcr.io/kgpp34/kumabox/ubuntu:24.04 --name limited \
+  --cpus 2 --cpu-weight 100 --cpu-quota-us 150000 --cpu-period-us 100000 \
+  --cpu-burst-us -1 --cpuset-cpus 2-3
+```
+
+这个例子把进程限制在宿主机 CPU 2、3 上，每 100ms 可合计使用 150ms CPU 时间，不积攒突发额度。
+CPU 编号必须属于宿主机实际允许的集合；目前支持显式指定，不自动绑核。
+默认权重等于 vCPU 数量，周期为 100000us，配额等于 vCPU 数量乘周期，突发额度等于配额。
+这与之前没有突发额度的默认值不同；需要严格限额时使用 `--cpu-burst-us -1`。
+旧内核缺少 burst 支持时，只有默认推导的突发额度允许降级，显式请求正值会报错（禁用 burst 不需要此内核功能）。
+`clone` 支持相同的 CPU 参数，未指定时重新计算默认值，不继承源机器的 CPU 编号。
+`restore` 保留目标沙箱的 CPU 策略：加载内存时保留权重和 CPU 位置限制，恢复 guest 执行前施加配额和突发限制。
+
+以下内存选项在创建时确定，快照和克隆会保留：
+
+| 参数 | 行为 |
+| --- | --- |
+| `--hugepages` | 从宿主机 hugetlb 大页池分配 RAM，需要管理员预留足够大页；不足时启动失败。快照内存使用完整复制恢复，显式请求 mmap 也会降级。 |
+| `--mergeable` | 将私有 guest RAM 标记为可供 KSM 合并。不能与大页、共享内存同时使用；宿主机 KSM 扫描器由管理员开启和调节，运行时不会自动修改。 |
+| `--no-balloon` | 不创建 balloon 设备。默认创建，初始目标回收配置内存的 25%，并开启内存不足时自动放气和空闲页上报。 |
+
+保存快照前，会先让仍在运行的 guest 完成 balloon 回收。连续 2 秒没有进展，或总共超过 1 分钟，
+会记录警告并按当前内存继续保存，不会无限等待。这些选项在 CPU 开销、内存密度、恢复速度之间做取舍，
+并非打开后一定更快。HTTP 创建接口也支持 `cpu_policy`、`hugepages`、`mergeable`、`no_balloon` 字段。
 
 ### 通过 virtio-fs 共享宿主机目录
 
