@@ -4,12 +4,14 @@ package agent
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/user"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -77,7 +79,8 @@ func TestSignalingBackgroundCommandTerminatesItsProcessGroup(t *testing.T) {
 	defer ticker.Stop()
 	for {
 		stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", childPID))
-		if os.IsNotExist(err) {
+		// procfs may report ESRCH if the task exits between lookup and read.
+		if os.IsNotExist(err) || errors.Is(err, syscall.ESRCH) {
 			return
 		}
 		if err != nil {
