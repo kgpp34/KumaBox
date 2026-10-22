@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kumabox/kumabox/types"
 )
@@ -67,16 +68,32 @@ func TestSignalingBackgroundCommandTerminatesItsProcessGroup(t *testing.T) {
 	if err != nil || result.ExitCode == nil || *result.ExitCode != 137 {
 		t.Fatalf("group exit = %+v, %v", result, err)
 	}
-	// A container's PID 1 may leave an adopted zombie; it must not be executing.
-	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", childPID))
-	if os.IsNotExist(err) {
-		return
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, fields, ok := strings.Cut(string(stat), ") ")
-	if !ok || !strings.HasPrefix(fields, "Z ") {
-		t.Fatalf("background descendant survived: %s", stat)
+	// SIGKILL queues termination; reaping the group leader does not prove that
+	// every descendant has been scheduled to exit. Wait for observable exit,
+	// accepting zombies because a container's PID 1 may not reap adopted children.
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", childPID))
+		if os.IsNotExist(err) {
+			return
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, fields, ok := strings.Cut(string(stat), ") ")
+		if !ok {
+			t.Fatalf("invalid descendant process status: %s", stat)
+		}
+		if strings.HasPrefix(fields, "Z ") {
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			t.Fatalf("background descendant survived SIGKILL: %s", stat)
+		}
 	}
 }
