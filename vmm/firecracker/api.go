@@ -65,6 +65,12 @@ type vmConfig struct {
 
 // apiRequest bounds both response size and duration over a private Unix socket.
 func apiRequest(ctx context.Context, socket, method, path string, body, output any) error {
+	return apiRequestWithTimeout(ctx, socket, method, path, body, output, 500*time.Millisecond)
+}
+
+// apiRequestWithTimeout gives memory transfers their own deadline without
+// retrying a mutating request whose result may already have taken effect.
+func apiRequestWithTimeout(ctx context.Context, socket, method, path string, body, output any, timeout time.Duration) error {
 	info, err := os.Lstat(socket)
 	if err != nil {
 		return err
@@ -84,7 +90,7 @@ func apiRequest(ctx context.Context, socket, method, path string, body, output a
 		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
 	}}
 	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 500 * time.Millisecond}
+	client := &http.Client{Transport: transport, Timeout: timeout}
 	request, err := http.NewRequestWithContext(ctx, method, "http://localhost"+path, bytes.NewReader(raw))
 	if err != nil {
 		return err

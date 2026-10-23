@@ -191,8 +191,15 @@ This first batch supports CNI with one queue pair per NIC, managed data disks,
 agent file/process/forward operations, reconnectable serial console, and
 writable-disk persistence across stop/start. In Firecracker guests, disks follow attachment order (image layers,
 COW, then data disks), without virtio serials. Shared memory, hugetlb, KSM and
-explicit `directio=on` are rejected. Snapshot/clone/restore/hibernate, live device
-changes are not implemented for this backend yet. `console SANDBOX` uses a private
+explicit `directio=on` are rejected. `snapshot save` captures native memory/device
+state and all managed writable disks while paused, then resumes the guest.
+`restore SANDBOX SNAPSHOT` restores the original sandbox, including running
+guest processes, root disk and data disks. Automatic, `mmap` and `ondemand`
+memory restoration use Firecracker's private file mapping; eager `copy` is
+rejected before stopping the sandbox. Snapshot export/import is supported, but
+restoring still requires the original sandbox and its data/runtime paths.
+Clone, relocated restore, hibernate and live device changes are not implemented
+for this backend yet. `console SANDBOX` uses a private
 serial relay that survives the launching CLI, accepts one client at a time, and keeps logging
 while detached. Press `Ctrl+]`, then `.` to detach; reconnect with the same command.
 The relay exits when its VMM exits and is also reaped during runtime cleanup.

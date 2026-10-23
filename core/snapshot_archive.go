@@ -210,7 +210,7 @@ func (s *SnapshotService) validateSnapshotArtifacts(ctx context.Context, record 
 		return err
 	}
 	if validator, ok := backend.(vmm.RestoreValidator); ok {
-		if err := validator.ValidateRestore(ctx, directory, types.MemoryRestoreCopy); err != nil {
+		if err := validator.ValidateSnapshot(ctx, directory); err != nil {
 			return errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err)
 		}
 	}

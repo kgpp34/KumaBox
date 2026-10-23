@@ -322,6 +322,10 @@ func (f *fakeRuntime) ValidateRestore(context.Context, string, types.MemoryResto
 	return f.validateRestoreErr
 }
 
+func (f *fakeRuntime) ValidateSnapshot(context.Context, string) error {
+	return f.validateRestoreErr
+}
+
 func (f *fakeRuntime) Snapshot(_ context.Context, plan vmm.SnapshotPlan) error {
 	*f.steps = append(*f.steps, "snapshot")
 	f.snapshotPlan = plan

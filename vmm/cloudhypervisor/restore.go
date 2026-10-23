@@ -26,6 +26,19 @@ var (
 // ValidateRestore checks the native files Cloud Hypervisor requires before a
 // caller stops the current sandbox process.
 func (d *Driver) ValidateRestore(ctx context.Context, directory string, mode types.MemoryRestoreMode) error {
+	if err := d.ValidateSnapshot(ctx, directory); err != nil {
+		return err
+	}
+	_, err := d.restoreMemoryMode(ctx, filepath.Join(directory, "config.json"), mode)
+	return err
+}
+
+// ValidateSnapshot checks native artifact integrity independently of target
+// host memory support, so importing does not execute the configured monitor.
+func (*Driver) ValidateSnapshot(ctx context.Context, directory string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	for _, name := range []string{"config.json", "state.json"} {
 		path := filepath.Join(directory, name)
 		info, err := os.Lstat(path)
@@ -55,8 +68,7 @@ func (d *Driver) ValidateRestore(ctx context.Context, directory string, mode typ
 				return err
 			}
 			if info.Mode().IsRegular() && info.Size() > 0 {
-				_, err := d.restoreMemoryMode(ctx, filepath.Join(directory, "config.json"), mode)
-				return err
+				return nil
 			}
 		}
 	}

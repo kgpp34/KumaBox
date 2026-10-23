@@ -101,24 +101,15 @@ func (d *Driver) Launch(ctx context.Context, plan vmm.LaunchPlan) (result vmm.Pr
 	if err := d.paths.Prepare(plan.SandboxID); err != nil {
 		return result, err
 	}
-	var command *exec.Cmd
-	var reaping bool
 	defer func() {
 		if returnErr == nil {
 			return
 		}
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), d.options.AbortGrace+time.Second)
 		defer cancel()
-		switch {
-		case result.PID > 0:
+		if result.PID > 0 {
 			returnErr = errors.Join(returnErr, d.Abort(cleanup, result))
-		case command != nil && command.Process != nil:
-			_ = command.Process.Kill()
-			if !reaping {
-				_ = command.Wait()
-			}
-			returnErr = errors.Join(returnErr, d.Cleanup(cleanup, plan.SandboxID))
-		default:
+		} else {
 			returnErr = errors.Join(returnErr, d.Cleanup(cleanup, plan.SandboxID))
 		}
 	}()
@@ -137,56 +128,81 @@ func (d *Driver) Launch(ctx context.Context, plan vmm.LaunchPlan) (result vmm.Pr
 	} //nolint:gosec // private validated runtime directory
 	api, _ := d.paths.APISocket(plan.SandboxID)
 	args := []string{"--api-sock", api, "--config-file", configPath, "--id", plan.SandboxID.String(), "--level", "Warning"}
-	diagnostic := []string{strconv.Quote(d.options.Binary)}
-	for _, arg := range args {
-		diagnostic = append(diagnostic, strconv.Quote(arg))
-	}
-	if err := d.paths.WriteCmdline(plan.SandboxID, strings.Join(diagnostic, " ")); err != nil {
-		return result, err
-	}
 	scope, err := d.scopes.Prepare(ctx, plan.SandboxID, plan.CPUs, plan.CPUPolicy)
 	if err != nil {
 		return result, err
 	}
 	defer func() { returnErr = errors.Join(returnErr, scope.Close()) }()
-	logPath, _ := d.paths.LogFile(plan.SandboxID)
-	log, err := os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) //nolint:gosec // managed path
+	result, err = d.launchProcess(ctx, processLaunch{
+		sandboxID: plan.SandboxID, generation: plan.Generation,
+		args: args, namespace: plan.Network.Namespace, scope: scope,
+	})
 	if err != nil {
 		return result, err
 	}
+	if err := d.WaitReady(ctx, result); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+// processLaunch owns only process-level inputs; cold boot and native restore
+// prepare their configuration and CPU policy before sharing this launch path.
+type processLaunch struct {
+	sandboxID  types.SandboxID
+	generation uint64
+	args       []string
+	namespace  string
+	scope      *os.File
+}
+
+// launchProcess shares log/PTY ownership, exact identity, reaping and relay
+// startup. Its caller owns runtime cleanup and any post-exec failure rollback.
+func (d *Driver) launchProcess(ctx context.Context, launch processLaunch) (result vmm.Process, returnErr error) {
+	diagnostic := []string{strconv.Quote(d.options.Binary)}
+	for _, arg := range launch.args {
+		diagnostic = append(diagnostic, strconv.Quote(arg))
+	}
+	if err := d.paths.WriteCmdline(launch.sandboxID, strings.Join(diagnostic, " ")); err != nil {
+		return result, err
+	}
+	logPath, _ := d.paths.LogFile(launch.sandboxID)
+	log, err := os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) //nolint:gosec // managed path
+	if err != nil {
+		return result, fmt.Errorf("open VMM log: %w", err)
+	}
 	defer func() { returnErr = errors.Join(returnErr, log.Close()) }()
-	command = exec.Command(d.options.Binary, args...) //nolint:gosec // fixed configured executable, no shell
-	consoleSocket, _ := d.paths.ConsoleSocket(plan.SandboxID)
+	consoleSocket, _ := d.paths.ConsoleSocket(launch.sandboxID)
 	console, err := prepareConsole(consoleSocket)
 	if err != nil {
 		return result, err
 	}
 	defer console.close()
+	command := exec.Command(d.options.Binary, launch.args...) //nolint:gosec // configured executable, no shell
 	command.Stdin, command.Stdout, command.Stderr = console.slave, console.slave, log
-	vmm.ConfigureProcess(command, scope)
-	if err := vmm.StartProcess(command, plan.Network.Namespace); err != nil {
+	vmm.ConfigureProcess(command, launch.scope)
+	if err := vmm.StartProcess(command, launch.namespace); err != nil {
+		// Namespace restoration can fail after exec has already succeeded.
+		if command.Process != nil {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+		}
 		return result, fmt.Errorf("exec firecracker: %w", err)
 	}
-	result, err = vmm.CaptureProcess(command.Process.Pid, plan.SandboxID, plan.Generation, filepath.Base(d.options.Binary), api)
+	// Capture failure still needs a reaper even before a durable identity exists.
+	api, _ := d.paths.APISocket(launch.sandboxID)
+	result, err = vmm.CaptureProcess(command.Process.Pid, launch.sandboxID, launch.generation, filepath.Base(d.options.Binary), api)
 	if err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
 		return result, err
 	}
-	exited := make(chan error, 1)
-	go func() { exited <- command.Wait() }()
-	reaping = true
+	go func() { _ = command.Wait() }()
 	if err := d.paths.WriteProcess(result); err != nil {
 		return result, err
 	}
 	if err := d.startConsoleRelay(ctx, result, console, log); err != nil {
 		return result, fmt.Errorf("start console relay: %w", err)
-	}
-	if err := d.WaitReady(ctx, result); err != nil {
-		select {
-		case exit := <-exited:
-			return result, errors.Join(err, exit)
-		default:
-			return result, err
-		}
 	}
 	return result, nil
 }

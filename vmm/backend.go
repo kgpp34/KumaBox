@@ -155,9 +155,11 @@ type Cloner interface {
 	Clone(context.Context, ClonePlan) (Process, error)
 }
 
-// RestoreValidator optionally validates native snapshot files before a running
-// sandbox is stopped for restore.
+// RestoreValidator separates portable artifact integrity from launch policy.
+// Import checks only artifacts; restore also checks host bindings and memory
+// support before stopping a running sandbox.
 type RestoreValidator interface {
+	ValidateSnapshot(context.Context, string) error
 	ValidateRestore(context.Context, string, types.MemoryRestoreMode) error
 }
 
