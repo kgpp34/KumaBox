@@ -26,6 +26,7 @@ func NewCloneCommand(configuration configProvider) *cobra.Command {
 	var waitNetwork bool
 	var asJSON bool
 	var memoryMode string
+	var cpuPolicy types.CPUPolicy
 	command := &cobra.Command{
 		Use:   "clone [SNAPSHOT] --name NAME",
 		Short: "clone a snapshot into a new running sandbox",
@@ -76,6 +77,7 @@ func NewCloneCommand(configuration configProvider) *cobra.Command {
 				Name: name, Pull: pull, SourceDirectory: fromDir, NetworkName: networkName,
 				DataDisks: requested, WaitForNetwork: waitNetwork, SkipReseed: !waitNetwork,
 				MemoryMode: types.MemoryRestoreMode(memoryMode),
+				CPUPolicy:  cpuPolicy,
 			}
 			if command.Flags().Changed("nics") {
 				options.NICs = &nics
@@ -122,6 +124,7 @@ func NewCloneCommand(configuration configProvider) *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&name, "name", "", "required name for the new sandbox")
+	addCPUFlags(command, &cpuPolicy)
 	command.Flags().BoolVar(&pull, "pull", false, "pull the snapshot's pinned registry image if absent")
 	command.Flags().StringVar(&fromDir, "from-dir", "", "clone from a portable snapshot directory")
 	command.Flags().StringVar(&memoryMode, "restore-mode", "auto", "memory loading: auto, copy, ondemand, or mmap (requires a compatible monitor and private memory)")

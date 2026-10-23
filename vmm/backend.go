@@ -112,6 +112,8 @@ type RestorePlan struct {
 	Generation uint64
 	// CPUs sizes the process cgroup consistently with a normal launch.
 	CPUs uint32
+	// CPUPolicy is the target host policy, never inherited from a snapshot.
+	CPUPolicy types.CPUPolicy
 	// SnapshotDir contains native VMM state with already restored writable disks.
 	SnapshotDir string
 	// MemoryMode selects memory loading independently of source guest shape.

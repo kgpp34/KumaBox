@@ -321,3 +321,28 @@ func TestCreateFailureReturnsRetainedSandboxID(t *testing.T) {
 		t.Fatalf("resource ID = %q, want %q", failure.Error.ResourceID, id)
 	}
 }
+
+func TestCreateSchedulingAndMemoryOptionsReachServiceAndResponse(t *testing.T) {
+	policy := types.CPUPolicy{Weight: 37, QuotaUS: 150000, PeriodUS: 100000, BurstUS: -1, CPUSet: "2-3"}
+	called := false
+	handler := testHandler(t, &fakeSandboxes{create: func(input CreateSandboxInput) (types.Sandbox, error) {
+		called = true
+		if input.Config.CPUPolicy != policy || !input.Config.Mergeable || !input.Config.NoBalloon {
+			t.Fatalf("resource fields lost: %+v", input.Config)
+		}
+		return types.Sandbox{Config: input.Config}, nil
+	}})
+	body := `{"image":"demo","name":"resources","start":false,"cpu_policy":{"weight":37,"quota_us":150000,"period_us":100000,"burst_us":-1,"cpuset_cpus":"2-3"},"mergeable":true,"no_balloon":true}`
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, apiRequest("POST", "/v1/sandboxes", body, testToken))
+	if !called || response.Code != http.StatusCreated {
+		t.Fatalf("create=%d %s", response.Code, response.Body.String())
+	}
+	var output Sandbox
+	if err := json.Unmarshal(response.Body.Bytes(), &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.CPUPolicy != policy || !output.Mergeable || !output.NoBalloon {
+		t.Fatalf("response lost options: %+v", output)
+	}
+}

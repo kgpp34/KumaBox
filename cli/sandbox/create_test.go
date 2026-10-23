@@ -377,3 +377,24 @@ func newTestProgress(writer *bytes.Buffer) (*sandboxProgress, error) {
 		context.Background(), writer, "create sandbox", `Create "box"`, "preparing sandbox", "inspect the sandbox state",
 	)
 }
+
+func TestCreateResourceFlagsPersistAndRejectMemoryConflicts(t *testing.T) {
+	options := defaultCreateOptions()
+	command := &cobra.Command{}
+	options.addFlags(command)
+	if err := command.ParseFlags([]string{"--name", "resources", "--cpu-weight", "37", "--cpu-quota-us", "75000", "--cpu-period-us", "50000", "--cpu-burst-us", "-1", "--cpuset-cpus", "2-3", "--mergeable", "--no-balloon"}); err != nil {
+		t.Fatal(err)
+	}
+	request, err := options.request("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := types.CPUPolicy{Weight: 37, QuotaUS: 75000, PeriodUS: 50000, BurstUS: -1, CPUSet: "2-3"}
+	if request.Config.CPUPolicy != want || !request.Config.Mergeable || !request.Config.NoBalloon {
+		t.Fatalf("resource flags lost: %+v", request.Config)
+	}
+	options.hugePages = true
+	if _, err := options.request("demo"); err == nil {
+		t.Fatal("conflicting memory flags accepted")
+	}
+}

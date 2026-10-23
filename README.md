@@ -23,10 +23,10 @@ files nobody reviewed. Running that on a shared kernel is a bet. KumaBox gives
 every task its own **KVM microVM** with its own kernel, disk and network
 namespace, and gets you from an OCI image to a running sandbox in one command.
 
-> [!WARNING]
-> KumaBox is under active development. The CLI, metadata schema and snapshot
-> format are not yet covered by a stability guarantee. Use disposable Linux/KVM
-> hosts until the first stable release.
+> [!NOTE]
+> v0.1.0 is the first regular release of the single-host runtime. KumaBox is still
+> in the 0.x series; review release notes and snapshot compatibility before
+> upgrading. The E2B protocol adapter remains experimental.
 
 ## What KumaBox is
 
@@ -75,8 +75,8 @@ cleanup must be retried.
 Agents retry, branch and explore. Pay the setup cost once: boot, install
 dependencies, warm caches. Capture a **running snapshot** of memory and disks,
 then `clone` it for every attempt. Each clone gets a private writable disk,
-network identity and hostname. Cloud Hypervisor v53 uses on-demand memory
-restore; newer compatible versions can use copy-on-write memory restore.
+network identity and hostname. Cloud Hypervisor v53 can use opt-in on-demand
+memory restore; newer compatible versions can use copy-on-write memory restore.
 
 ## Quick start
 
@@ -142,7 +142,8 @@ Both `clone` and `restore` accept `--restore-mode auto|copy|ondemand|mmap`.
 Automatic selection uses mmap when the monitor and captured memory support it,
 otherwise eager copy. On-demand paging is opt-in to avoid first-touch tail
 latency under the runtime CPU ceiling. Explicit lazy modes require a compatible
-monitor and plain private memory, and are checked before stopping a restore target.
+monitor. Hugepage or shared backing falls back from mmap to eager copy; ondemand
+requires plain private memory. These checks run before stopping a restore target.
 During restore, the VMM loads memory without the guest CPU ceiling; the normal
 ceiling is applied before the guest resumes.
 
@@ -159,6 +160,42 @@ default path renews guest entropy and machine ID in a detached process.
 Host and guest artifacts are a matched release pair. Pin a versioned guest tag
 such as `24.04-v0.1.0`, or an OCI digest, when reproducibility matters.
 `sudo kumabox-check` alone performs a read-only host audit.
+
+### CPU scheduling and guest memory
+
+`create` and `run` accept host CPU policy separately from `--cpus` (guest topology):
+
+```bash
+sudo kumabox create ghcr.io/kgpp34/kumabox/ubuntu:24.04 --name limited \
+  --cpus 2 --cpu-weight 100 --cpu-quota-us 150000 --cpu-period-us 100000 \
+  --cpu-burst-us -1 --cpuset-cpus 2-3
+```
+
+The example grants 150ms of CPU time per 100ms window across host CPUs 2 and 3,
+with no saved burst credit. CPU IDs must belong to the host's effective cpuset;
+this is explicit placement, not automatic pinning. Defaults are weight = vCPU
+count, period = 100000us, quota = vCPU count × period, and burst credit = quota.
+This changes the previous strict default: use `--cpu-burst-us -1` to disable
+bursting. Old kernels without burst support degrade the derived default only;
+explicit positive burst settings require kernel support. `clone` accepts the same CPU
+flags and derives fresh defaults, never inheriting a source-host cpuset. Restore
+keeps the target policy; its weight and placement apply during memory loading,
+and its quota and burst apply before the guest resumes.
+
+Memory options are fixed at creation and inherited by snapshots and clones:
+
+| Flag | Behavior |
+| --- | --- |
+| `--hugepages` | Uses a host hugetlb pool reserved by the operator. Insufficient pages fail launch; snapshot memory restores by eager copy, including explicit mmap requests. |
+| `--mergeable` | Marks private guest RAM for KSM. Cannot combine with hugepages or shared memory. The operator must enable and tune the host KSM scanner; the runtime does not change it. |
+| `--no-balloon` | Omits the balloon device. Otherwise the initial balloon target reclaims 25% of configured RAM, with deflate-on-OOM and free-page reporting enabled. |
+
+Before snapshot capture, the guest gets time to settle its balloon target while
+still running. Reclaim that makes no progress for 2 seconds (or exceeds 1 minute
+overall) logs a warning and capture continues with the current memory. These
+options trade CPU work, memory density and restore latency; they are not
+unconditional performance improvements. The HTTP create endpoint accepts
+`cpu_policy`, `hugepages`, `mergeable` and `no_balloon` as JSON fields.
 
 ### Share a host directory with virtio-fs
 
@@ -455,10 +492,12 @@ and across a fleet.
 - [x] OCI to EROFS images, CNI networking, guest exec over vsock
 - [x] Running snapshots, clone, restore, hibernate, export and import
 - [x] Hotplug data disks, virtio-fs shares and VFIO PCI devices
-- [ ] Daemon mode with an HTTP API
+- [x] Authenticated HTTP API and runtime reconciliation
 - [ ] Multi-node control plane and scheduling
-- [ ] Go, Python and TypeScript SDKs
-- [ ] E2B-compatible API, so existing E2B code can point at KumaBox
+- [x] In-repository Python and TypeScript SDKs
+- [ ] Publish independently versioned Python and TypeScript SDK packages
+- [x] Experimental E2B protocol adapter with a documented compatibility subset
+- [ ] Complete the remaining E2B compatibility surface
 - [ ] MCP server, so agents can create and drive sandboxes as tools
 - [ ] Warm pools and published clone-latency benchmarks
 - [ ] Per-sandbox egress policy

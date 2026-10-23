@@ -98,27 +98,35 @@ func (s *Store) State(ctx context.Context, id types.SnapshotID) (State, bool, er
 }
 
 type recordData struct {
-	ID                string               `json:"id"`
-	Name              string               `json:"name,omitempty"`
-	Description       string               `json:"description,omitempty"`
-	SandboxID         string               `json:"sandbox_id"`
-	SandboxName       string               `json:"sandbox_name"`
-	SourceGeneration  uint64               `json:"source_generation"`
-	ImageDigest       string               `json:"image_digest"`
-	RegistryReference string               `json:"registry_reference,omitempty"`
-	VMM               string               `json:"vmm"`
-	CPUs              uint32               `json:"cpus"`
-	Memory            int64                `json:"memory"`
-	SharedMemory      bool                 `json:"shared_memory,omitempty"`
-	Storage           int64                `json:"storage"`
-	DataDisks         []types.DataDiskSpec `json:"data_disks,omitempty"`
-	NICs              int                  `json:"nics,omitempty"`
-	NetworkName       string               `json:"network_name,omitempty"`
-	Size              int64                `json:"size"`
-	CreatedAt         time.Time            `json:"created_at"`
-	LastAccessedAt    time.Time            `json:"last_accessed_at,omitzero"`
-	Ready             bool                 `json:"ready"`
-	Deleting          bool                 `json:"deleting,omitempty"`
+	ID                string `json:"id"`
+	Name              string `json:"name,omitempty"`
+	Description       string `json:"description,omitempty"`
+	SandboxID         string `json:"sandbox_id"`
+	SandboxName       string `json:"sandbox_name"`
+	SourceGeneration  uint64 `json:"source_generation"`
+	ImageDigest       string `json:"image_digest"`
+	RegistryReference string `json:"registry_reference,omitempty"`
+	VMM               string `json:"vmm"`
+	CPUs              uint32 `json:"cpus"`
+	Memory            int64  `json:"memory"`
+	SharedMemory      bool   `json:"shared_memory,omitempty"`
+	// CPUPolicy records host scheduling policy separately from guest shape.
+	CPUPolicy types.CPUPolicy `json:"cpu_policy,omitzero"`
+	// HugePages selects hugetlb-backed guest memory.
+	HugePages bool `json:"hugepages,omitempty"`
+	// Mergeable opts private guest memory into host KSM.
+	Mergeable bool `json:"mergeable,omitempty"`
+	// NoBalloon omits the default balloon device.
+	NoBalloon      bool                 `json:"no_balloon,omitempty"`
+	Storage        int64                `json:"storage"`
+	DataDisks      []types.DataDiskSpec `json:"data_disks,omitempty"`
+	NICs           int                  `json:"nics,omitempty"`
+	NetworkName    string               `json:"network_name,omitempty"`
+	Size           int64                `json:"size"`
+	CreatedAt      time.Time            `json:"created_at"`
+	LastAccessedAt time.Time            `json:"last_accessed_at,omitzero"`
+	Ready          bool                 `json:"ready"`
+	Deleting       bool                 `json:"deleting,omitempty"`
 }
 
 type nameData struct {
@@ -463,7 +471,7 @@ func encode(snapshot types.Snapshot, ready bool) recordData {
 		SourceGeneration: snapshot.SourceGeneration,
 		ImageDigest:      snapshot.ImageDigest.String(), RegistryReference: snapshot.RegistryReference,
 		VMM:  string(snapshot.VMM),
-		CPUs: snapshot.Config.CPUs, Memory: snapshot.Config.Memory, SharedMemory: snapshot.Config.SharedMemory, Storage: snapshot.Config.Storage, DataDisks: snapshot.Config.DataDisks,
+		CPUs: snapshot.Config.CPUs, Memory: snapshot.Config.Memory, SharedMemory: snapshot.Config.SharedMemory, CPUPolicy: snapshot.Config.CPUPolicy, HugePages: snapshot.Config.HugePages, Mergeable: snapshot.Config.Mergeable, NoBalloon: snapshot.Config.NoBalloon, Storage: snapshot.Config.Storage, DataDisks: snapshot.Config.DataDisks,
 		NICs: snapshot.Config.NICs, NetworkName: snapshot.Config.NetworkName,
 		Size: snapshot.Size, CreatedAt: snapshot.CreatedAt.UTC(), LastAccessedAt: snapshot.LastAccessedAt.UTC(), Ready: ready,
 	}
@@ -488,7 +496,7 @@ func decodeSnapshot(record recordData) (types.Snapshot, error) {
 		ImageDigest: digest, RegistryReference: record.RegistryReference,
 		VMM: types.VMMType(record.VMM), Size: record.Size,
 		Config: types.SandboxConfig{
-			Name: record.SandboxName, CPUs: record.CPUs, Memory: record.Memory, SharedMemory: record.SharedMemory, Storage: record.Storage, DataDisks: record.DataDisks,
+			Name: record.SandboxName, CPUs: record.CPUs, Memory: record.Memory, SharedMemory: record.SharedMemory, CPUPolicy: record.CPUPolicy, HugePages: record.HugePages, Mergeable: record.Mergeable, NoBalloon: record.NoBalloon, Storage: record.Storage, DataDisks: record.DataDisks,
 			NICs: record.NICs, NetworkName: record.NetworkName,
 		},
 		CreatedAt: record.CreatedAt.UTC(), LastAccessedAt: record.LastAccessedAt.UTC(),

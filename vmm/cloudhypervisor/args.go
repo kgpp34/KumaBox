@@ -19,6 +19,12 @@ func buildArgs(plan vmm.LaunchPlan, apiSocket, vsock string) []string {
 	if plan.SharedMemory {
 		memory += ",shared=on"
 	}
+	if plan.HugePages {
+		memory += ",hugepages=on"
+	}
+	if plan.Mergeable {
+		memory += ",mergeable=on"
+	}
 	args := []string{
 		"--api-socket", apiSocket,
 		"--cpus", fmt.Sprintf("boot=%d,max=%d", plan.CPUs, maximumCPUs),
@@ -63,7 +69,11 @@ func buildArgs(plan vmm.LaunchPlan, apiSocket, vsock string) []string {
 		"--cmdline", plan.Cmdline,
 		"--rng", "src=/dev/urandom",
 		"--watchdog",
-		"--balloon", fmt.Sprintf("size=%d,deflate_on_oom=on,free_page_reporting=on", plan.Memory/4),
+	)
+	if !plan.NoBalloon {
+		args = append(args, "--balloon", fmt.Sprintf("size=%d,deflate_on_oom=on,free_page_reporting=on", plan.Memory/4))
+	}
+	args = append(args,
 		"--vsock", fmt.Sprintf("cid=%d,socket=%s", vmm.VsockGuestCID, vsock),
 		"--serial", "off",
 		"--console", "pty",

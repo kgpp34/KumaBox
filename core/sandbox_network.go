@@ -295,8 +295,11 @@ func runGuestNetworkScript(ctx context.Context, backend vmm.Backend, process vmm
 	if err != nil {
 		return fmt.Errorf("connect guest agent: %w", err)
 	}
+	// Run closes completed exec streams itself. Cleanup is still needed if
+	// validation fails, but closing an already-closed socket is not a guest failure.
+	defer connection.Close() //nolint:errcheck // completed vsock transport; Run may have already closed it
 	code, runErr := agent.Run(ctx, connection, types.Command{Args: []string{"/bin/sh", "-c", script}}, nil, nil, nil)
-	return errors.Join(runErr, guestExitError(code), connection.Close())
+	return errors.Join(runErr, guestExitError(code))
 }
 
 func configureGuestNetwork(ctx context.Context, backend vmm.Backend, process vmm.Process, record types.Sandbox, dns []string) error {

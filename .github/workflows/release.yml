@@ -142,8 +142,20 @@ jobs:
             "$GITHUB_REF_NAME" "$GUEST_DIGEST" >> "$RUNNER_TEMP/release-notes.md"
           flags=(--draft)
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then flags+=(--prerelease); fi
-          gh release create "$GITHUB_REF_NAME" \
-            "dist/release/kumabox_${GITHUB_REF_NAME}_linux_amd64.tar.gz" \
-            dist/release/SHA256SUMS \
-            --verify-tag --title "KumaBox $GITHUB_REF_NAME" \
-            --notes-file "$RUNNER_TEMP/release-notes.md" "${flags[@]}"
+          if gh release view "$GITHUB_REF_NAME" --json isDraft > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
+            # Acceptance may require rebuilding an unpublished candidate. Never
+            # replace assets belonging to a release that is already public.
+            jq -e '.isDraft == true' "$RUNNER_TEMP/existing-release.json"
+            gh release upload "$GITHUB_REF_NAME" \
+              "dist/release/kumabox_${GITHUB_REF_NAME}_linux_amd64.tar.gz" \
+              dist/release/SHA256SUMS --clobber
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "KumaBox $GITHUB_REF_NAME" \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              "dist/release/kumabox_${GITHUB_REF_NAME}_linux_amd64.tar.gz" \
+              dist/release/SHA256SUMS \
+              --verify-tag --title "KumaBox $GITHUB_REF_NAME" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" "${flags[@]}"
+          fi

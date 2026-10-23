@@ -25,8 +25,12 @@ type configProvider func() config.Config
 type createOptions struct {
 	name         string
 	cpus         uint32
+	cpuPolicy    types.CPUPolicy
 	memory       string
 	sharedMemory bool
+	hugePages    bool
+	mergeable    bool
+	noBalloon    bool
 	storageSize  string
 	nics         int
 	networkName  string
@@ -42,14 +46,28 @@ func defaultCreateOptions() createOptions {
 
 // addFlags registers the resource shape accepted by sandbox creation commands.
 func (o *createOptions) addFlags(command *cobra.Command) {
+	addCPUFlags(command, &o.cpuPolicy)
 	command.Flags().StringVar(&o.name, "name", o.name, "required sandbox name")
 	command.Flags().Uint32Var(&o.cpus, "cpus", o.cpus, "number of virtual CPUs")
 	command.Flags().StringVar(&o.memory, "memory", o.memory, "guest memory (for example 1GiB)")
 	command.Flags().BoolVar(&o.sharedMemory, "shared-memory", false, "enable shared guest memory for runtime virtio-fs attachment")
+	command.Flags().BoolVar(&o.hugePages, "hugepages", false, "use preallocated host hugetlb pages (snapshot memory restores by copy)")
+	command.Flags().BoolVar(&o.mergeable, "mergeable", false, "opt private RAM into host KSM (excludes hugepages and shared-memory)")
+	command.Flags().BoolVar(&o.noBalloon, "no-balloon", false, "omit the balloon device instead of reclaiming 25 percent of guest RAM")
 	command.Flags().StringVar(&o.storageSize, "storage", o.storageSize, "logical sparse COW size (minimum 10GiB)")
 	command.Flags().IntVar(&o.nics, "nics", o.nics, "number of network interfaces (0 disables networking)")
 	command.Flags().StringVar(&o.networkName, "network", o.networkName, "CNI network name (empty selects the default)")
 	command.Flags().StringArrayVar(&o.dataDisks, "data-disk", nil, "managed disk: size=20GiB[,name=db][,fstype=ext4|none][,directio=on|off|auto]; repeatable")
+}
+
+// addCPUFlags gives creation and cloning the same host-policy contract.
+// Guest topology remains fixed in the captured state; these flags never resize it.
+func addCPUFlags(command *cobra.Command, policy *types.CPUPolicy) {
+	command.Flags().Uint32Var(&policy.Weight, "cpu-weight", 0, "CPU contention weight, 1..10000 (0: vCPU count)")
+	command.Flags().Int64Var(&policy.QuotaUS, "cpu-quota-us", 0, "CPU-time budget per period (0: vCPUs times period)")
+	command.Flags().Int64Var(&policy.PeriodUS, "cpu-period-us", 0, "CPU bandwidth period in microseconds (0: 100000)")
+	command.Flags().Int64Var(&policy.BurstUS, "cpu-burst-us", 0, "burst credit in microseconds (0: quota; -1: disabled)")
+	command.Flags().StringVar(&policy.CPUSet, "cpuset-cpus", "", "explicit host CPU list, such as 0-3,6 (empty: inherit)")
 }
 
 // request validates CLI values before any persistent service is opened.
@@ -80,6 +98,7 @@ func (o createOptions) request(imageReference string) (core.CreateSandboxRequest
 	sandboxConfig := types.SandboxConfig{
 		Name: o.name, CPUs: o.cpus, Memory: memoryBytes, SharedMemory: o.sharedMemory, Storage: storageBytes,
 		NICs: o.nics, NetworkName: o.networkName,
+		CPUPolicy: o.cpuPolicy, HugePages: o.hugePages, Mergeable: o.mergeable, NoBalloon: o.noBalloon,
 	}
 	requested := make([]types.DataDiskSpec, 0, len(o.dataDisks))
 	for _, value := range o.dataDisks {

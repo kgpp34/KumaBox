@@ -11,16 +11,24 @@ import (
 // CreateSandboxRequest is the client-controlled resource shape for one VM.
 // Omitted numeric fields use the same defaults as the local CLI.
 type CreateSandboxRequest struct {
-	Image        string     `json:"image"`
-	Name         string     `json:"name"`
-	CPUs         *uint32    `json:"cpus,omitempty"`
-	Memory       *int64     `json:"memory,omitempty"`
-	Storage      *int64     `json:"storage,omitempty"`
-	NICs         *int       `json:"nics,omitempty"`
-	Network      string     `json:"network,omitempty"`
-	SharedMemory bool       `json:"shared_memory,omitempty"`
-	DataDisks    []DataDisk `json:"data_disks,omitempty"`
-	Start        *bool      `json:"start,omitempty"`
+	Image        string  `json:"image"`
+	Name         string  `json:"name"`
+	CPUs         *uint32 `json:"cpus,omitempty"`
+	Memory       *int64  `json:"memory,omitempty"`
+	Storage      *int64  `json:"storage,omitempty"`
+	NICs         *int    `json:"nics,omitempty"`
+	Network      string  `json:"network,omitempty"`
+	SharedMemory bool    `json:"shared_memory,omitempty"`
+	// CPUPolicy controls host scheduling independently of guest topology.
+	CPUPolicy types.CPUPolicy `json:"cpu_policy,omitzero"`
+	// HugePages selects hugetlb-backed guest memory.
+	HugePages bool `json:"hugepages,omitempty"`
+	// Mergeable opts private guest memory into host KSM.
+	Mergeable bool `json:"mergeable,omitempty"`
+	// NoBalloon omits the default balloon device.
+	NoBalloon bool       `json:"no_balloon,omitempty"`
+	DataDisks []DataDisk `json:"data_disks,omitempty"`
+	Start     *bool      `json:"start,omitempty"`
 }
 
 // CreateSandboxInput is the application-neutral call passed to a sandbox service.
@@ -46,21 +54,29 @@ type DataDisk struct {
 
 // Sandbox is the stable public projection of a durable sandbox record.
 type Sandbox struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	ImageDigest  string     `json:"image_digest"`
-	VMM          string     `json:"vmm"`
-	State        string     `json:"state"`
-	CPUs         uint32     `json:"cpus"`
-	Memory       int64      `json:"memory"`
-	Storage      int64      `json:"storage"`
-	NICs         int        `json:"nics"`
-	Network      string     `json:"network,omitempty"`
-	SharedMemory bool       `json:"shared_memory"`
-	DataDisks    []DataDisk `json:"data_disks,omitempty"`
-	Generation   uint64     `json:"generation"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	ImageDigest  string `json:"image_digest"`
+	VMM          string `json:"vmm"`
+	State        string `json:"state"`
+	CPUs         uint32 `json:"cpus"`
+	Memory       int64  `json:"memory"`
+	Storage      int64  `json:"storage"`
+	NICs         int    `json:"nics"`
+	Network      string `json:"network,omitempty"`
+	SharedMemory bool   `json:"shared_memory"`
+	// CPUPolicy controls host scheduling independently of guest topology.
+	CPUPolicy types.CPUPolicy `json:"cpu_policy,omitzero"`
+	// HugePages selects hugetlb-backed guest memory.
+	HugePages bool `json:"hugepages,omitempty"`
+	// Mergeable opts private guest memory into host KSM.
+	Mergeable bool `json:"mergeable,omitempty"`
+	// NoBalloon omits the default balloon device.
+	NoBalloon  bool       `json:"no_balloon,omitempty"`
+	DataDisks  []DataDisk `json:"data_disks,omitempty"`
+	Generation uint64     `json:"generation"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
 // Snapshot is the stable public projection of a captured sandbox state.
@@ -137,7 +153,8 @@ func sandboxRecord(record types.Sandbox) Sandbox {
 		ID: record.ID.String(), Name: record.Config.Name, ImageDigest: record.ImageDigest.String(),
 		VMM: string(record.VMM), State: string(record.State), CPUs: record.Config.CPUs,
 		Memory: record.Config.Memory, Storage: record.Config.Storage, NICs: record.Config.NICs,
-		Network: record.Config.NetworkName, SharedMemory: record.Config.SharedMemory,
+		Network: record.Config.NetworkName, SharedMemory: record.Config.SharedMemory, CPUPolicy: record.Config.CPUPolicy,
+		HugePages: record.Config.HugePages, Mergeable: record.Config.Mergeable, NoBalloon: record.Config.NoBalloon,
 		DataDisks: disks, Generation: record.Generation, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}
 }

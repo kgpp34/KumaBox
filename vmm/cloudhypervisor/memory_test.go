@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/kumabox/kumabox/types"
+	"github.com/kumabox/kumabox/vmm"
 )
 
 func TestMemoryModeForVersion(t *testing.T) {
@@ -75,7 +76,7 @@ func TestExplicitMemoryRestoreModesRequireCompatibleMonitorAndBacking(t *testing
 		{"lazy on unknown monitor", "unknown", types.MemoryRestoreOnDemand, false, "", true},
 		{"auto on unknown monitor", "unknown", types.MemoryRestoreAuto, false, "", false},
 		{"shared auto", "v54.0", types.MemoryRestoreAuto, true, "", false},
-		{"shared explicit mmap", "v54.0", types.MemoryRestoreMmap, true, "", true},
+		{"shared explicit mmap falls back", "v54.0", types.MemoryRestoreMmap, true, "", false},
 		{"shared explicit lazy", "v54.0", types.MemoryRestoreOnDemand, true, "", true},
 		{"invalid mode", "v54.0", "invalid", false, "", true},
 	} {
@@ -134,5 +135,46 @@ func TestMemorySupportProbeCachesSuccessButRetriesFailureAndCancellation(t *test
 	data, err := os.ReadFile(binary + ".calls")
 	if err != nil || string(data) != "x" {
 		t.Fatalf("successful probe executed repeatedly: %q, %v", data, err)
+	}
+}
+
+func TestHugepageRestorePreservesBackingByCopy(t *testing.T) {
+	for _, backing := range []string{`{"size":536870912,"hugepages":true}`, `{"size":536870912,"zones":[{"hugepages":true}]}`} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(`{"memory":`+backing+`}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		driver := &Driver{binary: "/not-needed-for-copy-fallback"}
+		for _, mode := range []types.MemoryRestoreMode{types.MemoryRestoreAuto, types.MemoryRestoreMmap, types.MemoryRestoreCopy} {
+			if got, err := driver.restoreMemoryMode(t.Context(), path, mode); err != nil || got != "" {
+				t.Fatalf("%s=%q, %v", mode, got, err)
+			}
+		}
+		if _, err := driver.restoreMemoryMode(t.Context(), path, types.MemoryRestoreOnDemand); err == nil {
+			t.Fatal("hugetlb accepted demand paging")
+		}
+	}
+}
+
+func TestBalloonWaitSkipsSettledGuestAndHonorsCancellation(t *testing.T) {
+	driver := &Driver{}
+	var info vmInfo
+	info.Config.Memory.Size = 512 << 20
+	info.Config.Balloon = &struct {
+		Size int64 `json:"size"`
+	}{Size: 128 << 20}
+	info.MemoryActualSize = 384 << 20
+	if err := driver.waitBalloonSettled(t.Context(), vmm.Process{}, info); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	info.MemoryActualSize = 512 << 20
+	if err := driver.waitBalloonSettled(ctx, vmm.Process{}, info); !errors.Is(err, context.Canceled) {
+		t.Fatalf("pending reclaim cancellation=%v", err)
+	}
+	info.Config.Balloon = nil
+	if err := driver.waitBalloonSettled(ctx, vmm.Process{}, info); err != nil {
+		t.Fatalf("disabled balloon queried VMM: %v", err)
 	}
 }

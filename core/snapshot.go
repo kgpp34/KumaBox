@@ -783,7 +783,7 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, vmm.Process{})
 	}
 	plan := vmm.RestorePlan{
-		SandboxID: starting.ID, Generation: starting.Generation, CPUs: starting.Config.CPUs,
+		SandboxID: starting.ID, Generation: starting.Generation, CPUs: starting.Config.CPUs, CPUPolicy: starting.Config.CPUPolicy,
 		SnapshotDir: snapshotDir, Network: starting.Network, MemoryMode: options.MemoryMode,
 	}
 	var process vmm.Process
@@ -857,7 +857,7 @@ func validateRestoreLineage(sandbox types.Sandbox, capture types.Snapshot) error
 	if capture.SandboxID != sandbox.ID {
 		return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("snapshot belongs to another sandbox"))
 	}
-	if capture.VMM != sandbox.VMM || capture.ImageDigest != sandbox.ImageDigest || !reflect.DeepEqual(capture.Config, sandbox.Config) {
+	if capture.VMM != sandbox.VMM || capture.ImageDigest != sandbox.ImageDigest || !capture.Config.SameGuest(sandbox.Config) {
 		return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("snapshot runtime configuration differs from the target sandbox"))
 	}
 	return nil
@@ -867,6 +867,7 @@ func validateRestoreSource(sandbox types.Sandbox, capture types.Snapshot, option
 	if options.Force && options.SourceDirectory != "" {
 		if capture.VMM != sandbox.VMM || capture.ImageDigest != sandbox.ImageDigest || capture.Config.CPUs != sandbox.Config.CPUs ||
 			capture.Config.Memory != sandbox.Config.Memory || capture.Config.SharedMemory != sandbox.Config.SharedMemory ||
+			capture.Config.HugePages != sandbox.Config.HugePages || capture.Config.Mergeable != sandbox.Config.Mergeable || capture.Config.NoBalloon != sandbox.Config.NoBalloon ||
 			capture.Config.Storage != sandbox.Config.Storage || capture.Config.NICs != sandbox.Config.NICs ||
 			!reflect.DeepEqual(capture.Config.DataDisks, sandbox.Config.DataDisks) {
 			return errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("snapshot VMM, image, or resource shape differs from the target sandbox"))

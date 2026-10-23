@@ -239,11 +239,19 @@ type SandboxConfig struct {
 	Name string
 	// CPUs is the number of virtual CPUs exposed to the guest.
 	CPUs uint32
+	// CPUPolicy controls host CPU scheduling independently of the guest topology.
+	CPUPolicy CPUPolicy
 	// Memory is guest memory in bytes.
 	Memory int64
 	// SharedMemory enables host-backed guest RAM required by runtime virtio-fs.
 	// It is fixed for the lifetime of the sandbox and inherited by snapshots.
 	SharedMemory bool
+	// HugePages uses host hugetlb pages; captured memory restores by eager copy.
+	HugePages bool
+	// Mergeable opts private guest RAM into host KSM; the host owns KSM tuning.
+	Mergeable bool
+	// NoBalloon omits the balloon device; otherwise its initial target is 25% of RAM.
+	NoBalloon bool
 	// Storage is the logical size of the sparse ext4 COW disk in bytes.
 	Storage int64
 	// NICs is the current network interface count; zero disables networking.
@@ -255,6 +263,28 @@ type SandboxConfig struct {
 	DataDisks []DataDiskSpec
 }
 
+// SameGuest compares persisted guest shape and identity while ignoring host
+// scheduling policy. Restoring memory must not reapply a source-host CPU set.
+func (c SandboxConfig) SameGuest(other SandboxConfig) bool {
+	if c.Name != other.Name || c.CPUs != other.CPUs || c.Memory != other.Memory ||
+		c.SharedMemory != other.SharedMemory || c.HugePages != other.HugePages ||
+		c.Mergeable != other.Mergeable || c.NoBalloon != other.NoBalloon ||
+		c.Storage != other.Storage || c.NICs != other.NICs || c.NetworkName != other.NetworkName || len(c.DataDisks) != len(other.DataDisks) {
+		return false
+	}
+	for index, disk := range c.DataDisks {
+		right := other.DataDisks[index]
+		if disk.Name != right.Name || disk.Size != right.Size || disk.FSType != right.FSType ||
+			(disk.DirectIO == nil) != (right.DirectIO == nil) {
+			return false
+		}
+		if disk.DirectIO != nil && *disk.DirectIO != *right.DirectIO {
+			return false
+		}
+	}
+	return true
+}
+
 // Validate enforces the resource and naming contract before any persistent change.
 func (c SandboxConfig) Validate() error {
 	if !validSandboxName.MatchString(c.Name) {
@@ -262,6 +292,12 @@ func (c SandboxConfig) Validate() error {
 	}
 	if c.CPUs == 0 || c.CPUs > MaxSandboxCPUs {
 		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("CPU count must be between 1 and %d", MaxSandboxCPUs))
+	}
+	if _, err := c.CPUPolicy.Resolve(c.CPUs); err != nil {
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+	}
+	if c.Mergeable && (c.HugePages || c.SharedMemory) {
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("mergeable requires private memory without hugepages or shared-memory"))
 	}
 	if c.Memory < MinSandboxMemory {
 		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("memory must be at least %d bytes", MinSandboxMemory))
