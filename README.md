@@ -188,13 +188,16 @@ configuration. `start`, `stop`, `exec`, `ps`, `inspect`, `logs` and `rm` route b
 the persisted backend, so only create/run need `--vmm`.
 
 This first batch supports CNI with one queue pair per NIC, managed data disks,
-agent file/process/forward operations, and writable-disk persistence across
-stop/start. In Firecracker guests, disks follow attachment order (image layers,
+agent file/process/forward operations, reconnectable serial console, and
+writable-disk persistence across stop/start. In Firecracker guests, disks follow attachment order (image layers,
 COW, then data disks), without virtio serials. Shared memory, hugetlb, KSM and
 explicit `directio=on` are rejected. Snapshot/clone/restore/hibernate, live device
-changes and interactive console are not implemented for this backend yet; use
-`exec` and `logs`. Graceful stop sends CtrlAltDel; kernels without an i8042 handler
-use the bounded termination fallback. No Firecracker latency claim is made by
+changes are not implemented for this backend yet. `console SANDBOX` uses a private
+serial relay that survives the launching CLI, accepts one client at a time, and keeps logging
+while detached. Press `Ctrl+]`, then `.` to detach; reconnect with the same command.
+The relay exits when its VMM exits and is also reaped during runtime cleanup.
+Graceful stop sends CtrlAltDel; kernels without an i8042 handler use the bounded
+termination fallback. No Firecracker latency claim is made by
 this initial functional integration. The Firecracker process uses the existing
 cgroup/network namespace isolation and upstream seccomp; jailer/chroot integration
 is not included in this batch.

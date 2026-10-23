@@ -101,9 +101,9 @@ func (d *Driver) restore(ctx context.Context, plan vmm.RestorePlan, beforeResume
 		case result.PID > 0:
 			returnErr = errors.Join(returnErr, d.Abort(cleanupCtx, result))
 		case command != nil && command.Process != nil:
-			returnErr = errors.Join(returnErr, command.Process.Kill(), command.Wait(), d.scopes.Remove(cleanupCtx, plan.SandboxID), d.paths.Clear(plan.SandboxID))
+			returnErr = errors.Join(returnErr, command.Process.Kill(), command.Wait(), d.scopes.Remove(cleanupCtx, plan.SandboxID), d.paths.Clear(cleanupCtx, plan.SandboxID))
 		default:
-			returnErr = errors.Join(returnErr, d.scopes.Remove(cleanupCtx, plan.SandboxID), d.paths.Clear(plan.SandboxID))
+			returnErr = errors.Join(returnErr, d.scopes.Remove(cleanupCtx, plan.SandboxID), d.paths.Clear(cleanupCtx, plan.SandboxID))
 		}
 	}()
 	apiSocket, _ := d.paths.APISocket(plan.SandboxID)

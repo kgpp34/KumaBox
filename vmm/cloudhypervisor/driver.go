@@ -144,9 +144,9 @@ func (d *Driver) Launch(ctx context.Context, plan vmm.LaunchPlan) (result vmm.Pr
 		case result.PID > 0:
 			returnErr = errors.Join(returnErr, d.Abort(cleanupCtx, result))
 		case command != nil && command.Process != nil:
-			returnErr = errors.Join(returnErr, command.Process.Kill(), command.Wait(), d.scopes.Remove(cleanupCtx, plan.SandboxID), d.paths.Clear(plan.SandboxID))
+			returnErr = errors.Join(returnErr, command.Process.Kill(), command.Wait(), d.scopes.Remove(cleanupCtx, plan.SandboxID), d.paths.Clear(cleanupCtx, plan.SandboxID))
 		default:
-			returnErr = errors.Join(returnErr, d.scopes.Remove(cleanupCtx, plan.SandboxID), d.paths.Clear(plan.SandboxID))
+			returnErr = errors.Join(returnErr, d.scopes.Remove(cleanupCtx, plan.SandboxID), d.paths.Clear(cleanupCtx, plan.SandboxID))
 		}
 	}()
 	apiSocket, _ := d.paths.APISocket(plan.SandboxID)
@@ -389,7 +389,7 @@ func (d *Driver) Cleanup(ctx context.Context, id types.SandboxID) error {
 	if err := d.scopes.Remove(ctx, id); err != nil {
 		return err
 	}
-	return d.paths.Clear(id)
+	return d.paths.Clear(ctx, id)
 }
 
 // RemoveLogs releases persistent diagnostics only during sandbox removal.

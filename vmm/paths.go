@@ -1,11 +1,13 @@
 package vmm
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/storage"
@@ -13,11 +15,13 @@ import (
 )
 
 const (
-	apiSocketName = "api.sock"
-	vsockName     = "vsock.uds"
-	processName   = "process.json"
-	cmdlineName   = "cmdline"
-	logName       = "vmm.log"
+	apiSocketName      = "api.sock"
+	vsockName          = "vsock.uds"
+	processName        = "process.json"
+	consoleProcessName = "console-process.json"
+	consoleSocketName  = "console.sock"
+	cmdlineName        = "cmdline"
+	logName            = "vmm.log"
 )
 
 // Paths derives ephemeral runtime files and persistent VMM logs from shared roots.
@@ -72,6 +76,11 @@ func (p Paths) APISocket(id types.SandboxID) (string, error) { return p.runFile(
 // Vsock is the private host endpoint for the future guest-agent transport.
 func (p Paths) Vsock(id types.SandboxID) (string, error) { return p.runFile(id, vsockName) }
 
+// ConsoleSocket is the private serial relay endpoint for reconnectable consoles.
+func (p Paths) ConsoleSocket(id types.SandboxID) (string, error) {
+	return p.runFile(id, consoleSocketName)
+}
+
 // ProcessFile stores the PID generation and host boot identity.
 func (p Paths) ProcessFile(id types.SandboxID) (string, error) { return p.runFile(id, processName) }
 
@@ -108,11 +117,18 @@ func (p Paths) Prepare(id types.SandboxID) error {
 }
 
 // WriteProcess atomically replaces process identity after validating every field.
-func (p Paths) WriteProcess(process Process) error {
+func (p Paths) WriteProcess(process Process) error { return p.writeProcess(process, processName) }
+
+// WriteConsoleProcess records the exact serial relay generation for cleanup.
+func (p Paths) WriteConsoleProcess(process Process) error {
+	return p.writeProcess(process, consoleProcessName)
+}
+
+func (p Paths) writeProcess(process Process, name string) error {
 	if err := process.Validate(); err != nil {
 		return err
 	}
-	path, err := p.ProcessFile(process.SandboxID)
+	path, err := p.runFile(process.SandboxID, name)
 	if err != nil {
 		return err
 	}
@@ -125,7 +141,16 @@ func (p Paths) WriteProcess(process Process) error {
 
 // ReadProcess decodes and validates a complete identity file.
 func (p Paths) ReadProcess(id types.SandboxID) (Process, error) {
-	path, err := p.ProcessFile(id)
+	return p.readProcess(id, processName)
+}
+
+// ReadConsoleProcess validates the helper identity independently of the VMM PID.
+func (p Paths) ReadConsoleProcess(id types.SandboxID) (Process, error) {
+	return p.readProcess(id, consoleProcessName)
+}
+
+func (p Paths) readProcess(id types.SandboxID, name string) (Process, error) {
+	path, err := p.runFile(id, name)
 	if err != nil {
 		return Process{}, err
 	}
@@ -156,7 +181,27 @@ func (p Paths) WriteCmdline(id types.SandboxID, command string) error {
 }
 
 // Clear removes reconstructable files after the process has been proven absent.
-func (p Paths) Clear(id types.SandboxID) error {
+func (p Paths) Clear(ctx context.Context, id types.SandboxID) error {
+	// Adapters prove the VMM is absent before clearing. Reap any serial helper
+	// first, including when orphan collection reaches a different adapter first.
+	console, err := p.ReadConsoleProcess(id)
+	if err == nil {
+		expected, _ := p.APISocket(id)
+		if console.APISocket != expected {
+			return errors.New("console process control marker does not match its sandbox")
+		}
+		err := TerminateProcess(ctx, console, time.Second)
+		// A pidfd-triggered helper can already be exiting while its command line
+		// disappears. Observe that identity without signaling an unverified task.
+		if errors.Is(err, ErrProcessIdentityPending) {
+			err = WaitProcessExit(ctx, console, time.Second)
+		}
+		if err != nil {
+			return fmt.Errorf("stop console relay: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	dir, err := p.RunDir(id)
 	if err != nil {
 		return err

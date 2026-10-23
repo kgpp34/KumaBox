@@ -46,7 +46,7 @@ func TestPathsRoundTripPrivateProcessIdentity(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cloneState, "memory-range-0"), []byte("native state"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := paths.Clear(id); err != nil {
+	if err := paths.Clear(t.Context(), id); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(runDir); !os.IsNotExist(err) {
@@ -54,5 +54,38 @@ func TestPathsRoundTripPrivateProcessIdentity(t *testing.T) {
 	}
 	if _, err := os.Stat(cloneState); !os.IsNotExist(err) {
 		t.Fatalf("private clone state remains: %v", err)
+	}
+}
+
+func TestConsoleProcessIdentityIsSeparateAndFencesCleanup(t *testing.T) {
+	base := t.TempDir()
+	paths, err := NewPaths(storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := paths.Prepare(testSandboxID); err != nil {
+		t.Fatal(err)
+	}
+	socket, _ := paths.APISocket(testSandboxID)
+	helper := Process{PID: 42, StartTicks: 7, BootID: "boot", SandboxID: testSandboxID, Generation: 3, Binary: "kumabox", APISocket: socket}
+	if err := paths.WriteConsoleProcess(helper); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := paths.ReadConsoleProcess(testSandboxID); err != nil || got != helper {
+		t.Fatalf("console identity: %+v %v", got, err)
+	}
+	if _, err := paths.ReadProcess(testSandboxID); !os.IsNotExist(err) {
+		t.Fatalf("console overwrote primary identity: %v", err)
+	}
+	helper.APISocket = "/run/foreign/api.sock"
+	if err := paths.WriteConsoleProcess(helper); err != nil {
+		t.Fatal(err)
+	}
+	if err := paths.Clear(t.Context(), testSandboxID); err == nil {
+		t.Fatal("cleanup accepted a foreign console marker")
+	}
+	dir, _ := paths.RunDir(testSandboxID)
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatal("unsafe cleanup deleted runtime state")
 	}
 }

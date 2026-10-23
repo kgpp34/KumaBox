@@ -165,8 +165,10 @@ Ubuntu 镜像，让 initramfs 包含 MMIO 驱动，支持 `/dev/vdX` 启动参�
 第一批支持 CNI 网络、每张网卡一对收发队列、创建时的数据盘，以及基于同一 agent 的
 文件、进程和端口转发操作。停止再启动会保留根盘和数据盘。guest 中的磁盘按镜像层、COW、
 数据盘的顺序排列，没有 virtio serial。共享内存、大页、KSM 和显式 `directio=on` 会被拒绝。
-快照、克隆、恢复、休眠、在线设备变更和交互 console 暂未接入这个后端，可用 `exec` 和
-`logs` 操作及排查。正常停止发送 CtrlAltDel；guest 内核没有相应处理器时，等待超时后终止
+快照、克隆、恢复、休眠和在线设备变更暂未接入这个后端。
+`console 沙箱名` 通过私有串口中继连接，一次允许一个客户端；按 `Ctrl+]` 再按 `.` 退出，
+之后可用相同命令重连。CLI 退出不会关闭中继，无人连接时也会持续记录串口日志；
+VMM 退出后中继自动结束，运行时清理也会回收它。正常停止发送 CtrlAltDel；guest 内核没有相应处理器时，等待超时后终止
 进程。本批不承诺 Firecracker 的启动延迟。进程复用现有 cgroup、网络 namespace 隔离和
 上游 seccomp，暂未集成 jailer/chroot。
 

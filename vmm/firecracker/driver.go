@@ -156,7 +156,13 @@ func (d *Driver) Launch(ctx context.Context, plan vmm.LaunchPlan) (result vmm.Pr
 	}
 	defer func() { returnErr = errors.Join(returnErr, log.Close()) }()
 	command = exec.Command(d.options.Binary, args...) //nolint:gosec // fixed configured executable, no shell
-	command.Stdout, command.Stderr = log, log
+	consoleSocket, _ := d.paths.ConsoleSocket(plan.SandboxID)
+	console, err := prepareConsole(consoleSocket)
+	if err != nil {
+		return result, err
+	}
+	defer console.close()
+	command.Stdin, command.Stdout, command.Stderr = console.slave, console.slave, log
 	vmm.ConfigureProcess(command, scope)
 	if err := vmm.StartProcess(command, plan.Network.Namespace); err != nil {
 		return result, fmt.Errorf("exec firecracker: %w", err)
@@ -170,6 +176,9 @@ func (d *Driver) Launch(ctx context.Context, plan vmm.LaunchPlan) (result vmm.Pr
 	reaping = true
 	if err := d.paths.WriteProcess(result); err != nil {
 		return result, err
+	}
+	if err := d.startConsoleRelay(ctx, result, console, log); err != nil {
+		return result, fmt.Errorf("start console relay: %w", err)
 	}
 	if err := d.WaitReady(ctx, result); err != nil {
 		select {
@@ -294,11 +303,6 @@ func (d *Driver) Stop(ctx context.Context, process vmm.Process, options types.St
 	return vmm.TerminateProcess(ctx, process, d.options.StopGrace)
 }
 
-// Console is explicit about the serial relay not being implemented in this batch.
-func (*Driver) Console(context.Context, vmm.Process) (io.ReadWriteCloser, error) {
-	return nil, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, errors.New("firecracker interactive console is not supported yet; use logs or exec"))
-}
-
 // DialVsock preserves the guest agent protocol and validates ownership before
 // and after the hybrid handshake, just like the other monitor adapter.
 func (d *Driver) DialVsock(ctx context.Context, process vmm.Process, port uint32) (io.ReadWriteCloser, error) {
@@ -336,7 +340,7 @@ func (d *Driver) Cleanup(ctx context.Context, id types.SandboxID) error {
 	if err := d.scopes.Remove(ctx, id); err != nil {
 		return err
 	}
-	return d.paths.Clear(id)
+	return d.paths.Clear(ctx, id)
 }
 
 // Logs streams durable serial and monitor diagnostics.

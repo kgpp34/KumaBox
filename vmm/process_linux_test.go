@@ -4,7 +4,14 @@ package vmm
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/kumabox/kumabox/storage"
 )
 
 func TestCommandLineMatchesDistinguishesPendingIdentity(t *testing.T) {
@@ -34,4 +41,63 @@ func TestCommandLineMatchesFirecrackerSocketIdentity(t *testing.T) {
 			t.Fatalf("identity: %v %v", got, err)
 		}
 	}
+}
+
+func TestClearWaitsForExitingConsoleHelper(t *testing.T) {
+	base := t.TempDir()
+	paths, err := NewPaths(storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := paths.Prepare(testSandboxID); err != nil {
+		t.Fatal(err)
+	}
+	socket, _ := paths.APISocket(testSandboxID)
+	input, keepOpen, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()    //nolint:errcheck
+	defer keepOpen.Close() //nolint:errcheck
+	command := exec.Command("/bin/sh", "-c", "read line", "--api-socket", socket)
+	command.Stdin = input
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	var reaped chan struct{}
+	defer func() {
+		_ = command.Process.Kill()
+		if reaped != nil {
+			<-reaped
+		} else {
+			_ = command.Wait()
+		}
+	}()
+	helper, err := CaptureProcess(command.Process.Pid, testSandboxID, 3, "sh", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := paths.WriteConsoleProcess(helper); err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", command.Process.Pid))
+		if err == nil && len(raw) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("helper did not enter exiting state")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	reaped = make(chan struct{})
+	go func() { time.Sleep(50 * time.Millisecond); _ = command.Wait(); close(reaped) }()
+	if err := paths.Clear(t.Context(), testSandboxID); err != nil {
+		t.Fatalf("exiting helper blocked cleanup: %v", err)
+	}
+	<-reaped
 }
