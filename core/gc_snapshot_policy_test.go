@@ -2,6 +2,7 @@ package core
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,9 @@ import (
 func TestCollectWithPolicyPreviewsThenEvictsReadySnapshot(t *testing.T) {
 	configuration := config.Default()
 	configuration.Paths = gcTestRoots(t)
+	// The production adapter requires a cgroup path; this unique absent parent
+	// keeps discovery isolated without creating host resources.
+	configuration.VMM.CgroupParent = filepath.Join("/sys/fs/cgroup", "kumabox-test-"+filepath.Base(filepath.Dir(t.TempDir())))
 	service, err := OpenMaintenance(t.Context(), configuration)
 	if err != nil {
 		t.Fatal(err)
