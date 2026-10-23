@@ -124,11 +124,11 @@ func (d *Driver) restore(ctx context.Context, plan vmm.RestorePlan, beforeResume
 	defer func() { returnErr = errors.Join(returnErr, logFile.Close()) }()
 	command = exec.Command(d.binary, args...) //nolint:gosec // configured executable, no shell
 	command.Stdout, command.Stderr = logFile, logFile
-	configureProcess(command, scope)
-	if err := startProcess(command, plan.Network.Namespace); err != nil {
+	vmm.ConfigureProcess(command, scope)
+	if err := vmm.StartProcess(command, plan.Network.Namespace); err != nil {
 		return vmm.Process{}, fmt.Errorf("exec cloud-hypervisor restore process: %w", err)
 	}
-	result, err = captureProcess(command.Process.Pid, plan.SandboxID, plan.Generation, filepath.Base(d.binary), apiSocket)
+	result, err = vmm.CaptureProcess(command.Process.Pid, plan.SandboxID, plan.Generation, filepath.Base(d.binary), apiSocket)
 	if err != nil {
 		return result, fmt.Errorf("capture restore process identity: %w", err)
 	}
@@ -195,7 +195,7 @@ func (d *Driver) waitAPISocket(ctx context.Context, process vmm.Process) error {
 			return nil
 		}
 		located, exists, locateErr := d.Locate(ctx, process.SandboxID, process.Generation)
-		if locateErr != nil && !errors.Is(locateErr, errProcessIdentityPending) {
+		if locateErr != nil && !errors.Is(locateErr, vmm.ErrProcessIdentityPending) {
 			return locateErr
 		}
 		if (locateErr == nil && !exists) || located.PID != process.PID || located.StartTicks != process.StartTicks {

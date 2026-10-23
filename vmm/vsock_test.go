@@ -1,4 +1,4 @@
-package cloudhypervisor
+package vmm
 
 import (
 	"strings"

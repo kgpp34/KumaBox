@@ -150,6 +150,26 @@ ondemand 则要求普通私有内存；恢复前会先检查，
 主机端和 guest 端的产物需要配套使用。对可复现性有要求时，请固定带版本号的 guest 标签
 （例如 `24.04-v0.1.0`）或 OCI digest。单独执行 `sudo kumabox-check` 会做一次只读的主机检查。
 
+### Firecracker 后端（开发分支）
+
+Cloud Hypervisor 仍然是默认后端。`feat/firecracker` 分支新增实验性的
+Linux amd64 直启后端，实机验证使用官方 Firecracker v1.17.0。
+这部分尚未包含在已发布的 v0.1.0 二进制中。需要从当前代码构建主程序，并重新构建
+Ubuntu 镜像，让 initramfs 包含 MMIO 驱动，支持 `/dev/vdX` 启动参数。
+具体构建命令见[英文 README](README.md#firecracker-backend-development-branch)。
+
+创建或运行时指定 `--vmm firecracker`，后续 `start`、`stop`、`exec`、`ps`、
+`inspect`、`logs`、`rm` 自动读取沙箱记录中的后端类型。如果 Firecracker 不在 PATH，
+通过 `vmm.firecracker.binary` 或 `KUMABOX_VMM_FIRECRACKER_BINARY` 配置路径，后续命令也要保留该配置。
+
+第一批支持 CNI 网络、每张网卡一对收发队列、创建时的数据盘，以及基于同一 agent 的
+文件、进程和端口转发操作。停止再启动会保留根盘和数据盘。guest 中的磁盘按镜像层、COW、
+数据盘的顺序排列，没有 virtio serial。共享内存、大页、KSM 和显式 `directio=on` 会被拒绝。
+快照、克隆、恢复、休眠、在线设备变更和交互 console 暂未接入这个后端，可用 `exec` 和
+`logs` 操作及排查。正常停止发送 CtrlAltDel；guest 内核没有相应处理器时，等待超时后终止
+进程。本批不承诺 Firecracker 的启动延迟。进程复用现有 cgroup、网络 namespace 隔离和
+上游 seccomp，暂未集成 jailer/chroot。
+
 ### CPU 调度与 guest 内存
 
 `create`、`run` 可以单独指定宿主机 CPU 策略，`--cpus` 仍表示 guest 看见的虚拟 CPU 数量：

@@ -26,11 +26,19 @@ for argument in $(cat /proc/cmdline); do
 	esac
 done
 [ -n "$layers" ] && [ -n "$cow" ] && [ -n "$hostname" ] || fail 'missing root disk parameters'
-case "$layers$cow$hostname" in *[!A-Za-z0-9_.,-]*) fail 'invalid root disk parameters' ;; esac
+case "$layers$cow$hostname" in *[!A-Za-z0-9_.,/-]*) fail 'invalid root disk parameters' ;; esac
 case "$layers" in ,*|*,|*,,*) fail 'empty layer serial' ;; esac
 case "$cow" in .|..) fail 'invalid writable disk serial' ;; esac
 case "$timeout" in ''|*[!0-9]*) fail 'invalid device timeout' ;; esac
 [ "$timeout" -gt 0 ] && [ "$timeout" -le 120 ] || fail 'device timeout out of range'
+case "$hostname" in *[!A-Za-z0-9_.-]*) fail 'invalid hostname' ;; esac
+validate_disk() {
+	case "$1" in
+		/dev/vd*) suffix=${1#/dev/vd}; case "$suffix" in ''|*[!a-z]*) fail 'invalid MMIO disk' ;; esac ;;
+		''|.|..|*[!A-Za-z0-9_.-]*) fail 'invalid disk serial' ;;
+	esac
+}
+validate_disk "$cow"
 hostname "$hostname"
 
 # Device names change with attachment order. Resolve the stable virtio serial.
@@ -39,6 +47,7 @@ find_device() {
 	attempt=0
 	limit=$((timeout * 500))
 	while [ "$attempt" -lt "$limit" ]; do
+		case "$wanted" in		/dev/vd*) [ -b "$wanted" ] && { printf '%s\n' "$wanted"; return 0; } ;; esac
 		for sysdev in /sys/block/*; do
 			[ -d "$sysdev" ] || continue
 			value=
@@ -63,14 +72,14 @@ lowerdirs=
 old_ifs=$IFS
 IFS=,
 for serial in $layers; do
-	case "$serial" in .|..) fail 'invalid layer serial' ;; esac
+	validate_disk "$serial"
 	device=$(find_device "$serial") || fail "missing layer $serial"
-	mkdir -p "/layers/$serial"
-	mount -t erofs -o ro "$device" "/layers/$serial" || fail "mount layer $serial"
+	mkdir -p "/layers/${serial##*/}"
+	mount -t erofs -o ro "$device" "/layers/${serial##*/}" || fail "mount layer $serial"
 	if [ -n "$lowerdirs" ]; then
-		lowerdirs="$lowerdirs:/layers/$serial"
+		lowerdirs="$lowerdirs:/layers/${serial##*/}"
 	else
-		lowerdirs="/layers/$serial"
+		lowerdirs="/layers/${serial##*/}"
 	fi
 done
 IFS=$old_ifs

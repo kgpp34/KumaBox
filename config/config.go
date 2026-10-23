@@ -131,12 +131,14 @@ type VMM struct {
 	// CgroupParent contains per-sandbox VMM scopes.
 	CgroupParent string `mapstructure:"cgroup_parent"`
 	// CloudHypervisor configures the Cloud Hypervisor adapter.
-	CloudHypervisor CloudHypervisor `mapstructure:"cloud_hypervisor"`
+	CloudHypervisor Monitor `mapstructure:"cloud_hypervisor"`
+	// Firecracker configures the alternative direct-boot adapter.
+	Firecracker Monitor `mapstructure:"firecracker"`
 }
 
-// CloudHypervisor contains executable and bounded lifecycle waits.
-type CloudHypervisor struct {
-	// Binary is the cloud-hypervisor executable name or absolute path.
+// Monitor contains the executable and bounded process lifecycle waits shared by VMMs.
+type Monitor struct {
+	// Binary is the monitor executable name or absolute path.
 	Binary string `mapstructure:"binary"`
 	// StartupTimeout bounds process and API readiness.
 	StartupTimeout time.Duration `mapstructure:"startup_timeout"`
@@ -145,6 +147,9 @@ type CloudHypervisor struct {
 	// AbortGrace bounds failed-launch process termination.
 	AbortGrace time.Duration `mapstructure:"abort_grace"`
 }
+
+// CloudHypervisor preserves the original source-level configuration name.
+type CloudHypervisor = Monitor
 
 // Default returns the operational defaults used when no higher-precedence
 // source supplies a value.
@@ -162,8 +167,9 @@ func Default() Config {
 			DNS: "8.8.8.8,1.1.1.1", CleanupTimeout: 30 * time.Second, GuestAgentTimeout: 20 * time.Second,
 		},
 		VMM: VMM{
-			Default: types.VMMCloudHypervisor, CgroupParent: "/sys/fs/cgroup/kumabox.slice",
-			CloudHypervisor: CloudHypervisor{
+			Firecracker: Monitor{Binary: "firecracker", StartupTimeout: 10 * time.Second, StopGrace: 5 * time.Second, AbortGrace: 3 * time.Second},
+			Default:     types.VMMCloudHypervisor, CgroupParent: "/sys/fs/cgroup/kumabox.slice",
+			CloudHypervisor: Monitor{
 				Binary: "cloud-hypervisor", StartupTimeout: 10 * time.Second,
 				StopGrace: 5 * time.Second, AbortGrace: 3 * time.Second,
 			},
@@ -218,6 +224,10 @@ func (c *Config) Validate() error {
 	if strings.TrimSpace(c.VMM.CgroupParent) == "" {
 		return errors.New("vmm cgroup parent must not be empty")
 	}
+	fc := c.VMM.Firecracker
+	if strings.TrimSpace(fc.Binary) == "" || fc.StartupTimeout <= 0 || fc.StopGrace <= 0 || fc.AbortGrace <= 0 {
+		return errors.New("firecracker binary and lifecycle timeouts must be configured")
+	}
 	cloudHypervisor := c.VMM.CloudHypervisor
 	if strings.TrimSpace(cloudHypervisor.Binary) == "" || cloudHypervisor.StartupTimeout <= 0 ||
 		cloudHypervisor.StopGrace <= 0 || cloudHypervisor.AbortGrace <= 0 {
@@ -253,7 +263,11 @@ func NewLoader() *Loader {
 		"network.cni.conf_dir": defaults.Network.CNI.ConfDir, "network.cni.bin_dir": defaults.Network.CNI.BinDir,
 		"network.dns": defaults.Network.DNS, "network.scope": defaults.Network.Scope,
 		"network.cleanup_timeout": defaults.Network.CleanupTimeout, "network.guest_agent_timeout": defaults.Network.GuestAgentTimeout,
-		"vmm.default": defaults.VMM.Default, "vmm.cgroup_parent": defaults.VMM.CgroupParent,
+		"vmm.firecracker.binary":          defaults.VMM.Firecracker.Binary,
+		"vmm.firecracker.startup_timeout": defaults.VMM.Firecracker.StartupTimeout,
+		"vmm.firecracker.stop_grace":      defaults.VMM.Firecracker.StopGrace,
+		"vmm.firecracker.abort_grace":     defaults.VMM.Firecracker.AbortGrace,
+		"vmm.default":                     defaults.VMM.Default, "vmm.cgroup_parent": defaults.VMM.CgroupParent,
 		"vmm.cloud_hypervisor.binary":          defaults.VMM.CloudHypervisor.Binary,
 		"vmm.cloud_hypervisor.startup_timeout": defaults.VMM.CloudHypervisor.StartupTimeout,
 		"vmm.cloud_hypervisor.stop_grace":      defaults.VMM.CloudHypervisor.StopGrace,

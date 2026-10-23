@@ -23,6 +23,7 @@ type configProvider func() config.Config
 // parsing here gives both commands one validation contract and one set of
 // defaults.
 type createOptions struct {
+	backend      string
 	name         string
 	cpus         uint32
 	cpuPolicy    types.CPUPolicy
@@ -46,6 +47,7 @@ func defaultCreateOptions() createOptions {
 
 // addFlags registers the resource shape accepted by sandbox creation commands.
 func (o *createOptions) addFlags(command *cobra.Command) {
+	command.Flags().StringVar(&o.backend, "vmm", "", "VMM backend: cloud-hypervisor or firecracker (empty: configured default)")
 	addCPUFlags(command, &o.cpuPolicy)
 	command.Flags().StringVar(&o.name, "name", o.name, "required sandbox name")
 	command.Flags().Uint32Var(&o.cpus, "cpus", o.cpus, "number of virtual CPUs")
@@ -115,7 +117,12 @@ func (o createOptions) request(imageReference string) (core.CreateSandboxRequest
 	if err := sandboxConfig.Validate(); err != nil {
 		return core.CreateSandboxRequest{}, err
 	}
-	return core.CreateSandboxRequest{ImageReference: imageReference, Config: sandboxConfig}, nil
+	if o.backend != "" {
+		if err := types.VMMType(o.backend).Validate(); err != nil {
+			return core.CreateSandboxRequest{}, invalidFlag("vmm", err)
+		}
+	}
+	return core.CreateSandboxRequest{ImageReference: imageReference, Config: sandboxConfig, VMM: types.VMMType(o.backend)}, nil
 }
 
 // parseDataDisk accepts a compact, explicit disk specification without

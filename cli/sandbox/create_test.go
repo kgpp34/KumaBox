@@ -398,3 +398,17 @@ func TestCreateResourceFlagsPersistAndRejectMemoryConflicts(t *testing.T) {
 		t.Fatal("conflicting memory flags accepted")
 	}
 }
+
+func TestCreateSelectsVMM(t *testing.T) {
+	options := defaultCreateOptions()
+	options.name = "fc"
+	options.backend = "firecracker"
+	request, err := options.request("image")
+	if err != nil || request.VMM != types.VMMFirecracker {
+		t.Fatalf("request: %+v, %v", request, err)
+	}
+	options.backend = "unknown"
+	if _, err := options.request("image"); err == nil {
+		t.Fatal("accepted unknown VMM")
+	}
+}

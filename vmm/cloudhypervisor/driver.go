@@ -28,7 +28,6 @@ import (
 )
 
 const (
-	defaultStartupTimeout = 10 * time.Second
 	// A 50 ms poll consumed a large fraction of an otherwise ready clone.
 	// Both probes are bounded by startupTimeout, including when the VMM exits.
 	probeInterval  = 5 * time.Millisecond
@@ -40,10 +39,6 @@ const (
 // the VM. The API socket can accept requests before that transition completes.
 var errVMNotCreated = errors.New("cloud hypervisor VM is not created")
 
-// errProcessIdentityPending means /proc has the expected PID/start time but
-// has not exposed a command line yet. It must not be mistaken for process exit.
-var errProcessIdentityPending = errors.New("VMM process command line is not yet readable")
-
 // scopeManager is the cgroup capability consumed by this process adapter.
 type scopeManager interface {
 	Prepare(context.Context, types.SandboxID, uint32, types.CPUPolicy) (*os.File, error)
@@ -53,17 +48,8 @@ type scopeManager interface {
 	Remove(context.Context, types.SandboxID) error
 }
 
-// Options configures the executable and bounded readiness wait.
-type Options struct {
-	// Binary is an executable name or absolute path; empty selects cloud-hypervisor.
-	Binary string
-	// StartupTimeout bounds process/API readiness; zero selects ten seconds.
-	StartupTimeout time.Duration
-	// StopGrace bounds the identity-checked SIGTERM to SIGKILL window.
-	StopGrace time.Duration
-	// AbortGrace bounds termination after a failed launch.
-	AbortGrace time.Duration
-}
+// Options configures the executable and bounded host lifecycle policy.
+type Options = vmm.ProcessOptions
 
 // Driver launches and observes Cloud Hypervisor processes.
 type Driver struct {
@@ -93,21 +79,11 @@ func New(paths vmm.Paths, scopes *cgroup.Manager, options Options) (*Driver, err
 	if scopes == nil {
 		return nil, errors.New("cloud hypervisor cgroup manager is required")
 	}
-	if options.Binary == "" {
-		options.Binary = "cloud-hypervisor"
+	resolved, err := options.Resolve("cloud-hypervisor")
+	if err != nil {
+		return nil, err
 	}
-	if options.StartupTimeout == 0 {
-		options.StartupTimeout = defaultStartupTimeout
-	}
-	if options.StopGrace == 0 {
-		options.StopGrace = 5 * time.Second
-	}
-	if options.AbortGrace == 0 {
-		options.AbortGrace = 3 * time.Second
-	}
-	if options.StartupTimeout < probeInterval || options.StopGrace <= 0 || options.AbortGrace <= 0 {
-		return nil, errors.New("cloud hypervisor lifecycle timeouts must be positive and startup must cover one probe interval")
-	}
+	options = resolved
 	return &Driver{
 		paths: paths, scopes: scopes, binary: options.Binary,
 		startupTimeout: options.StartupTimeout, stopGrace: options.StopGrace, abortGrace: options.AbortGrace,
@@ -117,12 +93,18 @@ func New(paths vmm.Paths, scopes *cgroup.Manager, options Options) (*Driver, err
 // Type returns the durable backend identity stored with every owned sandbox.
 func (*Driver) Type() types.VMMType { return types.VMMCloudHypervisor }
 
+// ValidateConfig accepts the shared guest shape without monitor-specific restrictions.
+func (*Driver) ValidateConfig(config types.SandboxConfig) error { return config.Validate() }
+
+// NetworkQueues allocates one RX/TX pair per vCPU for multiqueue virtio-net.
+func (*Driver) NetworkQueues(cpus uint32) int { return max(2, int(cpus)*2) }
+
 // Preflight checks Linux/KVM and the configured binary before Starting is committed.
 func (d *Driver) Preflight() error {
 	if d == nil || d.scopes == nil || d.binary == "" {
 		return errors.New("cloud hypervisor driver is not configured")
 	}
-	if err := platformPreflight(); err != nil {
+	if err := vmm.PlatformPreflight(); err != nil {
 		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, err)
 	}
 	if _, err := exec.LookPath(d.binary); err != nil {
@@ -189,12 +171,12 @@ func (d *Driver) Launch(ctx context.Context, plan vmm.LaunchPlan) (result vmm.Pr
 
 	command = exec.Command(d.binary, args...) //nolint:gosec // executable is a configured fixed value; no shell is involved
 	command.Stdout, command.Stderr = logFile, logFile
-	configureProcess(command, scope)
+	vmm.ConfigureProcess(command, scope)
 
-	if err := startProcess(command, plan.Network.Namespace); err != nil {
+	if err := vmm.StartProcess(command, plan.Network.Namespace); err != nil {
 		return vmm.Process{}, fmt.Errorf("exec cloud-hypervisor: %w", err)
 	}
-	result, err = captureProcess(command.Process.Pid, plan.SandboxID, plan.Generation, filepath.Base(d.binary), apiSocket)
+	result, err = vmm.CaptureProcess(command.Process.Pid, plan.SandboxID, plan.Generation, filepath.Base(d.binary), apiSocket)
 	if err != nil {
 		return result, fmt.Errorf("capture VMM process identity: %w", err)
 	}
@@ -230,45 +212,14 @@ func withProcessExit(readinessErr error, exited <-chan error) error {
 // argument without depending on VM API health. A missing process file falls
 // back to the owned cgroup to close the exec-before-identity crash window.
 func (d *Driver) Locate(_ context.Context, id types.SandboxID, generation uint64) (vmm.Process, bool, error) {
-	if d == nil || d.scopes == nil {
-		return vmm.Process{}, false, errors.New("cloud hypervisor driver is not configured")
-	}
-	process, err := d.paths.ReadProcess(id)
-	if errors.Is(err, fs.ErrNotExist) {
-		process, err = d.recoverProcess(id, generation)
-	}
-	if err != nil {
-		return vmm.Process{}, false, err
-	}
-	if process.PID == 0 {
-		return vmm.Process{}, false, nil
-	}
-	alive, err := verifyProcess(process)
-	if err != nil {
-		if errors.Is(err, errProcessIdentityPending) {
-			// Keep the captured identity for readiness polling, but do not
-			// expose it as a verified live process to other callers.
-			if process.Generation != generation {
-				return vmm.Process{}, false, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("live VMM belongs to Starting generation %d, expected %d", process.Generation, generation))
-			}
-			return process, false, err
-		}
-		return vmm.Process{}, false, err
-	}
-	if !alive {
-		return vmm.Process{}, false, nil
-	}
-	if process.Generation != generation {
-		return vmm.Process{}, false, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("live VMM belongs to Starting generation %d, expected %d", process.Generation, generation))
-	}
-	return process, true, nil
+	return vmm.LocateProcess(d.paths, d.scopes, id, generation, d.binary)
 }
 
 // Observe combines identity-safe process location with the private vm.info API
 // to distinguish startup from readiness.
 func (d *Driver) Observe(ctx context.Context, id types.SandboxID, generation uint64) (vmm.Observation, error) {
 	process, exists, err := d.Locate(ctx, id, generation)
-	if errors.Is(err, errProcessIdentityPending) {
+	if errors.Is(err, vmm.ErrProcessIdentityPending) {
 		return vmm.Observation{State: vmm.ProcessStarting, Process: process}, nil
 	}
 	if err != nil {
@@ -344,7 +295,7 @@ func (d *Driver) Abort(ctx context.Context, process vmm.Process) error {
 	if err := process.Validate(); err != nil {
 		return err
 	}
-	if err := terminateProcess(ctx, process, d.abortGrace); err != nil {
+	if err := vmm.TerminateProcess(ctx, process, d.abortGrace); err != nil {
 		return err
 	}
 	return d.Cleanup(ctx, process.SandboxID)
@@ -362,7 +313,7 @@ func (d *Driver) Stop(ctx context.Context, process vmm.Process, options types.St
 	if err := process.Validate(); err != nil {
 		return err
 	}
-	alive, err := verifyProcess(process)
+	alive, err := vmm.VerifyProcess(process)
 	if err != nil {
 		return err
 	}
@@ -377,7 +328,7 @@ func (d *Driver) Stop(ctx context.Context, process vmm.Process, options types.St
 		shutdownCtx, cancel := context.WithTimeout(ctx, timeout)
 		err := d.snapshotAction(shutdownCtx, process.APISocket, "vm.power-button", nil, probeTimeout)
 		if err == nil {
-			err = waitProcessExit(shutdownCtx, process, timeout)
+			err = vmm.WaitProcessExit(shutdownCtx, process, timeout)
 		}
 		cancel()
 		if err == nil {
@@ -388,7 +339,7 @@ func (d *Driver) Stop(ctx context.Context, process vmm.Process, options types.St
 		return err
 	}
 	_ = d.requestShutdown(ctx, process.APISocket)
-	return terminateProcess(ctx, process, d.stopGrace)
+	return vmm.TerminateProcess(ctx, process, d.stopGrace)
 }
 
 // Console opens the direct-boot PTY reported by the exact live VMM. The caller
@@ -397,7 +348,7 @@ func (d *Driver) Console(ctx context.Context, process vmm.Process) (io.ReadWrite
 	if err := process.Validate(); err != nil {
 		return nil, err
 	}
-	alive, err := verifyProcess(process)
+	alive, err := vmm.VerifyProcess(process)
 	if err != nil {
 		return nil, err
 	}
@@ -418,7 +369,7 @@ func (d *Driver) Console(ctx context.Context, process vmm.Process) (io.ReadWrite
 	if err != nil {
 		return nil, err
 	}
-	alive, verifyErr := verifyProcess(process)
+	alive, verifyErr := vmm.VerifyProcess(process)
 	if verifyErr != nil || !alive {
 		if verifyErr == nil {
 			verifyErr = errdefs.New(errdefs.ClassUnavailable, errdefs.CodeArtifactUnavailable, errors.New("cloud-hypervisor exited while opening its console"))
@@ -444,38 +395,6 @@ func (d *Driver) Cleanup(ctx context.Context, id types.SandboxID) error {
 // RemoveLogs releases persistent diagnostics only during sandbox removal.
 func (d *Driver) RemoveLogs(ctx context.Context, id types.SandboxID) error {
 	return d.paths.RemoveLogs(ctx, id)
-}
-
-// recoverProcess inspects only the sandbox's cgroup and refuses unknown members.
-func (d *Driver) recoverProcess(id types.SandboxID, generation uint64) (vmm.Process, error) {
-	pids, err := d.scopes.PIDs(id)
-	if err != nil {
-		return vmm.Process{}, err
-	}
-	if len(pids) == 0 {
-		return vmm.Process{}, nil
-	}
-	apiSocket, err := d.paths.APISocket(id)
-	if err != nil {
-		return vmm.Process{}, err
-	}
-	var matches []vmm.Process
-	for _, pid := range pids {
-		process, match, err := identifyProcess(pid, id, generation, filepath.Base(d.binary), apiSocket)
-		if err != nil {
-			return vmm.Process{}, err
-		}
-		if match {
-			matches = append(matches, process)
-		}
-	}
-	if len(matches) != 1 || len(pids) != 1 {
-		return vmm.Process{}, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("cgroup contains %d process(es), %d matching the owned VMM", len(pids), len(matches)))
-	}
-	if err := d.paths.WriteProcess(matches[0]); err != nil {
-		return vmm.Process{}, err
-	}
-	return matches[0], nil
 }
 
 // queryState performs one bounded request over the private Unix socket.

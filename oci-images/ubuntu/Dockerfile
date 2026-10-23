@@ -62,7 +62,7 @@ RUN set -eu; \
     && install -m 0755 /usr/local/lib/kumabox/initramfs/kumabox-network \
         /etc/initramfs-tools/scripts/init-bottom/kumabox-network \
     && printf '%s\n' \
-        erofs overlay ext4 virtio_blk virtio_pci virtio_ring virtio_net \
+        erofs overlay ext4 virtio_blk virtio_pci virtio_mmio virtio_ring virtio_net \
         vsock vmw_vsock_virtio_transport \
         >> /etc/initramfs-tools/modules \
     && sed -i 's/^COMPRESS=.*/COMPRESS=gzip/' /etc/initramfs-tools/initramfs.conf \
@@ -78,7 +78,7 @@ RUN set -eu; \
         lsinitramfs "$initrd" > "$contents"; \
         grep -qx 'scripts/kumabox-overlay' "$contents"; \
         grep -qx 'scripts/init-bottom/kumabox-network' "$contents"; \
-        for module in erofs overlay ext4 virtio_blk virtio_pci virtio_net vsock vmw_vsock_virtio_transport; do \
+        for module in erofs overlay ext4 virtio_blk virtio_pci virtio_mmio virtio_net vsock vmw_vsock_virtio_transport; do \
             filename=$(modinfo -k "$kernel" -F filename "$module"); \
             if [ "$filename" != '(builtin)' ]; then \
                 basename=${filename##*/}; \

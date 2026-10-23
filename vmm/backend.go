@@ -17,6 +17,10 @@ import (
 // process launch, identity, control APIs, console access, and runtime cleanup.
 type Backend interface {
 	Type() types.VMMType
+	// ValidateConfig checks backend constraints before core reserves resources.
+	ValidateConfig(types.SandboxConfig) error
+	// NetworkQueues returns the required RX/TX queue count for host TAP creation.
+	NetworkQueues(uint32) int
 	Preflight() error
 	Locate(context.Context, types.SandboxID, uint64) (Process, bool, error)
 	Observe(context.Context, types.SandboxID, uint64) (Observation, error)

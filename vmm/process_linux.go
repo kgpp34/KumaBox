@@ -1,6 +1,6 @@
 //go:build linux
 
-package cloudhypervisor
+package vmm
 
 import (
 	"context"
@@ -18,11 +18,10 @@ import (
 	"github.com/vishvananda/netns"
 
 	"github.com/kumabox/kumabox/types"
-	"github.com/kumabox/kumabox/vmm"
 )
 
-// platformPreflight verifies that KVM can be opened by the current identity.
-func platformPreflight() error {
+// PlatformPreflight verifies that KVM can be opened by the current identity.
+func PlatformPreflight() error {
 	device, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
 	if err != nil {
 		return fmt.Errorf("open /dev/kvm: %w", err)
@@ -30,9 +29,9 @@ func platformPreflight() error {
 	return device.Close()
 }
 
-// configureProcess makes the VMM independent of the CLI process group and asks
+// ConfigureProcess makes the VMM independent of the CLI process group and asks
 // clone3 to place it in the prepared cgroup before it executes user code.
-func configureProcess(command *exec.Cmd, scope *os.File) {
+func ConfigureProcess(command *exec.Cmd, scope *os.File) {
 	command.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid:     true,
 		UseCgroupFD: true,
@@ -40,10 +39,10 @@ func configureProcess(command *exec.Cmd, scope *os.File) {
 	}
 }
 
-// startProcess starts the child in the requested network namespace. setns is
+// StartProcess starts the child in the requested network namespace. setns is
 // thread-local, so the caller thread is pinned until the original namespace is
 // restored after fork and exec.
-func startProcess(command *exec.Cmd, namespacePath string) (returnErr error) {
+func StartProcess(command *exec.Cmd, namespacePath string) (returnErr error) {
 	if namespacePath == "" {
 		return command.Start()
 	}
@@ -73,35 +72,38 @@ func startProcess(command *exec.Cmd, namespacePath string) (returnErr error) {
 	return command.Start()
 }
 
-func captureProcess(pid int, id types.SandboxID, generation uint64, binary, apiSocket string) (vmm.Process, error) {
+// CaptureProcess records a PID generation and the unique control-socket marker.
+func CaptureProcess(pid int, id types.SandboxID, generation uint64, binary, apiSocket string) (Process, error) {
 	start, err := processStartTicks(pid)
 	if err != nil {
-		return vmm.Process{}, err
+		return Process{}, err
 	}
 	bootID, err := hostBootID()
 	if err != nil {
-		return vmm.Process{}, err
+		return Process{}, err
 	}
-	process := vmm.Process{PID: pid, StartTicks: start, BootID: bootID, SandboxID: id, Generation: generation, Binary: binary, APISocket: apiSocket}
+	process := Process{PID: pid, StartTicks: start, BootID: bootID, SandboxID: id, Generation: generation, Binary: binary, APISocket: apiSocket}
 	return process, process.Validate()
 }
 
-func identifyProcess(pid int, id types.SandboxID, generation uint64, binary, apiSocket string) (vmm.Process, bool, error) {
+// IdentifyProcess recovers a candidate only when its executable/socket match.
+func IdentifyProcess(pid int, id types.SandboxID, generation uint64, binary, apiSocket string) (Process, bool, error) {
 	match, err := processCommandMatches(pid, binary, apiSocket)
 	if err != nil {
 		if !processExists(pid) {
-			return vmm.Process{}, false, nil
+			return Process{}, false, nil
 		}
-		return vmm.Process{}, false, err
+		return Process{}, false, err
 	}
 	if !match {
-		return vmm.Process{}, false, nil
+		return Process{}, false, nil
 	}
-	process, err := captureProcess(pid, id, generation, binary, apiSocket)
+	process, err := CaptureProcess(pid, id, generation, binary, apiSocket)
 	return process, err == nil, err
 }
 
-func verifyProcess(process vmm.Process) (bool, error) {
+// VerifyProcess proves boot ID, start time, executable and control socket still match.
+func VerifyProcess(process Process) (bool, error) {
 	bootID, err := hostBootID()
 	if err != nil {
 		return false, err
@@ -122,9 +124,9 @@ func verifyProcess(process vmm.Process) (bool, error) {
 	return processCommandMatches(process.PID, process.Binary, process.APISocket)
 }
 
-// terminateProcess opens a pidfd before identity checks, closing the PID-reuse
+// TerminateProcess opens a pidfd before identity checks, closing the PID-reuse
 // race between verification and signal delivery.
-func terminateProcess(ctx context.Context, process vmm.Process, grace time.Duration) error {
+func TerminateProcess(ctx context.Context, process Process, grace time.Duration) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -133,7 +135,7 @@ func terminateProcess(ctx context.Context, process vmm.Process, grace time.Durat
 		return err
 	}
 	defer handle.Release() //nolint:errcheck // releasing the pidfd cannot change process state
-	match, err := verifyProcess(process)
+	match, err := VerifyProcess(process)
 	if err != nil {
 		return err
 	}
@@ -159,9 +161,9 @@ func terminateProcess(ctx context.Context, process vmm.Process, grace time.Durat
 	return waitProcess(ctx, handle, time.Second)
 }
 
-// waitProcessExit observes a pidfd after checking its durable identity. An absent
+// WaitProcessExit observes a pidfd after checking its durable identity. An absent
 // or reused PID is already stopped from this sandbox's point of view.
-func waitProcessExit(ctx context.Context, process vmm.Process, timeout time.Duration) error {
+func WaitProcessExit(ctx context.Context, process Process, timeout time.Duration) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -170,10 +172,10 @@ func waitProcessExit(ctx context.Context, process vmm.Process, timeout time.Dura
 		return err
 	}
 	defer handle.Release() //nolint:errcheck // closing a pidfd cannot change process state
-	match, err := verifyProcess(process)
+	match, err := VerifyProcess(process)
 	// A process exiting between ACPI acknowledgement and this check may expose
 	// an empty command line. Observe its pidfd without sending any signal.
-	if errors.Is(err, errProcessIdentityPending) {
+	if errors.Is(err, ErrProcessIdentityPending) {
 		return waitProcess(ctx, handle, timeout)
 	}
 	if err != nil || !match {
@@ -229,7 +231,7 @@ func processCommandMatches(pid int, binary, apiSocket string) (bool, error) {
 // before its command-line bytes are readable during a concurrent launch.
 func commandLineMatches(raw []byte, binary, apiSocket string) (bool, error) {
 	if len(raw) == 0 {
-		return false, errProcessIdentityPending
+		return false, ErrProcessIdentityPending
 	}
 	fields := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
 	if len(fields) == 0 || filepath.Base(fields[0]) != binary {
@@ -237,7 +239,7 @@ func commandLineMatches(raw []byte, binary, apiSocket string) (bool, error) {
 	}
 	matches := 0
 	for index := 1; index+1 < len(fields); index++ {
-		if fields[index] == "--api-socket" && fields[index+1] == apiSocket {
+		if (fields[index] == "--api-socket" || fields[index] == "--api-sock") && fields[index+1] == apiSocket {
 			matches++
 		}
 	}

@@ -111,6 +111,9 @@ func (s *SandboxService) Start(ctx context.Context, reference string) (result ty
 	if err := backend.Preflight(); err != nil {
 		return record, failBeforeLaunch("host preflight", err)
 	}
+	if err := backend.ValidateConfig(record.Config); err != nil {
+		return record, failBeforeLaunch("validate runtime configuration", err)
+	}
 	if int(record.Config.CPUs) > runtime.NumCPU() {
 		return record, failBeforeLaunch("host capacity", errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, fmt.Errorf("requested %d vCPUs exceeds available host CPUs (%d)", record.Config.CPUs, runtime.NumCPU())))
 	}

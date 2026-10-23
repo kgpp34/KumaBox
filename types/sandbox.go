@@ -151,7 +151,7 @@ type VMMType string
 const (
 	// VMMCloudHypervisor selects the Cloud Hypervisor process adapter.
 	VMMCloudHypervisor VMMType = "cloud-hypervisor"
-	// VMMFirecracker reserves the stable identity for the future Firecracker adapter.
+	// VMMFirecracker selects the Firecracker direct-boot adapter.
 	VMMFirecracker VMMType = "firecracker"
 )
 

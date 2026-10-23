@@ -7,6 +7,7 @@ import (
 	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/vmm"
 	"github.com/kumabox/kumabox/vmm/cloudhypervisor"
+	"github.com/kumabox/kumabox/vmm/firecracker"
 )
 
 // openVMMRegistry assembles every backend enabled by this binary and freezes
@@ -30,7 +31,14 @@ func openVMMRegistry(configuration config.Config) (*vmm.Registry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initialize VMM cloud-hypervisor: %w", err)
 	}
-	registry, err := vmm.NewRegistry(cloudHypervisor)
+	fc, err := firecracker.New(paths, scopes, firecracker.Options{
+		Binary: configuration.VMM.Firecracker.Binary, StartupTimeout: configuration.VMM.Firecracker.StartupTimeout,
+		StopGrace: configuration.VMM.Firecracker.StopGrace, AbortGrace: configuration.VMM.Firecracker.AbortGrace,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize VMM firecracker: %w", err)
+	}
+	registry, err := vmm.NewRegistry(cloudHypervisor, fc)
 	if err != nil {
 		return nil, fmt.Errorf("initialize VMM registry: %w", err)
 	}

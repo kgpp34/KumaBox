@@ -16,12 +16,15 @@
 
 . /scripts/functions
 
-# kumabox_device resolves one virtio block serial with a bounded wait. Device
-# letters are deliberately ignored because VMM attachment order is not an ABI.
+# kumabox_device resolves serials or an explicit MMIO virtio block path.
+# Only /dev/vd[a-z]+ paths are accepted, never arbitrary guest paths.
 kumabox_device() {
 	serial=$1
 	attempt=0
 	while [ "$attempt" -lt "$KUMABOX_DEVICE_TIMEOUT" ]; do
+		case "$serial" in
+			/dev/vd*) [ -b "$serial" ] && { printf '%s\n' "$serial"; return 0; } ;;
+		esac
 		for sysdev in /sys/block/*; do
 			[ -d "$sysdev" ] || continue
 			value=
@@ -39,6 +42,14 @@ kumabox_device() {
 		attempt=$((attempt + 1))
 	done
 	return 1
+}
+
+# Reject path traversal and keep explicit device references within virtio-blk.
+kumabox_disk_reference() {
+	case "$1" in
+		/dev/vd*) suffix=${1#/dev/vd}; case "$suffix" in ''|*[!a-z]*) return 1 ;; esac ;;
+		''|.|..|*[!A-Za-z0-9_.-]*) return 1 ;;
+	esac
 }
 
 # mountroot is called by initramfs-tools when boot=kumabox-overlay is selected.
@@ -68,9 +79,7 @@ mountroot() {
 	case "$KUMABOX_LAYERS" in
 		,*|*,|*,,*) panic "kumabox.layers contains an empty serial" ;;
 	esac
-	case "$KUMABOX_COW" in
-		*[!A-Za-z0-9_.-]*) panic "kumabox.cow contains an invalid serial" ;;
-	esac
+	kumabox_disk_reference "$KUMABOX_COW" || panic "kumabox.cow contains an invalid disk reference"
 	case "$KUMABOX_HOSTNAME" in
 		*[!A-Za-z0-9_.-]*) panic "kumabox.hostname contains an invalid character" ;;
 	esac
@@ -92,11 +101,9 @@ mountroot() {
 	old_ifs=$IFS
 	IFS=,
 	for serial in $KUMABOX_LAYERS; do
-		case "$serial" in
-			*[!A-Za-z0-9_.-]*) panic "kumabox.layers contains an invalid serial" ;;
-		esac
+		kumabox_disk_reference "$serial" || panic "kumabox.layers contains an invalid disk reference"
 		device=$(kumabox_device "$serial") || panic "KumaBox layer $serial was not found"
-		mountpoint="$workspace/layers/$serial"
+		mountpoint="$workspace/layers/${serial##*/}"
 		mkdir -p "$mountpoint"
 		mount -t erofs -o ro "$device" "$mountpoint" || panic "KumaBox layer $serial could not be mounted"
 		if [ -n "$lowerdirs" ]; then

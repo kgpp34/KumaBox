@@ -25,19 +25,6 @@ import (
 	"github.com/kumabox/kumabox/vmm"
 )
 
-func TestCommandLineMatchesDistinguishesPendingIdentity(t *testing.T) {
-	const socket = "/run/kumabox/api.sock"
-	if match, err := commandLineMatches(nil, "cloud-hypervisor", socket); match || !errors.Is(err, errProcessIdentityPending) {
-		t.Fatalf("empty command line = %v, %v; want pending identity", match, err)
-	}
-	if match, err := commandLineMatches([]byte("cloud-hypervisor\x00--api-socket\x00"+socket+"\x00"), "cloud-hypervisor", socket); err != nil || !match {
-		t.Fatalf("complete command line = %v, %v; want match", match, err)
-	}
-	if match, err := commandLineMatches([]byte("other-vmm\x00--api-socket\x00"+socket+"\x00"), "cloud-hypervisor", socket); err != nil || match {
-		t.Fatalf("foreign command line = %v, %v; want mismatch", match, err)
-	}
-}
-
 func TestProcessIdentityHelper(t *testing.T) {
 	if os.Getenv("KUMABOX_PROCESS_HELPER") != "1" {
 		return
@@ -60,7 +47,7 @@ func TestConfigureProcessPlacesChildInPreparedCgroup(t *testing.T) {
 	}
 	defer scope.Close() //nolint:errcheck
 	command := exec.Command("true")
-	configureProcess(command, scope)
+	vmm.ConfigureProcess(command, scope)
 	if command.SysProcAttr == nil || !command.SysProcAttr.Setpgid || !command.SysProcAttr.UseCgroupFD || command.SysProcAttr.CgroupFD != int(scope.Fd()) {
 		t.Fatalf("process attributes = %+v", command.SysProcAttr)
 	}
@@ -68,7 +55,7 @@ func TestConfigureProcessPlacesChildInPreparedCgroup(t *testing.T) {
 
 func TestCaptureAndVerifyProcessIdentity(t *testing.T) {
 	command, wait := startProcessHelper(t, false, "/run/kumabox/api.sock")
-	process, err := captureProcess(
+	process, err := vmm.CaptureProcess(
 		command.Process.Pid,
 		types.SandboxID("123e4567-e89b-42d3-a456-426614174000"),
 		3,
@@ -78,8 +65,8 @@ func TestCaptureAndVerifyProcessIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if match, err := verifyProcess(process); err != nil || !match {
-		t.Fatalf("verifyProcess() = %v, %v", match, err)
+	if match, err := vmm.VerifyProcess(process); err != nil || !match {
+		t.Fatalf("vmm.VerifyProcess() = %v, %v", match, err)
 	}
 	for _, test := range []struct {
 		name   string
@@ -93,8 +80,8 @@ func TestCaptureAndVerifyProcessIdentity(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			candidate := process
 			test.mutate(&candidate)
-			if match, err := verifyProcess(candidate); err != nil || match {
-				t.Fatalf("verifyProcess() = %v, %v", match, err)
+			if match, err := vmm.VerifyProcess(candidate); err != nil || match {
+				t.Fatalf("vmm.VerifyProcess() = %v, %v", match, err)
 			}
 		})
 	}
@@ -112,7 +99,7 @@ func TestTerminateProcessEscalatesFromTermToKill(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			command, wait := startProcessHelper(t, ignoreTerm, "/run/kumabox/api.sock")
-			process, err := captureProcess(
+			process, err := vmm.CaptureProcess(
 				command.Process.Pid,
 				types.SandboxID("123e4567-e89b-42d3-a456-426614174000"),
 				3,
@@ -122,7 +109,7 @@ func TestTerminateProcessEscalatesFromTermToKill(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := terminateProcess(t.Context(), process, 50*time.Millisecond); err != nil {
+			if err := vmm.TerminateProcess(t.Context(), process, 50*time.Millisecond); err != nil {
 				t.Fatal(err)
 			}
 			select {
@@ -171,16 +158,16 @@ func startProcessHelper(t *testing.T, ignoreTerm bool, apiSocket string) (*exec.
 
 func TestTerminateProcessCancellationDoesNotEscalate(t *testing.T) {
 	command, _ := startProcessHelper(t, true, "/run/kumabox/api.sock")
-	process, err := captureProcess(command.Process.Pid, "123e4567-e89b-42d3-a456-426614174000", 3, filepath.Base(os.Args[0]), "/run/kumabox/api.sock")
+	process, err := vmm.CaptureProcess(command.Process.Pid, "123e4567-e89b-42d3-a456-426614174000", 3, filepath.Base(os.Args[0]), "/run/kumabox/api.sock")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
 	defer cancel()
-	if err := terminateProcess(ctx, process, time.Minute); !errors.Is(err, context.DeadlineExceeded) {
+	if err := vmm.TerminateProcess(ctx, process, time.Minute); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("terminate = %v", err)
 	}
-	if alive, err := verifyProcess(process); err != nil || !alive {
+	if alive, err := vmm.VerifyProcess(process); err != nil || !alive {
 		t.Fatalf("cancellation killed owned process: alive=%v, err=%v", alive, err)
 	}
 }
@@ -205,7 +192,7 @@ func TestStopShutdownPolicyAndCancellation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			socket := filepath.Join(t.TempDir(), "api.sock")
 			command, _ := startProcessHelper(t, !test.powerExit, socket)
-			process, err := captureProcess(command.Process.Pid, "123e4567-e89b-42d3-a456-426614174000", 3, filepath.Base(os.Args[0]), socket)
+			process, err := vmm.CaptureProcess(command.Process.Pid, "123e4567-e89b-42d3-a456-426614174000", 3, filepath.Base(os.Args[0]), socket)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -283,7 +270,7 @@ func TestSnapshotWaitsForBalloonBeforePausingGuest(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
 	socket := filepath.Join(socketDir, "api.sock")
 	command, _ := startProcessHelper(t, false, socket)
-	process, err := captureProcess(command.Process.Pid, id, 3, filepath.Base(os.Args[0]), socket)
+	process, err := vmm.CaptureProcess(command.Process.Pid, id, 3, filepath.Base(os.Args[0]), socket)
 	if err != nil {
 		t.Fatal(err)
 	}

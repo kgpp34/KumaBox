@@ -297,6 +297,8 @@ type fakeRuntime struct {
 	steps              *[]string
 	observation        vmm.Observation
 	preflightErr       error
+	configErr          error
+	queueCount         int
 	launchErr          error
 	stopErr            error
 	stopOptions        types.StopOptions
@@ -383,6 +385,15 @@ func (f *fakeRuntime) Clone(_ context.Context, plan vmm.ClonePlan) (vmm.Process,
 		Generation: plan.Generation, Binary: "cloud-hypervisor", APISocket: "/run/kumabox/clone.sock",
 	}, f.restoreErr
 }
+
+func (f *fakeRuntime) NetworkQueues(cpus uint32) int {
+	if f.queueCount > 0 {
+		return f.queueCount
+	}
+	return network.QueueCount(cpus)
+}
+
+func (f *fakeRuntime) ValidateConfig(types.SandboxConfig) error { return f.configErr }
 
 func (f *fakeRuntime) Type() types.VMMType {
 	if f.typ == "" {

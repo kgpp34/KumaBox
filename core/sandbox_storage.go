@@ -71,7 +71,11 @@ func (s *SandboxService) create(ctx context.Context, request CreateSandboxReques
 			return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, errors.New("disk backend does not support managed data disks"))
 		}
 	}
-	if _, err := s.dependencies.runtimes.Backend(request.VMM); err != nil {
+	backend, err := s.dependencies.runtimes.Backend(request.VMM)
+	if err != nil {
+		return types.Sandbox{}, err
+	}
+	if err := backend.ValidateConfig(request.Config); err != nil {
 		return types.Sandbox{}, err
 	}
 	var networkProvider network.Provider
@@ -173,7 +177,7 @@ func (s *SandboxService) create(ctx context.Context, request CreateSandboxReques
 			return types.Sandbox{}, s.compensate(ctx, record, "report", err)
 		}
 		specs := network.AddRange(0, request.Config.NICs)
-		queues := network.QueueCount(request.Config.CPUs)
+		queues := backend.NetworkQueues(request.Config.CPUs)
 		for index := range specs {
 			specs[index].Queues = queues
 		}

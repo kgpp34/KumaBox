@@ -41,6 +41,9 @@ func (p Paths) Ensure() error {
 	return errors.Join(storage.EnsureDir(p.RunBase()), storage.EnsureDir(p.LogBase()))
 }
 
+// KernelCache contains uncompressed kernels derived from immutable image artifacts.
+func (p Paths) KernelCache() string { return filepath.Join(p.roots.Data, "vmm", "kernels") }
+
 // RunBase contains reconstructable per-sandbox VMM state.
 func (p Paths) RunBase() string { return filepath.Join(p.roots.Run, "sandboxes") }
 
@@ -63,7 +66,7 @@ func (p Paths) CloneStateDir(id types.SandboxID) (string, error) {
 // LogDir returns one sandbox's private log directory.
 func (p Paths) LogDir(id types.SandboxID) (string, error) { return p.idDir(p.LogBase(), id) }
 
-// APISocket is the unique Cloud Hypervisor control endpoint and process marker.
+// APISocket is the unique VMM control endpoint and process marker.
 func (p Paths) APISocket(id types.SandboxID) (string, error) { return p.runFile(id, apiSocketName) }
 
 // Vsock is the private host endpoint for the future guest-agent transport.

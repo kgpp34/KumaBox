@@ -159,3 +159,17 @@ func TestStopTimeoutConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestFirecrackerConfigurationBoundary(t *testing.T) {
+	t.Setenv("KUMABOX_VMM_DEFAULT", "firecracker")
+	t.Setenv("KUMABOX_VMM_FIRECRACKER_BINARY", "/opt/test/firecracker")
+	t.Setenv("KUMABOX_VMM_FIRECRACKER_STARTUP_TIMEOUT", "7s")
+	c, err := NewLoader().Load("")
+	if err != nil || c.VMM.Default != "firecracker" || c.VMM.Firecracker.Binary != "/opt/test/firecracker" || c.VMM.Firecracker.StartupTimeout != 7*time.Second {
+		t.Fatalf("firecracker config: %+v, %v", c.VMM, err)
+	}
+	c.VMM.Firecracker.StopGrace = 0
+	if err := c.Validate(); err == nil {
+		t.Fatal("accepted unbounded Firecracker stop")
+	}
+}

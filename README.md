@@ -161,6 +161,44 @@ Host and guest artifacts are a matched release pair. Pin a versioned guest tag
 such as `24.04-v0.1.0`, or an OCI digest, when reproducibility matters.
 `sudo kumabox-check` alone performs a read-only host audit.
 
+### Firecracker backend (development branch)
+
+Cloud Hypervisor remains the default. The `feat/firecracker` branch adds an
+experimental **Linux amd64** direct-boot backend, tested with upstream
+Firecracker v1.17.0. This is not part of the published v0.1.0 binaries.
+Build the host binary and a new Ubuntu image from this checkout: older images
+may lack the MMIO driver and explicit `/dev/vdX` boot references.
+
+```sh
+make build
+docker build -f oci-images/ubuntu/Dockerfile -t kumabox-ubuntu:firecracker .
+docker save -o /tmp/kumabox-firecracker.tar kumabox-ubuntu:firecracker
+sudo ./bin/kumabox image import fc-ubuntu /tmp/kumabox-firecracker.tar --format docker
+sudo env KUMABOX_VMM_FIRECRACKER_BINARY=/path/to/firecracker \
+  ./bin/kumabox run fc-ubuntu --name fc-demo --vmm firecracker \
+  --cpus 2 --memory 1GiB --storage 10GiB --nics 1
+sudo ./bin/kumabox exec fc-demo -- uname -a
+sudo ./bin/kumabox stop fc-demo --timeout 10
+sudo ./bin/kumabox rm fc-demo
+```
+
+Keep the same executable configuration for subsequent commands when Firecracker
+is not on PATH. Alternatively configure `vmm.firecracker.binary` in the host
+configuration. `start`, `stop`, `exec`, `ps`, `inspect`, `logs` and `rm` route by
+the persisted backend, so only create/run need `--vmm`.
+
+This first batch supports CNI with one queue pair per NIC, managed data disks,
+agent file/process/forward operations, and writable-disk persistence across
+stop/start. In Firecracker guests, disks follow attachment order (image layers,
+COW, then data disks), without virtio serials. Shared memory, hugetlb, KSM and
+explicit `directio=on` are rejected. Snapshot/clone/restore/hibernate, live device
+changes and interactive console are not implemented for this backend yet; use
+`exec` and `logs`. Graceful stop sends CtrlAltDel; kernels without an i8042 handler
+use the bounded termination fallback. No Firecracker latency claim is made by
+this initial functional integration. The Firecracker process uses the existing
+cgroup/network namespace isolation and upstream seccomp; jailer/chroot integration
+is not included in this batch.
+
 ### CPU scheduling and guest memory
 
 `create` and `run` accept host CPU policy separately from `--cpus` (guest topology):

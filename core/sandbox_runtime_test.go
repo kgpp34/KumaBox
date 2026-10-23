@@ -676,3 +676,28 @@ func TestStopRejectsInvalidPolicyBeforeLockOrStateChange(t *testing.T) {
 		t.Fatalf("invalid stop = %v; steps=%v", err, *steps)
 	}
 }
+
+func TestBackendRejectsConfigBeforeReservation(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	rejection := errors.New("backend cannot represent requested memory")
+	testRuntime(t, service).configErr = rejection
+	_, err := service.Create(t.Context(), CreateSandboxRequest{ImageReference: "demo", Config: types.SandboxConfig{Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage}})
+	if !errors.Is(err, rejection) {
+		t.Fatalf("Create error: %v", err)
+	}
+	if len(*steps) != 0 {
+		t.Fatalf("incompatible backend allocated resources: %v", *steps)
+	}
+}
+
+func TestCreateUsesBackendQueuePolicy(t *testing.T) {
+	service, _ := newTestSandboxService(t, nil)
+	testRuntime(t, service).queueCount = 2
+	record, err := service.Create(t.Context(), CreateSandboxRequest{ImageReference: "demo", Config: types.SandboxConfig{Name: "queues", CPUs: 2, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage, NICs: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(record.Network.Interfaces) != 1 || record.Network.Interfaces[0].Queues != 2 {
+		t.Fatalf("backend queue policy was ignored: %+v", record.Network)
+	}
+}

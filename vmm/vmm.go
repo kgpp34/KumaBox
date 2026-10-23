@@ -13,6 +13,9 @@ import (
 	"github.com/kumabox/kumabox/types"
 )
 
+// ErrProcessIdentityPending means procfs has not exposed a live command line yet.
+var ErrProcessIdentityPending = errors.New("VMM process command line is not yet readable")
+
 const (
 	// LayerSerialPrefix identifies immutable EROFS disks by manifest position.
 	LayerSerialPrefix = "kumabox-layer"
