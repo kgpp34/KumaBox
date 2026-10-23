@@ -16,6 +16,8 @@ import (
 
 func TestGCEmptyRootReportsNoActions(t *testing.T) {
 	base := t.TempDir()
+	// Use an unused cgroup pathname without creating or scanning host scopes.
+	t.Setenv("KUMABOX_VMM_CGROUP_PARENT", filepath.Join("/sys/fs/cgroup", "kumabox-test-"+filepath.Base(filepath.Dir(base))))
 	args := []string{
 		"--root-dir", filepath.Join(base, "data"), "--run-dir", filepath.Join(base, "run"),
 		"--log-dir", filepath.Join(base, "log"), "gc", "--json",
@@ -35,6 +37,8 @@ func TestGCEmptyRootReportsNoActions(t *testing.T) {
 
 func TestGCSnapshotPolicyFlags(t *testing.T) {
 	base := t.TempDir()
+	// Use an unused cgroup pathname without creating or scanning host scopes.
+	t.Setenv("KUMABOX_VMM_CGROUP_PARENT", filepath.Join("/sys/fs/cgroup", "kumabox-test-"+filepath.Base(filepath.Dir(base))))
 	roots := []string{
 		"--root-dir", filepath.Join(base, "data"), "--run-dir", filepath.Join(base, "run"),
 		"--log-dir", filepath.Join(base, "log"),
