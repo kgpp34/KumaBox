@@ -101,7 +101,8 @@ func TestValidateSnapshotRejectsIncompleteAndUnsafeArtifacts(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{name: "unknown version", damage: func(t *testing.T, f *snapshotFixture) { f.meta.Version = 2; f.writeMeta(t) }},
+		{name: "unknown version", damage: func(t *testing.T, f *snapshotFixture) { f.meta.Version = 999; f.writeMeta(t) }},
+		{name: "missing version two owner", damage: func(t *testing.T, f *snapshotFixture) { f.meta.Version = 2; f.writeMeta(t) }},
 		{name: "memory byte size overflow", damage: func(t *testing.T, f *snapshotFixture) {
 			f.meta.Config.Machine.MemoryMiB = math.MaxInt64
 			f.writeMeta(t)

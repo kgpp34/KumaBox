@@ -196,18 +196,28 @@ state and all managed writable disks while paused, then resumes the guest.
 `restore SANDBOX SNAPSHOT` restores the original sandbox, including running
 guest processes, root disk and data disks. Automatic, `mmap` and `ondemand`
 memory restoration use Firecracker's private file mapping; eager `copy` is
-rejected before stopping the sandbox. Snapshot export/import is supported, but
-restoring still requires the original sandbox and its data/runtime paths.
-Clone, relocated restore, hibernate and live device changes are not implemented
-for this backend yet. `console SANDBOX` uses a private
+rejected before stopping the sandbox. `hibernate` publishes the snapshot while
+paused, then stops the VMM; `restore` resumes the captured processes and disks.
+`clone SNAPSHOT --name NAME` creates independent writable disks and private-mapped
+RAM while the source keeps running. The source sandbox may already be deleted.
+Export/import and `clone --from-dir DIR` support another data/runtime root with
+the exact image available and a compatible Firecracker build, CPU and host.
+Directory restore can also rebind a compatible target sandbox with `--force`.
+Clones retain the captured CPU, RAM, NIC count and managed disk set; adding
+devices or changing this shape is rejected before creating the clone.
+Use `clone --wait-network` or `net NAME --configure` to apply the new hostname,
+MAC and IP settings before using guest networking. Older guest agents use the
+existing exec fallback. Native disk paths are redirected in a private Linux
+mount namespace; cloning requires OverlayFS and mount/chroot privileges, without
+creating source-path placeholders on the host. `console SANDBOX` uses a private
 serial relay that survives the launching CLI, accepts one client at a time, and keeps logging
 while detached. Press `Ctrl+]`, then `.` to detach; reconnect with the same command.
 The relay exits when its VMM exits and is also reaped during runtime cleanup.
 Graceful stop sends CtrlAltDel; kernels without an i8042 handler use the bounded
 termination fallback. No Firecracker latency claim is made by
 this initial functional integration. The Firecracker process uses the existing
-cgroup/network namespace isolation and upstream seccomp; jailer/chroot integration
-is not included in this batch.
+cgroup/network namespace isolation and upstream seccomp. The clone's private
+path view is not a jailer security boundary; jailer integration is not included.
 
 ### CPU scheduling and guest memory
 

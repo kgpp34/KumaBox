@@ -22,7 +22,7 @@ import (
 // A real process identity and Unix API exercise pause/capture/resume failures
 // without KVM, root privileges or access to the machine's actual VMM cgroups.
 func TestSnapshotResumesAfterCaptureFailureAndCancellation(t *testing.T) {
-	for _, failure := range []string{"none", "pause response", "capture", "disk copy", "cancellation"} {
+	for _, failure := range []string{"none", "pause response", "capture", "disk copy", "cancellation", "persist failure", "hibernate", "termination cancellation"} {
 		t.Run(failure, func(t *testing.T) {
 			f := testSnapshot(t)
 			ctx, cancel := context.WithCancel(t.Context())
@@ -119,7 +119,9 @@ func TestSnapshotResumesAfterCaptureFailureAndCancellation(t *testing.T) {
 			if err := command.Start(); err != nil {
 				t.Fatal(err)
 			}
-			defer func() { _ = command.Process.Kill(); _ = command.Wait() }()
+			reaped := make(chan struct{})
+			go func() { _ = command.Wait(); close(reaped) }()
+			defer func() { _ = command.Process.Kill(); <-reaped }()
 			process, err := vmm.CaptureProcess(command.Process.Pid, f.meta.SandboxID, 1, "sh", socket)
 			if err != nil {
 				t.Fatal(err)
@@ -130,7 +132,7 @@ func TestSnapshotResumesAfterCaptureFailureAndCancellation(t *testing.T) {
 			if err := f.driver.paths.WriteProcess(process); err != nil {
 				t.Fatal(err)
 			}
-			f.driver.options = Options{Binary: "sh", StartupTimeout: time.Second}
+			f.driver.options = Options{Binary: "sh", StartupTimeout: time.Second, StopGrace: time.Second, AbortGrace: time.Second}
 			plan := vmm.SnapshotPlan{Process: process, Destination: t.TempDir()}
 			plan.WritableFiles = []vmm.SnapshotFile{{Source: f.meta.Writable[0].Source, Destination: filepath.Join(plan.Destination, "cow.raw")}}
 			if failure == "disk copy" {
@@ -138,8 +140,23 @@ func TestSnapshotResumesAfterCaptureFailureAndCancellation(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			err = f.driver.Snapshot(ctx, plan)
-			if (err == nil) != (failure == "none") {
+			if failure == "persist failure" || failure == "hibernate" || failure == "termination cancellation" {
+				err = f.driver.Hibernate(ctx, plan, func() error {
+					mu.Lock()
+					steps = append(steps, "persist")
+					mu.Unlock()
+					if failure == "persist failure" {
+						return errors.New("publish failed")
+					}
+					if failure == "termination cancellation" {
+						cancel()
+					}
+					return nil
+				})
+			} else {
+				err = f.driver.Snapshot(ctx, plan)
+			}
+			if (err == nil) != (failure == "none" || failure == "hibernate") {
 				t.Fatalf("snapshot result = %v", err)
 			}
 			if failure == "cancellation" && !errors.Is(err, context.Canceled) {
@@ -149,11 +166,27 @@ func TestSnapshotResumesAfterCaptureFailureAndCancellation(t *testing.T) {
 			got := slices.Clone(steps)
 			mu.Unlock()
 			want := []string{"Paused", "capture", "Resumed"}
+			if failure == "persist failure" {
+				want = []string{"Paused", "capture", "persist", "Resumed"}
+			}
+			if failure == "hibernate" || failure == "termination cancellation" {
+				want = []string{"Paused", "capture", "persist"}
+			}
 			if failure == "pause response" {
 				want = []string{"Paused", "Resumed"}
 			}
 			if !slices.Equal(got, want) {
 				t.Fatalf("state transitions = %v, want %v", got, want)
+			}
+			if failure == "hibernate" {
+				if alive, err := vmm.VerifyProcess(process); err != nil || alive {
+					t.Fatalf("hibernated process still alive: %v %v", alive, err)
+				}
+			}
+			if failure == "termination cancellation" {
+				if alive, err := vmm.VerifyProcess(process); err != nil || !alive {
+					t.Fatalf("unexpected canceled termination result: %v %v", alive, err)
+				}
 			}
 			if failure == "none" {
 				if err := f.driver.ValidateSnapshot(t.Context(), plan.Destination); err != nil {

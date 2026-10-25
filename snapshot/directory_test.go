@@ -47,7 +47,7 @@ func TestDirectoryRoundTripRequiresCompleteFlatFileSet(t *testing.T) {
 
 func TestDirectoryMemorySharesCacheWhileWritableFilesStayPrivate(t *testing.T) {
 	source := t.TempDir()
-	for _, name := range []string{"cow.raw", "config.json", "state.json", "memory-range-0"} {
+	for _, name := range []string{"cow.raw", "config.json", "state.json", "memory-range-0", "mem"} {
 		if err := os.WriteFile(filepath.Join(source, name), []byte("original"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -62,7 +62,7 @@ func TestDirectoryMemorySharesCacheWhileWritableFilesStayPrivate(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{"cow.raw", "config.json", "state.json", "memory-range-0"} {
+	for _, name := range []string{"cow.raw", "config.json", "state.json", "memory-range-0", "mem"} {
 		original, err := os.Stat(filepath.Join(exported, name))
 		if err != nil {
 			t.Fatal(err)
@@ -71,7 +71,7 @@ func TestDirectoryMemorySharesCacheWhileWritableFilesStayPrivate(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if shared := os.SameFile(original, staged); shared != (name == "memory-range-0") {
+		if shared := os.SameFile(original, staged); shared != (name == "memory-range-0" || name == "mem") {
 			t.Fatalf("%s shares source inode = %v", name, shared)
 		}
 	}

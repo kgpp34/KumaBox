@@ -149,8 +149,8 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	if err := validateCapturedDataDisks(snapshotDir, capture.Config.DataDisks); err != nil {
 		return types.Sandbox{}, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err)
 	}
-	if validator, ok := backend.(vmm.RestoreValidator); ok {
-		if err := validator.ValidateRestore(ctx, snapshotDir, options.MemoryMode); err != nil {
+	if validator, ok := backend.(vmm.SnapshotValidator); ok {
+		if err := validator.ValidateClone(ctx, snapshotDir, config, options.MemoryMode); err != nil {
 			if ctx.Err() != nil {
 				return types.Sandbox{}, ctx.Err()
 			}

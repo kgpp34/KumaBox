@@ -326,7 +326,7 @@ func guestNetworkConfig(record types.Sandbox, dns []string) (agent.NetworkConfig
 		if err := device.Validate(); err != nil {
 			return agent.NetworkConfig{}, err
 		}
-		guest := agent.NetworkInterface{MAC: device.MAC}
+		guest := agent.NetworkInterface{Name: device.Name, MAC: device.MAC}
 		if device.IPv4 != nil {
 			guest.Address, guest.Prefix, guest.Gateway = device.IPv4.Address, device.IPv4.Prefix, device.IPv4.Gateway
 		}

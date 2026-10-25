@@ -55,6 +55,9 @@ const (
 	MessageReseed = "reseed"
 	// MessageConfigureNetwork applies host-assigned guest identity and NIC settings.
 	MessageConfigureNetwork = "configure_network"
+	// MessageConfigureNetworkLinks additionally applies named-link MAC changes.
+	// Older agents reject it explicitly, allowing a deliberate exec fallback.
+	MessageConfigureNetworkLinks = "configure_network_links"
 	// MessageStdin carries one command input chunk.
 	MessageStdin = "stdin"
 	// MessageStdinClose closes command input without ending the session.

@@ -221,6 +221,11 @@ func processExists(pid int) bool {
 func processCommandMatches(pid int, binary, apiSocket string) (bool, error) {
 	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)) //nolint:gosec // pid is a positive kernel identity
 	if err != nil {
+		// Exit can remove cmdline after starttime was verified. Absence is a
+		// non-match, never a reason to signal or retain an already dead helper.
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+			return false, nil
+		}
 		return false, err
 	}
 	return commandLineMatches(raw, binary, apiSocket)

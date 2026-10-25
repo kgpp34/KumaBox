@@ -135,7 +135,7 @@ func (s *Server) handle(ctx context.Context, connection net.Conn) {
 			return
 		}
 		_ = encoder.Encode(Message{Type: MessageExit})
-	case MessageConfigureNetwork:
+	case MessageConfigureNetwork, MessageConfigureNetworkLinks:
 		if first.Network == nil {
 			_ = encoder.sendError("configure network: missing configuration")
 			return

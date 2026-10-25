@@ -155,12 +155,14 @@ type Cloner interface {
 	Clone(context.Context, ClonePlan) (Process, error)
 }
 
-// RestoreValidator separates portable artifact integrity from launch policy.
+// SnapshotValidator separates portable artifact integrity from launch policy.
 // Import checks only artifacts; restore also checks host bindings and memory
 // support before stopping a running sandbox.
-type RestoreValidator interface {
+type SnapshotValidator interface {
 	ValidateSnapshot(context.Context, string) error
 	ValidateRestore(context.Context, string, types.MemoryRestoreMode) error
+	// ValidateClone checks target shape without requiring source host paths.
+	ValidateClone(context.Context, string, types.SandboxConfig, types.MemoryRestoreMode) error
 }
 
 // Registry is an immutable routing table from durable VMM identities to their

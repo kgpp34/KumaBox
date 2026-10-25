@@ -29,18 +29,27 @@ const (
 )
 
 var (
-	_ vmm.Snapshotter      = (*Driver)(nil)
-	_ vmm.RestoreValidator = (*Driver)(nil)
+	_ vmm.Snapshotter       = (*Driver)(nil)
+	_ vmm.SnapshotValidator = (*Driver)(nil)
+	_ vmm.Hibernator        = (*Driver)(nil)
 )
 
 // snapshotConfig is a versioned sidecar for the opaque native device state.
-// Disks retain their exact host paths: only same-owner restore is supported.
+// Disks retain the exact host paths embedded in the native device state.
 // Writable maps every writable device to its immutable capture file.
 type snapshotConfig struct {
 	Version   int             `json:"version"`
 	SandboxID types.SandboxID `json:"sandbox_id"`
 	Config    vmConfig        `json:"config"`
 	Writable  []capturedDisk  `json:"writable"`
+	// Owner fences same-VM restore independently of inherited boot artifact paths.
+	// Version-one snapshots derive these boundaries from their original config.
+	Owner *snapshotOwner `json:"owner,omitempty"`
+}
+
+type snapshotOwner struct {
+	Data string `json:"data"`
+	Run  string `json:"run"`
 }
 
 type capturedDisk struct {
@@ -62,6 +71,19 @@ type snapshotCreate struct {
 //	verify -> validate devices -> pause -> native state -> disks -> sidecar
 //	                               \--------- resume on every exit ------/
 func (d *Driver) Snapshot(ctx context.Context, plan vmm.SnapshotPlan) (returnErr error) {
+	return d.capture(ctx, plan, nil)
+}
+
+// Hibernate keeps the guest paused through durable publication. A capture or
+// persist failure resumes it; after termination begins it must never run again.
+func (d *Driver) Hibernate(ctx context.Context, plan vmm.SnapshotPlan, persist func() error) error {
+	if persist == nil {
+		return invalid(errors.New("hibernate requires a persistence callback"))
+	}
+	return d.capture(ctx, plan, persist)
+}
+
+func (d *Driver) capture(ctx context.Context, plan vmm.SnapshotPlan, persist func() error) (returnErr error) {
 	if err := plan.Validate(); err != nil {
 		return invalid(err)
 	}
@@ -76,7 +98,8 @@ func (d *Driver) Snapshot(ctx context.Context, plan vmm.SnapshotPlan) (returnErr
 	if err := apiRequest(ctx, plan.Process.APISocket, http.MethodGet, "/vm/config", nil, &config); err != nil {
 		return err
 	}
-	meta := snapshotConfig{Version: 1, SandboxID: plan.Process.SandboxID, Config: config}
+	roots := d.paths.Roots()
+	meta := snapshotConfig{Version: 2, SandboxID: plan.Process.SandboxID, Config: config, Owner: &snapshotOwner{Data: roots.Data, Run: roots.Run}}
 	for _, file := range plan.WritableFiles {
 		if filepath.Dir(file.Destination) != filepath.Clean(plan.Destination) {
 			return invalid(errors.New("firecracker snapshot requires a flat capture directory"))
@@ -86,7 +109,11 @@ func (d *Driver) Snapshot(ctx context.Context, plan vmm.SnapshotPlan) (returnErr
 	if err := meta.validate(); err != nil {
 		return err
 	}
+	resumeGuest := true
 	defer func() {
+		if !resumeGuest {
+			return
+		}
 		resume, cancel := context.WithTimeout(context.WithoutCancel(ctx), d.options.StartupTimeout)
 		defer cancel()
 		returnErr = errors.Join(returnErr, d.setVMState(resume, plan.Process, "Resumed"))
@@ -110,7 +137,17 @@ func (d *Driver) Snapshot(ctx context.Context, plan vmm.SnapshotPlan) (returnErr
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(plan.Destination, snapshotConfigFile), raw, 0o600) //nolint:gosec // caller-owned private capture directory
+	if err := os.WriteFile(filepath.Join(plan.Destination, snapshotConfigFile), raw, 0o600); err != nil {
+		return err
+	} //nolint:gosec // caller-owned private capture directory
+	if persist == nil {
+		return nil
+	}
+	if err := persist(); err != nil {
+		return err
+	}
+	resumeGuest = false
+	return d.Stop(ctx, plan.Process, types.StopOptions{Force: true})
 }
 
 // setVMState verifies the exact process before changing its run state. A
@@ -129,8 +166,11 @@ func (d *Driver) setVMState(ctx context.Context, process vmm.Process, state stri
 }
 
 func (m snapshotConfig) validate() error {
-	if m.Version != 1 {
+	if m.Version != 1 && m.Version != 2 {
 		return errors.New("unsupported firecracker snapshot sidecar version")
+	}
+	if m.Version == 2 && (m.Owner == nil || !filepath.IsAbs(m.Owner.Data) || !filepath.IsAbs(m.Owner.Run)) {
+		return errors.New("snapshot has incomplete owner roots")
 	}
 	if _, err := types.ParseSandboxID(m.SandboxID.String()); err != nil {
 		return err

@@ -188,8 +188,18 @@ func TestSerialRelayDropsStalledClientAndKeepsDraining(t *testing.T) {
 	waitConsoleDetached(t, f.relay)
 	_ = stalled.Close()
 	_ = dialTestConsole(t, f.listener, consoleReady)
-	if !bytes.Contains(f.log.bytes(), []byte("still draining")) {
-		t.Fatal("serial log stopped after slow client")
+	// net.Pipe.Write acknowledges the read, before the relay appends it to
+	// the log. Reconnection runs on another worker and is not a log barrier.
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for !bytes.Contains(f.log.bytes(), []byte("still draining")) {
+		select {
+		case <-deadline.C:
+			t.Fatal("serial log stopped after slow client")
+		case <-ticker.C:
+		}
 	}
 }
 

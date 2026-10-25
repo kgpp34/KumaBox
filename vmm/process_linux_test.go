@@ -43,6 +43,19 @@ func TestCommandLineMatchesFirecrackerSocketIdentity(t *testing.T) {
 	}
 }
 
+func TestCommandIdentityOfExitedProcessIsAbsent(t *testing.T) {
+	command := exec.Command("true")
+	if err := command.Run(); err != nil {
+		t.Fatal(err)
+	}
+	// Cleanup may read starttime just before a relay exits and lose cmdline
+	// immediately afterwards. That final read must report absence, not fail it.
+	match, err := processCommandMatches(command.Process.Pid, "true", "/gone/api.sock")
+	if err != nil || match {
+		t.Fatalf("exited process identity = %v %v", match, err)
+	}
+}
+
 func TestClearWaitsForExitingConsoleHelper(t *testing.T) {
 	base := t.TempDir()
 	paths, err := NewPaths(storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")})

@@ -326,6 +326,10 @@ func (f *fakeRuntime) ValidateSnapshot(context.Context, string) error {
 	return f.validateRestoreErr
 }
 
+func (f *fakeRuntime) ValidateClone(context.Context, string, types.SandboxConfig, types.MemoryRestoreMode) error {
+	return f.validateRestoreErr
+}
+
 func (f *fakeRuntime) Snapshot(_ context.Context, plan vmm.SnapshotPlan) error {
 	*f.steps = append(*f.steps, "snapshot")
 	f.snapshotPlan = plan
@@ -484,7 +488,7 @@ func guestTestConnection() io.ReadWriteCloser {
 			_ = agent.NewEncoder(guest).Encode(agent.Message{Type: agent.MessageExit})
 			return
 		}
-		if request.Type == agent.MessageConfigureNetwork && request.Network != nil {
+		if (request.Type == agent.MessageConfigureNetwork || request.Type == agent.MessageConfigureNetworkLinks) && request.Network != nil {
 			_ = agent.NewEncoder(guest).Encode(agent.Message{Type: agent.MessageExit})
 		}
 	}()

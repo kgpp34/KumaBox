@@ -158,7 +158,7 @@ func StageDirectory(ctx context.Context, source, destination string) (types.Snap
 // copies must remain private because restore rewrites them. Cross-filesystem
 // fallback owns its data instead of leaving a source-dependent symlink.
 func stageDirectoryFile(destination, source, name string) error {
-	if strings.HasPrefix(name, "memory-range") {
+	if name == "mem" || strings.HasPrefix(name, "memory-range") {
 		err := os.Link(source, destination)
 		if err == nil {
 			return nil

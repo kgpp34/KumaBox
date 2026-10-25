@@ -19,8 +19,8 @@ import (
 )
 
 var (
-	_ vmm.Restorer         = (*Driver)(nil)
-	_ vmm.RestoreValidator = (*Driver)(nil)
+	_ vmm.Restorer          = (*Driver)(nil)
+	_ vmm.SnapshotValidator = (*Driver)(nil)
 )
 
 // ValidateRestore checks the native files Cloud Hypervisor requires before a
@@ -31,6 +31,11 @@ func (d *Driver) ValidateRestore(ctx context.Context, directory string, mode typ
 	}
 	_, err := d.restoreMemoryMode(ctx, filepath.Join(directory, "config.json"), mode)
 	return err
+}
+
+// ValidateClone permits the device rebinding supported by the native adapter.
+func (d *Driver) ValidateClone(ctx context.Context, directory string, _ types.SandboxConfig, mode types.MemoryRestoreMode) error {
+	return d.ValidateRestore(ctx, directory, mode)
 }
 
 // ValidateSnapshot checks native artifact integrity independently of target

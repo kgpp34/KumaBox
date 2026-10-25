@@ -61,7 +61,6 @@ func TestRestoreBindingsKeepOwnerAndNetworkIdentity(t *testing.T) {
 		{name: "CPUs", change: func(_ *snapshotConfig, p *vmm.RestorePlan) { p.CPUs = 1 }},
 		{name: "NIC count", change: func(_ *snapshotConfig, p *vmm.RestorePlan) { p.Network.Interfaces = nil }},
 		{name: "TAP", change: func(_ *snapshotConfig, p *vmm.RestorePlan) { p.Network.Interfaces[0].TAP = "foreign" }},
-		{name: "MAC", change: func(_ *snapshotConfig, p *vmm.RestorePlan) { p.Network.Interfaces[0].MAC = "02:00:00:00:00:99" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := testSnapshot(t)
@@ -75,5 +74,40 @@ func TestRestoreBindingsKeepOwnerAndNetworkIdentity(t *testing.T) {
 				t.Fatal("accepted foreign bindings")
 			}
 		})
+	}
+}
+
+// A clone's boot source can still name the original kernel cache. Version two
+// binds restore to the current owner roots instead of inheriting that fence.
+func TestValidateRestoreUsesCurrentOwnerAfterCrossRootClone(t *testing.T) {
+	f := testSnapshot(t)
+	roots := f.driver.paths.Roots()
+	f.meta.Version = 2
+	f.meta.Owner = &snapshotOwner{Data: roots.Data, Run: roots.Run}
+	f.meta.Config.Boot.Kernel = "/gone/original/data/vmlinux"
+	f.writeMeta(t)
+	if err := f.driver.ValidateRestore(t.Context(), f.directory, types.MemoryRestoreMmap); err != nil {
+		t.Fatal(err)
+	}
+	f.meta.Owner.Run = "/foreign/runtime"
+	f.writeMeta(t)
+	if err := f.driver.ValidateRestore(t.Context(), f.directory, types.MemoryRestoreMmap); err == nil {
+		t.Fatal("accepted another owner's runtime root")
+	}
+}
+
+func TestRestoreBindingsAllowGuestMACChangeAndUnorderedNICs(t *testing.T) {
+	meta := snapshotConfig{SandboxID: "123e4567-e89b-42d3-a456-426614174000"}
+	meta.Config.Machine.VCPUs = 2
+	meta.Config.NICs = []networkInterface{
+		{ID: "eth1", TAP: "tap-one", MAC: "02:00:00:00:00:01"},
+		{ID: "eth0", TAP: "tap-zero", MAC: "02:00:00:00:00:02"},
+	}
+	plan := vmm.RestorePlan{SandboxID: meta.SandboxID, CPUs: 2, Network: types.NetworkSetup{Interfaces: []types.NetworkInterface{
+		{Index: 0, TAP: "tap-zero", MAC: "02:00:00:00:00:03"},
+		{Index: 1, TAP: "tap-one", MAC: "02:00:00:00:00:04"},
+	}}}
+	if err := validateRestoreBindings(meta, plan); err != nil {
+		t.Fatal(err)
 	}
 }

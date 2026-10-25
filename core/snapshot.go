@@ -585,8 +585,12 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 	if err := validateCapturedDataDisks(snapshotDir, capture.Config.DataDisks); err != nil {
 		return record, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, err)
 	}
-	if validator, ok := backend.(vmm.RestoreValidator); ok {
-		if err := validator.ValidateRestore(ctx, snapshotDir, options.MemoryMode); err != nil {
+	if validator, ok := backend.(vmm.SnapshotValidator); ok {
+		validate := func() error { return validator.ValidateRestore(ctx, snapshotDir, options.MemoryMode) }
+		if options.SourceDirectory != "" {
+			validate = func() error { return validator.ValidateClone(ctx, snapshotDir, record.Config, options.MemoryMode) }
+		}
+		if err := validate(); err != nil {
 			if ctx.Err() != nil {
 				return record, ctx.Err()
 			}

@@ -3,7 +3,9 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -22,6 +24,12 @@ const (
 
 // applyGuestNetwork owns the guest OS mechanism behind the wire protocol.
 func applyGuestNetwork(ctx context.Context, configuration NetworkConfig) error {
+	if err := configuration.Validate(); err != nil {
+		return err
+	}
+	if err := applyGuestLinkMACs(ctx, configuration.Interfaces); err != nil {
+		return err
+	}
 	if err := writeNetworkFiles("/etc/systemd/network", configuration); err != nil {
 		return fmt.Errorf("write network files: %w", err)
 	}
@@ -46,6 +54,43 @@ func applyGuestNetwork(ctx context.Context, configuration NetworkConfig) error {
 	output, err := exec.CommandContext(ctx, "systemctl", "restart", "systemd-networkd").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("restart systemd-networkd: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// applyGuestLinkMACs changes only explicitly named links. Firecracker's native
+// virtio boot MAC survives cloning, so the effective guest address is updated
+// here, alongside the guest OS configuration rather than inside a VMM adapter.
+func applyGuestLinkMACs(ctx context.Context, interfaces []NetworkInterface) error {
+	for _, device := range interfaces {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if device.Name == "" {
+			continue
+		}
+		link, err := netlink.LinkByName(device.Name)
+		if err != nil {
+			return fmt.Errorf("find guest link %s: %w", device.Name, err)
+		}
+		mac, err := net.ParseMAC(device.MAC)
+		if err != nil {
+			return err
+		}
+		if bytes.Equal(link.Attrs().HardwareAddr, mac) {
+			continue
+		}
+		up := link.Attrs().Flags&net.FlagUp != 0
+		if err := netlink.LinkSetDown(link); err != nil {
+			return err
+		}
+		err = netlink.LinkSetHardwareAddr(link, mac)
+		if up {
+			err = errors.Join(err, netlink.LinkSetUp(link))
+		}
+		if err != nil {
+			return fmt.Errorf("set guest link %s MAC: %w", device.Name, err)
+		}
 	}
 	return nil
 }

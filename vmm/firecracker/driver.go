@@ -154,6 +154,8 @@ type processLaunch struct {
 	args       []string
 	namespace  string
 	scope      *os.File
+	// root selects a private filesystem view for native path redirection only.
+	root string
 }
 
 // launchProcess shares log/PTY ownership, exact identity, reaping and relay
@@ -181,6 +183,7 @@ func (d *Driver) launchProcess(ctx context.Context, launch processLaunch) (resul
 	command := exec.Command(d.options.Binary, launch.args...) //nolint:gosec // configured executable, no shell
 	command.Stdin, command.Stdout, command.Stderr = console.slave, console.slave, log
 	vmm.ConfigureProcess(command, launch.scope)
+	command.SysProcAttr.Chroot = launch.root
 	if err := vmm.StartProcess(command, launch.namespace); err != nil {
 		// Namespace restoration can fail after exec has already succeeded.
 		if command.Process != nil {

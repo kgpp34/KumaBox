@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/moby/term"
 	"golang.org/x/sys/unix"
@@ -103,12 +104,8 @@ func (d *Driver) startConsoleRelay(ctx context.Context, process vmm.Process, con
 	}
 	pidfd := os.NewFile(uintptr(fd), "VMM lifetime")
 	defer pidfd.Close() //nolint:errcheck // parent closes only its duplicated descriptor
-	alive, err := vmm.VerifyProcess(process)
-	if err != nil {
+	if err := d.waitProcessIdentity(ctx, process); err != nil {
 		return err
-	}
-	if !alive {
-		return errors.New("VMM exited before console relay startup")
 	}
 	listener, err := console.listener.File()
 	if err != nil {
@@ -163,14 +160,37 @@ func (d *Driver) startConsoleRelay(ctx context.Context, process vmm.Process, con
 	if response[0] != consoleReady {
 		return errors.New("invalid console relay readiness")
 	}
-	alive, err = vmm.VerifyProcess(helper)
-	if err != nil {
-		return err
+	return d.waitProcessIdentity(ctx, helper)
+}
+
+// waitProcessIdentity handles the brief procfs command-line gap after exec.
+// A pending identity is never treated as verified or signalled; launch waits
+// within its existing deadline until it matches, disappears or is replaced.
+func (d *Driver) waitProcessIdentity(ctx context.Context, process vmm.Process) error {
+	ctx, cancel := context.WithTimeout(ctx, d.options.StartupTimeout)
+	defer cancel()
+	ticker := time.NewTicker(probeInterval)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		alive, err := vmm.VerifyProcess(process)
+		if !errors.Is(err, vmm.ErrProcessIdentityPending) {
+			if err != nil {
+				return err
+			}
+			if !alive {
+				return errors.New("process exited or changed identity during firecracker startup")
+			}
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
 	}
-	if !alive {
-		return errors.New("console relay exited during startup")
-	}
-	return nil
 }
 
 // RunConsoleRelay serves inherited PTY/listener descriptors until the exact VMM

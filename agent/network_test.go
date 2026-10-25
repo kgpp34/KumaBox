@@ -22,6 +22,7 @@ func TestConfigureNetworkExchangesStructuredMessage(t *testing.T) {
 	defer guest.Close() //nolint:errcheck // test cleanup
 	done := make(chan error, 1)
 	go func() {
+		defer guest.Close() //nolint:errcheck
 		message, err := NewDecoder(guest).Decode()
 		if err != nil {
 			done <- err
@@ -100,5 +101,47 @@ func TestNetworkConfigAcceptsIPv6DNS(t *testing.T) {
 	configuration.DNSServers = []string{"2001:4860:4860::8888"}
 	if err := configuration.Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestNamedNetworkConfigurationUsesExplicitProtocol(t *testing.T) {
+	configuration := testNetworkConfig()
+	configuration.Interfaces[0].Name = "eth0"
+	host, guest := net.Pipe()
+	defer host.Close()  //nolint:errcheck
+	defer guest.Close() //nolint:errcheck
+	done := make(chan error, 1)
+	go func() {
+		defer guest.Close() //nolint:errcheck
+		message, err := NewDecoder(guest).Decode()
+		if err == nil && (message.Type != MessageConfigureNetworkLinks || message.Network == nil || message.Network.Interfaces[0].Name != "eth0") {
+			err = errors.New("named network request lost explicit protocol")
+		}
+		if err == nil {
+			err = NewEncoder(guest).Encode(Message{Type: MessageExit})
+		}
+		done <- err
+	}()
+	if err := ConfigureNetwork(t.Context(), host, configuration); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	script, err := LegacyNetworkScript(configuration)
+	if err != nil || !strings.Contains(script, "ip link set dev 'eth0' address '02:00:00:00:00:02'") {
+		t.Fatalf("legacy named link configuration = %q %v", script, err)
+	}
+}
+
+func TestNetworkConfigurationRejectsUnsafeLinkNames(t *testing.T) {
+	for _, name := range []string{"lo", "eth0;id", "../eth0", "eth0'", "abcdefghijklmnop"} {
+		t.Run(name, func(t *testing.T) {
+			configuration := testNetworkConfig()
+			configuration.Interfaces[0].Name = name
+			if err := configuration.Validate(); err == nil {
+				t.Fatal("accepted unsafe link name")
+			}
+		})
 	}
 }

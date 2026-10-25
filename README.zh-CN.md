@@ -168,13 +168,20 @@ Ubuntu 镜像，让 initramfs 包含 MMIO 驱动，支持 `/dev/vdX` 启动参�
 `snapshot save` 会暂停 VM，捕获内存、设备状态和所有受管可写磁盘，然后恢复运行。
 `restore 沙箱名 快照名` 可恢复原沙箱的进程内存、根盘和数据盘。`auto`、`mmap` 和
 `ondemand` 均使用 Firecracker 原生的私有文件映射；`copy` 会在停止沙箱前被拒绝。
-支持快照导出和导入，但恢复仍要求原沙箱及原有数据、运行时路径。
-克隆、路径迁移后的恢复、休眠和在线设备变更暂未接入这个后端。
+`hibernate` 会在 VM 暂停期间发布快照，再停止 VMM；`restore` 恢复捕获的进程和磁盘。
+`clone 快照名 --name 新名字` 使用独立可写盘和私有映射内存，源沙箱可以继续运行，也可以已被删除。
+支持快照导出、导入和 `clone --from-dir 目录`，可迁移到另一组数据和运行时目录；目标端需要
+相同镜像，以及兼容的 Firecracker 构建、CPU 和宿主机。目录恢复也可以通过 `--force` 重绑定
+到资源形状兼容的目标沙箱。克隆必须保留捕获时的 CPU、内存、网卡数量和数据盘集合；
+新增设备或改变这些配置会在创建克隆之前被拒绝。
+使用 `clone --wait-network` 或 `net 沙箱名 --configure` 应用新的主机名、MAC 和 IP 后再使用网络；
+旧版 guest agent 走已有的 exec 回退路径。磁盘路径重定向在私有 Linux 挂载 namespace 内完成，
+需要 OverlayFS 以及挂载、chroot 权限，不会在宿主机创建原沙箱路径的占位文件。
 `console 沙箱名` 通过私有串口中继连接，一次允许一个客户端；按 `Ctrl+]` 再按 `.` 退出，
 之后可用相同命令重连。CLI 退出不会关闭中继，无人连接时也会持续记录串口日志；
 VMM 退出后中继自动结束，运行时清理也会回收它。正常停止发送 CtrlAltDel；guest 内核没有相应处理器时，等待超时后终止
 进程。本批不承诺 Firecracker 的启动延迟。进程复用现有 cgroup、网络 namespace 隔离和
-上游 seccomp，暂未集成 jailer/chroot。
+上游 seccomp。克隆的私有路径视图不作为 jailer 安全边界，暂未集成 jailer。
 
 ### CPU 调度与 guest 内存
 

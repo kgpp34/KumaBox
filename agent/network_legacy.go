@@ -16,6 +16,10 @@ func LegacyNetworkScript(configuration NetworkConfig) (string, error) {
 	var script strings.Builder
 	script.WriteString("set -eu\nmkdir -p /etc/systemd/network\nrm -f /etc/systemd/network/10-kumabox-*.network\n")
 	for _, device := range configuration.Interfaces {
+		if device.Name != "" {
+			mac, _ := net.ParseMAC(device.MAC)
+			fmt.Fprintf(&script, "if [ \"$(cat /sys/class/net/%s/address)\" != '%s' ]; then\n  ip link set dev '%s' down\n  ip link set dev '%s' address '%s'\n  ip link set dev '%s' up\nfi\n", device.Name, mac.String(), device.Name, device.Name, mac.String(), device.Name)
+		}
 		if device.Address == "" {
 			continue
 		}

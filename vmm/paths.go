@@ -30,6 +30,10 @@ type Paths struct {
 	roots storage.Roots
 }
 
+// Roots returns a value copy of the validated ownership boundaries. Adapters
+// use module path constructors rather than duplicating another module's layout.
+func (p Paths) Roots() storage.Roots { return p.roots }
+
 // NewPaths validates roots without creating directories.
 func NewPaths(roots storage.Roots) (Paths, error) {
 	validated, err := roots.Validate()

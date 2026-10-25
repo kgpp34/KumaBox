@@ -15,10 +15,14 @@ var (
 	// operation. Hosts may use the legacy exec path for that specific response.
 	ErrNetworkConfigUnsupported = errors.New("guest agent does not support network configuration")
 	validGuestHostname          = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
+	validGuestLinkName          = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,14}$`)
 )
 
 // NetworkInterface contains only guest-visible facts, never host TAP paths.
 type NetworkInterface struct {
+	// Name optionally identifies the existing link when its restored MAC must
+	// change. Omit it to keep the original MAC-matched protocol behavior.
+	Name    string `json:"name,omitempty"`
 	MAC     string `json:"mac"`
 	Address string `json:"address,omitempty"`
 	Prefix  int    `json:"prefix,omitempty"`
@@ -43,12 +47,19 @@ func (c NetworkConfig) Validate() error {
 		}
 	}
 	seen := make(map[string]bool, len(c.Interfaces))
+	names := make(map[string]bool, len(c.Interfaces))
 	for _, device := range c.Interfaces {
+		if device.Name != "" && (!validGuestLinkName.MatchString(device.Name) || device.Name == "lo" || names[device.Name]) {
+			return fmt.Errorf("invalid or duplicate guest link name %q", device.Name)
+		}
+		if device.Name != "" {
+			names[device.Name] = true
+		}
 		mac, err := net.ParseMAC(device.MAC)
-		if err != nil || len(mac) != 6 || seen[device.MAC] {
+		if err != nil || len(mac) != 6 || seen[strings.ToLower(device.MAC)] {
 			return fmt.Errorf("invalid or duplicate guest MAC %q", device.MAC)
 		}
-		seen[device.MAC] = true
+		seen[strings.ToLower(device.MAC)] = true
 		if device.Address == "" {
 			if device.Prefix != 0 || device.Gateway != "" {
 				return fmt.Errorf("guest NIC %s has settings without an address", device.MAC)
@@ -73,7 +84,14 @@ func ConfigureNetwork(ctx context.Context, connection io.ReadWriteCloser, config
 	}
 	stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
 	defer stop()
-	if err := NewEncoder(connection).Encode(Message{Type: MessageConfigureNetwork, Network: &configuration}); err != nil {
+	typeName := MessageConfigureNetwork
+	for _, device := range configuration.Interfaces {
+		if device.Name != "" {
+			typeName = MessageConfigureNetworkLinks
+			break
+		}
+	}
+	if err := NewEncoder(connection).Encode(Message{Type: typeName, Network: &configuration}); err != nil {
 		return fmt.Errorf("send network configuration: %w", err)
 	}
 	response, err := NewDecoder(connection).Decode()
