@@ -3,7 +3,9 @@ package firecracker
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -81,7 +83,7 @@ func TestKernelCacheConcurrentPublication(t *testing.T) {
 		t.Fatal("no kernel published")
 	}
 	raw, err := os.ReadFile(source)
-	if err != nil || validELF(raw) {
+	if err != nil || validELF(bytes.NewReader(raw)) {
 		t.Fatal("source kernel was changed")
 	}
 	if err := os.WriteFile(first, []byte("corrupt cache"), 0o600); err != nil {
@@ -105,6 +107,41 @@ func TestKernelExtractionRequiresELF(t *testing.T) {
 	result, err := prepareKernel(t.Context(), t.TempDir(), source)
 	if err != nil || result != source {
 		t.Fatalf("ELF passthrough: %q %v", result, err)
+	}
+}
+
+func TestPrepareKernelBoundsAndCancellation(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		size int64
+	}{
+		{name: "large ELF", size: 32 << 20},
+		{name: "oversized ELF", size: maxKernelBytes + 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := filepath.Join(t.TempDir(), "vmlinux")
+			if err := os.WriteFile(source, elfFixture(), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Truncate(source, test.size); err != nil {
+				t.Fatal(err)
+			}
+			result, err := prepareKernel(t.Context(), t.TempDir(), source)
+			if test.size > maxKernelBytes {
+				if err == nil {
+					t.Fatal("accepted an oversized ELF kernel")
+				}
+				return
+			}
+			if err != nil || result != source {
+				t.Fatalf("large ELF passthrough: %q %v", result, err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			if _, err := prepareKernel(ctx, t.TempDir(), source); !errors.Is(err, context.Canceled) {
+				t.Fatalf("canceled start: %v", err)
+			}
+		})
 	}
 }
 

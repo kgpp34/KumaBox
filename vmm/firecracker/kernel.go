@@ -24,22 +24,15 @@ const maxKernelBytes = 256 << 20
 // starts and sandboxes. A lock plus rename prevents readers seeing partial data.
 // Existing image artifacts are immutable and are never modified by this adapter.
 func prepareKernel(ctx context.Context, cache, source string) (result string, returnErr error) {
-	file, err := os.Open(source) //nolint:gosec // verified image artifact supplied by core
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	raw, direct, err := readKernel(source)
 	if err != nil {
 		return "", err
 	}
-	raw, readErr := io.ReadAll(io.LimitReader(file, maxKernelBytes+1))
-	if err := errors.Join(readErr, file.Close()); err != nil {
-		return "", err
-	}
-	if len(raw) > maxKernelBytes {
-		return "", errors.New("compressed kernel exceeds size limit")
-	}
-	if validELF(raw) {
+	if direct {
 		return source, nil
-	}
-	if err := ctx.Err(); err != nil {
-		return "", err
 	}
 	if err := storage.EnsureDir(cache); err != nil {
 		return "", err
@@ -54,8 +47,8 @@ func prepareKernel(ctx context.Context, cache, source string) (result string, re
 	if err := storage.CheckPath(target); err != nil {
 		return "", err
 	}
-	if existing, err := os.ReadFile(target); err == nil { //nolint:gosec // managed content-addressed cache
-		if !validELF(existing) {
+	if _, direct, err := readKernel(target); err == nil {
+		if !direct {
 			return "", errors.New("cached firecracker kernel is not a valid x86-64 ELF")
 		}
 		return target, nil
@@ -93,8 +86,37 @@ func prepareKernel(ctx context.Context, cache, source string) (result string, re
 	return target, nil
 }
 
-func validELF(raw []byte) bool {
-	file, err := elf.NewFile(bytes.NewReader(raw))
+// readKernel inspects ELF headers directly from the immutable file. Copying an
+// already usable kernel into the Go heap adds allocation and GC work to every
+// start; only compressed inputs need their full contents for the cache digest.
+func readKernel(path string) (raw []byte, direct bool, returnErr error) {
+	file, err := os.Open(path) //nolint:gosec // verified image artifact or managed content-addressed cache
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { returnErr = errors.Join(returnErr, file.Close()) }()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, false, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxKernelBytes {
+		return nil, false, errors.New("kernel must be a regular file within the size limit")
+	}
+	if validELF(io.NewSectionReader(file, 0, info.Size())) {
+		return nil, true, nil
+	}
+	raw, err = io.ReadAll(io.LimitReader(file, maxKernelBytes+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if len(raw) > maxKernelBytes {
+		return nil, false, errors.New("compressed kernel exceeds size limit")
+	}
+	return raw, false, nil
+}
+
+func validELF(reader io.ReaderAt) bool {
+	file, err := elf.NewFile(reader)
 	if err != nil {
 		return false
 	}
@@ -131,7 +153,7 @@ func extractKernel(raw []byte) ([]byte, error) {
 			}
 			decoded, _ := io.ReadAll(io.LimitReader(reader, maxKernelBytes+1))
 			_ = reader.Close()
-			if len(decoded) <= maxKernelBytes && validELF(decoded) {
+			if len(decoded) <= maxKernelBytes && validELF(bytes.NewReader(decoded)) {
 				return decoded, nil
 			}
 		}
