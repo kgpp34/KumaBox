@@ -21,6 +21,8 @@ RUN make x86_64_defconfig \
     && scripts/kconfig/merge_config.sh -m .config /src/kernel.config \
     && make olddefconfig \
     && grep -qx 'CONFIG_PVH=y' .config \
+    && grep -qx 'CONFIG_VIRTIO_MMIO=y' .config \
+    && grep -qx 'CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y' .config \
     && grep -qx 'CONFIG_VIRTIO_BLK=y' .config \
     && grep -qx 'CONFIG_VIRTIO_NET=y' .config \
     && grep -qx 'CONFIG_VIRTIO_VSOCKETS=y' .config \

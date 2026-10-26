@@ -444,8 +444,11 @@ docker save kumabox/ubuntu:fast -o /tmp/kumabox-ubuntu-fast.tar
 sudo kumabox image import ubuntu-fast /tmp/kumabox-ubuntu-fast.tar --format docker
 ```
 
-The fast profile has its own built-in kernel and initramfs; use the general
-Ubuntu image for workloads that require kernel modules or passthrough drivers.
+The fast profile has its own built-in kernel and initramfs, with both PCI and
+MMIO virtio transports for Cloud Hypervisor and Firecracker. Rebuild the boot
+artifact when switching from a fast image that only supported PCI. Use the
+general Ubuntu image for workloads that require kernel modules or passthrough
+drivers.
 
 ## Remote API and SDKs
 
