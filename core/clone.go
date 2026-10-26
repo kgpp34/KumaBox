@@ -337,20 +337,23 @@ func (s *SnapshotService) configureCloneGuest(ctx context.Context, backend vmm.B
 	if err != nil {
 		return err
 	}
-	deadline := time.NewTimer(s.configuration.Network.GuestAgentTimeout)
-	defer deadline.Stop()
+	// The deadline must reach DialVsock: checking a timer only between attempts
+	// cannot interrupt a stalled transport handshake.
+	connectCtx, cancel := context.WithTimeout(ctx, s.configuration.Network.GuestAgentTimeout)
+	defer cancel()
 	retry := time.NewTicker(guestAgentConnectRetryInterval)
 	defer retry.Stop()
 	for {
-		connection, err := backend.DialVsock(ctx, process, agent.Port)
+		connection, err := backend.DialVsock(connectCtx, process, agent.Port)
 		if err == nil {
 			return configureGuestNetworkConnection(ctx, backend, process, connection, configuration)
 		}
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
-			return fmt.Errorf("guest agent unavailable after clone: %w", err)
+		case <-connectCtx.Done():
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("guest agent unavailable after clone: %w", errors.Join(err, connectCtx.Err()))
 		case <-retry.C:
 		}
 	}

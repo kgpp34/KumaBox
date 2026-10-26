@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
@@ -22,6 +24,7 @@ import (
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/types"
+	"github.com/kumabox/kumabox/vmm"
 )
 
 func TestClonePullUsesSnapshotDigestAfterTagMoves(t *testing.T) {
@@ -119,5 +122,29 @@ func TestCloneGuestNetworkUsesNewIdentityAndAddress(t *testing.T) {
 		configuration.Interfaces[0].MAC != "02:00:00:00:00:02" || configuration.Interfaces[0].Address != "10.0.0.3" ||
 		configuration.Interfaces[0].Gateway != "10.0.0.1" || len(configuration.DNSServers) != 1 || configuration.DNSServers[0] != "1.1.1.1" {
 		t.Fatalf("guest configuration = %+v", configuration)
+	}
+}
+
+type waitingGuestRuntime struct{ *fakeRuntime }
+
+func (*waitingGuestRuntime) DialVsock(ctx context.Context, _ vmm.Process, _ uint32) (io.ReadWriteCloser, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestCloneGuestConnectDeadlineBoundsBlockedHandshake(t *testing.T) {
+	service, _, _ := newTestSnapshotService(t)
+	service.configuration.Network.GuestAgentTimeout = 10 * time.Millisecond
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	record := types.Sandbox{Config: types.SandboxConfig{
+		Name: "box", CPUs: 1, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage,
+	}}
+	err := service.configureCloneGuest(ctx, &waitingGuestRuntime{fakeRuntime: &fakeRuntime{}}, vmm.Process{}, record)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("connect = %v, want connection deadline", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("handshake exhausted caller deadline instead of connection deadline: %v", ctx.Err())
 	}
 }
