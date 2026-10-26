@@ -19,10 +19,7 @@ import (
 	"github.com/vishvananda/netns"
 )
 
-const (
-	tapTXQueueLength = 10000
-	tapGROMaxSize    = 65536
-)
+const tapGROMaxSize = 65536
 
 type linuxPlatform struct{}
 
@@ -170,9 +167,9 @@ func createTAP(name string, queues int) (netlink.Link, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve TAP %s: %w", name, err)
 	}
-	// Queue and GRO tuning improve throughput but are not supported by every
-	// kernel. The functional network path must remain available in that case.
-	_ = netlink.LinkSetTxQLen(link, tapTXQueueLength)
+	// Keep the kernel's TAP queue length. Inflating it eagerly allocates large
+	// per-queue buffers when the link comes up, even for idle sandboxes.
+	// GRO tuning is optional because not every kernel supports it.
 	_ = netlink.LinkSetGROMaxSize(link, tapGROMaxSize)
 	return link, nil
 }
