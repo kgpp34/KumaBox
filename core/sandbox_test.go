@@ -394,11 +394,12 @@ func (f *fakeRuntime) Clone(_ context.Context, plan vmm.ClonePlan) (vmm.Process,
 	}, f.restoreErr
 }
 
-func (f *fakeRuntime) NetworkQueues(cpus uint32) int {
-	if f.queueCount > 0 {
-		return f.queueCount
+func (f *fakeRuntime) NetworkPolicy(cpus uint32) vmm.NetworkPolicy {
+	queues := f.queueCount
+	if queues == 0 {
+		queues = network.QueueCount(cpus)
 	}
-	return network.QueueCount(cpus)
+	return vmm.NetworkPolicy{Queues: queues, GuestMACUpdate: f.Type() == types.VMMFirecracker}
 }
 
 func (f *fakeRuntime) ValidateConfig(types.SandboxConfig) error { return f.configErr }

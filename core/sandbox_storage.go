@@ -177,7 +177,7 @@ func (s *SandboxService) create(ctx context.Context, request CreateSandboxReques
 			return types.Sandbox{}, s.compensate(ctx, record, "report", err)
 		}
 		specs := network.AddRange(0, request.Config.NICs)
-		queues := backend.NetworkQueues(request.Config.CPUs)
+		queues := backend.NetworkPolicy(request.Config.CPUs).Queues
 		for index := range specs {
 			specs[index].Queues = queues
 		}

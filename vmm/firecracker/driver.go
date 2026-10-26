@@ -58,8 +58,11 @@ func New(paths vmm.Paths, scopes *cgroup.Manager, options Options) (*Driver, err
 // Type is the durable identity used to route every later sandbox operation.
 func (*Driver) Type() types.VMMType { return types.VMMFirecracker }
 
-// NetworkQueues selects the single RX/TX pair supported by Firecracker.
-func (*Driver) NetworkQueues(uint32) int { return 2 }
+// NetworkPolicy uses one RX/TX pair and guest-side MAC updates because native
+// MMIO snapshot load can replace TAPs, but retains the captured virtio MAC.
+func (*Driver) NetworkPolicy(uint32) vmm.NetworkPolicy {
+	return vmm.NetworkPolicy{Queues: 2, GuestMACUpdate: true}
+}
 
 // Preflight requires Linux, accessible KVM, and the configured executable.
 func (d *Driver) Preflight() error {

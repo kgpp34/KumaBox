@@ -333,7 +333,7 @@ const guestAgentConnectRetryInterval = 25 * time.Millisecond
 // configureCloneGuest applies the new MAC/IP map over vsock, which remains
 // available even before the clone has a working guest network.
 func (s *SnapshotService) configureCloneGuest(ctx context.Context, backend vmm.Backend, process vmm.Process, record types.Sandbox) error {
-	configuration, err := guestNetworkConfig(record, s.dnsServers)
+	configuration, err := guestNetworkConfig(record, s.dnsServers, backend.NetworkPolicy(record.Config.CPUs))
 	if err != nil {
 		return err
 	}

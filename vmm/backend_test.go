@@ -16,7 +16,7 @@ type nilRegistryBackend struct{ Backend }
 func (*nilRegistryBackend) Type() types.VMMType { return types.VMMCloudHypervisor }
 
 func (b registryBackend) Type() types.VMMType                    { return b.typ }
-func (registryBackend) NetworkQueues(uint32) int                 { return 2 }
+func (registryBackend) NetworkPolicy(uint32) NetworkPolicy       { return NetworkPolicy{Queues: 2} }
 func (registryBackend) ValidateConfig(types.SandboxConfig) error { return nil }
 func (registryBackend) Preflight() error                         { return nil }
 func (registryBackend) Locate(context.Context, types.SandboxID, uint64) (Process, bool, error) {

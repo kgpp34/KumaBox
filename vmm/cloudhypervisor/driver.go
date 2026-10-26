@@ -96,8 +96,11 @@ func (*Driver) Type() types.VMMType { return types.VMMCloudHypervisor }
 // ValidateConfig accepts the shared guest shape without monitor-specific restrictions.
 func (*Driver) ValidateConfig(config types.SandboxConfig) error { return config.Validate() }
 
-// NetworkQueues allocates one RX/TX pair per vCPU for multiqueue virtio-net.
-func (*Driver) NetworkQueues(cpus uint32) int { return max(2, int(cpus)*2) }
+// NetworkPolicy uses multiqueue TAPs and native NIC replacement on restore.
+// Guest PCI hotplug may assign a different link name, so MAC is its identity.
+func (*Driver) NetworkPolicy(cpus uint32) vmm.NetworkPolicy {
+	return vmm.NetworkPolicy{Queues: max(2, int(cpus)*2)}
+}
 
 // Preflight checks Linux/KVM and the configured binary before Starting is committed.
 func (d *Driver) Preflight() error {

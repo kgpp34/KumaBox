@@ -19,8 +19,8 @@ type Backend interface {
 	Type() types.VMMType
 	// ValidateConfig checks backend constraints before core reserves resources.
 	ValidateConfig(types.SandboxConfig) error
-	// NetworkQueues returns the required RX/TX queue count for host TAP creation.
-	NetworkQueues(uint32) int
+	// NetworkPolicy describes TAP queues and native snapshot MAC behavior.
+	NetworkPolicy(uint32) NetworkPolicy
 	Preflight() error
 	Locate(context.Context, types.SandboxID, uint64) (Process, bool, error)
 	Observe(context.Context, types.SandboxID, uint64) (Observation, error)
@@ -34,6 +34,16 @@ type Backend interface {
 	Logs(context.Context, types.SandboxID, LogOptions, io.Writer) error
 	Cleanup(context.Context, types.SandboxID) error
 	RemoveLogs(context.Context, types.SandboxID) error
+}
+
+// NetworkPolicy describes transport requirements shared by allocation and guest
+// configuration. Guest link names are hints only for backends whose native
+// snapshot retains the boot MAC; hotplugged links are matched by their new MAC.
+type NetworkPolicy struct {
+	// Queues is the total RX/TX queue count required for host TAP creation.
+	Queues int
+	// GuestMACUpdate applies a new MAC inside a restored guest, by fixed link name.
+	GuestMACUpdate bool
 }
 
 // NetworkDevice is a NIC currently reported by a running VMM. TAP identity

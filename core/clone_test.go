@@ -22,6 +22,7 @@ import (
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/storage"
 	"github.com/kumabox/kumabox/types"
+	"github.com/kumabox/kumabox/vmm"
 )
 
 func TestClonePullUsesSnapshotDigestAfterTagMoves(t *testing.T) {
@@ -111,7 +112,7 @@ func TestCloneGuestNetworkUsesNewIdentityAndAddress(t *testing.T) {
 			IPv4: &types.IPv4Config{Address: "10.0.0.3", Gateway: "10.0.0.1", Prefix: 24},
 		}}},
 	}
-	configuration, err := guestNetworkConfig(record, []string{"1.1.1.1"})
+	configuration, err := guestNetworkConfig(record, []string{"1.1.1.1"}, vmm.NetworkPolicy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,5 +120,12 @@ func TestCloneGuestNetworkUsesNewIdentityAndAddress(t *testing.T) {
 		configuration.Interfaces[0].MAC != "02:00:00:00:00:02" || configuration.Interfaces[0].Address != "10.0.0.3" ||
 		configuration.Interfaces[0].Gateway != "10.0.0.1" || len(configuration.DNSServers) != 1 || configuration.DNSServers[0] != "1.1.1.1" {
 		t.Fatalf("guest configuration = %+v", configuration)
+	}
+	if configuration.Interfaces[0].Name != "" {
+		t.Fatal("hotplugged NIC was tied to its old guest link name")
+	}
+	fixedMAC, err := guestNetworkConfig(record, nil, vmm.NetworkPolicy{GuestMACUpdate: true})
+	if err != nil || fixedMAC.Interfaces[0].Name != "eth0" {
+		t.Fatalf("fixed native MAC update lost its link hint: %+v %v", fixedMAC, err)
 	}
 }

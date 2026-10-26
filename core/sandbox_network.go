@@ -188,7 +188,7 @@ func reconcileNICs(ctx context.Context, record types.Sandbox, target int, provid
 
 func (s *SandboxService) addLiveNIC(ctx context.Context, record types.Sandbox, provider network.Resizer, hotplugger vmm.NetworkHotplugger, backend vmm.Backend, process vmm.Process) (types.Sandbox, error) {
 	index := record.Config.NICs
-	spec := network.AddSpec{Index: index, Queues: backend.NetworkQueues(record.Config.CPUs)}
+	spec := network.AddSpec{Index: index, Queues: backend.NetworkPolicy(record.Config.CPUs).Queues}
 	interfaces, err := provider.Add(ctx, record.ID, record.Config.NetworkName, spec)
 	if err != nil {
 		return record, err
@@ -303,7 +303,7 @@ func runGuestNetworkScript(ctx context.Context, backend vmm.Backend, process vmm
 }
 
 func configureGuestNetwork(ctx context.Context, backend vmm.Backend, process vmm.Process, record types.Sandbox, dns []string) error {
-	configuration, err := guestNetworkConfig(record, dns)
+	configuration, err := guestNetworkConfig(record, dns, backend.NetworkPolicy(record.Config.CPUs))
 	if err != nil {
 		return err
 	}
@@ -314,7 +314,7 @@ func configureGuestNetwork(ctx context.Context, backend vmm.Backend, process vmm
 	return configureGuestNetworkConnection(ctx, backend, process, connection, configuration)
 }
 
-func guestNetworkConfig(record types.Sandbox, dns []string) (agent.NetworkConfig, error) {
+func guestNetworkConfig(record types.Sandbox, dns []string, policy vmm.NetworkPolicy) (agent.NetworkConfig, error) {
 	if err := record.Config.Validate(); err != nil {
 		return agent.NetworkConfig{}, err
 	}
@@ -326,7 +326,10 @@ func guestNetworkConfig(record types.Sandbox, dns []string) (agent.NetworkConfig
 		if err := device.Validate(); err != nil {
 			return agent.NetworkConfig{}, err
 		}
-		guest := agent.NetworkInterface{Name: device.Name, MAC: device.MAC}
+		guest := agent.NetworkInterface{MAC: device.MAC}
+		if policy.GuestMACUpdate {
+			guest.Name = device.Name
+		}
 		if device.IPv4 != nil {
 			guest.Address, guest.Prefix, guest.Gateway = device.IPv4.Address, device.IPv4.Prefix, device.IPv4.Gateway
 		}
