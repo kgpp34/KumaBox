@@ -10,7 +10,12 @@ FROM ${BASE_IMAGE} AS root
 RUN set -eu; \
     rm -rf /lib/modules/* /boot/vmlinuz-* /boot/initrd.img-*; \
     sed -i '/^ExecStartPre=-\/sbin\/modprobe /d' \
-      /etc/systemd/system/kumabox-agent.service
+      /etc/systemd/system/kumabox-agent.service; \
+    # Custom base images may still carry an identity from package installation.
+    rm -f /etc/machine-id /var/lib/dbus/machine-id /var/lib/systemd/random-seed; \
+    install -d -m 0755 /var/lib/dbus; \
+    touch /etc/machine-id; \
+    ln -s /etc/machine-id /var/lib/dbus/machine-id
 COPY --from=boot /boot/vmlinuz-fast /boot/vmlinuz-fast
 COPY --from=boot /boot/initrd.img-fast /boot/initrd.img-fast
 

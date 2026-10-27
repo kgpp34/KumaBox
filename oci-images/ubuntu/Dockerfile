@@ -97,6 +97,12 @@ RUN set -eu; \
         > /etc/systemd/network/20-kumabox.network \
     && test -x /usr/local/bin/kumabox-agent \
     && test -L /etc/systemd/system/sysinit.target.wants/kumabox-agent.service \
+    # Package installation can populate both IDs. Clearing only /etc leaves
+    # systemd free to reuse the image's D-Bus identity on every new sandbox.
+    && rm -f /etc/machine-id /var/lib/dbus/machine-id /var/lib/systemd/random-seed \
+    && install -d -m 0755 /var/lib/dbus \
+    && touch /etc/machine-id \
+    && ln -s /etc/machine-id /var/lib/dbus/machine-id \
     && rm -rf /var/lib/apt/lists/* /usr/local/lib/kumabox
 
 CMD ["/sbin/init"]
