@@ -105,7 +105,7 @@ func (p *Provider) ensureTAP(item lease, d *datapath) error {
 		tap := &netlink.Tuntap{
 			LinkAttrs: attrs, Mode: netlink.TUNTAP_MODE_TAP,
 			NonPersist: true,
-			Flags:      netlink.TUNTAP_VNET_HDR | netlink.TUNTAP_NO_PI | netlink.TUNTAP_MULTI_QUEUE,
+			Flags:      tapQueueFlags(item.Interface.Queues),
 			Queues:     max(1, item.Interface.Queues/2),
 		}
 		if err := netlink.LinkAdd(tap); err != nil {
@@ -179,6 +179,17 @@ func (p *Provider) ensureTAP(item lease, d *datapath) error {
 	}
 	value.Enabled = 1
 	return d.endpoints.Update(key, value, ebpf.UpdateAny)
+}
+
+// tapQueueFlags matches the monitor's TUNSETIFF contract: a single RX/TX
+// pair opens without IFF_MULTI_QUEUE, while additional pairs require it.
+// Creating every TAP as multiqueue makes single-vCPU monitors reject it.
+func tapQueueFlags(queues int) netlink.TuntapFlag {
+	flags := netlink.TUNTAP_VNET_HDR | netlink.TUNTAP_NO_PI
+	if queues <= 2 {
+		return flags | netlink.TUNTAP_ONE_QUEUE
+	}
+	return flags | netlink.TUNTAP_MULTI_QUEUE
 }
 
 // addOwnedRoute never replaces another installation's endpoint route, even
