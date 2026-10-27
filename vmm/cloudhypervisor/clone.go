@@ -60,8 +60,10 @@ func (d *Driver) Clone(ctx context.Context, plan vmm.ClonePlan) (vmm.Process, er
 	}
 	plan.SnapshotDir = privateDir
 	return d.restore(ctx, plan.RestorePlan, func(ctx context.Context, _ string) error {
-		if err := d.swapCloneNets(ctx, apiSocket, plan.SandboxID, oldNets, plan.Network.Interfaces); err != nil {
-			return err
+		if oldNets != nil {
+			if err := d.swapCloneNets(ctx, apiSocket, plan.SandboxID, oldNets, plan.Network.Interfaces); err != nil {
+				return err
+			}
 		}
 		return d.addCloneDataDisks(ctx, apiSocket, plan.NewDataDisks, plan.CPUs)
 	})
@@ -251,6 +253,7 @@ func patchCloneConfig(path string, plan vmm.ClonePlan, vsockSocket string) ([]cl
 		}
 	}
 	oldNets := make([]cloneNet, len(nets))
+	preserve := preserveCloneNICs(plan.Network, nets)
 	for index, device := range nets {
 		if err := json.Unmarshal(device["id"], &oldNets[index].ID); err != nil || oldNets[index].ID == "" {
 			return nil, errors.Join(err, fmt.Errorf("snapshot NIC %d has no removable ID", index))
@@ -259,10 +262,16 @@ func patchCloneConfig(path string, plan vmm.ClonePlan, vsockSocket string) ([]cl
 		if err != nil {
 			return nil, err
 		}
+		if preserve {
+			tap = plan.Network.Interfaces[index].TAP
+		}
 		device["tap"], err = json.Marshal(tap)
 		if err != nil {
 			return nil, err
 		}
+	}
+	if preserve {
+		oldNets = nil
 	}
 	if len(nets) > 0 {
 		config["net"], err = json.Marshal(nets)
@@ -278,6 +287,25 @@ func patchCloneConfig(path string, plan vmm.ClonePlan, vsockSocket string) ([]cl
 		return nil, err
 	}
 	return oldNets, nil
+}
+
+// preserveCloneNICs keeps captured virtio device identity when only the host
+// endpoint changes. New MACs or a different NIC layout still use paused hotplug.
+// Keeping a fixed NIC avoids link removal, guest renaming and DHCP/networkd work.
+func preserveCloneNICs(setup types.NetworkSetup, captured []map[string]json.RawMessage) bool {
+	if len(setup.Interfaces) == 0 || len(setup.Interfaces) != len(captured) {
+		return false
+	}
+	for index, item := range setup.Interfaces {
+		var mac string
+		var queues, queueSize int
+		if json.Unmarshal(captured[index]["mac"], &mac) != nil || json.Unmarshal(captured[index]["num_queues"], &queues) != nil ||
+			json.Unmarshal(captured[index]["queue_size"], &queueSize) != nil || item.AddressMode != types.AddressModeFixed ||
+			item.MAC != mac || item.Queues != queues || item.QueueSize != queueSize {
+			return false
+		}
+	}
+	return true
 }
 
 // swapCloneNets runs while the VM is paused, before guest memory can send

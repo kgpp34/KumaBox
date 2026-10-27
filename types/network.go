@@ -19,17 +19,28 @@ const (
 	// NetworkBackendBridge attaches TAP devices directly to a pre-existing host
 	// bridge. The guest obtains its address from the bridge's DHCP service.
 	NetworkBackendBridge NetworkBackend = "bridge"
+	// NetworkBackendEBPF connects isolated TAPs through a host eBPF data plane.
+	NetworkBackendEBPF NetworkBackend = "ebpf"
 )
 
 // Validate rejects backend names that cannot be routed to an implementation.
 func (b NetworkBackend) Validate() error {
 	switch b {
-	case NetworkBackendCNI, NetworkBackendBridge:
+	case NetworkBackendCNI, NetworkBackendBridge, NetworkBackendEBPF:
 		return nil
 	default:
 		return fmt.Errorf("unsupported network backend %q", b)
 	}
 }
+
+// AddressMode describes guest addressing independently of host forwarding.
+// Empty preserves the addressing contract of older network records.
+type AddressMode string
+
+const (
+	// AddressModeFixed preserves template-local addresses across clones.
+	AddressModeFixed AddressMode = "fixed"
+)
 
 // IPv4Config is the guest-visible address returned by an infrastructure
 // network provider.
@@ -82,6 +93,11 @@ type NetworkInterface struct {
 	Network string
 	// IPv4 is nil when a plugin intentionally returns no IPv4 address.
 	IPv4 *IPv4Config
+	// AddressMode selects whether a clone can retain the captured guest identity.
+	AddressMode AddressMode
+	// HostAddress is the unique routed IPv4 endpoint outside the guest. It must
+	// never replace IPv4 in guest boot parameters or network configuration.
+	HostAddress string
 }
 
 // Validate checks the provider-to-VMM handoff independently of persistence and
@@ -106,6 +122,16 @@ func (c NetworkInterface) Validate() error {
 		if err := c.IPv4.Validate(); err != nil {
 			return err
 		}
+	}
+	if c.AddressMode != "" && c.AddressMode != AddressModeFixed {
+		return fmt.Errorf("unsupported guest address mode %q", c.AddressMode)
+	}
+	if c.AddressMode == AddressModeFixed {
+		if c.IPv4 == nil || net.ParseIP(c.HostAddress).To4() == nil || c.HostAddress == c.IPv4.Address {
+			return errors.New("fixed guest addressing requires distinct guest and host IPv4 addresses")
+		}
+	} else if c.HostAddress != "" {
+		return errors.New("host address requires fixed guest addressing")
 	}
 	return nil
 }
@@ -135,9 +161,9 @@ func (s NetworkSetup) Validate() error {
 	if err := s.Backend.Validate(); err != nil {
 		return err
 	}
-	if s.Backend == NetworkBackendBridge {
+	if s.Backend == NetworkBackendBridge || s.Backend == NetworkBackendEBPF {
 		if s.Namespace != "" {
-			return errors.New("bridge network setup must not have a namespace")
+			return errors.New("host TAP network setup must not have a namespace")
 		}
 	} else if !filepath.IsAbs(s.Namespace) {
 		return errors.New("network namespace must be an absolute path")
@@ -145,6 +171,9 @@ func (s NetworkSetup) Validate() error {
 	seen := make(map[int]struct{}, len(s.Interfaces))
 	previous := -1
 	for position, networkInterface := range s.Interfaces {
+		if (s.Backend == NetworkBackendEBPF) != (networkInterface.AddressMode == AddressModeFixed) {
+			return errors.New("fixed guest addressing requires the eBPF network backend")
+		}
 		if err := networkInterface.Validate(); err != nil {
 			return fmt.Errorf("network interface %d: %w", networkInterface.Index, err)
 		}

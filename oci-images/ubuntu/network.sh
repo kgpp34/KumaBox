@@ -70,9 +70,13 @@ for config_file in /run/net-*.conf; do
 	mkdir -p "$directory"
 	{
 		printf '[Match]\nMACAddress=%s\n\n' "$HWADDR"
-		printf '[Network]\nAddress=%s/%s\n' "$IPV4ADDR" "$prefix"
+		printf '[Network]\n'
+		case "$IPV4ADDR" in
+		169.254.*) printf 'DHCP=no\nLinkLocalAddressing=no\nIPv6AcceptRA=no\n' ;;
+		*) printf 'Address=%s/%s\n' "$IPV4ADDR" "$prefix" ;;
+		esac
 		if [ -n "$IPV4GATEWAY" ] && [ "$IPV4GATEWAY" != "0.0.0.0" ]; then
-			printf 'Gateway=%s\n' "$IPV4GATEWAY"
+			case "$IPV4ADDR" in 169.254.*) ;; *) printf 'Gateway=%s\n' "$IPV4GATEWAY" ;; esac
 		fi
 		if [ -n "$IPV4DNS0" ] && [ "$IPV4DNS0" != "0.0.0.0" ]; then
 			printf 'DNS=%s\n' "$IPV4DNS0"
@@ -80,5 +84,22 @@ for config_file in /run/net-*.conf; do
 		if [ -n "$IPV4DNS1" ] && [ "$IPV4DNS1" != "0.0.0.0" ]; then
 			printf 'DNS=%s\n' "$IPV4DNS1"
 		fi
+		case "$IPV4ADDR" in
+		169.254.*)
+			[ -z "$IPV4GATEWAY" ] || [ "$IPV4GATEWAY" = "0.0.0.0" ] || printf 'DNSDefaultRoute=yes\n'
+			printf '\n[Address]\nAddress=%s/%s\nScope=global\nDuplicateAddressDetection=none\n' "$IPV4ADDR" "$prefix"
+			[ -z "$IPV4GATEWAY" ] || [ "$IPV4GATEWAY" = "0.0.0.0" ] || printf '\n[Route]\nDestination=0.0.0.0/0\nGateway=%s\nPreferredSource=%s\n' "$IPV4GATEWAY" "$IPV4ADDR"
+			;;
+		esac
 	} >"$directory/10-kumabox-$identifier.network"
+	case "$IPV4ADDR" in
+	169.254.*)
+		if [ -n "$IPV4GATEWAY" ] && [ "$IPV4GATEWAY" != 0.0.0.0 ] && [ -n "$IPV4DNS0" ] && [ "$IPV4DNS0" != 0.0.0.0 ]; then
+			mkdir -p "$rootmnt/etc/kumabox"
+			{ printf 'nameserver %s\n' "$IPV4DNS0"; [ -z "$IPV4DNS1" ] || [ "$IPV4DNS1" = 0.0.0.0 ] || printf 'nameserver %s\n' "$IPV4DNS1"; } > "$rootmnt/etc/kumabox/resolv.conf"
+			rm -f "$resolver"
+			ln -s /etc/kumabox/resolv.conf "$resolver"
+		fi
+		;;
+	esac
 done

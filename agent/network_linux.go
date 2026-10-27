@@ -23,8 +23,11 @@ const (
 
 // applyGuestNetwork owns the guest OS mechanism behind the wire protocol.
 func applyGuestNetwork(ctx context.Context, configuration NetworkConfig) error {
-	if err := writeNetworkFiles("/etc/systemd/network", configuration); err != nil {
-		return fmt.Errorf("write network files: %w", err)
+	unchanged := networkFilesMatch("/etc/systemd/network", configuration)
+	if !unchanged {
+		if err := writeNetworkFiles("/etc/systemd/network", configuration); err != nil {
+			return fmt.Errorf("write network files: %w", err)
+		}
 	}
 	if err := os.WriteFile("/etc/hostname", []byte(configuration.Hostname+"\n"), 0o644); err != nil { //nolint:gosec // fixed guest OS path
 		return fmt.Errorf("write hostname: %w", err)
@@ -32,7 +35,13 @@ func applyGuestNetwork(ctx context.Context, configuration NetworkConfig) error {
 	if err := unix.Sethostname([]byte(configuration.Hostname)); err != nil {
 		return fmt.Errorf("set hostname: %w", err)
 	}
+	if err := writeFixedResolverAt("/", configuration); err != nil {
+		return fmt.Errorf("configure fixed guest resolver: %w", err)
+	}
 	if len(configuration.Interfaces) == 0 {
+		return nil
+	}
+	if unchanged && guestNetworkReady(configuration) {
 		return nil
 	}
 	if err := prepareDHCPLinks(ctx, configuration.Interfaces); err != nil {
@@ -141,19 +150,8 @@ func reloadGuestNetwork(ctx context.Context, configuration NetworkConfig) error 
 	if err != nil {
 		return fmt.Errorf("reload systemd-networkd: %w: %s", err, strings.TrimSpace(string(output)))
 	}
-	for _, device := range configuration.Interfaces {
-		if !device.DHCP {
-			continue
-		}
-		link, err := linkByMAC(ctx, device.MAC)
-		if err != nil {
-			return err
-		}
-		output, err := exec.CommandContext(ctx, "networkctl", "reconfigure", link.Attrs().Name).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("reconfigure %s for DHCP: %w: %s", link.Attrs().Name, err, strings.TrimSpace(string(output)))
-		}
-	}
+	// Reload already reconfigures links matching a changed .network file.
+	// Another reconfigure can restart DHCP while that first request is pending.
 	return waitGuestNetwork(ctx, configuration)
 }
 
@@ -190,8 +188,26 @@ func guestNetworkReady(configuration NetworkConfig) bool {
 		if !guestIPv4Matches(addresses, expected.Address, expected.Prefix) || !guestDefaultRouteMatches(routes, expected.Gateway) {
 			return false
 		}
+		if net.ParseIP(expected.Address).IsLinkLocalUnicast() && expected.Gateway != "" && !guestRouteSourceMatches(routes, expected.Address) {
+			return false
+		}
 	}
 	return true
+}
+
+func guestRouteSourceMatches(routes []netlink.Route, address string) bool {
+	for _, route := range routes {
+		if route.Dst != nil {
+			ones, _ := route.Dst.Mask.Size()
+			if ones != 0 {
+				continue
+			}
+		}
+		if route.Src.Equal(net.ParseIP(address)) {
+			return true
+		}
+	}
+	return false
 }
 
 func guestHasIPv4(addresses []net.Addr) bool {
@@ -221,7 +237,7 @@ func guestIPv4Matches(addresses []net.Addr, address string, prefix int) bool {
 	found := address == ""
 	for _, value := range addresses {
 		network, ok := value.(*net.IPNet)
-		if !ok || network.IP.To4() == nil || network.IP.IsLinkLocalUnicast() {
+		if !ok || network.IP.To4() == nil || (network.IP.IsLinkLocalUnicast() && network.IP.String() != address) {
 			continue
 		}
 		bits, _ := network.Mask.Size()

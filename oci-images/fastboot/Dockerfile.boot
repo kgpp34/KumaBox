@@ -40,7 +40,7 @@ RUN set -eu; \
     install -d /rootfs/bin /rootfs/dev /rootfs/proc /rootfs/sys /out/boot; \
     install -m 0755 /bin/busybox /rootfs/bin/busybox; \
     install -m 0755 /src/init /rootfs/init; \
-    for applet in sh cat mount mkdir sleep hostname rm ln switch_root; do \
+    for applet in sh cat mount mkdir sleep hostname rm ln tr switch_root; do \
       ln -s busybox "/rootfs/bin/$applet"; \
     done; \
     cd /rootfs; \

@@ -43,7 +43,7 @@ Each sandbox is a real machine:
 
 - **Hardware isolation.** A dedicated guest kernel behind KVM, with one Cloud Hypervisor process per VM.
 - **OCI in, microVM out.** Digest-pinned OCI images become shared, read-only EROFS layers plus a private copy-on-write disk per VM.
-- **Real networking.** A network namespace per VM, multiqueue TAP and CNI, with multiple NICs at creation.
+- **Real networking.** CNI namespaces, direct Linux bridges, or experimental isolated TAP/eBPF networking, with multiple NICs and live resize.
 - **Guest execution without SSH.** `exec` over vsock with streamed stdout and stderr, optional stdin, environment, working directory and guest user. Detached commands remain manageable after disconnect through `process ls/kill/logs/attach`.
 - **Snapshots as first-class artifacts.** Save a running VM, restore or hibernate it, clone it with a fresh network identity, or export and import it as a portable archive.
 - **Runtime devices.** Attach external raw disks, virtio-fs shares and VFIO PCI devices to a running Cloud Hypervisor VM.
@@ -388,6 +388,43 @@ sudo kumabox image import ubuntu-fast /tmp/kumabox-ubuntu-fast.tar --format dock
 
 The fast profile has its own built-in kernel and initramfs; use the general
 Ubuntu image for workloads that require kernel modules or passthrough drivers.
+
+## Experimental TAP/eBPF networking
+
+Build and install the current source, then prepare one installation-wide set of
+IPv4 forwarding/NAT rules:
+
+```bash
+sudo kumabox-ebpf setup
+sudo kumabox run ubuntu-fast --name fixed-net --network-backend ebpf
+sudo kumabox snapshot save fixed-net --name fixed-base
+sudo kumabox clone fixed-base --name fixed-clone --wait-network
+sudo kumabox inspect fixed-clone
+```
+
+Each NIC has a fixed template-local IP/MAC and a distinct `host_address`. TC eBPF
+translates addresses on independent TAPs; there is no shared bridge or DHCP.
+Compatible snapshot clones retain their virtio NIC identity. A matching current
+guest agent avoids reloading unchanged network configuration while still updating
+the hostname and checking effective addresses/routes.
+Use a guest image built from this checkout: older release images do not contain
+the fixed-address boot and DNS configuration.
+
+This first IPv4 data plane uses Linux routing/conntrack for external NAT, with
+shared firewall rules rather than one rule per sandbox. It does not yet implement
+an eBPF SNAT session table, tenant network policy, TAP pooling or IPv6. Existing
+CNI and bridge modes remain available. The host requires bpffs and TC eBPF support;
+normal builds embed the compiled BPF object and do not require Clang. To regenerate
+it on Linux, install Clang/libbpf headers and run `go generate ./network/tap`.
+
+The default host endpoint subnet is `10.89.0.0/16`; select an unused private range
+with `KUMABOX_NETWORK_EBPF_SUBNET`. When changing the subnet or installation scope,
+pass the same subnet and TAP prefix to `kumabox-ebpf setup SUBNET PREFIX` (the
+prefix is `kt` followed by `KUMABOX_NETWORK_SCOPE`). Rules must be reapplied after
+host reboot, using the host's firewall persistence mechanism or a boot service.
+Released host addresses remain unavailable for 90 seconds to avoid stale TCP
+state reaching another VM. New allocations immediately use other free addresses;
+size the subnet for active endpoints plus recent turnover.
 
 ## Remote API and SDKs
 

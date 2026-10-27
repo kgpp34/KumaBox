@@ -23,20 +23,21 @@ type configProvider func() config.Config
 // parsing here gives both commands one validation contract and one set of
 // defaults.
 type createOptions struct {
-	name         string
-	cpus         uint32
-	cpuPolicy    types.CPUPolicy
-	memory       string
-	sharedMemory bool
-	hugePages    bool
-	mergeable    bool
-	noBalloon    bool
-	storageSize  string
-	nics         int
-	networkName  string
-	bridgeName   string
-	bridgeStatic bool
-	dataDisks    []string
+	name           string
+	cpus           uint32
+	cpuPolicy      types.CPUPolicy
+	memory         string
+	sharedMemory   bool
+	hugePages      bool
+	mergeable      bool
+	noBalloon      bool
+	storageSize    string
+	nics           int
+	networkName    string
+	bridgeName     string
+	bridgeStatic   bool
+	networkBackend string
+	dataDisks      []string
 }
 
 // defaultCreateOptions returns the public resource defaults for a new sandbox.
@@ -59,6 +60,7 @@ func (o *createOptions) addFlags(command *cobra.Command) {
 	command.Flags().StringVar(&o.storageSize, "storage", o.storageSize, "logical sparse COW size (minimum 10GiB)")
 	command.Flags().IntVar(&o.nics, "nics", o.nics, "number of network interfaces (0 disables networking)")
 	command.Flags().StringVar(&o.networkName, "network", o.networkName, "CNI network name (empty selects the default)")
+	command.Flags().StringVar(&o.networkBackend, "network-backend", "", "host network backend: cni or ebpf (--bridge selects bridge)")
 	command.Flags().StringVar(&o.bridgeName, "bridge", o.bridgeName, "attach TAPs directly to this existing host bridge; guest uses DHCP (excludes --network)")
 	command.Flags().BoolVar(&o.bridgeStatic, "bridge-static", false, "allocate a static address from the bridge subnet instead of using DHCP (requires --bridge)")
 	command.Flags().StringArrayVar(&o.dataDisks, "data-disk", nil, "managed disk: size=20GiB[,name=db][,fstype=ext4|none][,directio=on|off|auto]; repeatable")
@@ -108,7 +110,13 @@ func (o createOptions) request(imageReference string) (core.CreateSandboxRequest
 	if o.networkName != "" && o.bridgeName != "" {
 		return core.CreateSandboxRequest{}, invalidFlag("bridge", errors.New("excludes --network"))
 	}
-	backend := types.NetworkBackend("")
+	backend := types.NetworkBackend(o.networkBackend)
+	if backend != "" && backend != types.NetworkBackendCNI && backend != types.NetworkBackendEBPF {
+		return core.CreateSandboxRequest{}, invalidFlag("network-backend", errors.New("must be cni or ebpf; use --bridge for bridge networking"))
+	}
+	if o.bridgeName != "" && backend != "" {
+		return core.CreateSandboxRequest{}, invalidFlag("network-backend", errors.New("excludes --bridge"))
+	}
 	networkName := o.networkName
 	if o.bridgeName != "" {
 		backend = types.NetworkBackendBridge

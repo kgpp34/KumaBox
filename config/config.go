@@ -76,6 +76,8 @@ type Network struct {
 	// CNI locates network configuration and plugin executables installed by the
 	// host administrator.
 	CNI CNI `mapstructure:"cni"`
+	// EBPF configures fixed guest identities on isolated host TAPs.
+	EBPF EBPF `mapstructure:"ebpf"`
 	// DNS is a comma- or semicolon-separated list injected into guest network
 	// configuration by the boot protocol.
 	DNS string `mapstructure:"dns"`
@@ -86,6 +88,14 @@ type Network struct {
 	CleanupTimeout time.Duration `mapstructure:"cleanup_timeout"`
 	// GuestAgentTimeout bounds clone's wait for a restored guest agent.
 	GuestAgentTimeout time.Duration `mapstructure:"guest_agent_timeout"`
+}
+
+// EBPF contains installation-wide eBPF networking settings.
+type EBPF struct {
+	// Subnet reserves unique host endpoints; guests retain template-local IPs.
+	Subnet string `mapstructure:"subnet"`
+	// PinDir holds kernel objects across CLI invocations; empty derives a root-specific path.
+	PinDir string `mapstructure:"pin_dir"`
 }
 
 // CNI contains host-owned CNI discovery paths.
@@ -158,8 +168,9 @@ func Default() Config {
 		Metadata: Metadata{BusyTimeout: 50 * time.Millisecond, RetryLimit: 5 * time.Second},
 		Sandbox:  Sandbox{Ext4Binary: "mkfs.ext4", CleanupTimeout: 10 * time.Second, StopTimeout: types.DefaultStopTimeout},
 		Network: Network{
-			CNI: CNI{ConfDir: "/etc/cni/net.d", BinDir: "/opt/cni/bin"},
-			DNS: "8.8.8.8,1.1.1.1", CleanupTimeout: 30 * time.Second, GuestAgentTimeout: 20 * time.Second,
+			CNI:  CNI{ConfDir: "/etc/cni/net.d", BinDir: "/opt/cni/bin"},
+			EBPF: EBPF{Subnet: "10.89.0.0/16"},
+			DNS:  "8.8.8.8,1.1.1.1", CleanupTimeout: 30 * time.Second, GuestAgentTimeout: 20 * time.Second,
 		},
 		VMM: VMM{
 			Default: types.VMMCloudHypervisor, CgroupParent: "/sys/fs/cgroup/kumabox.slice",
@@ -198,6 +209,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Network.CleanupTimeout <= 0 || c.Network.GuestAgentTimeout <= 0 {
 		return errors.New("network cleanup and guest agent timeouts must be positive")
+	}
+	if c.Network.EBPF.PinDir != "" && !filepath.IsAbs(c.Network.EBPF.PinDir) {
+		return errors.New("eBPF pin directory must be absolute")
 	}
 	if _, err := c.Network.DNSServers(); err != nil {
 		return fmt.Errorf("network DNS: %w", err)
@@ -251,6 +265,7 @@ func NewLoader() *Loader {
 		"sandbox.ext4_binary": defaults.Sandbox.Ext4Binary, "sandbox.cleanup_timeout": defaults.Sandbox.CleanupTimeout,
 		"sandbox.stop_timeout": defaults.Sandbox.StopTimeout,
 		"network.cni.conf_dir": defaults.Network.CNI.ConfDir, "network.cni.bin_dir": defaults.Network.CNI.BinDir,
+		"network.ebpf.subnet": defaults.Network.EBPF.Subnet, "network.ebpf.pin_dir": defaults.Network.EBPF.PinDir,
 		"network.dns": defaults.Network.DNS, "network.scope": defaults.Network.Scope,
 		"network.cleanup_timeout": defaults.Network.CleanupTimeout, "network.guest_agent_timeout": defaults.Network.GuestAgentTimeout,
 		"vmm.default": defaults.VMM.Default, "vmm.cgroup_parent": defaults.VMM.CgroupParent,

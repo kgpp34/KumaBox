@@ -2,7 +2,10 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/kumabox/kumabox/config"
@@ -15,6 +18,7 @@ import (
 	"github.com/kumabox/kumabox/network"
 	bridgenet "github.com/kumabox/kumabox/network/bridge"
 	"github.com/kumabox/kumabox/network/cni"
+	"github.com/kumabox/kumabox/network/tap"
 	"github.com/kumabox/kumabox/sandbox"
 	sandboxcatalog "github.com/kumabox/kumabox/sandbox/catalog"
 	"github.com/kumabox/kumabox/storage"
@@ -211,7 +215,20 @@ func OpenSandbox(ctx context.Context, configuration config.Config, reporter Sand
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
-	networks, err := network.NewRegistry(cniProvider, bridgeProvider)
+	tapState := filepath.Join(configuration.Paths.Data, "network", "ebpf")
+	pinDir := configuration.Network.EBPF.PinDir
+	if pinDir == "" {
+		digest := sha256.Sum256([]byte(tapState))
+		pinDir = fmt.Sprintf("/sys/fs/bpf/kumabox-%x", digest[:8])
+	}
+	tapProvider, err := tap.New(tap.Options{
+		StateDir: tapState, PinDir: pinDir,
+		Subnet: configuration.Network.EBPF.Subnet, TAPPrefix: "kt" + configuration.Network.Scope,
+	})
+	if err != nil {
+		return nil, errors.Join(err, store.Close())
+	}
+	networks, err := network.NewRegistry(cniProvider, bridgeProvider, tapProvider)
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}

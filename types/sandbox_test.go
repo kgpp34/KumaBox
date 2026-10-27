@@ -3,6 +3,7 @@ package types
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSandboxID(t *testing.T) {
@@ -33,7 +34,6 @@ func TestSandboxConfigValidationMatchesCreateContract(t *testing.T) {
 		{"storage", SandboxConfig{Name: "demo", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage - 1}},
 		{"NIC count", SandboxConfig{Name: "demo", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage, NICs: MaxSandboxNICs + 1}},
 		{"network name", SandboxConfig{Name: "demo", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage, NICs: 1, NetworkName: "bad/name"}},
-		{"bridge without NIC", SandboxConfig{Name: "demo", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage, NetworkBackend: NetworkBackendBridge, NetworkName: "br0"}},
 		{"bridge without device", SandboxConfig{Name: "demo", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage, NICs: 1, NetworkBackend: NetworkBackendBridge}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -58,6 +58,43 @@ func TestSandboxConfigValidationMatchesCreateContract(t *testing.T) {
 	bridge.NetworkName = "br0"
 	if err := bridge.Validate(); err != nil {
 		t.Fatalf("valid bridge config was rejected: %v", err)
+	}
+	bridge.NICs = 0
+	if err := bridge.Validate(); err != nil {
+		t.Fatalf("offline bridge policy was rejected: %v", err)
+	}
+}
+
+func TestCreatingOfflineSandboxCanReserveItsNetworkPolicy(t *testing.T) {
+	digest, err := ParseDigest("sha256:" + strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := NewSandboxID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, backend := range []NetworkBackend{NetworkBackendBridge, NetworkBackendEBPF} {
+		t.Run(string(backend), func(t *testing.T) {
+			record := Sandbox{
+				ID: id, Config: SandboxConfig{
+					Name: "offline", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage,
+					NetworkBackend: backend, NetworkName: "selected",
+				}, ImageDigest: digest, VMM: VMMCloudHypervisor,
+				State: SandboxStateCreating, Generation: 1, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+			}
+			if err := record.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			record.State = SandboxStateCreated
+			if err := record.Validate(); err == nil {
+				t.Fatal("committed network selection without an owner was accepted")
+			}
+			record.Network = NetworkSetup{Backend: backend, Interfaces: []NetworkInterface{}}
+			if err := record.Validate(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

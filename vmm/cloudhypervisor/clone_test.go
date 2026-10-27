@@ -78,6 +78,37 @@ func TestPatchCloneConfigRebindsOnlyPrivateDevices(t *testing.T) {
 	}
 }
 
+func TestPatchCloneConfigPreservesFixedGuestNIC(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	original := `{"disks":[{"serial":"kumabox-layer0","path":"/old/base"},{"serial":"kumabox-cow","path":"/old/cow"}],"vsock":{"socket":"/old/vsock"},"net":[{"id":"captured-nic","tap":"old-tap","mac":"02:4b:42:00:00:02","num_queues":4,"queue_size":512}]}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan := vmm.ClonePlan{RestorePlan: vmm.RestorePlan{SandboxID: types.SandboxID("123e4567-e89b-42d3-a456-426614174000"), Network: types.NetworkSetup{
+		Backend: types.NetworkBackendEBPF, Interfaces: []types.NetworkInterface{{Index: 0, TAP: "kt12345678-0", MAC: "02:4b:42:00:00:02", Queues: 4, QueueSize: 512, AddressMode: types.AddressModeFixed}},
+	}}, WritableDisk: "/new/cow", ImageDisks: []vmm.Disk{{Path: "/new/base", Serial: "kumabox-layer0"}}}
+	old, err := patchCloneConfig(path, plan, "/new/vsock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old != nil {
+		t.Fatalf("fixed NIC requires no remove/add: %+v", old)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var patched struct {
+		Net []struct{ ID, TAP, MAC string }
+	}
+	if err := json.Unmarshal(data, &patched); err != nil {
+		t.Fatal(err)
+	}
+	if len(patched.Net) != 1 || patched.Net[0].ID != "captured-nic" || patched.Net[0].TAP != "kt12345678-0" || patched.Net[0].MAC != "02:4b:42:00:00:02" {
+		t.Fatalf("guest device was changed: %+v", patched)
+	}
+}
+
 func TestPatchCloneConfigRebindsManagedDataDisk(t *testing.T) {
 	directIO := false
 	path := filepath.Join(t.TempDir(), "config.json")

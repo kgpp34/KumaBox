@@ -3,12 +3,64 @@
 package bridge
 
 import (
+	"context"
+	"errors"
 	"net"
 	"testing"
+	"time"
+
+	"github.com/vishvananda/netlink"
 
 	"github.com/kumabox/kumabox/network"
 	"github.com/kumabox/kumabox/types"
 )
+
+func TestDHCPReservationDoesNotWaitForStaticIPAM(t *testing.T) {
+	provider := &Provider{prefix: "bt", queueSize: 512, leaseDir: t.TempDir()}
+	guard, err := provider.lockLeases(t.Context(), "br0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := guard.Unlock(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	id := types.SandboxID("123e4567-e89b-42d3-a456-426614174000")
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	addresses, err := provider.reserveAddresses(ctx, id, &netlink.Bridge{
+		LinkAttrs: netlink.LinkAttrs{Name: "br0"},
+	}, []network.AddSpec{{Index: 0, DHCP: true}})
+	if err != nil {
+		t.Fatalf("DHCP reservation blocked behind static IPAM: %v", err)
+	}
+	if len(addresses) != 1 || addresses[0] != nil {
+		t.Fatalf("DHCP allocated a host-side static address: %v", addresses)
+	}
+	owned, err := provider.OwnedIDs(t.Context())
+	if err != nil || len(owned) != 1 || owned[0] != id {
+		t.Fatalf("DHCP ownership was not retained: %v, %v", owned, err)
+	}
+}
+
+func TestBridgeLeaseLockHonorsCancellation(t *testing.T) {
+	provider := &Provider{leaseDir: t.TempDir()}
+	guard, err := provider.lockLeases(t.Context(), "br0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := guard.Unlock(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := provider.lockLeases(ctx, "br0"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("contended bridge lock = %v, want deadline exceeded", err)
+	}
+}
 
 func TestBridgeLeaseAllocationAndRelease(t *testing.T) {
 	provider := &Provider{prefix: "bt", queueSize: 512, leaseDir: t.TempDir()}

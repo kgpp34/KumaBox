@@ -60,3 +60,22 @@ func TestNetworkSetupAcceptsBridgeWithoutNamespace(t *testing.T) {
 		t.Fatal("bridge setup with a namespace was accepted")
 	}
 }
+
+func TestFixedGuestIdentityRequiresSeparateHostAddressAndEBPF(t *testing.T) {
+	setup := NetworkSetup{Backend: NetworkBackendEBPF, Interfaces: []NetworkInterface{{
+		Index: 0, Name: "eth0", TAP: "kt12345678-0", MAC: "02:4b:42:00:00:02", Queues: 4, QueueSize: 512, Network: "ebpf",
+		AddressMode: AddressModeFixed, HostAddress: "10.89.0.7", IPv4: &IPv4Config{Address: "169.254.240.2", Gateway: "169.254.240.1", Prefix: 30},
+	}}}
+	if err := setup.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	setup.Interfaces[0].HostAddress = setup.Interfaces[0].IPv4.Address
+	if err := setup.Validate(); err == nil {
+		t.Fatal("overlapping guest and host identities accepted")
+	}
+	setup.Interfaces[0].HostAddress = "10.89.0.7"
+	setup.Backend = NetworkBackendBridge
+	if err := setup.Validate(); err == nil {
+		t.Fatal("fixed shared identity on a bridge was accepted")
+	}
+}

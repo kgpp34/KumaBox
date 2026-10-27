@@ -14,7 +14,12 @@ import (
 var ErrUnsupported = errors.New("bridge networking requires Linux")
 
 // New constructs a provider that rejects every operation on non-Linux hosts.
-func New(Options) (*Provider, error) { return &Provider{}, nil }
+func New(options Options) (*Provider, error) {
+	if err := options.Validate(); err != nil {
+		return nil, err
+	}
+	return &Provider{prefix: options.TAPPrefix, queueSize: options.QueueSize, leaseDir: options.LeaseDir}, nil
+}
 
 // Add is unavailable without Linux network namespaces.
 func (*Provider) Add(context.Context, types.SandboxID, string, ...network.AddSpec) ([]types.NetworkInterface, error) {

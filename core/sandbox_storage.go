@@ -49,7 +49,7 @@ func (s *SandboxService) create(ctx context.Context, request CreateSandboxReques
 	if err := request.Config.Validate(); err != nil {
 		return types.Sandbox{}, err
 	}
-	if request.Config.NICs == 0 && request.Config.NetworkName != "" {
+	if request.Config.NICs == 0 && request.Config.NetworkName != "" && request.Config.NetworkBackend != types.NetworkBackendBridge && request.Config.NetworkBackend != types.NetworkBackendEBPF {
 		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("network name requires at least one NIC when creating a sandbox"))
 	}
 	if request.VMM == "" {
@@ -161,7 +161,7 @@ func (s *SandboxService) create(ctx context.Context, request CreateSandboxReques
 		if prepareErr != nil {
 			return types.Sandbox{}, s.compensate(ctx, record, "network prepare", prepareErr)
 		}
-		if namespace != "" {
+		if namespace != "" || networkProvider.Type() == types.NetworkBackendBridge || networkProvider.Type() == types.NetworkBackendEBPF {
 			setup = types.NetworkSetup{Backend: networkProvider.Type(), Namespace: namespace, Interfaces: []types.NetworkInterface{}}
 			record.Network = setup
 		}

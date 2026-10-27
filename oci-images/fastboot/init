@@ -134,12 +134,34 @@ for argument in $(cat /proc/cmdline); do
 				esac
 			done
 			mkdir -p /newroot/etc/systemd/network
+			identifier=$(printf '%s' "$mac" | tr -d ':')
 			{
-				printf '[Match]\nMACAddress=%s\n\n[Network]\nAddress=%s/%s\n' "$mac" "$address" "$prefix"
-				[ -z "$gateway" ] || [ "$gateway" = 0.0.0.0 ] || printf 'Gateway=%s\n' "$gateway"
+				printf '[Match]\nMACAddress=%s\n\n[Network]\n' "$mac"
+				case "$address" in
+				169.254.*) printf 'DHCP=no\nLinkLocalAddressing=no\nIPv6AcceptRA=no\n' ;;
+				*) printf 'Address=%s/%s\n' "$address" "$prefix" ;;
+				esac
+				case "$address" in 169.254.*) ;; *) [ -z "$gateway" ] || [ "$gateway" = 0.0.0.0 ] || printf 'Gateway=%s\n' "$gateway" ;; esac
 				[ -z "$dns0" ] || [ "$dns0" = 0.0.0.0 ] || printf 'DNS=%s\n' "$dns0"
 				[ -z "$dns1" ] || [ "$dns1" = 0.0.0.0 ] || printf 'DNS=%s\n' "$dns1"
-			} >"/newroot/etc/systemd/network/10-kumabox-$interface.network"
+				case "$address" in
+				169.254.*)
+					[ -z "$gateway" ] || [ "$gateway" = 0.0.0.0 ] || printf 'DNSDefaultRoute=yes\n'
+					printf '\n[Address]\nAddress=%s/%s\nScope=global\nDuplicateAddressDetection=none\n' "$address" "$prefix"
+					[ -z "$gateway" ] || [ "$gateway" = 0.0.0.0 ] || printf '\n[Route]\nDestination=0.0.0.0/0\nGateway=%s\nPreferredSource=%s\n' "$gateway" "$address"
+					;;
+				esac
+			} >"/newroot/etc/systemd/network/10-kumabox-$identifier.network"
+			case "$address" in
+			169.254.*)
+				if [ -n "$gateway" ] && [ "$gateway" != 0.0.0.0 ] && [ -n "$dns0" ] && [ "$dns0" != 0.0.0.0 ]; then
+					mkdir -p /newroot/etc/kumabox
+					{ printf 'nameserver %s\n' "$dns0"; [ -z "$dns1" ] || [ "$dns1" = 0.0.0.0 ] || printf 'nameserver %s\n' "$dns1"; } > /newroot/etc/kumabox/resolv.conf
+					rm -f "$resolver"
+					ln -s /etc/kumabox/resolv.conf "$resolver"
+				fi
+				;;
+			esac
 			;;
 	esac
 done

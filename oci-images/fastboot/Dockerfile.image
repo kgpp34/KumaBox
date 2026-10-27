@@ -11,6 +11,19 @@ RUN set -eu; \
     rm -rf /lib/modules/* /boot/vmlinuz-* /boot/initrd.img-*; \
     sed -i '/^ExecStartPre=-\/sbin\/modprobe /d' \
       /etc/systemd/system/kumabox-agent.service; \
+    # Module loading is unnecessary with the built-in kernel. Conditions keep
+    # these units available if a modular kernel is selected later.
+    for unit in modprobe@.service systemd-modules-load.service; do \
+      install -d "/etc/systemd/system/${unit}.d"; \
+      printf '[Unit]\nConditionPathExists=/proc/modules\n' \
+        > "/etc/systemd/system/${unit}.d/10-kumabox-builtin.conf"; \
+    done; \
+    # Build distribution caches once rather than on every fresh writable disk.
+    # systemd's update conditions still refresh them after guest software updates.
+    systemd-sysusers; \
+    ldconfig; \
+    journalctl --update-catalog; \
+    /usr/lib/systemd/systemd-update-done; \
     # Custom base images may still carry an identity from package installation.
     rm -f /etc/machine-id /var/lib/dbus/machine-id /var/lib/systemd/random-seed; \
     install -d -m 0755 /var/lib/dbus; \

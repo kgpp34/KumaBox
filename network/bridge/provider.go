@@ -1,6 +1,6 @@
 // Package bridge attaches sandbox TAP devices directly to a pre-existing host
 // Linux bridge. It deliberately uses no CNI plugin, namespace, veth or TC
-// redirect: the guest receives a static address from the bridge subnet.
+// redirect. Guests use DHCP or the provider's persistent static address leases.
 package bridge
 
 import (
@@ -66,13 +66,5 @@ func (*Provider) Quiesce(context.Context, types.SandboxID) error { return nil }
 
 // Unquiesce is a no-op: the TAP stays attached to the bridge across stop/start.
 func (*Provider) Unquiesce(context.Context, types.SandboxID) error { return nil }
-
-// queueSizeOrDefault returns the configured virtio queue depth.
-func (p *Provider) queueSizeOrDefault() int {
-	if p == nil || p.queueSize <= 0 {
-		return network.DefaultQueueSize
-	}
-	return p.queueSize
-}
 
 var _ network.Provider = (*Provider)(nil)

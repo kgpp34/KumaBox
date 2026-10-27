@@ -22,6 +22,13 @@ func TestGuestIPv4MatchesRejectsStaleSourceAddress(t *testing.T) {
 	}
 }
 
+func TestGuestIPv4MatchesFixedLinkLocalAddress(t *testing.T) {
+	addresses := []net.Addr{&net.IPNet{IP: net.ParseIP("169.254.240.2"), Mask: net.CIDRMask(30, 32)}}
+	if !guestIPv4Matches(addresses, "169.254.240.2", 30) {
+		t.Fatal("fixed link-local guest identity was ignored")
+	}
+}
+
 func TestGuestDefaultRouteMatches(t *testing.T) {
 	_, subnet, err := net.ParseCIDR("10.88.0.0/16")
 	if err != nil {

@@ -3,6 +3,7 @@ module github.com/kumabox/kumabox
 go 1.24.4
 
 require (
+	github.com/cilium/ebpf v0.17.3
 	github.com/containernetworking/cni v1.3.0
 	github.com/containernetworking/plugins v1.9.1
 	github.com/gofrs/flock v0.13.0

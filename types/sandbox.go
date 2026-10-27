@@ -332,9 +332,8 @@ func (c SandboxConfig) Validate() error {
 		}
 	}
 	if c.NetworkBackend == NetworkBackendBridge {
-		if c.NICs == 0 {
-			return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("bridge networking requires at least one NIC"))
-		}
+		// The bridge policy survives an offline clone or a resize to zero NICs
+		// so later hotplug can use the same backend and segment.
 		if c.NetworkName == "" {
 			return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("bridge networking requires a bridge device"))
 		}
@@ -460,7 +459,9 @@ func (s Sandbox) Validate() error {
 	if s.Config.NICs == 0 && len(s.Network.Interfaces) != 0 {
 		return errors.New("sandbox without NICs must not contain interfaces")
 	}
-	if s.Config.NICs == 0 && s.Network.Backend == "" && s.Config.NetworkName != "" {
+	// Creating reserves the requested network policy before host resources
+	// exist. Later states must retain an actual owner even at zero NICs.
+	if s.State != SandboxStateCreating && s.Config.NICs == 0 && s.Network.Backend == "" && s.Config.NetworkName != "" {
 		return errors.New("sandbox without a network owner must not retain a network name")
 	}
 	if s.Network.Backend != "" {

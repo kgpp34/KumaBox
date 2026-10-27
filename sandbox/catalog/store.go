@@ -118,14 +118,16 @@ type networkData struct {
 // networkInterfaceData stores one NIC without exposing adapter encoding tags
 // through the shared types package.
 type networkInterfaceData struct {
-	Index     int       `json:"index"`
-	Name      string    `json:"name"`
-	TAP       string    `json:"tap"`
-	MAC       string    `json:"mac"`
-	Queues    int       `json:"queues"`
-	QueueSize int       `json:"queue_size"`
-	Network   string    `json:"network"`
-	IPv4      *ipv4Data `json:"ipv4,omitempty"`
+	Index       int               `json:"index"`
+	Name        string            `json:"name"`
+	TAP         string            `json:"tap"`
+	MAC         string            `json:"mac"`
+	Queues      int               `json:"queues"`
+	QueueSize   int               `json:"queue_size"`
+	Network     string            `json:"network"`
+	IPv4        *ipv4Data         `json:"ipv4,omitempty"`
+	AddressMode types.AddressMode `json:"address_mode,omitempty"`
+	HostAddress string            `json:"host_address,omitempty"`
 }
 
 // ipv4Data stores the optional guest-visible IPv4 assignment.
@@ -720,7 +722,7 @@ func encodeNetwork(setup types.NetworkSetup) *networkData {
 		data := networkInterfaceData{
 			Index: networkInterface.Index, Name: networkInterface.Name, TAP: networkInterface.TAP,
 			MAC: networkInterface.MAC, Queues: networkInterface.Queues, QueueSize: networkInterface.QueueSize,
-			Network: networkInterface.Network,
+			Network: networkInterface.Network, AddressMode: networkInterface.AddressMode, HostAddress: networkInterface.HostAddress,
 		}
 		if networkInterface.IPv4 != nil {
 			data.IPv4 = &ipv4Data{
@@ -742,6 +744,7 @@ func decodeNetwork(data networkData) types.NetworkSetup {
 		networkInterface := types.NetworkInterface{
 			Index: item.Index, Name: item.Name, TAP: item.TAP, MAC: item.MAC,
 			Queues: item.Queues, QueueSize: item.QueueSize, Network: item.Network,
+			AddressMode: item.AddressMode, HostAddress: item.HostAddress,
 		}
 		if item.IPv4 != nil {
 			networkInterface.IPv4 = &types.IPv4Config{

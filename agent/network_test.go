@@ -98,6 +98,80 @@ func TestNetworkConfigRejectsUnsafeValues(t *testing.T) {
 	}
 }
 
+func TestNetworkFilesMatchOnlyAnUnchangedStaticConfiguration(t *testing.T) {
+	directory := t.TempDir()
+	configuration := testNetworkConfig()
+	configuration.Interfaces[0].Address = "169.254.240.2"
+	configuration.Interfaces[0].Prefix = 30
+	configuration.Interfaces[0].Gateway = "169.254.240.1"
+	if err := writeNetworkFiles(directory, configuration); err != nil {
+		t.Fatal(err)
+	}
+	if !networkFilesMatch(directory, configuration) {
+		t.Fatal("fixed guest configuration did not match")
+	}
+	file, err := os.ReadFile(filepath.Join(directory, "10-kumabox-020000000002.network"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(file), "Scope=global") || !strings.Contains(string(file), "PreferredSource=169.254.240.2") {
+		t.Fatal("fixed network lost explicit address/route scope")
+	}
+	configuration.Hostname = "another-clone"
+	if !networkFilesMatch(directory, configuration) {
+		t.Fatal("hostname change invalidated the network configuration")
+	}
+	configuration.DNSServers = []string{"8.8.8.8"}
+	if networkFilesMatch(directory, configuration) {
+		t.Fatal("changed resolver was ignored")
+	}
+	configuration.DNSServers = []string{"1.1.1.1"}
+	if err := os.WriteFile(filepath.Join(directory, "10-kumabox-stale.network"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if networkFilesMatch(directory, configuration) {
+		t.Fatal("stale managed file was ignored")
+	}
+}
+
+func TestFixedResolverUsesDirectServersAndRemainsStable(t *testing.T) {
+	root := t.TempDir()
+	configuration := testNetworkConfig()
+	configuration.Interfaces[0].Address = "169.254.240.2"
+	configuration.Interfaces[0].Gateway = "169.254.240.1"
+	if err := writeFixedResolverAt(root, configuration); err != nil {
+		t.Fatal(err)
+	}
+	resolver := filepath.Join(root, "etc/resolv.conf")
+	target, err := os.Readlink(resolver)
+	if err != nil || target != "/etc/kumabox/resolv.conf" {
+		t.Fatalf("resolver link: %s %v", target, err)
+	}
+	path := filepath.Join(root, "etc/kumabox/resolv.conf")
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFixedResolverAt(root, configuration); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("unchanged resolver was republished")
+	}
+	configuration.DNSServers = []string{"8.8.8.8"}
+	if err := writeFixedResolverAt(root, configuration); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "nameserver 8.8.8.8\n" {
+		t.Fatalf("updated resolver: %s %v", data, err)
+	}
+}
+
 func TestNetworkConfigAcceptsDHCPAndWritesCloneSafeUnit(t *testing.T) {
 	configuration := testNetworkConfig()
 	configuration.Interfaces[0].DHCP = true

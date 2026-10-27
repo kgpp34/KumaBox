@@ -126,7 +126,7 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	}
 	if options.NetworkName != "" {
 		config.NetworkName = options.NetworkName
-	} else if config.NICs == 0 {
+	} else if config.NICs == 0 && config.NetworkBackend != types.NetworkBackendBridge && config.NetworkBackend != types.NetworkBackendEBPF {
 		config.NetworkName = ""
 	}
 	if err := config.Validate(); err != nil {

@@ -45,7 +45,7 @@ KumaBox 是一个**面向 AI Agent 和不可信工作负载的 microVM 沙箱运
 
 - **硬件级隔离。** 每个沙箱运行在 KVM 之上的独立 guest 内核里，每台 VM 对应一个独立的 Cloud Hypervisor 进程。
 - **OCI 进，microVM 出。** 按 digest 固定的 OCI 镜像被转换成共享、只读的 EROFS 层，再为每台 VM 叠加一块私有的写时复制磁盘。
-- **真实的网络。** 每台 VM 拥有独立的网络命名空间，通过 CNI 使用多队列 TAP 和 tc redirect。支持多网卡，也支持在线调整网卡。
+- **真实的网络。** 支持 CNI 独立网络命名空间、直接连接 Linux bridge，以及实验性的独立 TAP/eBPF 网络。支持多网卡和在线调整网卡。
 - **无需 SSH 即可执行命令。** `exec` 走 vsock 通道，支持流式 stdout / stderr、stdin、环境变量、工作目录和用户选择，并返回真实的退出码。交互式终端通过 `console` 使用。
 - **快照是一等公民。** 支持运行态快照、导出、导入、原地恢复、休眠，以及以全新身份克隆。
 - **按需使用真实设备。** 运行中的 Cloud Hypervisor 沙箱可热插拔外部数据盘、virtio-fs 共享目录和 VFIO PCI 设备。
@@ -294,6 +294,37 @@ sudo kumabox image import ubuntu-fast /tmp/kumabox-ubuntu-fast.tar --format dock
 
 快速镜像使用内建驱动的独立内核和 initramfs；需要内核模块或直通驱动的负载仍使用
 通用 Ubuntu 镜像。
+
+## 实验性的 TAP/eBPF 网络
+
+从当前源码构建、安装后，先配置安装实例共享的 IPv4 转发和 NAT 规则：
+
+```bash
+sudo kumabox-ebpf setup
+sudo kumabox run ubuntu-fast --name fixed-net --network-backend ebpf
+sudo kumabox snapshot save fixed-net --name fixed-base
+sudo kumabox clone fixed-base --name fixed-clone --wait-network
+sudo kumabox inspect fixed-clone
+```
+
+guest 的每张网卡保留固定的模板内 IP/MAC，宿主机给每个 TAP 分配不同的
+`host_address`，由 TC eBPF 做双向地址转换，无共享 bridge，也不需要 DHCP。
+网卡布局一致的快照克隆会保留 virtio 网卡身份。配套的最新 guest agent 在网络配置
+和实际地址、路由均未变化时跳过 networkd 重配，同时更新主机名。
+该模式需要从本次源码重建 guest 镜像；旧发布镜像不包含对应的固定地址引导与 DNS 配置。
+
+第一版支持 IPv4，出网 NAT 使用 Linux 路由和 conntrack，防火墙规则按安装实例共享，
+不会随每台沙箱增加。完整 eBPF SNAT 会话表、租户网络策略、TAP 池和 IPv6 尚未实现。
+CNI 和 bridge 模式继续可用。宿主机需要 bpffs 和 TC eBPF 支持；普通构建已嵌入 BPF
+字节码，不需要现场安装 Clang。开发时可在安装 Clang/libbpf 头文件的 Linux 上运行
+`go generate ./network/tap` 重新生成字节码。
+
+默认宿主地址池为 `10.89.0.0/16`，应选择没有被现有网络使用的私有网段，可通过
+`KUMABOX_NETWORK_EBPF_SUBNET` 修改。修改地址池或安装 scope 后，使用对应的
+`kumabox-ebpf setup SUBNET PREFIX`，其中 PREFIX 为 `kt` 加上
+`KUMABOX_NETWORK_SCOPE`。宿主重启后需要通过防火墙持久化机制或启动服务重新应用规则。
+释放的宿主地址会保留 90 秒冷却时间，避免旧 TCP 状态影响另一台 VM。新沙箱立即使用其他
+空闲地址，不会等待 90 秒；规划地址池时应同时考虑活跃端点和近期回收的地址。
 
 ## 访问沙箱里的服务
 

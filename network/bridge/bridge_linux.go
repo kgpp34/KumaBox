@@ -19,6 +19,7 @@ import (
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
 
+	filelock "github.com/kumabox/kumabox/lock/flock"
 	"github.com/kumabox/kumabox/network"
 	"github.com/kumabox/kumabox/types"
 )
@@ -31,6 +32,13 @@ const (
 	ownerDirName  = ".owners"
 )
 
+func (p *Provider) queueSizeOrDefault() int {
+	if p == nil || p.queueSize <= 0 {
+		return network.DefaultQueueSize
+	}
+	return p.queueSize
+}
+
 // New constructs a direct-bridge provider without touching the host.
 func New(options Options) (*Provider, error) {
 	if err := options.Validate(); err != nil {
@@ -42,7 +50,7 @@ func New(options Options) (*Provider, error) {
 // Add creates or reclaims one TAP per NIC, attaches it to the requested
 // pre-existing bridge, and allocates a stable address from the bridge subnet.
 // No CNI plugin or private namespace is involved.
-func (p *Provider) Add(_ context.Context, id types.SandboxID, networkName string, specs ...network.AddSpec) ([]types.NetworkInterface, error) {
+func (p *Provider) Add(ctx context.Context, id types.SandboxID, networkName string, specs ...network.AddSpec) ([]types.NetworkInterface, error) {
 	if len(specs) == 0 {
 		return []types.NetworkInterface{}, nil
 	}
@@ -53,56 +61,13 @@ func (p *Provider) Add(_ context.Context, id types.SandboxID, networkName string
 	if err != nil {
 		return nil, err
 	}
-	static := slices.ContainsFunc(specs, func(spec network.AddSpec) bool { return !spec.DHCP })
-	var gateway net.IP
-	var subnet *net.IPNet
-	var prefix int
-	if static {
-		gateway, subnet, prefix, err = bridgeIPv4(bridge)
-		if err != nil {
-			return nil, err
-		}
-	}
-	unlock, err := p.lockLeases(networkName)
+	addresses, err := p.reserveAddresses(ctx, id, bridge, specs)
 	if err != nil {
 		return nil, err
 	}
-	if err := p.claimOwner(networkName, id); err != nil {
-		unlock()
-		return nil, err
-	}
-	addresses := make([]string, len(specs))
-	for index, spec := range specs {
-		if spec.DHCP {
-			continue
-		}
-		if spec.Existing != nil && spec.Existing.IPv4 != nil {
-			if !subnet.Contains(net.ParseIP(spec.Existing.IPv4.Address)) {
-				unlock()
-				return nil, fmt.Errorf("NIC %d address %s is outside bridge %s subnet", spec.Index, spec.Existing.IPv4.Address, networkName)
-			}
-			if err := p.claimLease(networkName, spec.Existing.IPv4.Address, id, spec.Index); err != nil {
-				unlock()
-				return nil, err
-			}
-			addresses[index] = spec.Existing.IPv4.Address
-			continue
-		}
-		address, err := p.allocateAddress(networkName, subnet, gateway, id, spec.Index)
-		if err != nil {
-			unlock()
-			return nil, err
-		}
-		addresses[index] = address
-	}
-	unlock()
 	result := make([]types.NetworkInterface, 0, len(specs))
 	for index, spec := range specs {
-		var ipv4 *types.IPv4Config
-		if !spec.DHCP {
-			ipv4 = &types.IPv4Config{Address: addresses[index], Gateway: gateway.String(), Prefix: prefix}
-		}
-		item, err := p.addOne(id, bridge, spec, ipv4)
+		item, err := p.addOne(id, bridge, spec, addresses[index])
 		if err != nil {
 			return nil, err
 		}
@@ -158,24 +123,13 @@ func (p *Provider) Recover(ctx context.Context, id types.SandboxID, networkName 
 	if err != nil {
 		return nil, err
 	}
-	unlock, err := p.lockLeases(networkName)
-	if err != nil {
+	specs := make([]network.AddSpec, len(expected))
+	for index, item := range expected {
+		specs[index] = network.AddSpec{Index: item.Index, DHCP: item.IPv4 == nil, Existing: &expected[index]}
+	}
+	if _, err := p.reserveAddresses(ctx, id, bridge, specs); err != nil {
 		return nil, err
 	}
-	if err := p.claimOwner(networkName, id); err != nil {
-		unlock()
-		return nil, err
-	}
-	for _, item := range expected {
-		if item.IPv4 == nil {
-			continue
-		}
-		if err := p.claimLease(networkName, item.IPv4.Address, id, item.Index); err != nil {
-			unlock()
-			return nil, err
-		}
-	}
-	unlock()
 	if err := p.Verify(ctx, id, expected); err == nil {
 		return slices.Clone(expected), nil
 	}
@@ -201,7 +155,7 @@ func (p *Provider) Recover(ctx context.Context, id types.SandboxID, networkName 
 // Delete removes every TAP named for this sandbox and releases its leases.
 func (p *Provider) Delete(_ context.Context, id types.SandboxID) error {
 	owned := make(map[string]struct{}, types.MaxSandboxNICs)
-	for index := 0; index < types.MaxSandboxNICs; index++ {
+	for index := range types.MaxSandboxNICs {
 		name, err := network.TAPName(p.prefix, id, index)
 		if err != nil {
 			return err
@@ -289,7 +243,7 @@ func (p *Provider) IndexForTAP(id types.SandboxID, tap string) (int, bool) {
 }
 
 func (p *Provider) indexForTAP(id types.SandboxID, tap string) (int, bool) {
-	for index := 0; index < types.MaxSandboxNICs; index++ {
+	for index := range types.MaxSandboxNICs {
 		name, err := network.TAPName(p.prefix, id, index)
 		if err != nil {
 			return 0, false
@@ -647,21 +601,68 @@ func (p *Provider) releaseOwner(id types.SandboxID) error {
 	return errors.Join(failures...)
 }
 
-func (p *Provider) lockLeases(bridgeName string) (func(), error) {
+// reserveAddresses keeps per-sandbox ownership durable before TAP creation.
+// DHCP has no shared host-side address allocation, so its owner fsync must not
+// hold the bridge-wide IPAM lock or serialize unrelated sandbox creation.
+func (p *Provider) reserveAddresses(
+	ctx context.Context,
+	id types.SandboxID,
+	bridge netlink.Link,
+	specs []network.AddSpec,
+) (result []*types.IPv4Config, returnErr error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	name := bridge.Attrs().Name
+	if err := p.claimOwner(name, id); err != nil {
+		return nil, err
+	}
+	result = make([]*types.IPv4Config, len(specs))
+	if !slices.ContainsFunc(specs, func(spec network.AddSpec) bool { return !spec.DHCP }) {
+		return result, nil
+	}
+	gateway, subnet, prefix, err := bridgeIPv4(bridge)
+	if err != nil {
+		return nil, err
+	}
+	guard, err := p.lockLeases(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { returnErr = errors.Join(returnErr, guard.Unlock(context.WithoutCancel(ctx))) }()
+	for index, spec := range specs {
+		if spec.DHCP {
+			continue
+		}
+		if spec.Existing != nil && spec.Existing.IPv4 != nil {
+			address := *spec.Existing.IPv4
+			if !subnet.Contains(net.ParseIP(address.Address)) {
+				return nil, fmt.Errorf("NIC %d address %s is outside bridge %s subnet", spec.Index, address.Address, name)
+			}
+			if err := p.claimLease(name, address.Address, id, spec.Index); err != nil {
+				return nil, err
+			}
+			result[index] = &address
+			continue
+		}
+		address, err := p.allocateAddress(name, subnet, gateway, id, spec.Index)
+		if err != nil {
+			return nil, err
+		}
+		result[index] = &types.IPv4Config{Address: address, Gateway: gateway.String(), Prefix: prefix}
+	}
+	return result, nil
+}
+
+func (p *Provider) lockLeases(ctx context.Context, bridgeName string) (*filelock.Lock, error) {
 	if err := p.ensureLeaseDir(bridgeName); err != nil {
 		return nil, err
 	}
-	file, err := os.OpenFile(filepath.Join(p.leaseDir, bridgeName, leaseLockName), os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // managed lease directory
-	if err != nil {
-		return nil, fmt.Errorf("open bridge lease lock: %w", err)
+	guard := filelock.New(filepath.Join(p.leaseDir, bridgeName, leaseLockName))
+	if err := guard.Lock(ctx); err != nil {
+		return nil, fmt.Errorf("lock bridge leases: %w", err)
 	}
-	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX); err != nil {
-		return nil, errors.Join(fmt.Errorf("lock bridge leases: %w", err), file.Close())
-	}
-	return func() {
-		_ = unix.Flock(int(file.Fd()), unix.LOCK_UN)
-		_ = file.Close()
-	}, nil
+	return guard, nil
 }
 
 func (p *Provider) ensureLeaseDir(bridgeName string) error {
@@ -722,13 +723,13 @@ func createTap(name string, queues, mtu int) (netlink.Link, error) {
 func attachToBridge(link netlink.Link, bridgeIndex, mtu int) error {
 	req := nl.NewNetlinkRequest(unix.RTM_SETLINK, unix.NLM_F_ACK)
 	msg := nl.NewIfInfomsg(unix.AF_UNSPEC)
-	msg.Index = int32(link.Attrs().Index)
+	msg.Index = int32(link.Attrs().Index) //nolint:gosec // kernel link indices are positive int32
 	msg.Flags = unix.IFF_UP
 	msg.Change = unix.IFF_UP
 	req.AddData(msg)
-	req.AddData(nl.NewRtAttr(unix.IFLA_MASTER, nl.Uint32Attr(uint32(bridgeIndex))))
+	req.AddData(nl.NewRtAttr(unix.IFLA_MASTER, nl.Uint32Attr(uint32(bridgeIndex)))) //nolint:gosec // resolved kernel bridge index
 	if mtu > 0 {
-		req.AddData(nl.NewRtAttr(unix.IFLA_MTU, nl.Uint32Attr(uint32(mtu))))
+		req.AddData(nl.NewRtAttr(unix.IFLA_MTU, nl.Uint32Attr(uint32(mtu)))) //nolint:gosec // positive MTU read from the existing bridge
 	}
 	if _, err := req.Execute(unix.NETLINK_ROUTE, 0); err != nil {
 		return fmt.Errorf("attach TAP %s to bridge %d: %w", link.Attrs().Name, bridgeIndex, err)

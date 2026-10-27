@@ -94,6 +94,10 @@ type networkInterfaceOutput struct {
 	Network string `json:"network"`
 	// IPv4 is the optional guest-visible IPv4 assignment.
 	IPv4 *ipv4Output `json:"ipv4,omitempty"`
+	// AddressMode describes guest addressing independently of the host backend.
+	AddressMode types.AddressMode `json:"address_mode,omitempty"`
+	// HostAddress is the unique routed endpoint for a fixed guest address.
+	HostAddress string `json:"host_address,omitempty"`
 }
 
 // ipv4Output is the stable JSON projection of a guest IPv4 assignment.
@@ -141,7 +145,7 @@ func networkResult(setup types.NetworkSetup) *networkOutput {
 		item := networkInterfaceOutput{
 			Index: networkInterface.Index, Name: networkInterface.Name, TAP: networkInterface.TAP,
 			MAC: networkInterface.MAC, Queues: networkInterface.Queues, QueueSize: networkInterface.QueueSize,
-			Network: networkInterface.Network,
+			Network: networkInterface.Network, AddressMode: networkInterface.AddressMode, HostAddress: networkInterface.HostAddress,
 		}
 		if networkInterface.IPv4 != nil {
 			item.IPv4 = &ipv4Output{

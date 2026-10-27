@@ -252,6 +252,66 @@ func TestCreateZeroNICPreparesHotplugNamespace(t *testing.T) {
 	}
 }
 
+type bridgeResizeNetwork struct{ *resizeNetwork }
+
+func (*bridgeResizeNetwork) Type() types.NetworkBackend { return types.NetworkBackendBridge }
+
+func TestCreateZeroNICBridgePreservesHotplugPolicy(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	provider := &bridgeResizeNetwork{resizeNetwork: &resizeNetwork{
+		fakeNetwork: &fakeNetwork{steps: steps},
+		owned:       make(map[int]types.NetworkInterface),
+	}}
+	networks, err := network.NewRegistry(provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.dependencies.networks = networks
+	record, err := service.Create(t.Context(), CreateSandboxRequest{
+		ImageReference: "demo",
+		Config: types.SandboxConfig{
+			Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory, Storage: types.DefaultSandboxStorage,
+			NetworkBackend: types.NetworkBackendBridge, NetworkName: "br0",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Network.Backend != types.NetworkBackendBridge || record.Network.Namespace != "" ||
+		record.Config.NetworkName != "br0" || record.Config.NICs != 0 {
+		t.Fatalf("offline bridge policy = %+v", record)
+	}
+	if _, err := service.Start(t.Context(), "box"); err != nil {
+		t.Fatalf("offline bridge sandbox cannot start: %v", err)
+	}
+}
+
+func TestNetResizeBridgeCanRemoveAndReaddLastNIC(t *testing.T) {
+	service, provider, _, _ := newResizeService(t, 1)
+	networks, err := network.NewRegistry(&bridgeResizeNetwork{resizeNetwork: provider})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.dependencies.networks = networks
+	catalog := service.dependencies.catalog.(*fakeCatalog)
+	catalog.record.Config.NetworkBackend = types.NetworkBackendBridge
+	catalog.record.Network.Backend = types.NetworkBackendBridge
+	catalog.record.Network.Namespace = ""
+	for _, count := range []int{0, 1} {
+		record, err := service.NetResize(t.Context(), "box", count)
+		if err != nil {
+			t.Fatalf("resize to %d NICs: %v", count, err)
+		}
+		if err := record.Validate(); err != nil {
+			t.Fatalf("resize to %d NICs left an invalid record: %v", count, err)
+		}
+		if record.Config.NICs != count || record.Network.Backend != types.NetworkBackendBridge ||
+			record.Config.NetworkName != "bridge" || len(provider.owned) != count {
+			t.Fatalf("resize to %d lost bridge policy: %+v", count, record)
+		}
+	}
+}
+
 func TestNetResizeAddFailureRollsBackCNI(t *testing.T) {
 	service, provider, runtime, _ := newResizeService(t, 1)
 	runtime.addErr = errors.New("VMM rejected NIC")
