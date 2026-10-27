@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/containernetworking/cni/libcni"
 	cnitypes "github.com/containernetworking/cni/pkg/types"
@@ -55,9 +56,10 @@ func (p *Provider) Prepare(ctx context.Context, id types.SandboxID) (string, err
 	return path, nil
 }
 
-// Add stages every NIC before plugin execution, then advances one interface at
-// a time through adding to ready. A crash during ADD therefore leaves enough
-// information for Delete to issue the matching DEL.
+// Add stages every NIC before plugin execution, then provisions pending NICs
+// concurrently and commits their ready records in one metadata update. A crash
+// during ADD therefore leaves enough information for Delete to issue the
+// matching DEL.
 //
 //	staged -> adding -> CNI ADD -> TAP/TC -> ready
 //	              \---- failure ----> CNI DEL -> sweep
@@ -92,6 +94,16 @@ func (p *Provider) Add(ctx context.Context, id types.SandboxID, networkName stri
 		returnErr = errors.Join(returnErr, p.rollback(rollbackCtx, id, list, touched))
 	}()
 
+	// Resolve and stage every NIC before touching the host. The phase update
+	// below is one metadata commit rather than one per interface; the expensive
+	// CNI ADD and TAP/TC work then runs concurrently across NICs. Different
+	// interfaces have disjoint TAPs and veths, and a shared netns is only used
+	// as the target of those operations.
+	type pendingNIC struct {
+		spec network.AddSpec
+		item interfaceData
+	}
+	pending := make([]pendingNIC, 0, len(specs))
 	result = make([]types.NetworkInterface, 0, len(specs))
 	for _, spec := range specs {
 		item, err := p.interfaceRecord(ctx, id, spec.Index)
@@ -115,17 +127,47 @@ func (p *Provider) Add(ctx context.Context, id types.SandboxID, networkName stri
 				return nil, fmt.Errorf("recover interrupted CNI ADD for %s/%s: %w", id, item.Name, err)
 			}
 		}
-		if err := p.setInterfacePhase(ctx, id, spec.Index, interfaceAdding); err != nil {
+		pending = append(pending, pendingNIC{spec: spec, item: item})
+	}
+	if len(pending) > 0 {
+		indices := make([]int, len(pending))
+		for index := range pending {
+			indices[index] = pending[index].spec.Index
+		}
+		if err := p.setInterfacesPhase(ctx, id, indices, interfaceAdding); err != nil {
 			return nil, err
 		}
-		ready, err := p.addOne(ctx, id, list, item, spec.Existing)
-		if err != nil {
+		type addOutcome struct {
+			ready types.NetworkInterface
+			err   error
+		}
+		outcomes := make([]addOutcome, len(pending))
+		var wait sync.WaitGroup
+		for index := range pending {
+			wait.Add(1)
+			go func(index int) {
+				defer wait.Done()
+				ready, err := p.addOne(ctx, id, list, pending[index].item, pending[index].spec.Existing)
+				outcomes[index] = addOutcome{ready: ready, err: err}
+			}(index)
+		}
+		// A failure must not cancel a peer mid-ADD; wait for every interface so
+		// rollback sees a settled CNI/TAP state, then report all failures.
+		wait.Wait()
+		var addErr error
+		for index := range outcomes {
+			if outcomes[index].err != nil {
+				addErr = errors.Join(addErr, outcomes[index].err)
+				continue
+			}
+			result = append(result, outcomes[index].ready)
+		}
+		if addErr != nil {
+			return nil, addErr
+		}
+		if err := p.storeReadyBatch(ctx, id, result); err != nil {
 			return nil, err
 		}
-		if err := p.storeReady(ctx, id, ready); err != nil {
-			return nil, err
-		}
-		result = append(result, ready)
 	}
 	if err := p.update(ctx, id, func(record *recordData) (*recordData, error) {
 		if record == nil {
@@ -353,30 +395,37 @@ func (p *Provider) deleteOne(ctx context.Context, id types.SandboxID, list *libc
 	return nil
 }
 
-func (p *Provider) setInterfacePhase(ctx context.Context, id types.SandboxID, index int, phase interfacePhase) error {
+func (p *Provider) setInterfacesPhase(ctx context.Context, id types.SandboxID, indices []int, phase interfacePhase) error {
 	return p.update(ctx, id, func(record *recordData) (*recordData, error) {
 		if record == nil {
 			return nil, corrupt(errors.New("network record is missing"))
 		}
-		position := findInterface(record, index)
-		if position < 0 {
-			return nil, corrupt(fmt.Errorf("network interface %d is missing", index))
+		for _, index := range indices {
+			position := findInterface(record, index)
+			if position < 0 {
+				return nil, corrupt(fmt.Errorf("network interface %d is missing", index))
+			}
+			record.Interfaces[position].Phase = phase
 		}
-		record.Interfaces[position].Phase = phase
 		return record, nil
 	})
 }
 
-func (p *Provider) storeReady(ctx context.Context, id types.SandboxID, ready types.NetworkInterface) error {
+func (p *Provider) storeReadyBatch(ctx context.Context, id types.SandboxID, ready []types.NetworkInterface) error {
+	if len(ready) == 0 {
+		return nil
+	}
 	return p.update(ctx, id, func(record *recordData) (*recordData, error) {
 		if record == nil {
 			return nil, corrupt(errors.New("network record is missing"))
 		}
-		position := findInterface(record, ready.Index)
-		if position < 0 {
-			return nil, corrupt(fmt.Errorf("network interface %d is missing", ready.Index))
+		for _, item := range ready {
+			position := findInterface(record, item.Index)
+			if position < 0 {
+				return nil, corrupt(fmt.Errorf("network interface %d is missing", item.Index))
+			}
+			record.Interfaces[position] = fromType(item, interfaceReady)
 		}
-		record.Interfaces[position] = fromType(ready, interfaceReady)
 		return record, nil
 	})
 }

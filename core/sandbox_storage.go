@@ -190,12 +190,10 @@ func (s *SandboxService) create(ctx context.Context, request CreateSandboxReques
 		}
 		record.Network = setup
 		record.Config.NetworkName = interfaces[0].Network
-		if err := s.dependencies.reporter.Status("quiescing sandbox network"); err != nil {
-			return types.Sandbox{}, s.compensate(ctx, record, "report", err)
-		}
-		if err := networkProvider.Quiesce(ctx, id); err != nil {
-			return types.Sandbox{}, s.compensate(ctx, record, "network quiesce", err)
-		}
+		// Links stay up after CNI ADD. Start unquiesces retained plumbing before
+		// launch, while Stop quiesces it after the VMM is gone. Quiescing here
+		// only to unquiesce again in Start added a full network round trip to
+		// every create/run and clone.
 	}
 	diskStatus := "creating sparse ext4 disk"
 	if origin != nil {

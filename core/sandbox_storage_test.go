@@ -123,7 +123,6 @@ func TestCreatePublishesResolvedNetworkWithCreatedState(t *testing.T) {
 		"status:resolving and checking image", "verify", "reserve",
 		"status:preparing sandbox network", "network-prepare",
 		"status:allocating sandbox network interfaces", "network-add",
-		"status:quiescing sandbox network", "network-quiesce",
 		"status:creating sparse ext4 disk", "disk",
 		"status:committing created state", "created", "report",
 	}

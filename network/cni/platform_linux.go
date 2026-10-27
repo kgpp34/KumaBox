@@ -116,21 +116,21 @@ func setupRedirect(interfaceName, tapName string, queues int, overrideMAC string
 			return "", fmt.Errorf("remove address %s from %s: %w", address.IPNet, interfaceName, err)
 		}
 	}
-	tap, err := createTAP(tapName, queues)
+	tap, err := createTAP(tapName, queues, source.Attrs().MTU)
 	if err != nil {
 		return "", err
 	}
-	if source.Attrs().MTU > 0 {
-		if err := netlink.LinkSetMTU(tap, source.Attrs().MTU); err != nil {
-			return "", fmt.Errorf("set TAP %s MTU: %w", tapName, err)
+	// The TAP is created already up with the source MTU. Only the CNI veth may
+	// still need a state transition; skip it when the plugin already brought it
+	// up, which is the normal bridge-plugin case.
+	if source.Attrs().Flags&net.FlagUp == 0 {
+		if err := netlink.LinkSetUp(source); err != nil {
+			return "", fmt.Errorf("set link %s up: %w", source.Attrs().Name, err)
 		}
 	}
 	for _, link := range []netlink.Link{source, tap} {
-		if err := netlink.LinkSetUp(link); err != nil {
-			return "", fmt.Errorf("set link %s up: %w", link.Attrs().Name, err)
-		}
 		qdisc := &netlink.Ingress{QdiscAttrs: netlink.QdiscAttrs{LinkIndex: link.Attrs().Index, Parent: netlink.HANDLE_INGRESS}}
-		if err := netlink.QdiscAdd(qdisc); err != nil {
+		if err := netlink.QdiscAdd(qdisc); err != nil && !errors.Is(err, syscall.EEXIST) {
 			return "", fmt.Errorf("add ingress qdisc to %s: %w", link.Attrs().Name, err)
 		}
 	}
@@ -143,7 +143,7 @@ func setupRedirect(interfaceName, tapName string, queues int, overrideMAC string
 	return mac, nil
 }
 
-func createTAP(name string, queues int) (netlink.Link, error) {
+func createTAP(name string, queues, mtu int) (netlink.Link, error) {
 	queuePairs := max(1, queues/2)
 	flags := netlink.TUNTAP_VNET_HDR | netlink.TUNTAP_NO_PI
 	if queuePairs == 1 {
@@ -151,8 +151,12 @@ func createTAP(name string, queues int) (netlink.Link, error) {
 	} else {
 		flags |= netlink.TUNTAP_MULTI_QUEUE_DEFAULTS
 	}
+	attrs := netlink.LinkAttrs{Name: name, Flags: net.FlagUp, TxQLen: -1}
+	if mtu > 0 {
+		attrs.MTU = mtu
+	}
 	tap := &netlink.Tuntap{
-		LinkAttrs: netlink.LinkAttrs{Name: name},
+		LinkAttrs: attrs,
 		Mode:      netlink.TUNTAP_MODE_TAP,
 		Queues:    queuePairs,
 		Flags:     flags,
@@ -163,13 +167,18 @@ func createTAP(name string, queues int) (netlink.Link, error) {
 	for _, descriptor := range tap.Fds {
 		_ = descriptor.Close()
 	}
-	link, err := netlink.LinkByName(name)
-	if err != nil {
-		return nil, fmt.Errorf("resolve TAP %s: %w", name, err)
+	// LinkAdd resolves the index after TUNSETIFF. Fall back to a lookup only
+	// when the kernel did not expose it, instead of paying a dump on every NIC.
+	link := netlink.Link(tap)
+	if tap.Attrs().Index == 0 {
+		resolved, err := netlink.LinkByName(name)
+		if err != nil {
+			return nil, fmt.Errorf("resolve TAP %s: %w", name, err)
+		}
+		link = resolved
 	}
-	// Keep the kernel's TAP queue length. Inflating it eagerly allocates large
-	// per-queue buffers when the link comes up, even for idle sandboxes.
-	// GRO tuning is optional because not every kernel supports it.
+	// Keep the kernel's TAP queue length (TxQLen is omitted above). GRO tuning
+	// is optional because not every kernel supports it.
 	_ = netlink.LinkSetGROMaxSize(link, tapGROMaxSize)
 	return link, nil
 }

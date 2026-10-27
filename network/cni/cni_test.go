@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,14 +26,22 @@ func newTestProvider(options Options, store metadata.Store, lists map[string]*li
 }
 
 type fakeRuntime struct {
-	addError error
-	delError error
-	adds     []string
-	dels     []string
+	mu               sync.Mutex
+	addError         error
+	delError         error
+	failInterface    string
+	failInterfaceErr error
+	adds             []string
+	dels             []string
 }
 
 func (f *fakeRuntime) AddNetworkList(_ context.Context, _ *libcni.NetworkConfigList, runtime *libcni.RuntimeConf) (cnitypes.Result, error) {
+	f.mu.Lock()
 	f.adds = append(f.adds, runtime.IfName)
+	f.mu.Unlock()
+	if f.failInterface != "" && runtime.IfName == f.failInterface {
+		return nil, f.failInterfaceErr
+	}
 	if f.addError != nil {
 		return nil, f.addError
 	}
@@ -46,11 +55,14 @@ func (f *fakeRuntime) AddNetworkList(_ context.Context, _ *libcni.NetworkConfigL
 }
 
 func (f *fakeRuntime) DelNetworkList(_ context.Context, _ *libcni.NetworkConfigList, runtime *libcni.RuntimeConf) error {
+	f.mu.Lock()
 	f.dels = append(f.dels, runtime.IfName)
+	f.mu.Unlock()
 	return f.delError
 }
 
 type fakePlatform struct {
+	mu              sync.Mutex
 	namespace       bool
 	removeError     error
 	linksUp         []bool
@@ -62,6 +74,8 @@ type fakePlatform struct {
 }
 
 func (f *fakePlatform) EnsureNamespace(name, _ string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	created := !f.namespace
 	f.namespace = true
 	f.ensuredNames = append(f.ensuredNames, name)
@@ -69,6 +83,8 @@ func (f *fakePlatform) EnsureNamespace(name, _ string) (bool, error) {
 }
 
 func (f *fakePlatform) RemoveNamespace(_ context.Context, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.removedNames = append(f.removedNames, name)
 	if f.removeError != nil {
 		return f.removeError
@@ -78,6 +94,8 @@ func (f *fakePlatform) RemoveNamespace(_ context.Context, name string) error {
 }
 
 func (f *fakePlatform) NamespaceExists(string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if !f.namespace {
 		return os.ErrNotExist
 	}
@@ -85,7 +103,9 @@ func (f *fakePlatform) NamespaceExists(string) error {
 }
 
 func (f *fakePlatform) SetupRedirect(_, interfaceName, _ string, _ int, overrideMAC string) (string, error) {
+	f.mu.Lock()
 	f.redirectedNames = append(f.redirectedNames, interfaceName)
+	f.mu.Unlock()
 	if overrideMAC != "" {
 		return overrideMAC, nil
 	}
@@ -93,16 +113,22 @@ func (f *fakePlatform) SetupRedirect(_, interfaceName, _ string, _ int, override
 }
 
 func (f *fakePlatform) DeleteTAP(_, tap string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.deletedTAPs = append(f.deletedTAPs, tap)
 	return nil
 }
 
 func (f *fakePlatform) SetLinkState(_ string, _ []string, up bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.linksUp = append(f.linksUp, up)
 	return nil
 }
 
 func (f *fakePlatform) VerifyTAP(_, tap string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.verifiedTAPs = append(f.verifiedTAPs, tap)
 	return nil
 }
@@ -154,6 +180,66 @@ func TestProviderLifecyclePersistsCleanupIntent(t *testing.T) {
 	}
 	if !slices.Equal(host.linksUp, []bool{false, true}) {
 		t.Fatalf("link states = %v", host.linksUp)
+	}
+}
+
+func TestAddMultipleInterfaces(t *testing.T) {
+	provider, executor, host, id := testProvider(t)
+	if _, err := provider.Prepare(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	interfaces, err := provider.Add(t.Context(), id, "bridge",
+		network.AddSpec{Index: 0, Queues: 4},
+		network.AddSpec{Index: 1, Queues: 4},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(interfaces) != 2 || interfaces[0].Index != 0 || interfaces[1].Index != 1 {
+		t.Fatalf("interfaces = %+v", interfaces)
+	}
+	adds := append([]string(nil), executor.adds...)
+	slices.Sort(adds)
+	if !slices.Equal(adds, []string{"eth0", "eth1"}) {
+		t.Fatalf("CNI adds = %v", adds)
+	}
+	redirects := append([]string(nil), host.redirectedNames...)
+	slices.Sort(redirects)
+	if !slices.Equal(redirects, []string{"eth0", "eth1"}) {
+		t.Fatalf("redirects = %v", redirects)
+	}
+	record, err := provider.view(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record == nil || record.Phase != phaseReady || len(record.Interfaces) != 2 {
+		t.Fatalf("record = %+v", record)
+	}
+	for _, item := range record.Interfaces {
+		if item.Phase != interfaceReady {
+			t.Fatalf("interface %d phase = %s", item.Index, item.Phase)
+		}
+	}
+}
+
+func TestAddFailureRollsBackEveryNIC(t *testing.T) {
+	provider, executor, _, id := testProvider(t)
+	if _, err := provider.Prepare(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("second NIC failed")
+	executor.failInterface = "eth1"
+	executor.failInterfaceErr = failure
+	if _, err := provider.Add(t.Context(), id, "bridge",
+		network.AddSpec{Index: 0, Queues: 4},
+		network.AddSpec{Index: 1, Queues: 4},
+	); !errors.Is(err, failure) {
+		t.Fatalf("Add error = %v, want %v", err, failure)
+	}
+	dels := append([]string(nil), executor.dels...)
+	slices.Sort(dels)
+	if !slices.Equal(dels, []string{"eth0", "eth1"}) {
+		t.Fatalf("rollback CNI dels = %v", dels)
 	}
 }
 
