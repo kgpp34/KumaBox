@@ -23,6 +23,8 @@ import (
 	"github.com/kumabox/kumabox/types"
 )
 
+var _ network.Resizer = (*Provider)(nil)
+
 const (
 	tapGROMaxSize = 65536
 	leaseLockName = ".lock"
@@ -225,6 +227,145 @@ func (p *Provider) Delete(_ context.Context, id types.SandboxID) error {
 	}
 	if err := p.releaseOwner(id); err != nil {
 		failures = append(failures, err)
+	}
+	return errors.Join(failures...)
+}
+
+// Allocated lists TAP or lease slots owned by the sandbox, including slots
+// left by an interrupted resize.
+func (p *Provider) Allocated(_ context.Context, id types.SandboxID) ([]int, error) {
+	allocated := make(map[int]struct{}, types.MaxSandboxNICs)
+	links, err := netlink.LinkList()
+	if err != nil {
+		return nil, fmt.Errorf("list host links: %w", err)
+	}
+	for _, link := range links {
+		if index, ok := p.indexForTAP(id, link.Attrs().Name); ok {
+			allocated[index] = struct{}{}
+		}
+	}
+	entries, err := os.ReadDir(p.leaseDir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("read bridge lease directory: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == ownerDirName {
+			continue
+		}
+		directory := filepath.Join(p.leaseDir, entry.Name())
+		leases, err := os.ReadDir(directory)
+		if err != nil {
+			return nil, fmt.Errorf("read bridge leases for %s: %w", entry.Name(), err)
+		}
+		for _, lease := range leases {
+			if lease.IsDir() || lease.Name() == leaseLockName {
+				continue
+			}
+			raw, err := os.ReadFile(filepath.Join(directory, lease.Name())) //nolint:gosec // managed lease directory
+			if err != nil {
+				return nil, fmt.Errorf("read bridge lease %s: %w", lease.Name(), err)
+			}
+			owner, slot, ok := strings.Cut(string(raw), "/")
+			if !ok || owner != id.String() {
+				continue
+			}
+			index, err := strconv.Atoi(slot)
+			if err == nil && index >= 0 {
+				allocated[index] = struct{}{}
+			}
+		}
+	}
+	result := make([]int, 0, len(allocated))
+	for index := range allocated {
+		result = append(result, index)
+	}
+	slices.Sort(result)
+	return result, nil
+}
+
+// IndexForTAP maps one managed TAP name back to its sandbox slot.
+func (p *Provider) IndexForTAP(id types.SandboxID, tap string) (int, bool) {
+	return p.indexForTAP(id, tap)
+}
+
+func (p *Provider) indexForTAP(id types.SandboxID, tap string) (int, bool) {
+	for index := 0; index < types.MaxSandboxNICs; index++ {
+		name, err := network.TAPName(p.prefix, id, index)
+		if err != nil {
+			return 0, false
+		}
+		if name == tap {
+			return index, true
+		}
+	}
+	return 0, false
+}
+
+// Remove releases selected live-resize slots while retaining the sandbox owner
+// record for a later full Delete.
+func (p *Provider) Remove(_ context.Context, id types.SandboxID, indices ...int) error {
+	var failures []error
+	for _, index := range indices {
+		if index < 0 {
+			failures = append(failures, fmt.Errorf("negative NIC index %d", index))
+			continue
+		}
+		name, err := network.TAPName(p.prefix, id, index)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		link, err := netlink.LinkByName(name)
+		if err == nil {
+			if err := netlink.LinkDel(link); err != nil && !linkMissing(err) {
+				failures = append(failures, fmt.Errorf("delete TAP %s: %w", name, err))
+			}
+		} else if !linkMissing(err) {
+			failures = append(failures, fmt.Errorf("find TAP %s: %w", name, err))
+		}
+		if err := p.releaseLeaseIndex(id, index); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func (p *Provider) releaseLeaseIndex(id types.SandboxID, index int) error {
+	owner := id.String() + "/" + strconv.Itoa(index)
+	entries, err := os.ReadDir(p.leaseDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read bridge lease directory: %w", err)
+	}
+	var failures []error
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == ownerDirName {
+			continue
+		}
+		directory := filepath.Join(p.leaseDir, entry.Name())
+		leases, err := os.ReadDir(directory)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("read bridge leases for %s: %w", entry.Name(), err))
+			continue
+		}
+		for _, lease := range leases {
+			if lease.IsDir() || lease.Name() == leaseLockName {
+				continue
+			}
+			path := filepath.Join(directory, lease.Name())
+			raw, err := os.ReadFile(path) //nolint:gosec // managed lease directory
+			if err != nil {
+				failures = append(failures, fmt.Errorf("read bridge lease %s: %w", path, err))
+				continue
+			}
+			if strings.TrimSpace(string(raw)) == owner {
+				if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+					failures = append(failures, fmt.Errorf("release bridge lease %s: %w", path, err))
+				}
+			}
+		}
 	}
 	return errors.Join(failures...)
 }

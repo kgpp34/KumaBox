@@ -188,7 +188,11 @@ func reconcileNICs(ctx context.Context, record types.Sandbox, target int, provid
 
 func (s *SandboxService) addLiveNIC(ctx context.Context, record types.Sandbox, provider network.Resizer, hotplugger vmm.NetworkHotplugger, backend vmm.Backend, process vmm.Process) (types.Sandbox, error) {
 	index := record.Config.NICs
-	spec := network.AddSpec{Index: index, Queues: network.QueueCount(record.Config.CPUs)}
+	spec := network.AddSpec{
+		Index:  index,
+		Queues: network.QueueCount(record.Config.CPUs),
+		DHCP:   record.Network.Backend == types.NetworkBackendBridge && !record.Config.BridgeStatic,
+	}
 	interfaces, err := provider.Add(ctx, record.ID, record.Config.NetworkName, spec)
 	if err != nil {
 		return record, err

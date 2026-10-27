@@ -6,6 +6,7 @@ import (
 	"net"
 	"testing"
 
+	"github.com/kumabox/kumabox/network"
 	"github.com/kumabox/kumabox/types"
 )
 
@@ -62,5 +63,36 @@ func TestBridgeOwnedIDs(t *testing.T) {
 	}
 	if len(owned) != 1 || owned[0] != id {
 		t.Fatalf("OwnedIDs = %v", owned)
+	}
+}
+
+func TestBridgeIndexForTAP(t *testing.T) {
+	provider := &Provider{prefix: "bt", queueSize: 512, leaseDir: t.TempDir()}
+	id := types.SandboxID("123e4567-e89b-42d3-a456-426614174000")
+	tap, err := network.TAPName(provider.prefix, id, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index, ok := provider.IndexForTAP(id, tap); !ok || index != 3 {
+		t.Fatalf("IndexForTAP = %d, %t", index, ok)
+	}
+	if _, ok := provider.IndexForTAP(id, "bt00000000-0"); ok {
+		t.Fatal("foreign TAP was accepted")
+	}
+}
+
+func TestBridgeAllocatedIncludesStaticLease(t *testing.T) {
+	provider := &Provider{prefix: "bt", queueSize: 512, leaseDir: t.TempDir()}
+	subnet := &net.IPNet{IP: net.ParseIP("10.99.0.0").To4(), Mask: net.CIDRMask(16, 32)}
+	id := types.SandboxID("123e4567-e89b-42d3-a456-426614174000")
+	if _, err := provider.allocateAddress("kubebr0", subnet, net.ParseIP("10.99.0.1"), id, 2); err != nil {
+		t.Fatal(err)
+	}
+	allocated, err := provider.Allocated(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allocated) != 1 || allocated[0] != 2 {
+		t.Fatalf("Allocated = %v", allocated)
 	}
 }
