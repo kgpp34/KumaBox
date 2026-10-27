@@ -43,6 +43,9 @@ fi
 pid_file="/run/kumabox-bridge-${name}.pid"
 
 stop_dhcp() {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl disable --now "kumabox-bridge-dhcp@${name}.service" 2>/dev/null || true
+    fi
     if [ -f "$pid_file" ]; then
         local pid
         pid=$(cat "$pid_file" 2>/dev/null || true)
@@ -96,10 +99,37 @@ print(gateway, network.netmask, start, end)
 PY
 )
     stop_dhcp
+    local range="${start},${end},${netmask},12h"
+    if command -v systemctl >/dev/null 2>&1; then
+        mkdir -p /etc/kumabox
+        cat > "/etc/kumabox/bridge-${name}.env" <<EOF
+DHCP_RANGE=${range}
+GATEWAY=${gateway}
+EOF
+        cat > /etc/systemd/system/kumabox-bridge-dhcp@.service <<'UNIT'
+[Unit]
+Description=KumaBox DHCP for bridge %i
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/kumabox/bridge-%i.env
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --interface=%i --bind-interfaces --dhcp-range=${DHCP_RANGE} --dhcp-option=3,${GATEWAY} --dhcp-option=6,8.8.8.8,1.1.1.1 --no-ping --port=0
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+        systemctl daemon-reload
+        if systemctl enable --now "kumabox-bridge-dhcp@${name}.service"; then
+            echo "DHCP unit started on ${name} (${start}-${end}, gateway ${gateway})"
+            return
+        fi
+        echo "systemd DHCP unit failed; falling back to a foreground process" >&2
+    fi
     dnsmasq --interface="$name" --bind-interfaces \
-        --dhcp-range="${start},${end},${netmask},12h" \
+        --dhcp-range="${range}" \
         --dhcp-option=3,"${gateway}" \
-        --dhcp-option=6,8.8.8.8,1.1.1.1 \
+        --dhcp-option=6,8.8.8.8,1.1.1.1 --no-ping \
         --pid-file="$pid_file" --port=0
     echo "DHCP server started on ${name} (${start}-${end}, gateway ${gateway})"
 }
@@ -136,6 +166,7 @@ PY
         ;;
     delete)
         stop_dhcp
+        rm -f "/etc/kumabox/bridge-${name}.env"
         ip link del "$name" 2>/dev/null || true
         if command -v iptables >/dev/null 2>&1; then
             iptables -D FORWARD -i "$name" -j ACCEPT 2>/dev/null || true
