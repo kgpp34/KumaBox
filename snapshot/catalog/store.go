@@ -123,6 +123,7 @@ type recordData struct {
 	NICs           int                  `json:"nics,omitempty"`
 	NetworkName    string               `json:"network_name,omitempty"`
 	NetworkBackend string               `json:"network_backend,omitempty"`
+	BridgeStatic   bool                 `json:"bridge_static,omitempty"`
 	Size           int64                `json:"size"`
 	CreatedAt      time.Time            `json:"created_at"`
 	LastAccessedAt time.Time            `json:"last_accessed_at,omitzero"`
@@ -473,7 +474,7 @@ func encode(snapshot types.Snapshot, ready bool) recordData {
 		ImageDigest:      snapshot.ImageDigest.String(), RegistryReference: snapshot.RegistryReference,
 		VMM:  string(snapshot.VMM),
 		CPUs: snapshot.Config.CPUs, Memory: snapshot.Config.Memory, SharedMemory: snapshot.Config.SharedMemory, CPUPolicy: snapshot.Config.CPUPolicy, HugePages: snapshot.Config.HugePages, Mergeable: snapshot.Config.Mergeable, NoBalloon: snapshot.Config.NoBalloon, Storage: snapshot.Config.Storage, DataDisks: snapshot.Config.DataDisks,
-		NICs: snapshot.Config.NICs, NetworkName: snapshot.Config.NetworkName, NetworkBackend: string(snapshot.Config.NetworkBackend),
+		NICs: snapshot.Config.NICs, NetworkName: snapshot.Config.NetworkName, NetworkBackend: string(snapshot.Config.NetworkBackend), BridgeStatic: snapshot.Config.BridgeStatic,
 		Size: snapshot.Size, CreatedAt: snapshot.CreatedAt.UTC(), LastAccessedAt: snapshot.LastAccessedAt.UTC(), Ready: ready,
 	}
 }
@@ -498,7 +499,7 @@ func decodeSnapshot(record recordData) (types.Snapshot, error) {
 		VMM: types.VMMType(record.VMM), Size: record.Size,
 		Config: types.SandboxConfig{
 			Name: record.SandboxName, CPUs: record.CPUs, Memory: record.Memory, SharedMemory: record.SharedMemory, CPUPolicy: record.CPUPolicy, HugePages: record.HugePages, Mergeable: record.Mergeable, NoBalloon: record.NoBalloon, Storage: record.Storage, DataDisks: record.DataDisks,
-			NICs: record.NICs, NetworkName: record.NetworkName, NetworkBackend: types.NetworkBackend(record.NetworkBackend),
+			NICs: record.NICs, NetworkName: record.NetworkName, NetworkBackend: types.NetworkBackend(record.NetworkBackend), BridgeStatic: record.BridgeStatic,
 		},
 		CreatedAt: record.CreatedAt.UTC(), LastAccessedAt: record.LastAccessedAt.UTC(),
 	}

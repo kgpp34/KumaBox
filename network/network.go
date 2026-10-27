@@ -33,6 +33,9 @@ type AddSpec struct {
 	Queues int
 	// Existing carries the identity that recovery must preserve.
 	Existing *types.NetworkInterface
+	// DHCP asks the provider to leave the address to the guest's DHCP client.
+	// Bridge backends use it for Cocoon-compatible bridge networking.
+	DHCP bool
 }
 
 // Provider owns host network namespaces, CNI allocations, and TAP plumbing for

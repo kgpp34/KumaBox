@@ -19,18 +19,23 @@ func writeNetworkFiles(directory string, configuration NetworkConfig) error {
 	}
 	wanted := make(map[string]bool, len(configuration.Interfaces))
 	for _, device := range configuration.Interfaces {
-		if device.Address == "" {
+		if device.Address == "" && !device.DHCP {
 			continue
 		}
 		name := "10-kumabox-" + strings.ReplaceAll(device.MAC, ":", "") + ".network"
 		wanted[name] = true
 		var content strings.Builder
-		fmt.Fprintf(&content, "[Match]\nMACAddress=%s\n\n[Network]\nAddress=%s/%d\n", device.MAC, device.Address, device.Prefix)
-		if device.Gateway != "" {
-			fmt.Fprintf(&content, "Gateway=%s\n", device.Gateway)
-		}
-		for _, server := range configuration.DNSServers {
-			fmt.Fprintf(&content, "DNS=%s\n", server)
+		fmt.Fprintf(&content, "[Match]\nMACAddress=%s\n\n[Network]\n", device.MAC)
+		if device.DHCP {
+			content.WriteString("DHCP=ipv4\n\n[DHCPv4]\nClientIdentifier=mac\n")
+		} else {
+			fmt.Fprintf(&content, "Address=%s/%d\n", device.Address, device.Prefix)
+			if device.Gateway != "" {
+				fmt.Fprintf(&content, "Gateway=%s\n", device.Gateway)
+			}
+			for _, server := range configuration.DNSServers {
+				fmt.Fprintf(&content, "DNS=%s\n", server)
+			}
 		}
 		stage, err := os.CreateTemp(directory, ".kumabox-network-")
 		if err != nil {

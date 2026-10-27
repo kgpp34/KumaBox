@@ -181,6 +181,7 @@ func (s *SandboxService) create(ctx context.Context, request CreateSandboxReques
 		queues := network.QueueCount(request.Config.CPUs)
 		for index := range specs {
 			specs[index].Queues = queues
+			specs[index].DHCP = backend == types.NetworkBackendBridge && !request.Config.BridgeStatic
 		}
 		interfaces, err := networkProvider.Add(ctx, id, request.Config.NetworkName, specs...)
 		if err != nil {

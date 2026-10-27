@@ -2,12 +2,16 @@
 # scripts/kumabox-bridge.sh — create/delete the host bridge used by
 # `kumabox run --bridge NAME`.
 #
-# KumaBox allocates each guest a static address from the bridge's IPv4 subnet;
-# no DHCP server is required. The bridge is not persisted by this script.
+# The default guest mode is DHCP, matching Cocoon's bridge mode. Pass --static
+# to use KumaBox's host-side static IPAM instead (`--bridge-static`).
 #
 # Usage:
 #   sudo ./scripts/kumabox-bridge.sh create kubebr0 10.99.0.0/16
+#   sudo ./scripts/kumabox-bridge.sh create kubebr0 10.99.0.0/16 --static
 #   sudo ./scripts/kumabox-bridge.sh delete kubebr0
+#
+# The bridge and DHCP server are not persisted by this script; use
+# systemd-networkd/dnsmasq units for production.
 
 set -euo pipefail
 
@@ -15,14 +19,15 @@ PATH="${PATH:-}:/usr/local/sbin:/usr/sbin:/sbin"
 export PATH
 
 usage() {
-    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
 }
 
-[ "$#" -eq 3 ] || [ "$#" -eq 2 ] || usage
+[ "$#" -ge 2 ] || usage
 action=$1
 name=$2
 cidr=${3:-}
+mode=${4:---dhcp}
 
 case "$name" in
     ''|*[!A-Za-z0-9_.-]*|.|..)
@@ -34,6 +39,19 @@ if [ "${#name}" -gt 15 ]; then
     echo "bridge name exceeds the Linux interface name limit: $name" >&2
     exit 2
 fi
+
+pid_file="/run/kumabox-bridge-${name}.pid"
+
+stop_dhcp() {
+    if [ -f "$pid_file" ]; then
+        local pid
+        pid=$(cat "$pid_file" 2>/dev/null || true)
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+        fi
+        rm -f "$pid_file"
+    fi
+}
 
 ensure_nat() {
     local subnet=$1
@@ -57,9 +75,42 @@ ensure_nat() {
     sysctl -w net.ipv4.ip_forward=1 >/dev/null
 }
 
+start_dhcp() {
+    local subnet=$1
+    command -v dnsmasq >/dev/null 2>&1 || {
+        echo "dnsmasq is required for --dhcp; install it or use --static" >&2
+        exit 1
+    }
+    command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 1; }
+    local gateway netmask start end
+    read -r gateway netmask start end < <(python3 - "$subnet" <<'PY'
+import ipaddress, sys
+network = ipaddress.ip_network(sys.argv[1], strict=False)
+if network.version != 4:
+    raise SystemExit("bridge subnet must be IPv4")
+hosts = network.hosts()
+gateway = next(hosts)
+start = next(hosts, gateway)
+end = network.broadcast_address - 1
+print(gateway, network.netmask, start, end)
+PY
+)
+    stop_dhcp
+    dnsmasq --interface="$name" --bind-interfaces \
+        --dhcp-range="${start},${end},${netmask},12h" \
+        --dhcp-option=3,"${gateway}" \
+        --dhcp-option=6,8.8.8.8,1.1.1.1 \
+        --pid-file="$pid_file" --port=0
+    echo "DHCP server started on ${name} (${start}-${end}, gateway ${gateway})"
+}
+
 case "$action" in
     create)
         [ -n "$cidr" ] || usage
+        case "$mode" in
+            --dhcp|--static) ;;
+            *) echo "unknown bridge mode: $mode" >&2; usage ;;
+        esac
         command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 1; }
         read -r gateway prefix < <(python3 - "$cidr" <<'PY'
 import ipaddress, sys
@@ -75,10 +126,16 @@ PY
         ip addr replace "${gateway}/${prefix}" dev "$name"
         ip link set "$name" up
         ensure_nat "$cidr"
+        if [ "$mode" = "--dhcp" ]; then
+            start_dhcp "$cidr"
+            echo "create a sandbox with: kumabox run IMAGE --bridge ${name}"
+        else
+            echo "create a sandbox with: kumabox run IMAGE --bridge ${name} --bridge-static"
+        fi
         echo "bridge ${name} is ready (${gateway}/${prefix}, subnet ${cidr})"
-        echo "create a sandbox with: kumabox run IMAGE --bridge ${name}"
         ;;
     delete)
+        stop_dhcp
         ip link del "$name" 2>/dev/null || true
         if command -v iptables >/dev/null 2>&1; then
             iptables -D FORWARD -i "$name" -j ACCEPT 2>/dev/null || true

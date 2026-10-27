@@ -264,6 +264,9 @@ type SandboxConfig struct {
 	// uses the service default and is replaced by the selected backend when
 	// creation commits.
 	NetworkBackend NetworkBackend
+	// BridgeStatic opts a bridge sandbox into host-side static IPAM. The default
+	// bridge mode uses DHCP from the bridge, matching Cocoon.
+	BridgeStatic bool
 	// DataDisks are additional sandbox-owned writable disks in attachment order.
 	DataDisks []DataDiskSpec
 }
@@ -275,7 +278,7 @@ func (c SandboxConfig) SameGuest(other SandboxConfig) bool {
 		c.SharedMemory != other.SharedMemory || c.HugePages != other.HugePages ||
 		c.Mergeable != other.Mergeable || c.NoBalloon != other.NoBalloon ||
 		c.Storage != other.Storage || c.NICs != other.NICs || c.NetworkName != other.NetworkName ||
-		c.effectiveNetworkBackend() != other.effectiveNetworkBackend() || len(c.DataDisks) != len(other.DataDisks) {
+		c.effectiveNetworkBackend() != other.effectiveNetworkBackend() || c.BridgeStatic != other.BridgeStatic || len(c.DataDisks) != len(other.DataDisks) {
 		return false
 	}
 	for index, disk := range c.DataDisks {

@@ -86,11 +86,38 @@ func TestNetworkConfigRejectsUnsafeValues(t *testing.T) {
 		func(config *NetworkConfig) { config.Interfaces[0].MAC = "../../bad" },
 		func(config *NetworkConfig) { config.Interfaces[0].Address = "invalid" },
 		func(config *NetworkConfig) { config.DNSServers = []string{"invalid"} },
+		func(config *NetworkConfig) {
+			config.Interfaces[0].DHCP = true
+		},
 	} {
 		config := testNetworkConfig()
 		mutate(&config)
 		if err := config.Validate(); err == nil {
 			t.Fatalf("accepted invalid configuration %+v", config)
+		}
+	}
+}
+
+func TestNetworkConfigAcceptsDHCPAndWritesCloneSafeUnit(t *testing.T) {
+	configuration := testNetworkConfig()
+	configuration.Interfaces[0].DHCP = true
+	configuration.Interfaces[0].Address = ""
+	configuration.Interfaces[0].Prefix = 0
+	configuration.Interfaces[0].Gateway = ""
+	if err := configuration.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	if err := writeNetworkFiles(directory, configuration); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(directory, "10-kumabox-020000000002.network"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"DHCP=ipv4", "ClientIdentifier=mac"} {
+		if !strings.Contains(string(content), want) {
+			t.Fatalf("DHCP network file %q does not contain %q", content, want)
 		}
 	}
 }

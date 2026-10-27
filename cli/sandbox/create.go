@@ -35,6 +35,7 @@ type createOptions struct {
 	nics         int
 	networkName  string
 	bridgeName   string
+	bridgeStatic bool
 	dataDisks    []string
 }
 
@@ -58,7 +59,8 @@ func (o *createOptions) addFlags(command *cobra.Command) {
 	command.Flags().StringVar(&o.storageSize, "storage", o.storageSize, "logical sparse COW size (minimum 10GiB)")
 	command.Flags().IntVar(&o.nics, "nics", o.nics, "number of network interfaces (0 disables networking)")
 	command.Flags().StringVar(&o.networkName, "network", o.networkName, "CNI network name (empty selects the default)")
-	command.Flags().StringVar(&o.bridgeName, "bridge", o.bridgeName, "attach TAPs directly to this existing host bridge (static address from its subnet; excludes --network)")
+	command.Flags().StringVar(&o.bridgeName, "bridge", o.bridgeName, "attach TAPs directly to this existing host bridge; guest uses DHCP (excludes --network)")
+	command.Flags().BoolVar(&o.bridgeStatic, "bridge-static", false, "allocate a static address from the bridge subnet instead of using DHCP (requires --bridge)")
 	command.Flags().StringArrayVar(&o.dataDisks, "data-disk", nil, "managed disk: size=20GiB[,name=db][,fstype=ext4|none][,directio=on|off|auto]; repeatable")
 }
 
@@ -100,6 +102,9 @@ func (o createOptions) request(imageReference string) (core.CreateSandboxRequest
 	if o.nics == 0 && o.bridgeName != "" {
 		return core.CreateSandboxRequest{}, invalidFlag("bridge", errors.New("requires at least one NIC"))
 	}
+	if o.bridgeStatic && o.bridgeName == "" {
+		return core.CreateSandboxRequest{}, invalidFlag("bridge-static", errors.New("requires --bridge"))
+	}
 	if o.networkName != "" && o.bridgeName != "" {
 		return core.CreateSandboxRequest{}, invalidFlag("bridge", errors.New("excludes --network"))
 	}
@@ -111,7 +116,7 @@ func (o createOptions) request(imageReference string) (core.CreateSandboxRequest
 	}
 	sandboxConfig := types.SandboxConfig{
 		Name: o.name, CPUs: o.cpus, Memory: memoryBytes, SharedMemory: o.sharedMemory, Storage: storageBytes,
-		NICs: o.nics, NetworkName: networkName, NetworkBackend: backend,
+		NICs: o.nics, NetworkName: networkName, NetworkBackend: backend, BridgeStatic: o.bridgeStatic,
 		CPUPolicy: o.cpuPolicy, HugePages: o.hugePages, Mergeable: o.mergeable, NoBalloon: o.noBalloon,
 	}
 	requested := make([]types.DataDiskSpec, 0, len(o.dataDisks))

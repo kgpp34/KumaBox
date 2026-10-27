@@ -102,6 +102,7 @@ func TestCreateCommandMapsResourceValidationToFlags(t *testing.T) {
 		{name: "network without NIC", args: []string{"demo", "--name", "box", "--nics", "0", "--network", "bridge"}, flag: "--network"},
 		{name: "bridge without NIC", args: []string{"demo", "--name", "box", "--nics", "0", "--bridge", "br0"}, flag: "--bridge"},
 		{name: "bridge with network", args: []string{"demo", "--name", "box", "--bridge", "br0", "--network", "bridge"}, flag: "--bridge"},
+		{name: "bridge-static without bridge", args: []string{"demo", "--name", "box", "--bridge-static"}, flag: "--bridge-static"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -184,8 +185,16 @@ func TestCreateOptionsMapBridgeBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if request.Config.NetworkBackend != types.NetworkBackendBridge || request.Config.NetworkName != "br0" {
+	if request.Config.NetworkBackend != types.NetworkBackendBridge || request.Config.NetworkName != "br0" || request.Config.BridgeStatic {
 		t.Fatalf("bridge config = %+v", request.Config)
+	}
+	options.bridgeStatic = true
+	request, err = options.request("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !request.Config.BridgeStatic {
+		t.Fatalf("bridge static flag was lost: %+v", request.Config)
 	}
 }
 
@@ -210,7 +219,7 @@ func TestCreateAndRunExposeSharedMemory(t *testing.T) {
 func TestRunCommandUsesCreateResourceContract(t *testing.T) {
 	createCommand := NewCreateCommand(func() config.Config { return config.Config{} })
 	runCommand := NewRunCommand(func() config.Config { return config.Config{} })
-	for _, name := range []string{"name", "cpus", "memory", "storage", "nics", "network", "bridge"} {
+	for _, name := range []string{"name", "cpus", "memory", "storage", "nics", "network", "bridge", "bridge-static"} {
 		createFlag, runFlag := createCommand.Flags().Lookup(name), runCommand.Flags().Lookup(name)
 		if createFlag == nil || runFlag == nil {
 			t.Fatalf("shared flag --%s is missing", name)

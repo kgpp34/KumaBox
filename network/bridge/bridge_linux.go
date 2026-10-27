@@ -26,6 +26,7 @@ import (
 const (
 	tapGROMaxSize = 65536
 	leaseLockName = ".lock"
+	ownerDirName  = ".owners"
 )
 
 // New constructs a direct-bridge provider without touching the host.
@@ -50,16 +51,29 @@ func (p *Provider) Add(_ context.Context, id types.SandboxID, networkName string
 	if err != nil {
 		return nil, err
 	}
-	gateway, subnet, prefix, err := bridgeIPv4(bridge)
-	if err != nil {
-		return nil, err
+	static := slices.ContainsFunc(specs, func(spec network.AddSpec) bool { return !spec.DHCP })
+	var gateway net.IP
+	var subnet *net.IPNet
+	var prefix int
+	if static {
+		gateway, subnet, prefix, err = bridgeIPv4(bridge)
+		if err != nil {
+			return nil, err
+		}
 	}
 	unlock, err := p.lockLeases(networkName)
 	if err != nil {
 		return nil, err
 	}
+	if err := p.claimOwner(networkName, id); err != nil {
+		unlock()
+		return nil, err
+	}
 	addresses := make([]string, len(specs))
 	for index, spec := range specs {
+		if spec.DHCP {
+			continue
+		}
 		if spec.Existing != nil && spec.Existing.IPv4 != nil {
 			if !subnet.Contains(net.ParseIP(spec.Existing.IPv4.Address)) {
 				unlock()
@@ -82,9 +96,11 @@ func (p *Provider) Add(_ context.Context, id types.SandboxID, networkName string
 	unlock()
 	result := make([]types.NetworkInterface, 0, len(specs))
 	for index, spec := range specs {
-		item, err := p.addOne(id, bridge, spec, &types.IPv4Config{
-			Address: addresses[index], Gateway: gateway.String(), Prefix: prefix,
-		})
+		var ipv4 *types.IPv4Config
+		if !spec.DHCP {
+			ipv4 = &types.IPv4Config{Address: addresses[index], Gateway: gateway.String(), Prefix: prefix}
+		}
+		item, err := p.addOne(id, bridge, spec, ipv4)
 		if err != nil {
 			return nil, err
 		}
@@ -144,10 +160,13 @@ func (p *Provider) Recover(ctx context.Context, id types.SandboxID, networkName 
 	if err != nil {
 		return nil, err
 	}
+	if err := p.claimOwner(networkName, id); err != nil {
+		unlock()
+		return nil, err
+	}
 	for _, item := range expected {
 		if item.IPv4 == nil {
-			unlock()
-			return nil, fmt.Errorf("NIC %d has no bridge address to recover", item.Index)
+			continue
 		}
 		if err := p.claimLease(networkName, item.IPv4.Address, id, item.Index); err != nil {
 			unlock()
@@ -204,6 +223,9 @@ func (p *Provider) Delete(_ context.Context, id types.SandboxID) error {
 	if err := p.releaseLeases(id); err != nil {
 		failures = append(failures, err)
 	}
+	if err := p.releaseOwner(id); err != nil {
+		failures = append(failures, err)
+	}
 	return errors.Join(failures...)
 }
 
@@ -230,8 +252,19 @@ func (p *Provider) OwnedIDs(ctx context.Context) ([]types.SandboxID, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read bridge leases for %s: %w", entry.Name(), err)
 		}
+		if owners, err := os.ReadDir(filepath.Join(directory, ownerDirName)); err == nil {
+			for _, owner := range owners {
+				id, err := types.ParseSandboxID(owner.Name())
+				if err != nil {
+					continue
+				}
+				owned[id] = struct{}{}
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("read bridge owners for %s: %w", entry.Name(), err)
+		}
 		for _, lease := range leases {
-			if lease.Name() == leaseLockName {
+			if lease.Name() == leaseLockName || lease.IsDir() {
 				continue
 			}
 			raw, err := os.ReadFile(filepath.Join(directory, lease.Name())) //nolint:gosec // managed lease directory
@@ -417,7 +450,7 @@ func (p *Provider) releaseLeases(id types.SandboxID) error {
 			continue
 		}
 		for _, lease := range leases {
-			if lease.Name() == leaseLockName {
+			if lease.Name() == leaseLockName || lease.IsDir() {
 				continue
 			}
 			path := filepath.Join(directory, lease.Name())
@@ -431,6 +464,43 @@ func (p *Provider) releaseLeases(id types.SandboxID) error {
 					failures = append(failures, fmt.Errorf("release bridge lease %s: %w", path, err))
 				}
 			}
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func (p *Provider) claimOwner(bridgeName string, id types.SandboxID) error {
+	directory := filepath.Join(p.leaseDir, bridgeName, ownerDirName)
+	if err := os.MkdirAll(directory, 0o750); err != nil {
+		return fmt.Errorf("create bridge owner directory: %w", err)
+	}
+	path := filepath.Join(directory, id.String())
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // managed lease directory
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("claim bridge owner: %w", err)
+	}
+	return errors.Join(file.Sync(), file.Close())
+}
+
+func (p *Provider) releaseOwner(id types.SandboxID) error {
+	entries, err := os.ReadDir(p.leaseDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read bridge lease directory: %w", err)
+	}
+	var failures []error
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(p.leaseDir, entry.Name(), ownerDirName, id.String())
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			failures = append(failures, fmt.Errorf("release bridge owner %s: %w", path, err))
 		}
 	}
 	return errors.Join(failures...)

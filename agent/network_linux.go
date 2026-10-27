@@ -17,6 +17,7 @@ import (
 
 const (
 	networkReloadGrace = 300 * time.Millisecond
+	networkDHCPGrace   = 5 * time.Second
 	networkPollDelay   = 10 * time.Millisecond
 )
 
@@ -34,6 +35,9 @@ func applyGuestNetwork(ctx context.Context, configuration NetworkConfig) error {
 	if len(configuration.Interfaces) == 0 {
 		return nil
 	}
+	if err := prepareDHCPLinks(ctx, configuration.Interfaces); err != nil {
+		return err
+	}
 	// Reload applies changed .network files to their matching links without
 	// restarting the whole daemon. Verify the effective addresses and routes;
 	// older or incompatible networkd builds retain the restart fallback.
@@ -47,15 +51,65 @@ func applyGuestNetwork(ctx context.Context, configuration NetworkConfig) error {
 	if err != nil {
 		return fmt.Errorf("restart systemd-networkd: %w: %s", err, strings.TrimSpace(string(output)))
 	}
+	return waitGuestNetwork(ctx, configuration)
+}
+
+// prepareDHCPLinks removes addresses left in captured guest memory before the
+// new DHCP client runs. Without it a clone can keep advertising the source IP
+// until the lease happens to be renewed.
+func prepareDHCPLinks(ctx context.Context, interfaces []NetworkInterface) error {
+	for _, device := range interfaces {
+		if !device.DHCP {
+			continue
+		}
+		link, err := linkByMAC(ctx, device.MAC)
+		if err != nil {
+			return fmt.Errorf("find DHCP NIC %s: %w", device.MAC, err)
+		}
+		addresses, err := netlink.AddrList(link, netlink.FAMILY_V4)
+		if err != nil {
+			return fmt.Errorf("list addresses on %s: %w", link.Attrs().Name, err)
+		}
+		for _, address := range addresses {
+			if err := netlink.AddrDel(link, &address); err != nil {
+				return fmt.Errorf("flush address %s on %s: %w", address.IPNet, link.Attrs().Name, err)
+			}
+		}
+	}
 	return nil
 }
 
-func reloadGuestNetwork(ctx context.Context, configuration NetworkConfig) error {
-	output, err := exec.CommandContext(ctx, "networkctl", "reload").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("reload systemd-networkd: %w: %s", err, strings.TrimSpace(string(output)))
+func linkByMAC(ctx context.Context, mac string) (netlink.Link, error) {
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(networkPollDelay)
+	defer ticker.Stop()
+	for {
+		links, err := net.Interfaces()
+		if err != nil {
+			return nil, err
+		}
+		for _, candidate := range links {
+			if strings.EqualFold(candidate.HardwareAddr.String(), mac) {
+				return netlink.LinkByIndex(candidate.Index)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-deadline.C:
+			return nil, fmt.Errorf("no link with MAC %s", mac)
+		case <-ticker.C:
+		}
 	}
-	deadline := time.NewTimer(networkReloadGrace)
+}
+
+func waitGuestNetwork(ctx context.Context, configuration NetworkConfig) error {
+	timeout := networkReloadGrace
+	if hasDHCP(configuration.Interfaces) {
+		timeout = networkDHCPGrace
+	}
+	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(networkPollDelay)
 	defer ticker.Stop()
@@ -67,10 +121,40 @@ func reloadGuestNetwork(ctx context.Context, configuration NetworkConfig) error 
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
-			return fmt.Errorf("network did not converge after reload")
+			return fmt.Errorf("network did not converge after %s", timeout)
 		case <-ticker.C:
 		}
 	}
+}
+
+func hasDHCP(interfaces []NetworkInterface) bool {
+	for _, device := range interfaces {
+		if device.DHCP {
+			return true
+		}
+	}
+	return false
+}
+
+func reloadGuestNetwork(ctx context.Context, configuration NetworkConfig) error {
+	output, err := exec.CommandContext(ctx, "networkctl", "reload").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("reload systemd-networkd: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	for _, device := range configuration.Interfaces {
+		if !device.DHCP {
+			continue
+		}
+		link, err := linkByMAC(ctx, device.MAC)
+		if err != nil {
+			return err
+		}
+		output, err := exec.CommandContext(ctx, "networkctl", "reconfigure", link.Attrs().Name).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("reconfigure %s for DHCP: %w: %s", link.Attrs().Name, err, strings.TrimSpace(string(output)))
+		}
+	}
+	return waitGuestNetwork(ctx, configuration)
 }
 
 // guestNetworkReady checks the target links' kernel state, including stale
@@ -90,15 +174,47 @@ func guestNetworkReady(configuration NetworkConfig) bool {
 			return false
 		}
 		addresses, err := link.Addrs()
-		if err != nil || !guestIPv4Matches(addresses, expected.Address, expected.Prefix) {
+		if err != nil {
 			return false
 		}
 		routes, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{LinkIndex: link.Index}, netlink.RT_FILTER_OIF)
-		if err != nil || !guestDefaultRouteMatches(routes, expected.Gateway) {
+		if err != nil {
+			return false
+		}
+		if expected.DHCP {
+			if !guestHasIPv4(addresses) || !guestHasDefaultRoute(routes) {
+				return false
+			}
+			continue
+		}
+		if !guestIPv4Matches(addresses, expected.Address, expected.Prefix) || !guestDefaultRouteMatches(routes, expected.Gateway) {
 			return false
 		}
 	}
 	return true
+}
+
+func guestHasIPv4(addresses []net.Addr) bool {
+	for _, value := range addresses {
+		network, ok := value.(*net.IPNet)
+		if ok && network.IP.To4() != nil && !network.IP.IsLinkLocalUnicast() {
+			return true
+		}
+	}
+	return false
+}
+
+func guestHasDefaultRoute(routes []netlink.Route) bool {
+	for _, route := range routes {
+		if route.Dst == nil {
+			return true
+		}
+		ones, _ := route.Dst.Mask.Size()
+		if ones == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func guestIPv4Matches(addresses []net.Addr, address string, prefix int) bool {

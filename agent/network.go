@@ -23,6 +23,9 @@ type NetworkInterface struct {
 	Address string `json:"address,omitempty"`
 	Prefix  int    `json:"prefix,omitempty"`
 	Gateway string `json:"gateway,omitempty"`
+	// DHCP asks networkd to obtain this NIC's address from the segment's DHCP
+	// server. It is mutually exclusive with Address/Prefix/Gateway.
+	DHCP bool `json:"dhcp,omitempty"`
 }
 
 // NetworkConfig replaces all managed NIC settings and the guest hostname.
@@ -49,6 +52,12 @@ func (c NetworkConfig) Validate() error {
 			return fmt.Errorf("invalid or duplicate guest MAC %q", device.MAC)
 		}
 		seen[device.MAC] = true
+		if device.DHCP {
+			if device.Address != "" || device.Prefix != 0 || device.Gateway != "" {
+				return fmt.Errorf("guest NIC %s combines DHCP with static settings", device.MAC)
+			}
+			continue
+		}
 		if device.Address == "" {
 			if device.Prefix != 0 || device.Gateway != "" {
 				return fmt.Errorf("guest NIC %s has settings without an address", device.MAC)
