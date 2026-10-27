@@ -113,7 +113,7 @@ generate_cni_conflist() {
       "bridge": "kumabox0",
       "mtu": ${host_mtu},
       "isGateway": true,
-      "ipMasq": true,
+      "ipMasq": false,
       "ipMasqBackend": "nftables",
       "hairpinMode": true,
       "ipam": {
@@ -130,6 +130,81 @@ generate_cni_conflist() {
 }
 CNIEOF
     fixed "generated $CNI_CONFLIST (subnet: ${subnet})"
+}
+
+# ---------------------------------------------------------------------------
+# Host MASQUERADE
+# ---------------------------------------------------------------------------
+# The CNI bridge plugin's per-VM ipMasq leaks one nft rule per sandbox. The
+# conflist therefore disables it and one host rule covers the whole subnet.
+masquerade_subnet() {
+    local subnet="${SUBNET:-10.88.0.0/16}"
+    if [ -f "${CNI_CONFLIST:-}" ] && command -v python3 >/dev/null 2>&1; then
+        local parsed
+        parsed=$(python3 - "$CNI_CONFLIST" <<'PY' 2>/dev/null || true
+import json,sys
+c=json.load(open(sys.argv[1]))
+print(c["plugins"][0]["ipam"]["ranges"][0][0]["subnet"])
+PY
+)
+        [ -n "$parsed" ] && subnet="$parsed"
+    fi
+    printf '%s\n' "$subnet"
+}
+
+ensure_host_masquerade() {
+    local subnet="${1:-10.88.0.0/16}"
+    if ! command -v nft >/dev/null 2>&1; then
+        warn "nft is required for the host MASQUERADE rule"
+        return
+    fi
+    mkdir -p /etc/kumabox
+    cat > /etc/kumabox/masquerade.nft <<EOF
+table ip kumabox {
+	chain postrouting {
+		type nat hook postrouting priority srcnat; policy accept;
+		ip saddr ${subnet} ip daddr != ${subnet} masquerade
+	}
+}
+EOF
+    cat > /etc/systemd/system/kumabox-masquerade.service <<'UNIT'
+[Unit]
+Description=KumaBox CNI masquerade for the sandbox bridge subnet
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=-/usr/sbin/nft delete table ip kumabox
+ExecStart=/usr/sbin/nft -f /etc/kumabox/masquerade.nft
+ExecStop=-/usr/sbin/nft delete table ip kumabox
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload
+        systemctl enable --now kumabox-masquerade.service
+    else
+        nft delete table ip kumabox 2>/dev/null || true
+        nft -f /etc/kumabox/masquerade.nft
+    fi
+    fixed "host MASQUERADE for ${subnet}"
+}
+
+check_host_masquerade() {
+    local subnet
+    subnet=$(masquerade_subnet)
+    if systemctl is-active --quiet kumabox-masquerade.service 2>/dev/null &&
+        nft list table ip kumabox 2>/dev/null | grep -Fq "$subnet"; then
+        pass "host MASQUERADE: ${subnet}"
+        return
+    fi
+    warn "host MASQUERADE for ${subnet} is missing"
+    if $FIX; then
+        ensure_host_masquerade "$subnet"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -361,15 +436,16 @@ else
     fi
 fi
 
-# The CNI bridge plugin must use the same masquerade backend for ADD and DEL.
-# An explicit nftables backend also avoids a per-sandbox iptables rule scan.
+# Prefer one host-level MASQUERADE over the bridge plugin's per-sandbox rules.
 if [ -f "$CNI_CONFLIST" ]; then
-    if grep -Eq '"ipMasqBackend"[[:space:]]*:[[:space:]]*"nftables"' "$CNI_CONFLIST"; then
-        check_binary nft
-    elif grep -Eq '"ipMasq"[[:space:]]*:[[:space:]]*true' "$CNI_CONFLIST" &&
-        ! grep -Eq '"ipMasqBackend"[[:space:]]*:' "$CNI_CONFLIST"; then
-        warn "$CNI_CONFLIST uses implicit masquerade backend; set ipMasqBackend explicitly to avoid ADD/DEL using different rule sets"
+    if grep -Eq '"ipMasq"[[:space:]]*:[[:space:]]*true' "$CNI_CONFLIST"; then
+        warn "$CNI_CONFLIST still enables per-sandbox ipMasq"
+        if $FIX; then
+            sed -i 's/"ipMasq"[[:space:]]*:[[:space:]]*true/"ipMasq": false/' "$CNI_CONFLIST"
+            fixed "disabled per-sandbox ipMasq"
+        fi
     fi
+    check_host_masquerade
 fi
 
 # ---------------------------------------------------------------------------

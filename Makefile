@@ -60,18 +60,20 @@ deps: ## Tidy Go modules
 
 # --- Build ---
 
-build: | $(LOCALBIN) ## Build kumabox and kumabox-check
+build: | $(LOCALBIN) ## Build kumabox, kumabox-check and kumabox-bridge
 	CGO_ENABLED=0 go build -ldflags "$(GO_LDFLAGS)" -o $(LOCALBIN)/kumabox ./cmd/kumabox
 	cp scripts/kumabox-check.sh $(LOCALBIN)/kumabox-check
-	chmod 0755 $(LOCALBIN)/kumabox-check
+	cp scripts/kumabox-bridge.sh $(LOCALBIN)/kumabox-bridge
+	chmod 0755 $(LOCALBIN)/kumabox-check $(LOCALBIN)/kumabox-bridge
 
 agent: | $(LOCALBIN) ## Build the Linux guest agent for the selected GOARCH
 	CGO_ENABLED=0 GOOS=linux GOARCH=$${GOARCH:-$$(go env GOARCH)} go build -trimpath -ldflags "$(GO_LDFLAGS)" -o $(LOCALBIN)/kumabox-agent ./cmd/kumabox-agent
 
-install: build ## Install kumabox and kumabox-check
+install: build ## Install kumabox, kumabox-check and kumabox-bridge
 	install -d "$(DESTDIR)$(PREFIX)/bin"
 	install -m 0755 $(LOCALBIN)/kumabox "$(DESTDIR)$(PREFIX)/bin/kumabox"
 	install -m 0755 $(LOCALBIN)/kumabox-check "$(DESTDIR)$(PREFIX)/bin/kumabox-check"
+	install -m 0755 $(LOCALBIN)/kumabox-bridge "$(DESTDIR)$(PREFIX)/bin/kumabox-bridge"
 
 # --- Testing ---
 
@@ -80,6 +82,7 @@ test: vet ## Run tests with race detection and coverage
 
 doctor-check: ## Check host and guest shell script syntax
 	bash -n scripts/kumabox-check.sh
+	bash -n scripts/kumabox-bridge.sh
 	sh -n oci-images/ubuntu/overlay.sh
 	sh -n oci-images/ubuntu/network.sh
 	sh -n oci-images/fastboot/init
