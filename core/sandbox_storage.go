@@ -75,16 +75,21 @@ func (s *SandboxService) create(ctx context.Context, request CreateSandboxReques
 		return types.Sandbox{}, err
 	}
 	var networkProvider network.Provider
+	backend := s.dependencies.defaultNetwork
+	if request.Config.NetworkBackend != "" {
+		backend = request.Config.NetworkBackend
+	}
+	request.Config.NetworkBackend = backend
 	if request.Config.NICs > 0 {
 		var providerErr error
-		networkProvider, providerErr = s.dependencies.networks.Provider(s.dependencies.defaultNetwork)
+		networkProvider, providerErr = s.dependencies.networks.Provider(backend)
 		if providerErr != nil {
 			return types.Sandbox{}, providerErr
 		}
 	} else {
 		// An available provider gives even an initially offline sandbox a
 		// namespace that its running VMM can use for later hotplug.
-		networkProvider, _ = s.dependencies.networks.Provider(s.dependencies.defaultNetwork)
+		networkProvider, _ = s.dependencies.networks.Provider(backend)
 	}
 	if int(request.Config.CPUs) > runtime.NumCPU() { //nolint:gosec // Config validation bounds CPUs to a small positive value
 		return types.Sandbox{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, fmt.Errorf("requested %d vCPUs exceeds available host CPUs (%d)", request.Config.CPUs, runtime.NumCPU()))

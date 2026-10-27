@@ -75,8 +75,10 @@ type recordData struct {
 	DataDisks []types.DataDiskSpec `json:"data_disks,omitempty"`
 	// NICs is the current network interface count.
 	NICs int `json:"nics,omitempty"`
-	// NetworkName is the resolved CNI conflist name.
+	// NetworkName is the resolved CNI conflist or bridge device name.
 	NetworkName string `json:"network_name,omitempty"`
+	// NetworkBackend is the requested provider for a newly created sandbox.
+	NetworkBackend types.NetworkBackend `json:"network_backend,omitempty"`
 	// Network is the resolved provider-to-VMM handoff.
 	Network *networkData `json:"network,omitempty"`
 	// ImageDigest pins the canonical manifest record.
@@ -657,7 +659,7 @@ func encode(record types.Sandbox) recordData {
 	data := recordData{
 		ID: record.ID.String(), Name: record.Config.Name, CPUs: record.Config.CPUs,
 		Memory: record.Config.Memory, SharedMemory: record.Config.SharedMemory, CPUPolicy: record.Config.CPUPolicy, HugePages: record.Config.HugePages, Mergeable: record.Config.Mergeable, NoBalloon: record.Config.NoBalloon, Storage: record.Config.Storage, DataDisks: record.Config.DataDisks, NICs: record.Config.NICs,
-		NetworkName: record.Config.NetworkName,
+		NetworkName: record.Config.NetworkName, NetworkBackend: record.Config.NetworkBackend,
 		ImageDigest: record.ImageDigest.String(), VMM: string(record.VMM), State: string(record.State),
 		Generation: record.Generation, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}
@@ -690,7 +692,7 @@ func decode(raw []byte) (types.Sandbox, error) {
 	record := types.Sandbox{
 		ID: id, Config: types.SandboxConfig{
 			Name: data.Name, CPUs: data.CPUs, Memory: data.Memory, SharedMemory: data.SharedMemory, CPUPolicy: data.CPUPolicy, HugePages: data.HugePages, Mergeable: data.Mergeable, NoBalloon: data.NoBalloon, Storage: data.Storage, DataDisks: data.DataDisks,
-			NICs: data.NICs, NetworkName: data.NetworkName,
+			NICs: data.NICs, NetworkName: data.NetworkName, NetworkBackend: data.NetworkBackend,
 		},
 		ImageDigest: digest, VMM: types.VMMType(data.VMM), State: types.SandboxState(data.State), Generation: data.Generation,
 		CreatedAt: data.CreatedAt, UpdatedAt: data.UpdatedAt,

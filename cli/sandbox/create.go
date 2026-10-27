@@ -34,6 +34,7 @@ type createOptions struct {
 	storageSize  string
 	nics         int
 	networkName  string
+	bridgeName   string
 	dataDisks    []string
 }
 
@@ -57,6 +58,7 @@ func (o *createOptions) addFlags(command *cobra.Command) {
 	command.Flags().StringVar(&o.storageSize, "storage", o.storageSize, "logical sparse COW size (minimum 10GiB)")
 	command.Flags().IntVar(&o.nics, "nics", o.nics, "number of network interfaces (0 disables networking)")
 	command.Flags().StringVar(&o.networkName, "network", o.networkName, "CNI network name (empty selects the default)")
+	command.Flags().StringVar(&o.bridgeName, "bridge", o.bridgeName, "attach TAPs directly to this existing host bridge (static address from its subnet; excludes --network)")
 	command.Flags().StringArrayVar(&o.dataDisks, "data-disk", nil, "managed disk: size=20GiB[,name=db][,fstype=ext4|none][,directio=on|off|auto]; repeatable")
 }
 
@@ -95,9 +97,21 @@ func (o createOptions) request(imageReference string) (core.CreateSandboxRequest
 	if o.nics == 0 && o.networkName != "" {
 		return core.CreateSandboxRequest{}, invalidFlag("network", errors.New("requires at least one NIC"))
 	}
+	if o.nics == 0 && o.bridgeName != "" {
+		return core.CreateSandboxRequest{}, invalidFlag("bridge", errors.New("requires at least one NIC"))
+	}
+	if o.networkName != "" && o.bridgeName != "" {
+		return core.CreateSandboxRequest{}, invalidFlag("bridge", errors.New("excludes --network"))
+	}
+	backend := types.NetworkBackend("")
+	networkName := o.networkName
+	if o.bridgeName != "" {
+		backend = types.NetworkBackendBridge
+		networkName = o.bridgeName
+	}
 	sandboxConfig := types.SandboxConfig{
 		Name: o.name, CPUs: o.cpus, Memory: memoryBytes, SharedMemory: o.sharedMemory, Storage: storageBytes,
-		NICs: o.nics, NetworkName: o.networkName,
+		NICs: o.nics, NetworkName: networkName, NetworkBackend: backend,
 		CPUPolicy: o.cpuPolicy, HugePages: o.hugePages, Mergeable: o.mergeable, NoBalloon: o.noBalloon,
 	}
 	requested := make([]types.DataDiskSpec, 0, len(o.dataDisks))

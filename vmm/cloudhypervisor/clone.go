@@ -60,7 +60,7 @@ func (d *Driver) Clone(ctx context.Context, plan vmm.ClonePlan) (vmm.Process, er
 	}
 	plan.SnapshotDir = privateDir
 	return d.restore(ctx, plan.RestorePlan, func(ctx context.Context, _ string) error {
-		if err := d.swapCloneNets(ctx, apiSocket, oldNets, plan.Network.Interfaces); err != nil {
+		if err := d.swapCloneNets(ctx, apiSocket, plan.SandboxID, oldNets, plan.Network.Interfaces); err != nil {
 			return err
 		}
 		return d.addCloneDataDisks(ctx, apiSocket, plan.NewDataDisks, plan.CPUs)
@@ -70,6 +70,16 @@ func (d *Driver) Clone(ctx context.Context, plan vmm.ClonePlan) (vmm.Process, er
 // addCloneDataDisks attaches freshly formatted disks to the paused clone.
 // They were absent from the captured device tree, so config patching alone
 // cannot expose them to the restored guest.
+// cloneNICID stays unique across clone generations. Reusing the source NIC ID
+// makes Cloud Hypervisor reject the replacement device even after removal.
+func cloneNICID(id types.SandboxID, index int) string {
+	compact := strings.ReplaceAll(id.String(), "-", "")
+	if len(compact) > 8 {
+		compact = compact[:8]
+	}
+	return "kumabox-net-" + compact + "-" + fmt.Sprint(index)
+}
+
 func (d *Driver) addCloneDataDisks(ctx context.Context, socket string, disks []vmm.Disk, cpus uint32) error {
 	for _, disk := range disks {
 		payload, err := cloneDataDiskPayload(disk, cpus)
@@ -272,7 +282,7 @@ func patchCloneConfig(path string, plan vmm.ClonePlan, vsockSocket string) ([]cl
 
 // swapCloneNets runs while the VM is paused, before guest memory can send
 // traffic with the source MAC or IP. A failed swap aborts the new VMM.
-func (d *Driver) swapCloneNets(ctx context.Context, socket string, old []cloneNet, fresh []types.NetworkInterface) error {
+func (d *Driver) swapCloneNets(ctx context.Context, socket string, sandboxID types.SandboxID, old []cloneNet, fresh []types.NetworkInterface) error {
 	for _, device := range old {
 		payload, err := json.Marshal(map[string]string{"id": device.ID})
 		if err != nil {
@@ -284,7 +294,7 @@ func (d *Driver) swapCloneNets(ctx context.Context, socket string, old []cloneNe
 	}
 	for _, device := range fresh {
 		payload, err := json.Marshal(map[string]any{
-			"id": "kumabox-net-" + fmt.Sprint(device.Index), "tap": device.TAP, "mac": device.MAC,
+			"id": cloneNICID(sandboxID, device.Index), "tap": device.TAP, "mac": device.MAC,
 			"num_queues": device.Queues, "queue_size": device.QueueSize,
 			"offload_tso": true, "offload_ufo": true, "offload_csum": true,
 		})

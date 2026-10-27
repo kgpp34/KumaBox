@@ -222,3 +222,15 @@ func TestCopyNativeStateKeepsCaptureAndSkipsWritableDisk(t *testing.T) {
 		t.Fatalf("source capture changed: %s, %v", original, err)
 	}
 }
+
+func TestCloneNICIDIsUniqueAcrossGenerations(t *testing.T) {
+	first := types.SandboxID("123e4567-e89b-42d3-a456-426614174000")
+	second := types.SandboxID("223e4567-e89b-42d3-a456-426614174000")
+	left, right := cloneNICID(first, 0), cloneNICID(second, 0)
+	if left == right {
+		t.Fatalf("clone NIC IDs collided: %q", left)
+	}
+	if cloneNICID(first, 0) == cloneNICID(first, 1) {
+		t.Fatal("NIC index did not affect clone ID")
+	}
+}

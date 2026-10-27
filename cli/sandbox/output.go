@@ -44,7 +44,7 @@ type sandboxOutput struct {
 	DataDisks []types.DataDiskSpec `json:"data_disks,omitempty"`
 	// NICs is the requested network interface count.
 	NICs int `json:"nics"`
-	// NetworkName is the resolved CNI network name.
+	// NetworkName is the resolved CNI conflist or bridge device name.
 	NetworkName string `json:"network_name,omitempty"`
 	// Network is the resolved provider-to-VMM handoff.
 	Network *networkOutput `json:"network,omitempty"`
@@ -70,7 +70,7 @@ type sandboxFailureOutput struct {
 type networkOutput struct {
 	// Backend identifies the provider that owns host network resources.
 	Backend string `json:"backend"`
-	// Namespace is the absolute network namespace path.
+	// Namespace is the absolute network namespace path; empty for bridge mode.
 	Namespace string `json:"namespace"`
 	// Interfaces lists NICs in stable guest index order.
 	Interfaces []networkInterfaceOutput `json:"interfaces"`
@@ -90,7 +90,7 @@ type networkInterfaceOutput struct {
 	Queues int `json:"queues"`
 	// QueueSize is the descriptor count for each queue.
 	QueueSize int `json:"queue_size"`
-	// Network is the resolved CNI conflist name.
+	// Network is the resolved CNI conflist or bridge device name.
 	Network string `json:"network"`
 	// IPv4 is the optional guest-visible IPv4 assignment.
 	IPv4 *ipv4Output `json:"ipv4,omitempty"`

@@ -16,12 +16,15 @@ const (
 	// NetworkBackendCNI selects a CNI plugin chain running in a private network
 	// namespace.
 	NetworkBackendCNI NetworkBackend = "cni"
+	// NetworkBackendBridge attaches TAP devices directly to a pre-existing host
+	// bridge. The guest obtains its address from the bridge's DHCP service.
+	NetworkBackendBridge NetworkBackend = "bridge"
 )
 
 // Validate rejects backend names that cannot be routed to an implementation.
 func (b NetworkBackend) Validate() error {
 	switch b {
-	case NetworkBackendCNI:
+	case NetworkBackendCNI, NetworkBackendBridge:
 		return nil
 	default:
 		return fmt.Errorf("unsupported network backend %q", b)
@@ -74,7 +77,8 @@ type NetworkInterface struct {
 	Queues int
 	// QueueSize is the descriptor count for each virtio queue.
 	QueueSize int
-	// Network is the resolved CNI conflist name.
+	// Network is the provider-resolved network name: a CNI conflist name or a
+	// host bridge device.
 	Network string
 	// IPv4 is nil when a plugin intentionally returns no IPv4 address.
 	IPv4 *IPv4Config
@@ -112,7 +116,8 @@ type NetworkSetup struct {
 	// Backend selects the provider used by later lifecycle operations.
 	Backend NetworkBackend
 	// Namespace is the absolute Linux network namespace path containing the
-	// CNI interfaces and TAP devices.
+	// CNI interfaces and TAP devices. Bridge TAPs live in the host namespace,
+	// so bridge setups leave it empty.
 	Namespace string
 	// Interfaces are ordered by their stable NIC index.
 	Interfaces []NetworkInterface
@@ -130,7 +135,11 @@ func (s NetworkSetup) Validate() error {
 	if err := s.Backend.Validate(); err != nil {
 		return err
 	}
-	if !filepath.IsAbs(s.Namespace) {
+	if s.Backend == NetworkBackendBridge {
+		if s.Namespace != "" {
+			return errors.New("bridge network setup must not have a namespace")
+		}
+	} else if !filepath.IsAbs(s.Namespace) {
 		return errors.New("network namespace must be an absolute path")
 	}
 	seen := make(map[int]struct{}, len(s.Interfaces))

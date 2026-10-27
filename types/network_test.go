@@ -43,3 +43,20 @@ func TestNetworkSetupRejectsNonContiguousInterfaceIndices(t *testing.T) {
 		t.Fatal("NetworkSetup accepted an interface sequence that does not begin at zero")
 	}
 }
+
+func TestNetworkSetupAcceptsBridgeWithoutNamespace(t *testing.T) {
+	setup := NetworkSetup{
+		Backend: NetworkBackendBridge,
+		Interfaces: []NetworkInterface{{
+			Index: 0, Name: "eth0", TAP: "bt12345678-0", MAC: "02:00:00:00:00:01",
+			Queues: 4, QueueSize: 512, Network: "br0",
+		}},
+	}
+	if err := setup.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	setup.Namespace = "/var/run/netns/unexpected"
+	if err := setup.Validate(); err == nil {
+		t.Fatal("bridge setup with a namespace was accepted")
+	}
+}

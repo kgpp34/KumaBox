@@ -100,6 +100,8 @@ func TestCreateCommandMapsResourceValidationToFlags(t *testing.T) {
 		{name: "storage", args: []string{"demo", "--name", "box", "--storage", "1GiB"}, flag: "--storage"},
 		{name: "NICs", args: []string{"demo", "--name", "box", "--nics", "-1"}, flag: "--nics"},
 		{name: "network without NIC", args: []string{"demo", "--name", "box", "--nics", "0", "--network", "bridge"}, flag: "--network"},
+		{name: "bridge without NIC", args: []string{"demo", "--name", "box", "--nics", "0", "--bridge", "br0"}, flag: "--bridge"},
+		{name: "bridge with network", args: []string{"demo", "--name", "box", "--bridge", "br0", "--network", "bridge"}, flag: "--bridge"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -175,6 +177,18 @@ func TestCreateCommandDefaultsToOneNIC(t *testing.T) {
 	}
 }
 
+func TestCreateOptionsMapBridgeBackend(t *testing.T) {
+	options := defaultCreateOptions()
+	options.name, options.bridgeName = "box", "br0"
+	request, err := options.request("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Config.NetworkBackend != types.NetworkBackendBridge || request.Config.NetworkName != "br0" {
+		t.Fatalf("bridge config = %+v", request.Config)
+	}
+}
+
 func TestCreateAndRunExposeSharedMemory(t *testing.T) {
 	for _, command := range []*cobra.Command{
 		NewCreateCommand(func() config.Config { return config.Config{} }),
@@ -196,7 +210,7 @@ func TestCreateAndRunExposeSharedMemory(t *testing.T) {
 func TestRunCommandUsesCreateResourceContract(t *testing.T) {
 	createCommand := NewCreateCommand(func() config.Config { return config.Config{} })
 	runCommand := NewRunCommand(func() config.Config { return config.Config{} })
-	for _, name := range []string{"name", "cpus", "memory", "storage", "nics", "network"} {
+	for _, name := range []string{"name", "cpus", "memory", "storage", "nics", "network", "bridge"} {
 		createFlag, runFlag := createCommand.Flags().Lookup(name), runCommand.Flags().Lookup(name)
 		if createFlag == nil || runFlag == nil {
 			t.Fatalf("shared flag --%s is missing", name)

@@ -256,9 +256,14 @@ type SandboxConfig struct {
 	Storage int64
 	// NICs is the current network interface count; zero disables networking.
 	NICs int
-	// NetworkName selects one CNI conflist. Empty selects the provider default
-	// and is replaced by the resolved name when creation commits.
+	// NetworkName selects one CNI conflist or the bridge device when
+	// NetworkBackend is bridge. Empty selects the provider default and is
+	// replaced by the resolved name when creation commits.
 	NetworkName string
+	// NetworkBackend selects the provider for a newly created sandbox. Empty
+	// uses the service default and is replaced by the selected backend when
+	// creation commits.
+	NetworkBackend NetworkBackend
 	// DataDisks are additional sandbox-owned writable disks in attachment order.
 	DataDisks []DataDiskSpec
 }
@@ -269,7 +274,8 @@ func (c SandboxConfig) SameGuest(other SandboxConfig) bool {
 	if c.Name != other.Name || c.CPUs != other.CPUs || c.Memory != other.Memory ||
 		c.SharedMemory != other.SharedMemory || c.HugePages != other.HugePages ||
 		c.Mergeable != other.Mergeable || c.NoBalloon != other.NoBalloon ||
-		c.Storage != other.Storage || c.NICs != other.NICs || c.NetworkName != other.NetworkName || len(c.DataDisks) != len(other.DataDisks) {
+		c.Storage != other.Storage || c.NICs != other.NICs || c.NetworkName != other.NetworkName ||
+		c.effectiveNetworkBackend() != other.effectiveNetworkBackend() || len(c.DataDisks) != len(other.DataDisks) {
 		return false
 	}
 	for index, disk := range c.DataDisks {
@@ -283,6 +289,15 @@ func (c SandboxConfig) SameGuest(other SandboxConfig) bool {
 		}
 	}
 	return true
+}
+
+// effectiveNetworkBackend preserves compatibility with records and snapshots
+// written before the backend selector existed: empty meant CNI.
+func (c SandboxConfig) effectiveNetworkBackend() NetworkBackend {
+	if c.NetworkBackend == "" {
+		return NetworkBackendCNI
+	}
+	return c.NetworkBackend
 }
 
 // Validate enforces the resource and naming contract before any persistent change.
@@ -307,6 +322,22 @@ func (c SandboxConfig) Validate() error {
 	}
 	if c.NICs < 0 || c.NICs > MaxSandboxNICs {
 		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("NIC count must be between 0 and %d", MaxSandboxNICs))
+	}
+	if c.NetworkBackend != "" {
+		if err := c.NetworkBackend.Validate(); err != nil {
+			return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+		}
+	}
+	if c.NetworkBackend == NetworkBackendBridge {
+		if c.NICs == 0 {
+			return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("bridge networking requires at least one NIC"))
+		}
+		if c.NetworkName == "" {
+			return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("bridge networking requires a bridge device"))
+		}
+		if len(c.NetworkName) > 15 {
+			return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("bridge device %q exceeds the Linux interface name limit", c.NetworkName))
+		}
 	}
 	if c.NetworkName != "" && !validNetworkName.MatchString(c.NetworkName) {
 		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("network name %q must match %s", c.NetworkName, validNetworkName))
@@ -430,6 +461,9 @@ func (s Sandbox) Validate() error {
 		return errors.New("sandbox without a network owner must not retain a network name")
 	}
 	if s.Network.Backend != "" {
+		if s.Config.NetworkBackend != "" && s.Network.Backend != s.Config.NetworkBackend {
+			return errors.New("sandbox network backend differs from the requested backend")
+		}
 		if len(s.Network.Interfaces) != s.Config.NICs {
 			return fmt.Errorf("sandbox has %d network interfaces, expected %d", len(s.Network.Interfaces), s.Config.NICs)
 		}

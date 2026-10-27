@@ -13,6 +13,7 @@ import (
 	"github.com/kumabox/kumabox/metadata"
 	"github.com/kumabox/kumabox/metadata/sqlite"
 	"github.com/kumabox/kumabox/network"
+	bridgenet "github.com/kumabox/kumabox/network/bridge"
 	"github.com/kumabox/kumabox/network/cni"
 	"github.com/kumabox/kumabox/sandbox"
 	sandboxcatalog "github.com/kumabox/kumabox/sandbox/catalog"
@@ -198,7 +199,19 @@ func OpenSandbox(ctx context.Context, configuration config.Config, reporter Sand
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
-	networks, err := network.NewRegistry(cniProvider)
+	bridgeLeaseDir, err := storage.Join(configuration.Paths.Data, "network", "bridge")
+	if err != nil {
+		return nil, errors.Join(err, store.Close())
+	}
+	bridgeProvider, err := bridgenet.New(bridgenet.Options{
+		TAPPrefix: "bt",
+		QueueSize: network.DefaultQueueSize,
+		LeaseDir:  bridgeLeaseDir,
+	})
+	if err != nil {
+		return nil, errors.Join(err, store.Close())
+	}
+	networks, err := network.NewRegistry(cniProvider, bridgeProvider)
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
@@ -234,6 +247,9 @@ func (s *SandboxService) networkProvider(record types.Sandbox) (network.Provider
 		return nil, false, nil
 	}
 	backend := record.Network.Backend
+	if backend == "" {
+		backend = record.Config.NetworkBackend
+	}
 	if backend == "" {
 		backend = s.dependencies.defaultNetwork
 	}

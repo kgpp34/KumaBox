@@ -33,6 +33,8 @@ func TestSandboxConfigValidationMatchesCreateContract(t *testing.T) {
 		{"storage", SandboxConfig{Name: "demo", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage - 1}},
 		{"NIC count", SandboxConfig{Name: "demo", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage, NICs: MaxSandboxNICs + 1}},
 		{"network name", SandboxConfig{Name: "demo", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage, NICs: 1, NetworkName: "bad/name"}},
+		{"bridge without NIC", SandboxConfig{Name: "demo", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage, NetworkBackend: NetworkBackendBridge, NetworkName: "br0"}},
+		{"bridge without device", SandboxConfig{Name: "demo", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage, NICs: 1, NetworkBackend: NetworkBackendBridge}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			err := test.config.Validate()
@@ -49,6 +51,13 @@ func TestSandboxConfigValidationMatchesCreateContract(t *testing.T) {
 	withRetainedNetwork.NetworkName = "default"
 	if err := withRetainedNetwork.Validate(); err != nil {
 		t.Fatalf("zero-NIC config lost its retained network: %v", err)
+	}
+	bridge := valid
+	bridge.NICs = 1
+	bridge.NetworkBackend = NetworkBackendBridge
+	bridge.NetworkName = "br0"
+	if err := bridge.Validate(); err != nil {
+		t.Fatalf("valid bridge config was rejected: %v", err)
 	}
 }
 
@@ -87,5 +96,19 @@ func TestCommandValidation(t *testing.T) {
 		if err := invalid.Validate(); err == nil {
 			t.Fatalf("accepted invalid command %#v", invalid)
 		}
+	}
+}
+
+func TestSameGuestTreatsLegacyEmptyBackendAsCNI(t *testing.T) {
+	legacy := SandboxConfig{Name: "demo", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage, NICs: 1, NetworkName: "default"}
+	explicit := legacy
+	explicit.NetworkBackend = NetworkBackendCNI
+	if !legacy.SameGuest(explicit) {
+		t.Fatal("legacy empty backend is not compatible with explicit CNI")
+	}
+	explicit.NetworkBackend = NetworkBackendBridge
+	explicit.NetworkName = "br0"
+	if legacy.SameGuest(explicit) {
+		t.Fatal("CNI and bridge configs compared equal")
 	}
 }
