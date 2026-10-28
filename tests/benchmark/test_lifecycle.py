@@ -76,11 +76,22 @@ class FakeKumaBox:
 
 
 class BenchmarkTest(unittest.TestCase):
+    def test_network_backend_is_used_only_for_networked_lanes(self):
+        args = lifecycle.parse_args(["--image", "fixture", "--network-backend", "ebpf"])
+        with tempfile.TemporaryDirectory() as directory:
+            bench = lifecycle.Benchmark(args, FakeKumaBox(), "test", Path(directory))
+            try:
+                self.assertNotIn("--network-backend", bench.run_args("plain", 0))
+                networked = bench.run_args("networked", 1)
+                self.assertEqual(networked[networked.index("--network-backend") + 1], "ebpf")
+            finally:
+                bench.cleanup()
+
     def test_all_modes_and_bursts_exclude_setup_and_cleanup(self):
         args = lifecycle.parse_args([
             "--image", "fixture", "--lanes", "0", "--warmups", "1",
             "--samples", "2", "--concurrency", "1,2", "--batches", "1",
-            "--poll-interval", "0.001",
+            "--poll-interval", "0.001", "--golden-settle", "0",
         ])
         fake = FakeKumaBox()
         with tempfile.TemporaryDirectory() as directory:

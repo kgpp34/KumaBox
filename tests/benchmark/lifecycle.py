@@ -9,6 +9,7 @@ import argparse
 import concurrent.futures
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -169,11 +170,14 @@ class Benchmark:
         return name
 
     def run_args(self, name, lane):
-        return (
+        args = (
             "run", self.args.image, "--name", name,
             "--cpus", str(self.args.cpus), "--memory", self.args.memory,
             "--storage", self.args.storage, "--nics", str(lane), "--json",
         )
+        if lane:
+            args += ("--network-backend", self.args.network_backend)
+        return args
 
     def ready(self, name):
         """Probe the guest contract; CLI 'running' alone does not prove readiness."""
@@ -201,22 +205,27 @@ class Benchmark:
 
     def prepare_clone(self, lane):
         source = self.create_ready("source", lane)
+        # Agent readiness can precede the rest of guest boot. Prepare the golden
+        # outside timing, letting initial background work finish before capture.
+        time.sleep(self.args.golden_settle)
         snapshot = self.snapshot_name("golden", lane)
         _, save_ms = self.cli.json("snapshot", "save", source, "--name", snapshot, "--json")
         self.emit({"type": "setup", "lane": lane, "operation": "snapshot_save",
-                   "warmup": False, "elapsed_ms": save_ms})
-        self.cli.call("stop", source)
+                   "warmup": False, "elapsed_ms": save_ms,
+                   "golden_settle_seconds": self.args.golden_settle})
+        self.cli.call("stop", source, "--force")
         return snapshot
 
     def sample(self, mode, lane, warmup, concurrency, batch_index,
                snapshot=None, barrier=None, exec_source=None):
         name = None
         started = None
+        started_utc = None
         phase = "setup"
         try:
             if mode == "restart":
                 name = self.create_ready("restart", lane)
-                self.cli.call("stop", name)
+                self.cli.call("stop", name, "--force")
             elif mode == "restore":
                 name = self.create_ready("restore", lane)
                 capture = self.snapshot_name("hibernate", lane)
@@ -230,6 +239,7 @@ class Benchmark:
             if barrier is not None:
                 barrier.wait(timeout=self.args.command_timeout)
             started = time.monotonic_ns()
+            started_utc = time.time_ns()
             phase = "operation"
             if mode == "cold":
                 response, operation_ms = self.cli.json(*self.run_args(name, lane))
@@ -254,6 +264,7 @@ class Benchmark:
                 "type": "sample", "mode": mode, "lane": lane, "warmup": warmup,
                 "concurrency": concurrency, "batch": batch_index, "name": name,
                 "sandbox_id": response.get("id"), "success": True,
+                "started_utc_ns": started_utc, "ready_utc_ns": time.time_ns(),
                 "operation_ms": operation_ms, "ready_ms": ready_ms,
                 "agent_wait_ms": max(0, ready_ms - operation_ms) if mode != "exec" else None,
                 "probe_attempts": attempts, "cgroup": cgroup_metrics(response.get("id")),
@@ -275,7 +286,8 @@ class Benchmark:
             if match is None:
                 return
             if match["state"] in ("running", "starting", "stopping"):
-                self.cli.call("stop", name)
+                # Cleanup is outside timing; do not spend a guest shutdown window.
+                self.cli.call("stop", name, "--force")
             self.cli.call("rm", name)
             with self.lock:
                 self.owned_sandboxes.discard(name)
@@ -455,10 +467,14 @@ def parse_args(argv=None):
     parser.add_argument("--output", type=Path, help="new output directory; default /var/tmp/kumabox-bench-RUNID")
     parser.add_argument("--modes", default=",".join(MODES), help="comma-separated: " + ",".join(MODES))
     parser.add_argument("--lanes", default="0,1", help="comma-separated NIC counts, normally 0,1")
+    parser.add_argument("--network-backend", choices=("cni", "ebpf"), default="cni",
+                        help="provider for networked lanes; zero-NIC lanes remain unnetworked")
     parser.add_argument("--cpus", type=int, default=2)
     parser.add_argument("--memory", default="2GiB")
     parser.add_argument("--storage", default="10GiB")
     parser.add_argument("--warmups", type=int, default=3)
+    parser.add_argument("--golden-settle", type=float, default=5,
+                        help="seconds to settle the guest before capturing golden, outside timing")
     parser.add_argument("--samples", type=int, default=30)
     parser.add_argument("--concurrency", default="1,2,4,8")
     parser.add_argument("--batches", type=int, default=5)
@@ -474,6 +490,7 @@ def parse_args(argv=None):
             or not args.lanes or any(lane not in (0, 1) for lane in args.lanes)
             or not args.concurrency or any(count < 1 for count in args.concurrency)
             or min(args.warmups, args.batches) < 0 or args.samples < 1
+            or not math.isfinite(args.golden_settle) or args.golden_settle < 0
             or args.cpus < 1 or min(args.ready_timeout, args.probe_timeout,
                                    args.poll_interval, args.command_timeout) <= 0):
         parser.error("invalid modes, lanes, concurrency, sample count, or timeout")
