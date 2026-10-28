@@ -71,6 +71,8 @@ type recordData struct {
 	NoBalloon bool `json:"no_balloon,omitempty"`
 	// Storage is logical COW capacity in bytes.
 	Storage int64 `json:"storage"`
+	// COWIOMode persists host cache policy independently of the raw disk contents.
+	COWIOMode types.DiskIOMode `json:"cow_io_mode,omitempty"`
 	// DataDisks are managed writable disks in attachment order.
 	DataDisks []types.DataDiskSpec `json:"data_disks,omitempty"`
 	// NICs is the current network interface count.
@@ -662,7 +664,7 @@ func deleteRecord(ctx context.Context, writer metadata.Writer, record types.Sand
 func encode(record types.Sandbox) recordData {
 	data := recordData{
 		ID: record.ID.String(), Name: record.Config.Name, CPUs: record.Config.CPUs,
-		Memory: record.Config.Memory, SharedMemory: record.Config.SharedMemory, CPUPolicy: record.Config.CPUPolicy, HugePages: record.Config.HugePages, Mergeable: record.Config.Mergeable, NoBalloon: record.Config.NoBalloon, Storage: record.Config.Storage, DataDisks: record.Config.DataDisks, NICs: record.Config.NICs,
+		Memory: record.Config.Memory, SharedMemory: record.Config.SharedMemory, CPUPolicy: record.Config.CPUPolicy, HugePages: record.Config.HugePages, Mergeable: record.Config.Mergeable, NoBalloon: record.Config.NoBalloon, Storage: record.Config.Storage, COWIOMode: record.Config.COWIOMode, DataDisks: record.Config.DataDisks, NICs: record.Config.NICs,
 		NetworkName: record.Config.NetworkName, NetworkBackend: record.Config.NetworkBackend, BridgeStatic: record.Config.BridgeStatic,
 		ImageDigest: record.ImageDigest.String(), VMM: string(record.VMM), State: string(record.State),
 		Generation: record.Generation, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
@@ -695,7 +697,7 @@ func decode(raw []byte) (types.Sandbox, error) {
 	}
 	record := types.Sandbox{
 		ID: id, Config: types.SandboxConfig{
-			Name: data.Name, CPUs: data.CPUs, Memory: data.Memory, SharedMemory: data.SharedMemory, CPUPolicy: data.CPUPolicy, HugePages: data.HugePages, Mergeable: data.Mergeable, NoBalloon: data.NoBalloon, Storage: data.Storage, DataDisks: data.DataDisks,
+			Name: data.Name, CPUs: data.CPUs, Memory: data.Memory, SharedMemory: data.SharedMemory, CPUPolicy: data.CPUPolicy, HugePages: data.HugePages, Mergeable: data.Mergeable, NoBalloon: data.NoBalloon, Storage: data.Storage, COWIOMode: data.COWIOMode, DataDisks: data.DataDisks,
 			NICs: data.NICs, NetworkName: data.NetworkName, NetworkBackend: data.NetworkBackend, BridgeStatic: data.BridgeStatic,
 		},
 		ImageDigest: digest, VMM: types.VMMType(data.VMM), State: types.SandboxState(data.State), Generation: data.Generation,

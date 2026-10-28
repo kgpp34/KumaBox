@@ -22,12 +22,16 @@ func NewCloneCommand(configuration configProvider) *cobra.Command {
 	var waitNetwork bool
 	var asJSON bool
 	var memoryMode string
+	var cowIOMode string
 	var cpuPolicy types.CPUPolicy
 	command := &cobra.Command{
 		Use:   "clone [SNAPSHOT] --name NAME",
 		Short: "clone a snapshot into a new running sandbox",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
+			if err := types.DiskIOMode(cowIOMode).Validate(); err != nil {
+				return invalidFlag("cow-io", err)
+			}
 			if err := types.MemoryRestoreMode(memoryMode).Validate(); err != nil {
 				return invalidFlag("restore-mode", err)
 			}
@@ -74,6 +78,7 @@ func NewCloneCommand(configuration configProvider) *cobra.Command {
 				DataDisks: requested, WaitForNetwork: waitNetwork, SkipReseed: false,
 				MemoryMode: types.MemoryRestoreMode(memoryMode),
 				CPUPolicy:  cpuPolicy,
+				COWIOMode:  types.DiskIOMode(cowIOMode),
 			}
 			if command.Flags().Changed("nics") {
 				options.NICs = &nics
@@ -103,6 +108,7 @@ func NewCloneCommand(configuration configProvider) *cobra.Command {
 	command.Flags().BoolVar(&pull, "pull", false, "pull the snapshot's pinned registry image if absent")
 	command.Flags().StringVar(&fromDir, "from-dir", "", "clone from a portable snapshot directory")
 	command.Flags().StringVar(&memoryMode, "restore-mode", "auto", "memory loading: auto, copy, ondemand, or mmap (requires a compatible monitor and private memory)")
+	command.Flags().StringVar(&cowIOMode, "cow-io", "", "override root disk I/O: auto, direct, or buffered (default: inherit)")
 	command.Flags().IntVar(&nics, "nics", 0, "override the captured NIC count, including zero")
 	command.Flags().StringVar(&networkName, "network", "", "use another CNI network (default: inherit)")
 	command.Flags().StringArrayVar(&dataDiskFlags, "data-disk", nil, "add a new managed disk: size=20GiB[,name=db][,fstype=ext4|none][,directio=on|off|auto]; repeatable")

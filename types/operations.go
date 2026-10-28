@@ -43,6 +43,8 @@ type CloneOptions struct {
 	Name string
 	// CPUPolicy replaces source-host scheduling with the clone request.
 	CPUPolicy CPUPolicy
+	// COWIOMode overrides the captured root-disk cache policy. Empty inherits it.
+	COWIOMode DiskIOMode
 	// Pull fetches a missing registry image by the snapshot's exact digest.
 	Pull bool
 	// SourceDirectory selects a portable directory instead of a catalog snapshot.

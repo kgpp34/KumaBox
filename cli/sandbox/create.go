@@ -32,6 +32,7 @@ type createOptions struct {
 	mergeable      bool
 	noBalloon      bool
 	storageSize    string
+	cowIOMode      string
 	nics           int
 	networkName    string
 	bridgeName     string
@@ -58,6 +59,7 @@ func (o *createOptions) addFlags(command *cobra.Command) {
 	command.Flags().BoolVar(&o.mergeable, "mergeable", false, "opt private RAM into host KSM (excludes hugepages and shared-memory)")
 	command.Flags().BoolVar(&o.noBalloon, "no-balloon", false, "omit the balloon device instead of reclaiming 25 percent of guest RAM")
 	command.Flags().StringVar(&o.storageSize, "storage", o.storageSize, "logical sparse COW size (minimum 10GiB)")
+	command.Flags().StringVar(&o.cowIOMode, "cow-io", "auto", "writable root disk I/O: auto, direct, or buffered")
 	command.Flags().IntVar(&o.nics, "nics", o.nics, "number of network interfaces (0 disables networking)")
 	command.Flags().StringVar(&o.networkName, "network", o.networkName, "CNI network name (empty selects the default)")
 	command.Flags().StringVar(&o.networkBackend, "network-backend", "", "host network backend: cni or ebpf (--bridge selects bridge)")
@@ -78,6 +80,9 @@ func addCPUFlags(command *cobra.Command, policy *types.CPUPolicy) {
 
 // request validates CLI values before any persistent service is opened.
 func (o createOptions) request(imageReference string) (types.CreateSandboxRequest, error) {
+	if err := types.DiskIOMode(o.cowIOMode).Validate(); err != nil {
+		return types.CreateSandboxRequest{}, invalidFlag("cow-io", err)
+	}
 	if o.cpus == 0 || o.cpus > types.MaxSandboxCPUs {
 		return types.CreateSandboxRequest{}, invalidFlag("cpus", fmt.Errorf("must be between 1 and %d", types.MaxSandboxCPUs))
 	}
@@ -126,6 +131,7 @@ func (o createOptions) request(imageReference string) (types.CreateSandboxReques
 		Name: o.name, CPUs: o.cpus, Memory: memoryBytes, SharedMemory: o.sharedMemory, Storage: storageBytes,
 		NICs: o.nics, NetworkName: networkName, NetworkBackend: backend, BridgeStatic: o.bridgeStatic,
 		CPUPolicy: o.cpuPolicy, HugePages: o.hugePages, Mergeable: o.mergeable, NoBalloon: o.noBalloon,
+		COWIOMode: types.DiskIOMode(o.cowIOMode),
 	}
 	requested := make([]types.DataDiskSpec, 0, len(o.dataDisks))
 	for _, value := range o.dataDisks {

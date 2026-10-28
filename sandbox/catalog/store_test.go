@@ -73,7 +73,7 @@ func TestMarkCreatedAtomicallyPublishesResolvedNetwork(t *testing.T) {
 		Config: types.SandboxConfig{
 			Name: "box", CPUs: 2, Memory: types.DefaultSandboxMemory, SharedMemory: true, HugePages: true, NoBalloon: true,
 			CPUPolicy: types.CPUPolicy{Weight: 37, QuotaUS: 75000, PeriodUS: 50000, BurstUS: -1, CPUSet: "2-3"},
-			Storage:   types.DefaultSandboxStorage, NICs: 1,
+			Storage:   types.DefaultSandboxStorage, COWIOMode: types.DiskIOBuffered, NICs: 1,
 			DataDisks: []types.DataDiskSpec{{Name: "db", Size: types.MinDataDiskSize, FSType: "ext4", DirectIO: &directIO}},
 		},
 		ImageDigest: testDigest(t, 'a'), VMM: types.VMMCloudHypervisor,
@@ -105,7 +105,7 @@ func TestMarkCreatedAtomicallyPublishesResolvedNetwork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Config.CPUPolicy != record.Config.CPUPolicy || resolved.Config.HugePages != record.Config.HugePages || resolved.Config.NoBalloon != record.Config.NoBalloon || resolved.Config.NetworkName != "bridge" || !resolved.Config.SharedMemory || resolved.Network.Interfaces[0].IPv4.Address != "10.42.0.2" ||
+	if resolved.Config.COWIOMode != types.DiskIOBuffered || resolved.Config.CPUPolicy != record.Config.CPUPolicy || resolved.Config.HugePages != record.Config.HugePages || resolved.Config.NoBalloon != record.Config.NoBalloon || resolved.Config.NetworkName != "bridge" || !resolved.Config.SharedMemory || resolved.Network.Interfaces[0].IPv4.Address != "10.42.0.2" ||
 		len(resolved.Config.DataDisks) != 1 || resolved.Config.DataDisks[0].Name != "db" ||
 		resolved.Config.DataDisks[0].DirectIO == nil || *resolved.Config.DataDisks[0].DirectIO {
 		t.Fatalf("persisted network record = %+v", resolved)

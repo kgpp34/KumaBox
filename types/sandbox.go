@@ -62,6 +62,32 @@ var (
 	validDataDiskName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,19}$`)
 )
 
+// DiskIOMode controls the host cache policy of a sandbox's writable root disk.
+// Automatic selection retains direct I/O for existing sandboxes and snapshots.
+type DiskIOMode string
+
+const (
+	// DiskIOAuto retains the established writable-root policy.
+	DiskIOAuto DiskIOMode = "auto"
+	// DiskIODirect bypasses the host page cache for root-disk reads and writes.
+	DiskIODirect DiskIOMode = "direct"
+	// DiskIOBuffered uses the host page cache without disabling guest flushes.
+	DiskIOBuffered DiskIOMode = "buffered"
+)
+
+// Validate accepts the zero value for backward-compatible automatic selection.
+func (m DiskIOMode) Validate() error {
+	switch m {
+	case "", DiskIOAuto, DiskIODirect, DiskIOBuffered:
+		return nil
+	default:
+		return fmt.Errorf("invalid disk I/O mode %q: use auto, direct, or buffered", m)
+	}
+}
+
+// DirectIO resolves the current host cache policy after validation.
+func (m DiskIOMode) DirectIO() bool { return m != DiskIOBuffered }
+
 // DataDiskSpec describes a sandbox-owned writable disk. The name is its stable
 // guest serial and the only user-controlled part of its backing filename.
 type DataDiskSpec struct {
@@ -254,6 +280,8 @@ type SandboxConfig struct {
 	NoBalloon bool
 	// Storage is the logical size of the sparse ext4 COW disk in bytes.
 	Storage int64
+	// COWIOMode is inherited by snapshots and clones, including later cold starts.
+	COWIOMode DiskIOMode
 	// NICs is the current network interface count; zero disables networking.
 	NICs int
 	// NetworkName selects one CNI conflist or the bridge device when
@@ -277,7 +305,8 @@ func (c SandboxConfig) SameGuest(other SandboxConfig) bool {
 	if c.Name != other.Name || c.CPUs != other.CPUs || c.Memory != other.Memory ||
 		c.SharedMemory != other.SharedMemory || c.HugePages != other.HugePages ||
 		c.Mergeable != other.Mergeable || c.NoBalloon != other.NoBalloon ||
-		c.Storage != other.Storage || c.NICs != other.NICs || c.NetworkName != other.NetworkName ||
+		c.Storage != other.Storage || c.COWIOMode.DirectIO() != other.COWIOMode.DirectIO() ||
+		c.NICs != other.NICs || c.NetworkName != other.NetworkName ||
 		c.effectiveNetworkBackend() != other.effectiveNetworkBackend() || c.BridgeStatic != other.BridgeStatic || len(c.DataDisks) != len(other.DataDisks) {
 		return false
 	}
@@ -305,6 +334,9 @@ func (c SandboxConfig) effectiveNetworkBackend() NetworkBackend {
 
 // Validate enforces the resource and naming contract before any persistent change.
 func (c SandboxConfig) Validate() error {
+	if err := c.COWIOMode.Validate(); err != nil {
+		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+	}
 	if !validSandboxName.MatchString(c.Name) {
 		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("sandbox name %q must match %s", c.Name, validSandboxName))
 	}

@@ -162,6 +162,46 @@ func TestCloneDataDiskPayloadHonorsDirectIO(t *testing.T) {
 	}
 }
 
+func TestCloneRootDiskIOOverridesCapturedPolicy(t *testing.T) {
+	for _, mode := range []types.DiskIOMode{"", types.DiskIOAuto, types.DiskIODirect, types.DiskIOBuffered} {
+		name := string(mode)
+		if name == "" {
+			name = "legacy"
+		}
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			original := `{"disks":[{"serial":"kumabox-layer0","path":"/old/layer","readonly":true},{"serial":"kumabox-cow","path":"/old/cow","direct":false}],"vsock":{"socket":"/old/vsock"}}`
+			if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			plan := vmm.ClonePlan{
+				RestorePlan:  vmm.RestorePlan{SandboxID: types.SandboxID("123e4567-e89b-42d3-a456-426614174000")},
+				WritableDisk: "/new/cow", COWIOMode: mode,
+				ImageDisks: []vmm.Disk{{Path: "/new/layer", Serial: "kumabox-layer0", ReadOnly: true}},
+			}
+			if _, err := patchCloneConfig(path, plan, "/new/vsock"); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var config struct {
+				Disks []struct {
+					Direct   bool
+					Readonly bool
+				}
+			}
+			if err := json.Unmarshal(raw, &config); err != nil {
+				t.Fatal(err)
+			}
+			if len(config.Disks) != 2 || !config.Disks[0].Readonly || config.Disks[1].Direct != mode.DirectIO() {
+				t.Fatalf("root cache policy or immutable layer changed: %s", raw)
+			}
+		})
+	}
+}
+
 func TestCrossFilesystemMemoryUsesSourceLink(t *testing.T) {
 	directory := t.TempDir()
 	source := filepath.Join(directory, "memory-range-0")

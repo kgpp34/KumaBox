@@ -37,8 +37,10 @@ type configOutput struct {
 	// Mergeable opts private guest memory into host KSM.
 	Mergeable bool `json:"mergeable,omitempty"`
 	// NoBalloon omits the default balloon device.
-	NoBalloon   bool                 `json:"no_balloon,omitempty"`
-	Storage     int64                `json:"storage"`
+	NoBalloon bool  `json:"no_balloon,omitempty"`
+	Storage   int64 `json:"storage"`
+	// COWIOMode is inherited by clones unless explicitly overridden.
+	COWIOMode   types.DiskIOMode     `json:"cow_io_mode,omitempty"`
 	DataDisks   []types.DataDiskSpec `json:"data_disks,omitempty"`
 	NICs        int                  `json:"nics"`
 	NetworkName string               `json:"network_name,omitempty"`
@@ -56,7 +58,7 @@ func result(snapshot types.Snapshot) output {
 		VMM: string(snapshot.VMM),
 		Config: configOutput{
 			Name: snapshot.Config.Name, CPUs: snapshot.Config.CPUs, Memory: snapshot.Config.Memory, SharedMemory: snapshot.Config.SharedMemory, CPUPolicy: snapshot.Config.CPUPolicy, HugePages: snapshot.Config.HugePages, Mergeable: snapshot.Config.Mergeable, NoBalloon: snapshot.Config.NoBalloon,
-			Storage: snapshot.Config.Storage, DataDisks: snapshot.Config.DataDisks, NICs: snapshot.Config.NICs, NetworkName: snapshot.Config.NetworkName,
+			Storage: snapshot.Config.Storage, COWIOMode: snapshot.Config.COWIOMode, DataDisks: snapshot.Config.DataDisks, NICs: snapshot.Config.NICs, NetworkName: snapshot.Config.NetworkName,
 		},
 		Size: snapshot.Size, CreatedAt: snapshot.CreatedAt.UTC(), LastAccessedAt: lastAccessed.UTC(),
 	}

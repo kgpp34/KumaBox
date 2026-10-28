@@ -43,12 +43,13 @@ func TestArchiveRoundTripAndRejectsCorruption(t *testing.T) {
 			}
 			var archive bytes.Buffer
 			original := archiveTestRecord()
+			original.Config.COWIOMode = types.DiskIOBuffered
 			if err := WriteArchive(t.Context(), &archive, source, original, compressed); err != nil {
 				t.Fatal(err)
 			}
 			destination := t.TempDir()
 			restored, err := ReadArchive(t.Context(), bytes.NewReader(archive.Bytes()), destination)
-			if err != nil || restored.ID != original.ID || restored.ImageDigest != original.ImageDigest {
+			if err != nil || restored.ID != original.ID || restored.ImageDigest != original.ImageDigest || restored.Config.COWIOMode != types.DiskIOBuffered {
 				t.Fatalf("ReadArchive() = %+v, %v", restored, err)
 			}
 			memory, err := os.ReadFile(filepath.Join(destination, "memory-range-0"))

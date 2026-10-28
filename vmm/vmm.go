@@ -283,6 +283,9 @@ func (p RestorePlan) Validate() error {
 
 // Validate rejects a clone plan without a complete source capture and new COW.
 func (p ClonePlan) Validate() error {
+	if err := p.COWIOMode.Validate(); err != nil {
+		return err
+	}
 	if err := p.RestorePlan.Validate(); err != nil {
 		return err
 	}

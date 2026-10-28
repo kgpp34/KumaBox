@@ -296,7 +296,8 @@ func (s *SandboxService) launchPlan(record types.Sandbox, image types.Image) (vm
 	if err != nil {
 		return vmm.LaunchPlan{}, err
 	}
-	disks = append(disks, vmm.Disk{Path: cow, Serial: vmm.COWSerial})
+	directIO := record.Config.COWIOMode.DirectIO()
+	disks = append(disks, vmm.Disk{Path: cow, Serial: vmm.COWSerial, DirectIO: &directIO})
 	for _, spec := range record.Config.DataDisks {
 		path, err := s.dependencies.paths.DataDisk(record.ID, spec.Name)
 		if err != nil {

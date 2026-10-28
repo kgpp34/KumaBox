@@ -98,6 +98,7 @@ func TestCreateCommandMapsResourceValidationToFlags(t *testing.T) {
 		{name: "CPUs", args: []string{"demo", "--name", "box", "--cpus", "0"}, flag: "--cpus"},
 		{name: "memory", args: []string{"demo", "--name", "box", "--memory", "1MiB"}, flag: "--memory"},
 		{name: "storage", args: []string{"demo", "--name", "box", "--storage", "1GiB"}, flag: "--storage"},
+		{name: "COW I/O", args: []string{"demo", "--name", "box", "--cow-io", "unsafe"}, flag: "--cow-io"},
 		{name: "NICs", args: []string{"demo", "--name", "box", "--nics", "-1"}, flag: "--nics"},
 		{name: "network without NIC", args: []string{"demo", "--name", "box", "--nics", "0", "--network", "bridge"}, flag: "--network"},
 		{name: "bridge without NIC", args: []string{"demo", "--name", "box", "--nics", "0", "--bridge", "br0"}, flag: "--bridge"},

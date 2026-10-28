@@ -186,6 +186,10 @@ func patchCloneConfig(path string, plan vmm.ClonePlan, vsockSocket string) ([]cl
 				return nil, err
 			}
 			disk["readonly"] = json.RawMessage("false")
+			disk["direct"], err = json.Marshal(plan.COWIOMode.DirectIO())
+			if err != nil {
+				return nil, err
+			}
 		case position < len(plan.ImageDisks):
 			if serial != plan.ImageDisks[position].Serial {
 				return nil, fmt.Errorf("clone image disk %d has unexpected serial %q", position, serial)

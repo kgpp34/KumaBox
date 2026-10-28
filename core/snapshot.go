@@ -784,7 +784,7 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 				imageDisks, dataDisks, err = cloneDiskBindings(launch, len(starting.Config.DataDisks))
 				if err == nil {
 					process, err = cloner.Clone(ctx, vmm.ClonePlan{
-						RestorePlan: plan, WritableDisk: liveCOW,
+						RestorePlan: plan, WritableDisk: liveCOW, COWIOMode: starting.Config.COWIOMode,
 						ImageDisks: imageDisks, DataDisks: dataDisks,
 						Kernel: launch.Kernel, Initrd: launch.Initrd,
 					})

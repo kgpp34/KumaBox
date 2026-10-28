@@ -134,6 +134,8 @@ type ClonePlan struct {
 	RestorePlan
 	// WritableDisk is the new sandbox's COW path already populated from the capture.
 	WritableDisk string
+	// COWIOMode is the target's persisted root-disk cache policy.
+	COWIOMode types.DiskIOMode
 	// ImageDisks are read-only layers in manifest order at the target data root.
 	ImageDisks []Disk
 	// DataDisks are target-owned copies of the captured writable disks.

@@ -121,8 +121,10 @@ type recordData struct {
 	// Mergeable opts private guest memory into host KSM.
 	Mergeable bool `json:"mergeable,omitempty"`
 	// NoBalloon omits the default balloon device.
-	NoBalloon      bool                 `json:"no_balloon,omitempty"`
-	Storage        int64                `json:"storage"`
+	NoBalloon bool  `json:"no_balloon,omitempty"`
+	Storage   int64 `json:"storage"`
+	// COWIOMode is inherited when a capture creates a new sandbox.
+	COWIOMode      types.DiskIOMode     `json:"cow_io_mode,omitempty"`
 	DataDisks      []types.DataDiskSpec `json:"data_disks,omitempty"`
 	NICs           int                  `json:"nics,omitempty"`
 	NetworkName    string               `json:"network_name,omitempty"`
@@ -482,7 +484,7 @@ func encode(snapshot types.Snapshot, ready bool) recordData {
 		SourceGeneration: snapshot.SourceGeneration,
 		ImageDigest:      snapshot.ImageDigest.String(), RegistryReference: snapshot.RegistryReference,
 		VMM:  string(snapshot.VMM),
-		CPUs: snapshot.Config.CPUs, Memory: snapshot.Config.Memory, SharedMemory: snapshot.Config.SharedMemory, CPUPolicy: snapshot.Config.CPUPolicy, HugePages: snapshot.Config.HugePages, Mergeable: snapshot.Config.Mergeable, NoBalloon: snapshot.Config.NoBalloon, Storage: snapshot.Config.Storage, DataDisks: snapshot.Config.DataDisks,
+		CPUs: snapshot.Config.CPUs, Memory: snapshot.Config.Memory, SharedMemory: snapshot.Config.SharedMemory, CPUPolicy: snapshot.Config.CPUPolicy, HugePages: snapshot.Config.HugePages, Mergeable: snapshot.Config.Mergeable, NoBalloon: snapshot.Config.NoBalloon, Storage: snapshot.Config.Storage, COWIOMode: snapshot.Config.COWIOMode, DataDisks: snapshot.Config.DataDisks,
 		NICs: snapshot.Config.NICs, NetworkName: snapshot.Config.NetworkName, NetworkBackend: string(snapshot.Config.NetworkBackend), BridgeStatic: snapshot.Config.BridgeStatic,
 		Size: snapshot.Size, CreatedAt: snapshot.CreatedAt.UTC(), LastAccessedAt: snapshot.LastAccessedAt.UTC(), Ready: ready,
 	}
@@ -507,7 +509,7 @@ func decodeSnapshot(record recordData) (types.Snapshot, error) {
 		ImageDigest: digest, RegistryReference: record.RegistryReference,
 		VMM: types.VMMType(record.VMM), Size: record.Size,
 		Config: types.SandboxConfig{
-			Name: record.SandboxName, CPUs: record.CPUs, Memory: record.Memory, SharedMemory: record.SharedMemory, CPUPolicy: record.CPUPolicy, HugePages: record.HugePages, Mergeable: record.Mergeable, NoBalloon: record.NoBalloon, Storage: record.Storage, DataDisks: record.DataDisks,
+			Name: record.SandboxName, CPUs: record.CPUs, Memory: record.Memory, SharedMemory: record.SharedMemory, CPUPolicy: record.CPUPolicy, HugePages: record.HugePages, Mergeable: record.Mergeable, NoBalloon: record.NoBalloon, Storage: record.Storage, COWIOMode: record.COWIOMode, DataDisks: record.DataDisks,
 			NICs: record.NICs, NetworkName: record.NetworkName, NetworkBackend: types.NetworkBackend(record.NetworkBackend), BridgeStatic: record.BridgeStatic,
 		},
 		CreatedAt: record.CreatedAt.UTC(), LastAccessedAt: record.LastAccessedAt.UTC(),

@@ -65,6 +65,35 @@ func TestSandboxConfigValidationMatchesCreateContract(t *testing.T) {
 	}
 }
 
+func TestWritableRootIOModeIsInheritedAndValidated(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mode   DiskIOMode
+		direct bool
+	}{
+		{name: "legacy", direct: true},
+		{name: "automatic", mode: DiskIOAuto, direct: true},
+		{name: "direct", mode: DiskIODirect, direct: true},
+		{name: "buffered", mode: DiskIOBuffered},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := SandboxConfig{Name: "box", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage, COWIOMode: test.mode}
+			if err := config.Validate(); err != nil || config.COWIOMode.DirectIO() != test.direct {
+				t.Fatalf("I/O mode %q: direct=%v, err=%v", test.mode, config.COWIOMode.DirectIO(), err)
+			}
+			other := config
+			other.COWIOMode = DiskIOBuffered
+			if config.SameGuest(other) != !test.direct {
+				t.Fatal("restore accepted a different persisted root-disk I/O policy")
+			}
+		})
+	}
+	config := SandboxConfig{Name: "box", CPUs: 1, Memory: MinSandboxMemory, Storage: MinSandboxStorage, COWIOMode: "unsafe"}
+	if err := config.Validate(); err == nil {
+		t.Fatal("unknown I/O policy accepted")
+	}
+}
+
 func TestCreatingOfflineSandboxCanReserveItsNetworkPolicy(t *testing.T) {
 	digest, err := ParseDigest("sha256:" + strings.Repeat("a", 64))
 	if err != nil {

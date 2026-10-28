@@ -92,6 +92,9 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 	config := capture.Config
 	config.Name = options.Name
 	config.CPUPolicy = options.CPUPolicy
+	if options.COWIOMode != "" {
+		config.COWIOMode = options.COWIOMode
+	}
 	var err error
 	config.DataDisks, err = types.ResolveDataDisks(capture.Config.DataDisks, options.DataDisks)
 	if err != nil {
@@ -210,7 +213,7 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 		RestorePlan: vmm.RestorePlan{
 			SandboxID: starting.ID, Generation: starting.Generation, CPUs: starting.Config.CPUs, CPUPolicy: starting.Config.CPUPolicy,
 			SnapshotDir: snapshotDir, Network: starting.Network, MemoryMode: options.MemoryMode,
-		}, WritableDisk: liveCOW, ImageDisks: imageDisks,
+		}, WritableDisk: liveCOW, COWIOMode: starting.Config.COWIOMode, ImageDisks: imageDisks,
 		DataDisks: dataDisks[:inheritedCount], NewDataDisks: dataDisks[inheritedCount:],
 		Kernel: launch.Kernel, Initrd: launch.Initrd,
 	})

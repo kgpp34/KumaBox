@@ -40,6 +40,8 @@ type sandboxOutput struct {
 	NoBalloon bool `json:"no_balloon,omitempty"`
 	// Storage is the logical sparse COW size in bytes.
 	Storage int64 `json:"storage"`
+	// COWIOMode reports the persisted writable-root host cache policy.
+	COWIOMode types.DiskIOMode `json:"cow_io_mode,omitempty"`
 	// DataDisks are sandbox-owned writable disks.
 	DataDisks []types.DataDiskSpec `json:"data_disks,omitempty"`
 	// NICs is the requested network interface count.
@@ -123,7 +125,7 @@ func sandboxResult(sandbox types.Sandbox) sandboxOutput {
 	result := sandboxOutput{
 		ID: sandbox.ID.String(), Name: sandbox.Config.Name, ImageDigest: sandbox.ImageDigest.String(), VMM: string(sandbox.VMM),
 		State: string(sandbox.State), CPUs: sandbox.Config.CPUs, Memory: sandbox.Config.Memory, SharedMemory: sandbox.Config.SharedMemory, CPUPolicy: sandbox.Config.CPUPolicy, HugePages: sandbox.Config.HugePages, Mergeable: sandbox.Config.Mergeable, NoBalloon: sandbox.Config.NoBalloon,
-		Storage: sandbox.Config.Storage, DataDisks: sandbox.Config.DataDisks, NICs: sandbox.Config.NICs, NetworkName: sandbox.Config.NetworkName,
+		Storage: sandbox.Config.Storage, COWIOMode: sandbox.Config.COWIOMode, DataDisks: sandbox.Config.DataDisks, NICs: sandbox.Config.NICs, NetworkName: sandbox.Config.NetworkName,
 		Generation: sandbox.Generation,
 		CreatedAt:  sandbox.CreatedAt.UTC(), UpdatedAt: sandbox.UpdatedAt.UTC(),
 	}
