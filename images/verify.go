@@ -30,9 +30,9 @@ func NewGuard(paths Paths, catalog ImageResolver) *Guard {
 	return &Guard{paths: paths, catalog: catalog}
 }
 
-// WithAvailable checks regular-file presence and size while holding layer locks
-// across use. Full content hashing remains the explicit Verify operation so create
-// latency does not grow with total image bytes.
+// WithAvailable checks regular-file presence and size while holding shared layer
+// leases across use. Clone readers proceed together; import and removal retain
+// exclusive locks. Full content hashing remains the explicit Verify operation.
 func (g *Guard) WithAvailable(ctx context.Context, reference string, use func(types.Image) error) (types.Image, error) {
 	return g.withLocked(ctx, reference, availableImage, use)
 }
@@ -53,7 +53,7 @@ func (g *Guard) withLocked(ctx context.Context, reference string, check func(con
 		lockPaths[pos] = g.paths.Lock(layer.SourceDigest)
 	}
 	var locks filelock.Set
-	if err := locks.Lock(ctx, lockPaths...); err != nil {
+	if err := locks.RLock(ctx, lockPaths...); err != nil {
 		return types.Image{}, fmt.Errorf("lock image layers: %w", err)
 	}
 	defer func() { returnErr = errors.Join(returnErr, locks.Unlock(context.WithoutCancel(ctx))) }()

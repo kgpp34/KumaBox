@@ -17,10 +17,20 @@ type Set struct {
 // order. On failure it releases every lock already held by the set. Callers should
 // acquire their full path set in one call to preserve ordering across operations.
 func (s *Set) Lock(ctx context.Context, paths ...string) error {
+	return s.acquire(ctx, false, paths...)
+}
+
+// RLock holds shared leases in the same order as Lock. Independent readers may
+// proceed together while artifact publication and removal retain exclusive use.
+func (s *Set) RLock(ctx context.Context, paths ...string) error {
+	return s.acquire(ctx, true, paths...)
+}
+
+func (s *Set) acquire(ctx context.Context, shared bool, paths ...string) error {
 	ordered := slices.Compact(slices.Sorted(slices.Values(paths)))
 	for _, path := range ordered {
 		item := New(path)
-		if err := item.Lock(ctx); err != nil {
+		if err := item.acquire(ctx, shared); err != nil {
 			return errors.Join(err, s.Unlock(ctx))
 		}
 		s.held = append(s.held, item)
