@@ -178,7 +178,17 @@ ondemand 则要求普通私有内存；恢复前会先检查，
 
 `clone` 在虚拟机恢复运行后返回。随后执行 `net SANDBOX --configure`，把新主机名和
 已分配的网卡配置应用到 guest；也可以使用 `clone --wait-network`，在返回前完成此步骤。
-默认路径会在独立进程中更新 guest 熵和 machine ID。
+默认路径会等待 guest 熵和 machine ID 更新完成。
+daemon 配置 `sandbox.machine_id_sync` 默认为 `true`，返回前会显式同步 machine ID 文件。
+设为 `false` 时仍等待初始化完成，但身份文件由 guest 正常回写；在回写前崩溃或强停，
+可能丢失这次身份更新。旧版 guest agent 会忽略该选项，继续使用同步落盘策略。
+新版 initramfs 只在首次启动清除镜像自带身份，后续 stop/start 保留私有 machine ID；
+已有镜像需要重新构建才能使用这项行为。
+
+`create`、`run`、`clone` 支持 `--cow-io auto|direct|buffered`，auto 保留原有 direct I/O。
+克隆默认继承快照的模式，也可以显式覆盖；选择会在 stop/start 和后续快照中保留。
+buffered 使用宿主机页缓存，仍保留 guest flush 和 ext4 写入屏障，可能减少 XFS reflink
+写入竞争，具体收益需要按实际负载验证。
 
 主机端和 guest 端的产物需要配套使用。对可复现性有要求时，请固定带版本号的 guest 标签
 （例如 `24.04-v0.1.0`）或 OCI digest。单独执行 `sudo kumabox-check` 会做一次只读的主机检查。

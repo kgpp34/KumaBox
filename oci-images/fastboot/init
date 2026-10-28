@@ -80,8 +80,12 @@ mount -t ext4 -o noatime "$cow_device" /cow || fail 'mount writable disk'
 mkdir -p /cow/upper /cow/work
 mount -t overlay overlay -o "lowerdir=$lowerdirs,upperdir=/cow/upper,workdir=/cow/work" /newroot || fail 'mount root overlay'
 mkdir -p /newroot/dev /newroot/proc /newroot/sys /newroot/run /newroot/etc
-rm -f /newroot/etc/machine-id
-: >/newroot/etc/machine-id
+# Discard an image's baked identity only on first boot. An identity in the
+# private upper layer belongs to this sandbox and must survive stop/start.
+if [ ! -s /cow/upper/etc/machine-id ]; then
+	rm -f /newroot/etc/machine-id
+	: >/newroot/etc/machine-id
+fi
 printf '%s\n' "$hostname" >/newroot/etc/hostname
 
 resolver=/newroot/etc/resolv.conf

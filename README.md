@@ -160,7 +160,20 @@ cross-filesystem transfer copies the memory instead.
 `clone` returns after the VM resumes. Run `net SANDBOX --configure` to apply
 the clone's hostname and allocated NIC settings in the guest, or use
 `clone --wait-network` to include that step before the command returns. The
-default path renews guest entropy and machine ID in a detached process.
+default path waits for guest entropy and machine-ID renewal to finish.
+The daemon setting `sandbox.machine_id_sync` defaults to `true`, including an
+explicit machine-ID `fsync` before acknowledging the clone. Setting it to `false`
+still waits for initialization, but leaves identity persistence to normal guest
+writeback; a crash or force stop before writeback can lose that identity update.
+Older guest agents ignore this option and retain synchronous persistence.
+Updated initramfs scripts preserve a private machine ID across stop/start while
+clearing image-baked identities on first boot; rebuild older images for this behavior.
+
+`create`, `run` and `clone` accept `--cow-io auto|direct|buffered`. Automatic mode
+preserves direct I/O. Clones inherit the snapshot's mode unless overridden; the
+choice persists across stop/start and subsequent snapshots. Buffered mode uses
+the host page cache and retains guest flushes and ext4 write barriers. It can
+reduce XFS reflink write contention, but should be measured for your workload.
 
 Host and guest artifacts are a matched release pair. Pin a versioned guest tag
 such as `24.04-v0.1.0`, or an OCI digest, when reproducibility matters.

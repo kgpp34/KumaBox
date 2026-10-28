@@ -32,6 +32,9 @@ jobs:
       - name: Verify
         run: make verify
 
+      - name: Guest boot contracts
+        run: python3 -m unittest discover -s tests/e2e -p test_boot.py -v
+
       - name: Race detector
         run: make race
 
