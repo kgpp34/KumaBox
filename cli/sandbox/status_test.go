@@ -11,12 +11,12 @@ import (
 )
 
 func TestStatusCommandShowsCreatedSandboxAsJSON(t *testing.T) {
-	base := t.TempDir()
+	base := shortTempDir(t)
 	roots := storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")}
 	seedImage(t, roots)
 	installFakeMKFS(t, base)
 	id := executeCreate(t, roots, "box")
-	command := NewStatusCommand(func() config.Config { return sandboxTestConfig(roots) })
+	command := NewStatusCommand(func() config.Config { return sandboxTestConfig(t, roots) })
 	command.SetArgs([]string{"box", "--json"})
 	var output bytes.Buffer
 	command.SetOut(&output)

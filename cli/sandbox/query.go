@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
 )
@@ -18,7 +18,7 @@ func NewInspectCommand(configuration configProvider) *cobra.Command {
 		Short: "show detailed sandbox information as JSON",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
-			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+			service, err := client.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}
@@ -26,7 +26,7 @@ func NewInspectCommand(configuration configProvider) *cobra.Command {
 				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
 					Operation: "inspect sandbox",
 					Entity:    args[0],
-					Phase:     "close metadata",
+					Phase:     "close client",
 					Action:    "retry the query",
 				}))
 			}()
@@ -55,7 +55,7 @@ func NewLogsCommand(configuration configProvider) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
 			reference := args[0]
-			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+			service, err := client.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}
@@ -63,11 +63,11 @@ func NewLogsCommand(configuration configProvider) *cobra.Command {
 				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
 					Operation: "read sandbox logs",
 					Entity:    reference,
-					Phase:     "close metadata",
+					Phase:     "close client",
 					Action:    "retry the log stream",
 				}))
 			}()
-			return service.Logs(command.Context(), reference, core.SandboxLogOptions{Tail: tail, Follow: follow}, command.OutOrStdout())
+			return service.Logs(command.Context(), reference, types.SandboxLogOptions{Tail: tail, Follow: follow}, command.OutOrStdout())
 		},
 	}
 	command.Flags().BoolVarP(&follow, "follow", "f", false, "follow appended log output")
@@ -86,7 +86,7 @@ func NewListCommand(configuration configProvider) *cobra.Command {
 			if asJSON && quiet {
 				return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("--json and --quiet cannot be used together"))
 			}
-			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+			service, err := client.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}
@@ -94,7 +94,7 @@ func NewListCommand(configuration configProvider) *cobra.Command {
 				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
 					Operation: "list sandboxes",
 					Entity:    "",
-					Phase:     "close metadata",
+					Phase:     "close client",
 					Action:    "retry the query",
 				}))
 			}()
@@ -103,7 +103,7 @@ func NewListCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			records := make([]types.Sandbox, 0, len(statuses))
-			visible := make([]core.SandboxStatus, 0, len(statuses))
+			visible := make([]types.SandboxStatus, 0, len(statuses))
 			for _, status := range statuses {
 				projected := projectStatus(status)
 				if !includeAll && projected.State != string(types.SandboxStateStarting) && projected.State != string(types.SandboxStateRunning) && projected.State != string(types.SandboxStateStopping) {

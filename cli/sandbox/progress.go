@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	cliprogress "github.com/kumabox/kumabox/cli/progress"
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
 )
@@ -34,7 +34,7 @@ type sandboxProgress struct {
 	committed bool
 }
 
-var _ core.SandboxReporter = (*sandboxProgress)(nil)
+var _ client.SandboxReporter = (*sandboxProgress)(nil)
 
 // startCreateProgress starts progress for one create operation.
 func startCreateProgress(command *cobra.Command, name string) (*sandboxProgress, error) {

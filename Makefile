@@ -71,12 +71,14 @@ build: | $(LOCALBIN) ## Build kumabox and host setup helpers
 agent: | $(LOCALBIN) ## Build the Linux guest agent for the selected GOARCH
 	CGO_ENABLED=0 GOOS=linux GOARCH=$${GOARCH:-$$(go env GOARCH)} go build -trimpath -ldflags "$(GO_LDFLAGS)" -o $(LOCALBIN)/kumabox-agent ./cmd/kumabox-agent
 
-install: build ## Install kumabox and host setup helpers
+install: build ## Install kumabox, host helpers, and the systemd unit
 	install -d "$(DESTDIR)$(PREFIX)/bin"
 	install -m 0755 $(LOCALBIN)/kumabox "$(DESTDIR)$(PREFIX)/bin/kumabox"
 	install -m 0755 $(LOCALBIN)/kumabox-check "$(DESTDIR)$(PREFIX)/bin/kumabox-check"
 	install -m 0755 $(LOCALBIN)/kumabox-bridge "$(DESTDIR)$(PREFIX)/bin/kumabox-bridge"
 	install -m 0755 $(LOCALBIN)/kumabox-ebpf "$(DESTDIR)$(PREFIX)/bin/kumabox-ebpf"
+	install -d "$(DESTDIR)$(PREFIX)/lib/systemd/system"
+	install -m 0644 packaging/systemd/kumabox.service "$(DESTDIR)$(PREFIX)/lib/systemd/system/kumabox.service"
 
 # --- Testing ---
 

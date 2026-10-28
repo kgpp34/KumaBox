@@ -6,8 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/core"
-	"github.com/kumabox/kumabox/images"
+	"github.com/kumabox/kumabox/client"
 )
 
 // newListCommand renders catalog entries as an aligned table or detailed JSON.
@@ -19,12 +18,12 @@ func newListCommand(configuration configProvider) *cobra.Command {
 		Short:   "list imported images",
 		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) (returnErr error) {
-			state, err := core.OpenImages(command.Context(), configuration())
+			state, err := client.OpenImages(command.Context(), configuration())
 			if err != nil {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, state.Close()) }()
-			items, err := state.Catalog.List(command.Context())
+			items, err := state.List(command.Context())
 			if err != nil {
 				return err
 			}
@@ -49,12 +48,12 @@ func newInspectCommand(configuration configProvider) *cobra.Command {
 		Short: "inspect an imported image",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
-			state, err := core.OpenImages(command.Context(), configuration())
+			state, err := client.OpenImages(command.Context(), configuration())
 			if err != nil {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, state.Close()) }()
-			image, err := state.Catalog.Resolve(command.Context(), args[0])
+			image, err := state.Inspect(command.Context(), args[0])
 			if err != nil {
 				return err
 			}
@@ -79,12 +78,12 @@ func newVerifyCommand(configuration configProvider) *cobra.Command {
 			if err := progress.Status("checking image artifacts"); err != nil {
 				return err
 			}
-			state, err := core.OpenImages(command.Context(), configuration())
+			state, err := client.OpenImages(command.Context(), configuration())
 			if err != nil {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, state.Close()) }()
-			image, err := images.Verify(command.Context(), state.Paths, state.Catalog, args[0])
+			image, err := state.Verify(command.Context(), args[0])
 			if err != nil {
 				return err
 			}

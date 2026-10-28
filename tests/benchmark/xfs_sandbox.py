@@ -28,8 +28,7 @@ MIB = 1024 * 1024
 class SandboxExperiments:
     def __init__(self, args):
         self.args = args
-        self.cli = KumaBox(args.binary, ["--root-dir", str(args.root), "--run-dir", str(args.run),
-                                       "--log-dir", str(args.log)], 240)
+        self.cli = KumaBox(args.binary, ["--run-dir", str(args.run)], 240)
         self.prefix = "kbxfslab-" + uuid.uuid4().hex[:8]
         self.sandboxes, self.snapshots = set(), set()
         self.rows = []

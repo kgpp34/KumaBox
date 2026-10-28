@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 780" width="1200" height="780" role="img" aria-label="KumaBox architecture: a short-lived CLI control plane driving Cloud Hypervisor microVMs">
-<title>KumaBox architecture: a short-lived CLI control plane driving Cloud Hypervisor microVMs</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 780" width="1200" height="780" role="img" aria-label="KumaBox architecture: a persistent node runtime driving Cloud Hypervisor microVMs">
+<title>KumaBox architecture: a persistent node runtime driving Cloud Hypervisor microVMs</title>
 <defs>
   <pattern id="iso" width="40" height="23.094" patternUnits="userSpaceOnUse">
     <path d="M0 0 L40 23.094 M40 0 L0 23.094" stroke="#ffffff" stroke-opacity="0.028" stroke-width="1"/>
@@ -31,29 +31,29 @@
 <rect x="0" y="0" width="1200" height="780" rx="20" fill="url(#iso)"/>
 <rect x="0.5" y="0.5" width="1199" height="779" rx="20" fill="none" stroke="#34485F"/>
 <text x="48" y="58" font-size="26" fill="#E8EEF5" font-weight="700" text-anchor="start" >How KumaBox works</text>
-<text x="48" y="88" font-size="16" fill="#98AABF" font-weight="400" text-anchor="start" >Each command is a short-lived process. Only the microVMs keep running.</text>
+<text x="48" y="88" font-size="16" fill="#98AABF" font-weight="400" text-anchor="start" >CLI and API clients submit requests to one persistent node runtime.</text>
 <rect x="48" y="116" width="472" height="56" rx="12" fill="#243449" stroke="#34485F" stroke-width="1.2" />
 <text x="284.0" y="150" font-size="17" fill="#E8EEF5" font-weight="600" text-anchor="middle" >Your agent, script or CI job</text>
 <line x1="284.0" y1="172" x2="284.0" y2="214" stroke="#6F8FAF" stroke-width="2" stroke-linecap="round" marker-end="url(#arr)"/>
-<text x="298.0" y="199" font-size="13" fill="#98AABF" font-weight="400" text-anchor="start" class="mono" >kumabox run | exec | clone --json</text>
+<text x="298.0" y="199" font-size="13" fill="#98AABF" font-weight="400" text-anchor="start" class="mono" >CLI / API via Unix socket</text>
 <rect x="48" y="220" width="472" height="236" rx="12" fill="#1F2D40" stroke="#4E6E8E" stroke-width="1.6" />
-<text x="72" y="256" font-size="20" fill="#E8EEF5" font-weight="700" text-anchor="start" class="mono" >kumabox</text>
-<text x="178" y="256" font-size="14" fill="#98AABF" font-weight="400" text-anchor="start" >one process per command</text>
+<text x="72" y="256" font-size="20" fill="#E8EEF5" font-weight="700" text-anchor="start" class="mono" >kumabox daemon</text>
+<text x="260" y="256" font-size="14" fill="#98AABF" font-weight="400" text-anchor="start" >one shared application</text>
 <rect x="72.0" y="276" width="205.0" height="54" rx="10" fill="#243449" stroke="#34485F" stroke-width="1.2" />
 <text x="86.0" y="299" font-size="15" fill="#E8EEF5" font-weight="600" text-anchor="start" >Resource locks</text>
-<text x="86.0" y="319" font-size="12.5" fill="#98AABF" font-weight="400" text-anchor="start" >safe concurrent commands</text>
+<text x="86.0" y="319" font-size="12.5" fill="#98AABF" font-weight="400" text-anchor="start" >concurrent sandbox operations</text>
 <rect x="291.0" y="276" width="205.0" height="54" rx="10" fill="#243449" stroke="#34485F" stroke-width="1.2" />
 <text x="305.0" y="299" font-size="15" fill="#E8EEF5" font-weight="600" text-anchor="start" >Operation journal</text>
 <text x="305.0" y="319" font-size="12.5" fill="#98AABF" font-weight="400" text-anchor="start" >resumes interrupted work</text>
 <rect x="72.0" y="342" width="205.0" height="54" rx="10" fill="#243449" stroke="#34485F" stroke-width="1.2" />
 <text x="86.0" y="365" font-size="15" fill="#E8EEF5" font-weight="600" text-anchor="start" >Metadata</text>
-<text x="86.0" y="385" font-size="12.5" fill="#98AABF" font-weight="400" text-anchor="start" >JSON or SQLite backend</text>
+<text x="86.0" y="385" font-size="12.5" fill="#98AABF" font-weight="400" text-anchor="start" >one shared SQLite engine</text>
 <rect x="291.0" y="342" width="205.0" height="54" rx="10" fill="#243449" stroke="#34485F" stroke-width="1.2" />
 <text x="305.0" y="365" font-size="15" fill="#E8EEF5" font-weight="600" text-anchor="start" >Reconcile and GC</text>
 <text x="305.0" y="385" font-size="12.5" fill="#98AABF" font-weight="400" text-anchor="start" >records match reality</text>
 <circle cx="78" cy="428" r="5" fill="#F5B83D"/>
-<text x="92" y="433" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >Exits when the work is done. Nothing idles on the host.</text>
-<text x="48" y="492" font-size="14" fill="#98AABF" font-weight="600" text-anchor="start" >Subsystems each command drives</text>
+<text x="92" y="433" font-size="14" fill="#E8EEF5" font-weight="400" text-anchor="start" >One runtime supervises VM exits and recovery.</text>
+<text x="48" y="492" font-size="14" fill="#98AABF" font-weight="600" text-anchor="start" >Subsystems managed by the node</text>
 <rect x="48.0" y="506" width="228.0" height="104" rx="12" fill="#1F2D40" stroke="#34485F" stroke-width="1.2" />
 <rect x="48.0" y="524" width="4" height="26" rx="2" fill="#6F8FAF"/>
 <text x="68.0" y="543" font-size="17" fill="#E8EEF5" font-weight="700" text-anchor="start" >Images</text>
@@ -62,8 +62,8 @@
 <rect x="292.0" y="506" width="228.0" height="104" rx="12" fill="#1F2D40" stroke="#34485F" stroke-width="1.2" />
 <rect x="292.0" y="524" width="4" height="26" rx="2" fill="#6F8FAF"/>
 <text x="312.0" y="543" font-size="17" fill="#E8EEF5" font-weight="700" text-anchor="start" >Network</text>
-<text x="312.0" y="570" font-size="13" fill="#98AABF" font-weight="400" text-anchor="start" >CNI netns per VM</text>
-<text x="312.0" y="590" font-size="13" fill="#98AABF" font-weight="400" text-anchor="start" >multiqueue TAP, tc redirect</text>
+<text x="312.0" y="570" font-size="13" fill="#98AABF" font-weight="400" text-anchor="start" >CNI, bridge or TAP/eBPF</text>
+<text x="312.0" y="590" font-size="13" fill="#98AABF" font-weight="400" text-anchor="start" >isolated guest identities</text>
 <rect x="48.0" y="624" width="228.0" height="104" rx="12" fill="#1F2D40" stroke="#34485F" stroke-width="1.2" />
 <rect x="48.0" y="642" width="4" height="26" rx="2" fill="#6F8FAF"/>
 <text x="68.0" y="661" font-size="17" fill="#E8EEF5" font-weight="700" text-anchor="start" >Snapshots</text>
@@ -106,7 +106,7 @@
 <rect x="624" y="618" width="504" height="42" rx="10" fill="#1D2B3D" stroke="#34485F" stroke-width="1.2" />
 <text x="642" y="644" font-size="13.5" fill="#E8EEF5" font-weight="400" text-anchor="start" >Shared EROFS layer store: read-only, deduplicated across VMs</text>
 <rect x="624" y="670" width="504" height="42" rx="10" fill="#1D2B3D" stroke="#34485F" stroke-width="1.2" />
-<text x="642" y="696" font-size="13.5" fill="#E8EEF5" font-weight="400" text-anchor="start" >CNI network: per-VM netns and TAP, NAT to the outside</text>
+<text x="642" y="696" font-size="13.5" fill="#E8EEF5" font-weight="400" text-anchor="start" >Network providers: CNI, bridge, isolated TAP/eBPF</text>
 <path d="M520 300 C 570 300, 602 274, 658 274" stroke="#F5B83D" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrH)" class="flow"/>
 <text x="560" y="262" font-size="12.5" fill="#F5B83D" font-weight="600" text-anchor="middle" class="mono" >vsock</text>
 <path d="M520 392 L 620 392" stroke="#6F8FAF" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arr)"/>

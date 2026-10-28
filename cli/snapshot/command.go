@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/config"
-	"github.com/kumabox/kumabox/core"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
 )
@@ -34,7 +34,7 @@ func newSaveCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
-			service, err := core.OpenSnapshots(command.Context(), configuration(), progress)
+			service, err := client.OpenSnapshots(command.Context(), configuration(), progress)
 			if err != nil {
 				return err
 			}
@@ -43,12 +43,12 @@ func newSaveCommand(configuration configProvider) *cobra.Command {
 				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
 					Operation: "save snapshot",
 					Entity:    args[0],
-					Phase:     "close metadata",
+					Phase:     "close client",
 					Action:    "inspect the snapshot before retrying",
 					Committed: committed,
 				}))
 			}()
-			record, err := service.Save(command.Context(), core.SaveSnapshotRequest{
+			record, err := service.Save(command.Context(), types.SaveSnapshotRequest{
 				SandboxReference: args[0], Name: name, Description: description,
 			})
 			if err != nil {
@@ -78,7 +78,7 @@ func NewHibernateCommand(configuration func() config.Config) *cobra.Command {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
-			service, err := core.OpenSnapshots(command.Context(), configuration(), progress)
+			service, err := client.OpenSnapshots(command.Context(), configuration(), progress)
 			if err != nil {
 				return err
 			}
@@ -87,12 +87,12 @@ func NewHibernateCommand(configuration func() config.Config) *cobra.Command {
 				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
 					Operation: "hibernate sandbox",
 					Entity:    args[0],
-					Phase:     "close metadata",
+					Phase:     "close client",
 					Action:    "inspect the sandbox and snapshot before retrying",
 					Committed: committed,
 				}))
 			}()
-			record, err := service.Hibernate(command.Context(), core.SaveSnapshotRequest{
+			record, err := service.Hibernate(command.Context(), types.SaveSnapshotRequest{
 				SandboxReference: args[0], Name: name, Description: description,
 			})
 			if err != nil {
@@ -117,7 +117,7 @@ func newListCommand(configuration configProvider) *cobra.Command {
 		Short:   "list snapshots",
 		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) (returnErr error) {
-			service, err := core.OpenSnapshots(command.Context(), configuration(), nil)
+			service, err := client.OpenSnapshots(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}
@@ -125,7 +125,7 @@ func newListCommand(configuration configProvider) *cobra.Command {
 				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
 					Operation: "list snapshots",
 					Entity:    "",
-					Phase:     "close metadata",
+					Phase:     "close client",
 					Action:    "retry the query",
 				}))
 			}()
@@ -155,7 +155,7 @@ func newInspectCommand(configuration configProvider) *cobra.Command {
 		Short: "show detailed snapshot information as JSON",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
-			service, err := core.OpenSnapshots(command.Context(), configuration(), nil)
+			service, err := client.OpenSnapshots(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}
@@ -163,7 +163,7 @@ func newInspectCommand(configuration configProvider) *cobra.Command {
 				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
 					Operation: "inspect snapshot",
 					Entity:    args[0],
-					Phase:     "close metadata",
+					Phase:     "close client",
 					Action:    "retry the query",
 				}))
 			}()
@@ -183,7 +183,7 @@ func newRemoveCommand(configuration configProvider) *cobra.Command {
 		Short: "remove one or more snapshots",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
-			service, err := core.OpenSnapshots(command.Context(), configuration(), nil)
+			service, err := client.OpenSnapshots(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}
@@ -191,7 +191,7 @@ func newRemoveCommand(configuration configProvider) *cobra.Command {
 				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
 					Operation: "remove snapshot",
 					Entity:    args[0],
-					Phase:     "close metadata",
+					Phase:     "close client",
 					Action:    "retry snapshot removal",
 					Committed: true,
 				}))

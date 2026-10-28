@@ -64,8 +64,19 @@ func Execute(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	root.SetErr(stderr)
 
 	// Resolve unknown commands before execution so Cobra usage errors keep exit 2.
-	if _, _, err := root.Find(args); err != nil {
-		return &codedError{err: err, code: exitUsage}
+	target, _, findErr := root.Find(args)
+	if findErr != nil {
+		return &codedError{err: findErr, code: exitUsage}
+	}
+	// Doctor delegates its own flags to the host checker. Parse only leading
+	// global connection flags before Cobra reaches the flag-transparent command.
+	if target.Name() == "doctor" {
+		flags := root.PersistentFlags()
+		flags.SetInterspersed(false)
+		if err := flags.Parse(args); err != nil {
+			return &codedError{err: err, code: exitUsage}
+		}
+		root.SetArgs(flags.Args())
 	}
 	err = root.ExecuteContext(ctx)
 	if err == nil {
@@ -109,10 +120,17 @@ func newRootCommand() (*cobra.Command, error) {
 		Short:         "microVM sandboxes for AI agents",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+		PersistentPreRunE: func(command *cobra.Command, _ []string) error {
 			resolved, err := loader.Load(configFile)
 			if err != nil {
 				return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+			}
+			if command.Name() != "daemon" {
+				for _, name := range []string{"root-dir", "log-dir", "cni-conf-dir", "cni-bin-dir", "dns"} {
+					if command.Flags().Changed(name) {
+						return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("--%s configures the daemon; set it on kumabox daemon and select the client endpoint with --socket", name))
+					}
+				}
 			}
 			configuration = resolved
 			return nil
@@ -123,6 +141,7 @@ func newRootCommand() (*cobra.Command, error) {
 	})
 	flags := root.PersistentFlags()
 	flags.StringVar(&configFile, "config", "", "explicit configuration file")
+	flags.String("socket", "", "local KumaBox daemon Unix socket")
 	flags.String("root-dir", configuration.Paths.Data, "persistent data directory")
 	flags.String("run-dir", configuration.Paths.Run, "runtime state directory")
 	flags.String("log-dir", configuration.Paths.Log, "log directory")
@@ -130,7 +149,8 @@ func newRootCommand() (*cobra.Command, error) {
 	flags.String("cni-bin-dir", configuration.Network.CNI.BinDir, "CNI plugin binary directory")
 	flags.String("dns", configuration.Network.DNS, "comma-separated guest DNS servers")
 	for key, name := range map[string]string{
-		"paths.data": "root-dir", "paths.run": "run-dir", "paths.log": "log-dir",
+		"client.socket": "socket",
+		"paths.data":    "root-dir", "paths.run": "run-dir", "paths.log": "log-dir",
 		"network.cni.conf_dir": "cni-conf-dir", "network.cni.bin_dir": "cni-bin-dir", "network.dns": "dns",
 	} {
 		if err := loader.BindFlag(key, flags.Lookup(name)); err != nil {
@@ -139,7 +159,7 @@ func newRootCommand() (*cobra.Command, error) {
 	}
 	provideConfig := func() config.Config { return configuration }
 
-	root.AddCommand(doctorcmd.NewCommand())
+	root.AddCommand(doctorcmd.NewCommand(provideConfig))
 	root.AddCommand(newDaemonCommand(provideConfig))
 	root.AddCommand(newServeCommand(provideConfig))
 	root.AddCommand(newGCCommand(provideConfig))

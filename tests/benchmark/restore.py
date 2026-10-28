@@ -23,8 +23,7 @@ class RestoreBenchmark:
     def __init__(self, args):
         self.args = args
         self.prefix = "kbrestore-" + uuid.uuid4().hex[:8]
-        common = ["--root-dir", str(args.root), "--run-dir", str(args.run),
-                  "--log-dir", str(args.log)]
+        common = ["--run-dir", str(args.run)]
         self.variants = [(name, KumaBox(binary, common, 120))
                          for name, binary in args.variant]
         self.owner = self.variants[0][1]
@@ -194,6 +193,8 @@ def main():
     parser.add_argument("--scenarios", nargs="+", choices=("restore", "clone", "directory"),
                         default=["restore", "clone", "directory"])
     args = parser.parse_args()
+    if len(args.variant)>1:
+        parser.error("run one variant per matching daemon; switching CLI binaries does not switch the resident runtime")
     if os.geteuid() != 0 or args.samples < 2 or args.warmups < 0 or any(n < 1 for n in args.cpus):
         parser.error("requires root, samples >= 2, warmups >= 0 and positive CPU counts")
     if len({name for name, _ in args.variant}) != len(args.variant):

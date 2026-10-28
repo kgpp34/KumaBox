@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
 )
@@ -27,7 +27,7 @@ func NewNetCommand(configuration configProvider) *cobra.Command {
 			if !configure && (nics < 0 || nics > types.MaxSandboxNICs) {
 				return invalidFlag("nics", fmt.Errorf("must be between 0 and %d", types.MaxSandboxNICs))
 			}
-			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+			service, err := client.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}
@@ -35,7 +35,7 @@ func NewNetCommand(configuration configProvider) *cobra.Command {
 				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
 					Operation: "resize sandbox network",
 					Entity:    args[0],
-					Phase:     "close metadata",
+					Phase:     "close client",
 					Action:    "inspect the sandbox",
 				}))
 			}()

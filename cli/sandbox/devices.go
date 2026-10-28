@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
 )
@@ -30,7 +30,7 @@ func NewDiskCommand(configuration configProvider) *cobra.Command {
 			if directIO != "auto" && directIO != "on" && directIO != "off" {
 				return invalidFlag("directio", errors.New("must be auto, on, or off"))
 			}
-			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+			service, err := client.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}
@@ -56,7 +56,7 @@ func NewDiskCommand(configuration configProvider) *cobra.Command {
 			if detachName == "" {
 				return invalidFlag("name", errors.New("is required"))
 			}
-			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+			service, err := client.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}
@@ -93,7 +93,7 @@ func NewFSCommand(configuration configProvider) *cobra.Command {
 			if err != nil {
 				return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
 			}
-			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+			service, err := client.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}
@@ -120,7 +120,7 @@ func NewFSCommand(configuration configProvider) *cobra.Command {
 			if err := types.ValidateFileShareTag(detachTag); err != nil {
 				return invalidFlag("tag", err)
 			}
-			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+			service, err := client.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}
@@ -138,7 +138,7 @@ func NewFSCommand(configuration configProvider) *cobra.Command {
 	list := &cobra.Command{
 		Use: "list SANDBOX", Short: "list runtime virtio-fs shares", Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
-			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+			service, err := client.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}
@@ -180,7 +180,7 @@ func NewDeviceCommand(configuration configProvider) *cobra.Command {
 			if pci == "" {
 				return invalidFlag("pci", errors.New("is required"))
 			}
-			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+			service, err := client.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}
@@ -202,7 +202,7 @@ func NewDeviceCommand(configuration configProvider) *cobra.Command {
 			if detachID == "" {
 				return invalidFlag("id", errors.New("is required"))
 			}
-			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+			service, err := client.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}

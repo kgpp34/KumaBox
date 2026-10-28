@@ -3,7 +3,7 @@
 
 Run as root with an imported Ubuntu/systemd image containing the current agent.
 Only sandboxes created by this invocation are stopped and removed. Use dedicated
---root-dir/--run-dir/--log-dir to isolate metadata from normal workloads.
+daemon configuration to isolate metadata; select its socket with --socket.
 """
 
 import argparse
@@ -21,9 +21,11 @@ class GuestTests:
     def __init__(self, args):
         self.args = args
         self.command = [args.binary]
-        for option in ("root_dir", "run_dir", "log_dir"):
+        for option in ("run_dir",):
             if value := getattr(args, option):
                 self.command.extend(["--" + option.replace("_", "-"), value])
+        if value := getattr(args, "socket", None):
+            self.command.extend(["--socket", value])
         self.results = []
         self.created = []
         self.name = ""
@@ -257,10 +259,11 @@ class GuestTests:
         # on the sandbox's writable root filesystem outside temporary paths.
         persistent = "/root/kumabox-agent-e2e-persistent"
         self.file("write", persistent, data=b"persisted")
-        # stop terminates the VMM rather than shutting the guest OS down. The
-        # file API promises atomic visibility, not persistence after power loss.
+        # Stop may escalate to termination when the guest cannot handle ACPI.
+        # File writes promise atomic visibility, not persistence after power loss.
         self.guest("sync")
-        self.call("stop", self.name, "--json")
+        # Allow the default 30-second guest shutdown window and escalation.
+        self.call("stop", self.name, "--json", timeout=75)
         self.file("read", persistent, expect=None)
         self.call("start", self.name, "--json")
         deadline = time.monotonic() + 60
@@ -278,7 +281,7 @@ class GuestTests:
         failures = []
         for name in reversed(self.created):
             try:
-                self.call("stop", name, "--json")
+                self.call("stop", name, "--force", "--json")
                 self.call("rm", name)
             except Exception as error:
                 failures.append(f"{name}: {error}")
@@ -328,7 +331,8 @@ def main():
     parser.add_argument("--image", required=True)
     parser.add_argument("--commit", required=True, help="expected guest agent commit")
     parser.add_argument("--nics", nargs="+", type=int, choices=(0, 1), default=[0, 1])
-    parser.add_argument("--root-dir")
+    parser.add_argument("--socket")
+    parser.add_argument("--root-dir", help="daemon data root (not a client policy override)")
     parser.add_argument("--run-dir")
     parser.add_argument("--log-dir")
     parser.add_argument("--report", default="/tmp/kumabox-guest-e2e.json")

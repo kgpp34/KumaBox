@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
 )
@@ -45,7 +45,7 @@ func NewRestoreCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
-			service, err := core.OpenSnapshots(command.Context(), configuration(), progress)
+			service, err := client.OpenSnapshots(command.Context(), configuration(), progress)
 			if err != nil {
 				return err
 			}
@@ -54,12 +54,12 @@ func NewRestoreCommand(configuration configProvider) *cobra.Command {
 				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
 					Operation: "restore sandbox",
 					Entity:    args[0],
-					Phase:     "close metadata",
+					Phase:     "close client",
 					Action:    "inspect the sandbox before retrying",
 					Committed: committed,
 				}))
 			}()
-			record, err := service.RestoreWithOptions(command.Context(), args[0], reference, core.RestoreOptions{
+			record, err := service.RestoreWithOptions(command.Context(), args[0], reference, types.RestoreOptions{
 				SourceDirectory: fromDir, Force: force, Pull: pull, MemoryMode: types.MemoryRestoreMode(memoryMode),
 			})
 			if err != nil {

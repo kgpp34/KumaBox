@@ -224,7 +224,7 @@ func (p Process) Validate() error {
 }
 
 // ProcessState summarizes facts proven from process identity and the VMM API.
-type ProcessState string
+type ProcessState = types.RuntimeState
 
 const (
 	// ProcessAbsent means no owned VMM process is alive.

@@ -53,8 +53,10 @@ Each sandbox is a real machine:
 
 <p align="center"><img src="assets/readme/architecture.svg" alt="KumaBox architecture" width="100%"></p>
 
-**Lightweight control plane.** Every `kumabox` call opens durable state, takes
-resource locks, performs the operation and records the result. Each running VM
+**Persistent node runtime.** CLI commands submit requests over an owner-only Unix
+socket to `kumabox daemon`. The daemon owns one shared application and metadata
+engine, runs operations concurrently under resource locks, and supervises VM exits.
+`kumabox serve` exposes the node through the authenticated public HTTP API. Each running VM
 is backed by its own Cloud Hypervisor process, so one sandbox can never take
 down another.
 
@@ -98,6 +100,9 @@ sudo install -m 0755 bin/kumabox-check /usr/local/bin/kumabox-check
 
 # 2. Prepare the host once: Cloud Hypervisor, firmware, CNI plugins, EROFS tools
 sudo kumabox-check --upgrade
+sudo install -m 0644 packaging/systemd/kumabox.service /etc/systemd/system/kumabox.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now kumabox
 sudo kumabox doctor
 
 # 3. Pull the published guest image
@@ -426,9 +431,38 @@ Released host addresses remain unavailable for 90 seconds to avoid stale TCP
 state reaching another VM. New allocations immediately use other free addresses;
 size the subnet for active endpoints plus recent turnover.
 
+## Node service
+
+`kumabox daemon` must be running for runtime commands, including image queries,
+`doctor`, guest operations and snapshot transfers. The default socket is
+`/run/kumabox/kumabox.sock` (mode 0600). A stopped service produces an explicit
+connection error; clients never open a second runtime or modify SQLite directly.
+`help` and the client `version` remain available offline. Before first service
+startup, the standalone `kumabox-check` script can prepare the host.
+
+For a foreground service with custom host configuration:
+
+```bash
+sudo kumabox --config /etc/kumabox/config.yaml daemon
+sudo kumabox --socket /run/kumabox/kumabox.sock ps --all
+```
+
+Host paths, CNI, DNS and VMM policies belong to the daemon configuration.
+`--socket` (or `KUMABOX_CLIENT_SOCKET`) selects the client endpoint. A legacy
+`--run-dir` also changes the derived socket path. `--root-dir`, `--log-dir`, CNI
+and DNS flags apply only when starting the daemon.
+
+The systemd unit waits for a readiness notification and uses `KillMode=process`
+with `RuntimeDirectoryPreserve=yes`: restarting the node service retains
+running VMs and their sockets. Startup reconciles durable records and resumes exit supervision.
+A disconnected command can have committed before losing its response; inspect
+its state before retrying a mutation. Snapshot import/export and guest streams
+remain bounded in memory. Image import and external-device paths name files on
+the daemon host; relative paths are resolved at the CLI's working directory.
+
 ## Remote API and SDKs
 
-`kumabox serve` opens the same application services through an authenticated,
+`kumabox serve` forwards requests to the local daemon through an authenticated,
 versioned HTTP API. It binds to `127.0.0.1:8765` by default. Keep it on loopback
 and use an SSH tunnel or TLS reverse proxy for remote clients:
 

@@ -267,13 +267,13 @@ func TestCreateProgressReportsCommittedOutputFailure(t *testing.T) {
 }
 
 func TestCreateCommandPersistsCreatedSandboxAndFinalCOW(t *testing.T) {
-	base := t.TempDir()
+	base := shortTempDir(t)
 	roots := storage.Roots{
 		Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log"),
 	}
 	seedImage(t, roots)
 	installFakeMKFS(t, base)
-	command := NewCreateCommand(func() config.Config { return sandboxTestConfig(roots) })
+	command := NewCreateCommand(func() config.Config { return sandboxTestConfig(t, roots) })
 	command.SetArgs([]string{"demo", "--name", "box", "--cpus", "1", "--nics", "0", "--json"})
 	var stdout, stderr bytes.Buffer
 	command.SetOut(&stdout)
@@ -313,7 +313,7 @@ func TestCreateCommandPersistsCreatedSandboxAndFinalCOW(t *testing.T) {
 
 func seedImage(t *testing.T, roots storage.Roots) {
 	t.Helper()
-	state, err := core.OpenImages(t.Context(), sandboxTestConfig(roots))
+	state, err := core.OpenImages(t.Context(), sandboxTestConfig(t, roots))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,11 +363,12 @@ func seedImage(t *testing.T, roots storage.Roots) {
 }
 
 // sandboxTestConfig isolates host CNI discovery and scopes state to one test directory.
-func sandboxTestConfig(roots storage.Roots) config.Config {
+func sandboxTestConfig(t *testing.T, roots storage.Roots) config.Config {
 	configuration := config.Default()
 	configuration.Paths = roots
 	configuration.Network.CNI.ConfDir = filepath.Join(roots.Data, "cni-conf")
 	configuration.Network.CNI.BinDir = filepath.Join(roots.Data, "cni-bin")
+	startTestNode(t, configuration)
 	return configuration
 }
 

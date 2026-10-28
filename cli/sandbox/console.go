@@ -13,7 +13,7 @@ import (
 	"github.com/moby/term"
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/errdefs"
 )
 
@@ -37,7 +37,7 @@ func NewConsoleCommand(configuration configProvider) *cobra.Command {
 			}
 
 			reference := args[0]
-			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+			service, err := client.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}
@@ -45,7 +45,7 @@ func NewConsoleCommand(configuration configProvider) *cobra.Command {
 				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
 					Operation: "console sandbox",
 					Entity:    reference,
-					Phase:     "close metadata",
+					Phase:     "close client",
 					Action:    "retry the console connection",
 				}))
 			}()
@@ -72,8 +72,8 @@ func NewConsoleCommand(configuration configProvider) *cobra.Command {
 			if _, err := fmt.Fprintf(command.ErrOrStderr(), "Connected to %s (escape sequence: %s.).\r\n", reference, formatEscapeChar(escape)); err != nil {
 				return err
 			}
-			if remote, ok := connection.(*os.File); ok {
-				stopResize := relayConsoleResize(input.Fd(), remote.Fd())
+			if remote, ok := connection.(interface{ Resize(uint16, uint16) error }); ok {
+				stopResize := watchConsoleResize(input.Fd(), remote.Resize)
 				defer stopResize()
 			}
 			err = relayConsole(command.Context(), connection, input, command.OutOrStdout(), []byte{escape, '.'})
@@ -122,11 +122,11 @@ func relayConsole(ctx context.Context, remote io.ReadWriteCloser, input io.Reade
 	return errors.Join(err, closeErr)
 }
 
-// relayConsoleResize copies the local terminal size initially and on SIGWINCH.
-func relayConsoleResize(localFD, remoteFD uintptr) func() {
+// watchConsoleResize sends the initial terminal size and later SIGWINCH updates.
+func watchConsoleResize(localFD uintptr, resizeRemote func(uint16, uint16) error) func() {
 	syncSize := func() {
 		if size, err := term.GetWinsize(localFD); err == nil {
-			_ = term.SetWinsize(remoteFD, size)
+			_ = resizeRemote(size.Height, size.Width)
 		}
 	}
 	syncSize()

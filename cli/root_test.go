@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/errdefs"
+	"github.com/kumabox/kumabox/storage"
 )
 
 func TestDoctorForwardsArgumentsAndExitCode(t *testing.T) {
@@ -18,7 +20,7 @@ func TestDoctorForwardsArgumentsAndExitCode(t *testing.T) {
 		t.Skip("test helper is a shell script")
 	}
 
-	dir := t.TempDir()
+	dir := shortTempDir(t)
 	checker := filepath.Join(dir, "kumabox-check")
 	contents := []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\nexit 1\n")
 	if err := os.WriteFile(checker, contents, 0o755); err != nil {
@@ -27,7 +29,11 @@ func TestDoctorForwardsArgumentsAndExitCode(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var stdout bytes.Buffer
+	cfg := config.Default()
+	cfg.Paths = storage.Roots{Data: filepath.Join(dir, "data"), Run: filepath.Join(dir, "run"), Log: filepath.Join(dir, "log")}
+	startTestNode(t, cfg)
 	err := Execute(context.Background(), []string{
+		"--socket", cfg.SocketPath(),
 		"doctor", "--fix", "--upgrade", "--subnet=10.89.0.0/16",
 	}, &stdout, &bytes.Buffer{})
 	if got := ExitCode(err); got != 1 {
@@ -53,7 +59,7 @@ func TestVersion(t *testing.T) {
 }
 
 func TestExecuteConfigurationIsInvocationLocal(t *testing.T) {
-	base := t.TempDir()
+	base := shortTempDir(t)
 	for _, name := range []string{"first", "second"} {
 		dataRoot := filepath.Join(base, name, "data")
 		configFile := filepath.Join(base, name+".yaml")
@@ -61,6 +67,11 @@ func TestExecuteConfigurationIsInvocationLocal(t *testing.T) {
 		if err := os.WriteFile(configFile, contents, 0o600); err != nil {
 			t.Fatal(err)
 		}
+		cfg, err := config.NewLoader().Load(configFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		startTestNode(t, cfg)
 		var stdout bytes.Buffer
 		if err := Execute(t.Context(), []string{"--config", configFile, "image", "ls", "--json"}, &stdout, &bytes.Buffer{}); err != nil {
 			t.Fatal(err)
@@ -78,7 +89,7 @@ func TestExecutePassesConfigurationToImageAdapters(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test converter is a POSIX shell script")
 	}
-	base := t.TempDir()
+	base := shortTempDir(t)
 	binary := filepath.Join(base, "configured-erofs")
 	marker := filepath.Join(base, "converter-used")
 	t.Setenv("TEST_EROFS_MARKER", marker)
@@ -91,6 +102,11 @@ func TestExecutePassesConfigurationToImageAdapters(t *testing.T) {
 	if err := os.WriteFile(configFile, contents, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	cfg, err := config.NewLoader().Load(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startTestNode(t, cfg)
 	if err := Execute(t.Context(), []string{
 		"--config", configFile, "image", "import", "configured", "../testdata/oci-layout", "--platform", "linux/amd64",
 	}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -102,7 +118,7 @@ func TestExecutePassesConfigurationToImageAdapters(t *testing.T) {
 }
 
 func TestInvalidConfigurationUsesDomainExitCode(t *testing.T) {
-	configFile := filepath.Join(t.TempDir(), "invalid.yaml")
+	configFile := filepath.Join(shortTempDir(t), "invalid.yaml")
 	if err := os.WriteFile(configFile, []byte("images:\n  parallelism: 0\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -126,8 +142,11 @@ func TestNetworkFlagsAreBoundIntoConfiguration(t *testing.T) {
 }
 
 func TestImageAndUsageExitCodes(t *testing.T) {
-	base := t.TempDir()
-	flags := []string{"--root-dir", filepath.Join(base, "data"), "--run-dir", filepath.Join(base, "run"), "--log-dir", filepath.Join(base, "log")}
+	base := shortTempDir(t)
+	cfg := config.Default()
+	cfg.Paths = storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")}
+	startTestNode(t, cfg)
+	flags := []string{"--run-dir", filepath.Join(base, "run")}
 	for _, test := range []struct {
 		name string
 		args []string
@@ -207,5 +226,25 @@ func TestDomainErrorExitCodes(t *testing.T) {
 				t.Fatalf("errorExitCode(%q) = %d, want %d", test.code, got, test.want)
 			}
 		})
+	}
+}
+
+func TestMissingDaemonNeverCreatesRuntimeState(t *testing.T) {
+	base := shortTempDir(t)
+	socket := filepath.Join(base, "missing.sock")
+	err := Execute(t.Context(), []string{"--socket", socket, "image", "ls", "--json"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if ExitCode(err) != 6 || !strings.Contains(err.Error(), "start kumabox daemon") {
+		t.Fatalf("missing daemon: %v", err)
+	}
+	entries, readErr := os.ReadDir(base)
+	if readErr != nil || len(entries) != 0 {
+		t.Fatalf("client opened runtime state: %v %v", entries, readErr)
+	}
+}
+
+func TestHostPolicyFlagsAreDaemonOnly(t *testing.T) {
+	err := Execute(t.Context(), []string{"--root-dir", filepath.Join(shortTempDir(t), "data"), "ps"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if ExitCode(err) != 5 || !strings.Contains(err.Error(), "configures the daemon") {
+		t.Fatalf("host flag on client: %v", err)
 	}
 }

@@ -2,11 +2,13 @@ package image
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/client"
+	"github.com/kumabox/kumabox/errdefs"
 )
 
 // newPullCommand validates a registry reference and runs the shared image importer.
@@ -27,26 +29,17 @@ func newPullCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
-			state, err := core.OpenImages(command.Context(), configuration())
+			state, err := client.OpenImages(command.Context(), configuration())
 			if err != nil {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, state.Close()) }()
-			importer, err := core.NewImageImporter(command.Context(), state, progress, parsedPlatform)
-			if err != nil {
-				return err
-			}
 			var failures []error
 			for _, reference := range args {
-				input, name, sourceErr := core.NewRegistrySource(reference)
-				if sourceErr != nil {
-					failures = append(failures, sourceErr)
-					continue
-				}
-				if err := progress.Status("downloading and converting " + name); err != nil {
+				if err := progress.Status("downloading and converting " + reference); err != nil {
 					return errors.Join(errors.Join(failures...), err)
 				}
-				image, importErr := importer.Import(command.Context(), name, parsedPlatform, input)
+				image, importErr := state.Pull(command.Context(), reference, parsedPlatform, progress)
 				if importErr != nil {
 					failures = append(failures, importErr)
 					continue
@@ -85,17 +78,17 @@ func newImportCommand(configuration configProvider) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			sourceOptions := core.LocalImageOptions{Format: format, SourceTag: sourceTag}
-			err = sourceOptions.Validate()
-			if err != nil {
-				return err
+			switch format {
+			case "", "auto", "docker", "oci":
+			default:
+				return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("unsupported image format %q; use auto, oci, or docker", format))
 			}
 			progress, err := startImageProgress(command, "Import", args[0])
 			if err != nil {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
-			state, err := core.OpenImages(command.Context(), configuration())
+			state, err := client.OpenImages(command.Context(), configuration())
 			if err != nil {
 				return err
 			}
@@ -103,19 +96,7 @@ func newImportCommand(configuration configProvider) *cobra.Command {
 			if err := progress.Status("reading source"); err != nil {
 				return err
 			}
-			input, cleanup, err := state.OpenLocalSource(command.Context(), args[1], sourceOptions)
-			if err != nil {
-				return err
-			}
-			defer func() { returnErr = errors.Join(returnErr, cleanup()) }()
-			importer, err := core.NewImageImporter(command.Context(), state, progress, parsedPlatform)
-			if err != nil {
-				return err
-			}
-			if err := progress.Status("converting layers"); err != nil {
-				return err
-			}
-			image, err := importer.Import(command.Context(), args[0], parsedPlatform, input)
+			image, err := state.Import(command.Context(), args[0], args[1], format, sourceTag, parsedPlatform, progress)
 			if err != nil {
 				return err
 			}

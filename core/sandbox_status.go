@@ -11,12 +11,7 @@ import (
 
 // SandboxStatus combines a durable sandbox record with an identity-checked
 // runtime observation. Observation never changes the stored lifecycle state.
-type SandboxStatus struct {
-	Sandbox types.Sandbox
-	Runtime vmm.ProcessState
-	PID     int
-	Stale   bool
-}
+type SandboxStatus = types.SandboxStatus
 
 // Status observes every sandbox or the requested references. An absent VMM for
 // a Running record is reported as stale so callers can distinguish a crash

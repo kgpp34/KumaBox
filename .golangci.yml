@@ -36,11 +36,27 @@ linters:
               desc: library packages must not import process entry points
             - pkg: github.com/kumabox/kumabox/cli
               desc: library packages must not import CLI adapters
+        cli-submits-to-the-node:
+          files:
+            - "**/cli/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/kumabox/kumabox/core
+              desc: CLI runtime commands must use the node client
+            - pkg: github.com/kumabox/kumabox/metadata
+              desc: only the daemon owns runtime persistence
+            - pkg: github.com/kumabox/kumabox/vmm
+              desc: only the daemon manages VMM processes
+            - pkg: github.com/kumabox/kumabox/network
+              desc: only the daemon manages host networking
+            - pkg: github.com/kumabox/kumabox/disk
+              desc: only the daemon manages guest disks
         composition-does-not-belong-to-modules:
           files:
             - "$all"
             - "!$test"
             - "!**/core/**"
+            - "!**/daemon/**"
             - "!**/cli/**"
             - "!**/main.go"
           deny:

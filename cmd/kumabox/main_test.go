@@ -2,25 +2,30 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kumabox/kumabox/config"
+	"github.com/kumabox/kumabox/daemon"
+	"github.com/kumabox/kumabox/storage"
 )
 
 // TestMainBinaryStreamsAndExitCodes builds the real entrypoint so argument
 // parsing, signal setup, diagnostic printing, and os.Exit remain in scope.
 func TestMainBinaryStreamsAndExitCodes(t *testing.T) {
 	binary := buildBinary(t)
-	base := t.TempDir()
+	base := nodeTempDir(t)
 	global := []string{
-		"--root-dir", filepath.Join(base, "data"),
 		"--run-dir", filepath.Join(base, "run"),
-		"--log-dir", filepath.Join(base, "log"),
 	}
+	startBinaryTestNode(t, base)
 	tests := []struct {
 		name           string
 		args           []string
@@ -77,14 +82,17 @@ func TestMainBinaryStreamsAndExitCodes(t *testing.T) {
 
 func TestMainBinaryPropagatesSignalCancellation(t *testing.T) {
 	binary := buildBinary(t)
-	directory := t.TempDir()
+	directory := nodeTempDir(t)
 	marker := filepath.Join(directory, "ready")
 	checker := filepath.Join(directory, "kumabox-check")
 	script := []byte("#!/bin/sh\n: > \"$KUMABOX_TEST_READY\"\nexec sleep 30\n")
 	if err := os.WriteFile(checker, script, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(binary, "doctor")
+	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("KUMABOX_TEST_READY", marker)
+	cfg := startBinaryTestNode(t, directory)
+	command := exec.Command(binary, "--socket", cfg.SocketPath(), "doctor")
 	command.Env = append(os.Environ(), "PATH="+directory+string(os.PathListSeparator)+os.Getenv("PATH"), "KUMABOX_TEST_READY="+marker)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
@@ -159,4 +167,47 @@ func runBinary(t *testing.T, binary string, args, environment []string) (string,
 		t.Fatalf("run kumabox: %v", err)
 	}
 	return stdout.String(), stderr.String(), exitErr.ExitCode()
+}
+
+func nodeTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "kb-main-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
+func startBinaryTestNode(t *testing.T, base string) config.Config {
+	t.Helper()
+	cfg := config.Default()
+	cfg.Paths = storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	ready := make(chan struct{})
+	go func() {
+		done <- daemon.Run(ctx, cfg, daemon.Options{Ready: func(string) error { close(ready); return nil }}, io.Discard)
+	}()
+	select {
+	case <-ready:
+	case err := <-done:
+		cancel()
+		t.Fatal(err)
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("node startup timed out")
+	}
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Error("node shutdown timed out")
+		}
+	})
+	return cfg
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/disk"
+	imagecatalog "github.com/kumabox/kumabox/images/catalog"
 	"github.com/kumabox/kumabox/metadata"
 	"github.com/kumabox/kumabox/network"
 	"github.com/kumabox/kumabox/sandbox"
@@ -52,8 +53,9 @@ func (a *applicationState) close() error {
 }
 
 // Application groups the sandbox, snapshot, and maintenance services around
-// one metadata engine. Close releases that engine once after command work.
+// one metadata engine. Close releases that engine once after all callers drain.
 type Application struct {
+	Images      *ImageStore
 	Sandboxes   *SandboxService
 	Snapshots   *SnapshotService
 	Maintenance *MaintenanceService
@@ -86,6 +88,7 @@ func OpenApplication(ctx context.Context, configuration config.Config, reporter 
 	}
 	snapshots := &SnapshotService{applicationState: state, reporter: reporter, newID: types.NewSnapshotID}
 	return &Application{
+		Images:      &ImageStore{Paths: lifecycle.dependencies.imagePaths, Catalog: imagecatalog.New(lifecycle.dependencies.store, imagecatalog.WithImageUsage(imageUsage{})), options: configuration.Images, store: lifecycle.dependencies.store},
 		Sandboxes:   lifecycle,
 		Snapshots:   snapshots,
 		Maintenance: &MaintenanceService{applicationState: state, snapshotService: snapshots},
@@ -99,4 +102,25 @@ func (a *Application) Close() error {
 		return nil
 	}
 	return a.state.close()
+}
+
+// WithReporter returns a request-local view sharing adapters without changing
+// another request's reporter. Only Application.Close owns the shared store.
+func (s *SandboxService) WithReporter(reporter SandboxReporter) *SandboxService {
+	copy := *s
+	if reporter == nil {
+		reporter = discardReporter{}
+	}
+	copy.dependencies.reporter = reporter
+	return &copy
+}
+
+// WithReporter isolates snapshot progress while preserving the common leases.
+func (s *SnapshotService) WithReporter(reporter SnapshotReporter) *SnapshotService {
+	copy := *s
+	if reporter == nil {
+		reporter = discardSnapshotReporter{}
+	}
+	copy.reporter = reporter
+	return &copy
 }

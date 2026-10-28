@@ -55,7 +55,9 @@ KumaBox 是一个**面向 AI Agent 和不可信工作负载的 microVM 沙箱运
 
 <p align="center"><img src="assets/readme/architecture.svg" alt="KumaBox 架构" width="100%"></p>
 
-**轻量的控制面。** 每次调用 `kumabox`，都会打开持久化状态、获取资源锁、执行操作并记录结果。
+**常驻的节点运行时。** CLI 通过 Unix socket 把操作提交给 `kumabox daemon`。
+常驻进程统一持有数据库和运行时资源，并行执行不同沙箱的操作，监督 VMM 退出并恢复中断的状态。
+`kumabox serve` 通过这个节点服务提供对外的 HTTP API。
 每台运行中的 VM 由各自独立的 Cloud Hypervisor 进程承载，一个沙箱出问题不会拖垮其他沙箱。
 
 **持久化生命周期。** SQLite 保存沙箱与快照状态。多步骤操作先在私有位置准备产物，
@@ -76,6 +78,28 @@ Agent 天生就会重试、分支和探索。准备环境的成本只需要付�
 每个克隆都会获得自己的可写磁盘、网络身份和主机名。Cloud Hypervisor v53 可显式选择按需内存恢复；
 更新的兼容版本可以使用写时复制内存恢复。
 
+## 常驻服务
+
+运行时命令统一交给 `kumabox daemon` 执行，包括镜像、快照、文件、设备和
+`doctor`。默认 socket 为 `/run/kumabox/kumabox.sock`，权限 0600。
+服务未启动时 CLI 明确报错；`help` 和客户端 `version` 可离线使用。
+首次安装时可以直接运行独立的 `kumabox-check` 准备宿主机。
+
+```bash
+sudo kumabox --config /etc/kumabox/config.yaml daemon
+# 在另一个终端提交请求
+sudo kumabox --socket /run/kumabox/kumabox.sock ps --all
+```
+
+数据目录、CNI、DNS 和 VMM 参数由 daemon 的配置决定。
+客户端通过 `--socket` 或 `KUMABOX_CLIENT_SOCKET` 选择节点；`--run-dir` 可用于
+选择默认 socket 所在目录。`--root-dir`、`--log-dir`、CNI 和 DNS 参数只用于启动 daemon。
+镜像导入、外部磁盘和共享目录路径指向 daemon 所在主机，CLI 将相对路径转换为绝对路径。
+
+systemd 会等待运行时就绪通知后再完成启动，并通过 `KillMode=process` 和
+`RuntimeDirectoryPreserve=yes` 保留 VM 及其 socket。服务重启时重新接管并监督进程。
+如果变更请求中途断连，操作可能已经提交，应先 inspect 再决定是否重试。
+
 ## 快速开始
 
 需要一台 amd64 或 arm64 的 Linux 主机，能访问 `/dev/kvm`，并具备 root 权限。
@@ -95,6 +119,9 @@ sudo install -m 0755 bin/kumabox-check /usr/local/bin/kumabox-check
 
 # 2. 一次性准备主机：Cloud Hypervisor、固件、CNI 插件、EROFS 工具
 sudo kumabox-check --upgrade
+sudo install -m 0644 packaging/systemd/kumabox.service /etc/systemd/system/kumabox.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now kumabox
 sudo kumabox doctor
 
 # 3. 拉取已发布的 guest 镜像
@@ -430,7 +457,7 @@ sandbox.kill()
 
 每一次 Agent 行动都应该拥有一台用完即弃的计算机：像 git 分支一样便宜地分叉，像独立机器一样安全。
 KumaBox 自底向上构建这一目标。先在每台主机上做好一个正确、崩溃一致的运行时，
-再基于同一套状态机和元数据，往上构建常驻服务和多节点控制面。
+再基于常驻节点服务，往上构建多节点控制面。
 这样，同一个沙箱在单台服务器上和整个集群中的行为是一致的。
 
 ## 路线图

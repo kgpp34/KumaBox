@@ -61,7 +61,7 @@ func TestEmptySandboxOutputsRemainScriptFriendly(t *testing.T) {
 }
 
 func TestInspectCommandAlwaysReturnsIndentedJSONByNameOrID(t *testing.T) {
-	base := t.TempDir()
+	base := shortTempDir(t)
 	roots := storage.Roots{
 		Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log"),
 	}
@@ -104,7 +104,7 @@ func TestSandboxJSONIncludesRetainedFailure(t *testing.T) {
 }
 
 func TestListCommandShowsCreatedOnlyWithAllAndTracksRemoval(t *testing.T) {
-	base := t.TempDir()
+	base := shortTempDir(t)
 	roots := storage.Roots{
 		Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log"),
 	}
@@ -130,7 +130,7 @@ func TestListCommandShowsCreatedOnlyWithAllAndTracksRemoval(t *testing.T) {
 		t.Fatalf("ps --all table = %q", output)
 	}
 
-	remove := NewRemoveCommand(func() config.Config { return sandboxTestConfig(roots) })
+	remove := NewRemoveCommand(func() config.Config { return sandboxTestConfig(t, roots) })
 	remove.SetArgs([]string{id.String()})
 	remove.SetOut(&bytes.Buffer{})
 	remove.SetErr(&bytes.Buffer{})
@@ -143,11 +143,11 @@ func TestListCommandShowsCreatedOnlyWithAllAndTracksRemoval(t *testing.T) {
 }
 
 func TestListCommandRejectsJSONWithQuiet(t *testing.T) {
-	base := t.TempDir()
+	base := shortTempDir(t)
 	roots := storage.Roots{
 		Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log"),
 	}
-	command := NewListCommand(func() config.Config { return sandboxTestConfig(roots) })
+	command := NewListCommand(func() config.Config { return sandboxTestConfig(t, roots) })
 	command.SetArgs([]string{"--json", "--quiet"})
 	command.SilenceUsage = true
 	command.SilenceErrors = true
@@ -159,7 +159,7 @@ func TestListCommandRejectsJSONWithQuiet(t *testing.T) {
 }
 
 func TestLogsCommandStreamsTailByName(t *testing.T) {
-	base := t.TempDir()
+	base := shortTempDir(t)
 	roots := storage.Roots{
 		Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log"),
 	}
@@ -185,7 +185,7 @@ func TestLogsCommandStreamsTailByName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	command := NewLogsCommand(func() config.Config { return sandboxTestConfig(roots) })
+	command := NewLogsCommand(func() config.Config { return sandboxTestConfig(t, roots) })
 	command.SetArgs([]string{"--tail", "1", "box"})
 	var output bytes.Buffer
 	command.SetOut(&output)
@@ -197,7 +197,7 @@ func TestLogsCommandStreamsTailByName(t *testing.T) {
 		t.Fatalf("logs output = %q", output.String())
 	}
 
-	command = NewLogsCommand(func() config.Config { return sandboxTestConfig(roots) })
+	command = NewLogsCommand(func() config.Config { return sandboxTestConfig(t, roots) })
 	command.SetArgs([]string{"box", "--tail", "-1"})
 	command.SilenceUsage = true
 	command.SilenceErrors = true
@@ -232,7 +232,7 @@ func TestSandboxListOutputPreservesWriteErrors(t *testing.T) {
 
 func executeInspect(t *testing.T, roots storage.Roots, reference string) string {
 	t.Helper()
-	command := NewInspectCommand(func() config.Config { return sandboxTestConfig(roots) })
+	command := NewInspectCommand(func() config.Config { return sandboxTestConfig(t, roots) })
 	command.SetArgs([]string{reference})
 	var output bytes.Buffer
 	command.SetOut(&output)
@@ -245,7 +245,7 @@ func executeInspect(t *testing.T, roots storage.Roots, reference string) string 
 
 func executeList(t *testing.T, roots storage.Roots, args ...string) string {
 	t.Helper()
-	command := NewListCommand(func() config.Config { return sandboxTestConfig(roots) })
+	command := NewListCommand(func() config.Config { return sandboxTestConfig(t, roots) })
 	command.SetArgs(args)
 	var output bytes.Buffer
 	command.SetOut(&output)

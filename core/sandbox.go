@@ -27,14 +27,7 @@ import (
 )
 
 // CreateSandboxRequest contains user intent before image aliases are resolved.
-type CreateSandboxRequest struct {
-	// ImageReference is an existing local image alias or manifest digest.
-	ImageReference string
-	// Config contains the immutable name and guest resource shape.
-	Config types.SandboxConfig
-	// VMM selects the runtime backend; empty uses the configured default.
-	VMM types.VMMType
-}
+type CreateSandboxRequest = types.CreateSandboxRequest
 
 // imageGuard is the image capability consumed by sandbox creation.
 type imageGuard interface {

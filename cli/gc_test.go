@@ -10,17 +10,22 @@ import (
 
 	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/daemon"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/storage"
 )
 
 func TestGCEmptyRootReportsNoActions(t *testing.T) {
-	base := t.TempDir()
+	base := shortTempDir(t)
 	// Use an unused cgroup pathname without creating or scanning host scopes.
 	t.Setenv("KUMABOX_VMM_CGROUP_PARENT", filepath.Join("/sys/fs/cgroup", "kumabox-test-"+filepath.Base(filepath.Dir(base))))
+	cfg := config.Default()
+	cfg.Paths = storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")}
+	cfg.VMM.CgroupParent = filepath.Join("/sys/fs/cgroup", "kumabox-test-"+filepath.Base(filepath.Dir(base)))
+	startTestNode(t, cfg)
 	args := []string{
-		"--root-dir", filepath.Join(base, "data"), "--run-dir", filepath.Join(base, "run"),
-		"--log-dir", filepath.Join(base, "log"), "gc", "--json",
+		"--run-dir", filepath.Join(base, "run"),
+		"gc", "--json",
 	}
 	var output bytes.Buffer
 	if err := Execute(t.Context(), args, &output, &bytes.Buffer{}); err != nil {
@@ -36,12 +41,15 @@ func TestGCEmptyRootReportsNoActions(t *testing.T) {
 }
 
 func TestGCSnapshotPolicyFlags(t *testing.T) {
-	base := t.TempDir()
+	base := shortTempDir(t)
 	// Use an unused cgroup pathname without creating or scanning host scopes.
 	t.Setenv("KUMABOX_VMM_CGROUP_PARENT", filepath.Join("/sys/fs/cgroup", "kumabox-test-"+filepath.Base(filepath.Dir(base))))
+	cfg := config.Default()
+	cfg.Paths = storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")}
+	cfg.VMM.CgroupParent = filepath.Join("/sys/fs/cgroup", "kumabox-test-"+filepath.Base(filepath.Dir(base)))
+	startTestNode(t, cfg)
 	roots := []string{
-		"--root-dir", filepath.Join(base, "data"), "--run-dir", filepath.Join(base, "run"),
-		"--log-dir", filepath.Join(base, "log"),
+		"--run-dir", filepath.Join(base, "run"),
 	}
 	for _, flags := range [][]string{
 		{"--snapshot-keep", "1"},
@@ -70,7 +78,7 @@ func TestGCSnapshotPolicyFlags(t *testing.T) {
 }
 
 func TestDaemonStopsWhenContextIsCancelled(t *testing.T) {
-	base := t.TempDir()
+	base := shortTempDir(t)
 	configuration := config.Default()
 	configuration.Paths = storage.Roots{
 		Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log"),
@@ -84,7 +92,7 @@ func TestDaemonStopsWhenContextIsCancelled(t *testing.T) {
 	defer cancel()
 	timer := time.AfterFunc(50*time.Millisecond, cancel)
 	defer timer.Stop()
-	if err := supervise(ctx, service, 10*time.Millisecond, 0, &bytes.Buffer{}); err != nil {
+	if err := daemon.Supervise(ctx, service, 10*time.Millisecond, 0, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 }

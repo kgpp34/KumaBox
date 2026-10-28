@@ -5,21 +5,21 @@ import (
 	"io"
 
 	"github.com/kumabox/kumabox/api"
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/types"
 )
 
 // apiServices adapt the public HTTP contracts to the application services.
 // They are assembled beside the CLI entry point, preserving the direction
 // from application composition toward API transport.
-type apiSandboxService struct{ service *core.SandboxService }
+type apiSandboxService struct{ service *client.SandboxService }
 
 func (a apiSandboxService) Create(ctx context.Context, input api.CreateSandboxInput) (types.Sandbox, error) {
-	return a.service.Create(ctx, core.CreateSandboxRequest{ImageReference: input.ImageReference, Config: input.Config})
+	return a.service.Create(ctx, types.CreateSandboxRequest{ImageReference: input.ImageReference, Config: input.Config})
 }
 
 func (a apiSandboxService) Run(ctx context.Context, input api.CreateSandboxInput) (types.Sandbox, error) {
-	return a.service.Run(ctx, core.CreateSandboxRequest{ImageReference: input.ImageReference, Config: input.Config})
+	return a.service.Run(ctx, types.CreateSandboxRequest{ImageReference: input.ImageReference, Config: input.Config})
 }
 
 func (a apiSandboxService) List(ctx context.Context, all bool) ([]types.Sandbox, error) {
@@ -46,16 +46,16 @@ func (a apiSandboxService) Exec(ctx context.Context, ref string, command types.C
 	return a.service.Exec(ctx, ref, command, stdin, stdout, stderr)
 }
 
-type apiSnapshotService struct{ service *core.SnapshotService }
+type apiSnapshotService struct{ service *client.SnapshotService }
 
 func (a apiSnapshotService) Save(ctx context.Context, input api.SaveSnapshotInput) (types.Snapshot, error) {
-	return a.service.Save(ctx, core.SaveSnapshotRequest{
+	return a.service.Save(ctx, types.SaveSnapshotRequest{
 		SandboxReference: input.SandboxReference, Name: input.Name, Description: input.Description,
 	})
 }
 
 func (a apiSnapshotService) Hibernate(ctx context.Context, input api.SaveSnapshotInput) (types.Snapshot, error) {
-	return a.service.Hibernate(ctx, core.SaveSnapshotRequest{
+	return a.service.Hibernate(ctx, types.SaveSnapshotRequest{
 		SandboxReference: input.SandboxReference, Name: input.Name, Description: input.Description,
 	})
 }

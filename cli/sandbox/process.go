@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
 )
@@ -28,7 +28,7 @@ func newProcessList(configuration configProvider) *cobra.Command {
 	command := &cobra.Command{
 		Use: "ls SANDBOX", Aliases: []string{"list"}, Short: "list running agent-owned commands", Args: cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			return withGuestService(command, configuration, func(service *core.SandboxService) error {
+			return withGuestService(command, configuration, func(service *client.SandboxService) error {
 				records, err := service.Processes(command.Context(), args[0])
 				if err != nil {
 					return err
@@ -79,7 +79,7 @@ func newProcessKill(configuration configProvider) *cobra.Command {
 			if err := selected.Validate(); err != nil {
 				return invalidFlag("signal", err)
 			}
-			return withGuestService(command, configuration, func(service *core.SandboxService) error {
+			return withGuestService(command, configuration, func(service *client.SandboxService) error {
 				return service.SignalProcess(command.Context(), args[0], args[1], selected)
 			})
 		},
@@ -96,7 +96,7 @@ func newProcessOutput(configuration configProvider, verb string) *cobra.Command 
 			if err := types.ValidateProcessID(args[1]); err != nil {
 				return invalidFlag("process-id", err)
 			}
-			return withGuestService(command, configuration, func(service *core.SandboxService) error {
+			return withGuestService(command, configuration, func(service *client.SandboxService) error {
 				options := types.ProcessOutputOptions{After: after}
 				var result types.ProcessOutputResult
 				var err error
@@ -126,13 +126,13 @@ func newProcessOutput(configuration configProvider, verb string) *cobra.Command 
 	return command
 }
 
-func withGuestService(command *cobra.Command, configuration configProvider, run func(*core.SandboxService) error) (returnErr error) {
-	service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+func withGuestService(command *cobra.Command, configuration configProvider, run func(*client.SandboxService) error) (returnErr error) {
+	service, err := client.OpenSandbox(command.Context(), configuration(), nil)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{Operation: "access guest agent", Phase: "close metadata", Action: "inspect the guest before retrying"}))
+		returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{Operation: "access guest agent", Phase: "close client", Action: "inspect the guest before retrying"}))
 	}()
 	return run(service)
 }

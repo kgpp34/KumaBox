@@ -30,7 +30,7 @@ import (
 
 func newImageTestExecutor(t *testing.T) (storage.Roots, func(...string) (string, error)) {
 	t.Helper()
-	base := t.TempDir()
+	base := shortTempDir(t)
 	// This stand-in consumes tar input and writes deterministic bytes. Real EROFS is a Linux runbook check.
 	binary := filepath.Join(base, "mkfs.erofs")
 	script := "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'mkfs.erofs 1.8.10\\n'; exit 0; fi\nfor output do :; done\n/bin/cat > \"$output\"\n"
@@ -40,7 +40,7 @@ func newImageTestExecutor(t *testing.T) (storage.Roots, func(...string) (string,
 	t.Setenv("PATH", base+string(os.PathListSeparator)+os.Getenv("PATH"))
 	roots := storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")}
 	execute := func(args ...string) (string, error) {
-		command := NewCommand(func() config.Config { return imageTestConfig(roots) })
+		command := NewCommand(func() config.Config { return imageTestConfig(t, roots) })
 		var out, stderr bytes.Buffer
 		command.SetOut(&out)
 		command.SetErr(&stderr)
@@ -52,9 +52,10 @@ func newImageTestExecutor(t *testing.T) (storage.Roots, func(...string) (string,
 }
 
 // imageTestConfig returns production defaults scoped to one test directory.
-func imageTestConfig(roots storage.Roots) config.Config {
+func imageTestConfig(t *testing.T, roots storage.Roots) config.Config {
 	configuration := config.Default()
 	configuration.Paths = roots
+	startTestNode(t, configuration)
 	return configuration
 }
 
@@ -314,9 +315,9 @@ func TestImageCommandsFromDockerArchive(t *testing.T) {
 }
 
 func TestImportRejectsUnknownFormatBeforeOpeningStore(t *testing.T) {
-	base := t.TempDir()
+	base := shortTempDir(t)
 	roots := storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")}
-	command := NewCommand(func() config.Config { return imageTestConfig(roots) })
+	command := NewCommand(func() config.Config { return imageTestConfig(t, roots) })
 	command.SetOut(&bytes.Buffer{})
 	command.SetErr(&bytes.Buffer{})
 	command.SetArgs([]string{"import", "demo", "missing.tar", "--format", "tar"})

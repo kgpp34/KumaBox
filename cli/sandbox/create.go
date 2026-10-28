@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/config"
-	"github.com/kumabox/kumabox/core"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
 )
@@ -77,45 +77,45 @@ func addCPUFlags(command *cobra.Command, policy *types.CPUPolicy) {
 }
 
 // request validates CLI values before any persistent service is opened.
-func (o createOptions) request(imageReference string) (core.CreateSandboxRequest, error) {
+func (o createOptions) request(imageReference string) (types.CreateSandboxRequest, error) {
 	if o.cpus == 0 || o.cpus > types.MaxSandboxCPUs {
-		return core.CreateSandboxRequest{}, invalidFlag("cpus", fmt.Errorf("must be between 1 and %d", types.MaxSandboxCPUs))
+		return types.CreateSandboxRequest{}, invalidFlag("cpus", fmt.Errorf("must be between 1 and %d", types.MaxSandboxCPUs))
 	}
 	memoryBytes, err := parseBytes(o.memory)
 	if err != nil {
-		return core.CreateSandboxRequest{}, invalidFlag("memory", err)
+		return types.CreateSandboxRequest{}, invalidFlag("memory", err)
 	}
 	if memoryBytes < types.MinSandboxMemory {
-		return core.CreateSandboxRequest{}, invalidFlag("memory", fmt.Errorf("must be at least %d bytes", types.MinSandboxMemory))
+		return types.CreateSandboxRequest{}, invalidFlag("memory", fmt.Errorf("must be at least %d bytes", types.MinSandboxMemory))
 	}
 	storageBytes, err := parseBytes(o.storageSize)
 	if err != nil {
-		return core.CreateSandboxRequest{}, invalidFlag("storage", err)
+		return types.CreateSandboxRequest{}, invalidFlag("storage", err)
 	}
 	if storageBytes < types.MinSandboxStorage {
-		return core.CreateSandboxRequest{}, invalidFlag("storage", fmt.Errorf("must be at least %d bytes", types.MinSandboxStorage))
+		return types.CreateSandboxRequest{}, invalidFlag("storage", fmt.Errorf("must be at least %d bytes", types.MinSandboxStorage))
 	}
 	if o.nics < 0 || o.nics > types.MaxSandboxNICs {
-		return core.CreateSandboxRequest{}, invalidFlag("nics", fmt.Errorf("must be between 0 and %d", types.MaxSandboxNICs))
+		return types.CreateSandboxRequest{}, invalidFlag("nics", fmt.Errorf("must be between 0 and %d", types.MaxSandboxNICs))
 	}
 	if o.nics == 0 && o.networkName != "" {
-		return core.CreateSandboxRequest{}, invalidFlag("network", errors.New("requires at least one NIC"))
+		return types.CreateSandboxRequest{}, invalidFlag("network", errors.New("requires at least one NIC"))
 	}
 	if o.nics == 0 && o.bridgeName != "" {
-		return core.CreateSandboxRequest{}, invalidFlag("bridge", errors.New("requires at least one NIC"))
+		return types.CreateSandboxRequest{}, invalidFlag("bridge", errors.New("requires at least one NIC"))
 	}
 	if o.bridgeStatic && o.bridgeName == "" {
-		return core.CreateSandboxRequest{}, invalidFlag("bridge-static", errors.New("requires --bridge"))
+		return types.CreateSandboxRequest{}, invalidFlag("bridge-static", errors.New("requires --bridge"))
 	}
 	if o.networkName != "" && o.bridgeName != "" {
-		return core.CreateSandboxRequest{}, invalidFlag("bridge", errors.New("excludes --network"))
+		return types.CreateSandboxRequest{}, invalidFlag("bridge", errors.New("excludes --network"))
 	}
 	backend := types.NetworkBackend(o.networkBackend)
 	if backend != "" && backend != types.NetworkBackendCNI && backend != types.NetworkBackendEBPF {
-		return core.CreateSandboxRequest{}, invalidFlag("network-backend", errors.New("must be cni or ebpf; use --bridge for bridge networking"))
+		return types.CreateSandboxRequest{}, invalidFlag("network-backend", errors.New("must be cni or ebpf; use --bridge for bridge networking"))
 	}
 	if o.bridgeName != "" && backend != "" {
-		return core.CreateSandboxRequest{}, invalidFlag("network-backend", errors.New("excludes --bridge"))
+		return types.CreateSandboxRequest{}, invalidFlag("network-backend", errors.New("excludes --bridge"))
 	}
 	networkName := o.networkName
 	if o.bridgeName != "" {
@@ -131,18 +131,18 @@ func (o createOptions) request(imageReference string) (core.CreateSandboxRequest
 	for _, value := range o.dataDisks {
 		disk, err := parseDataDisk(value)
 		if err != nil {
-			return core.CreateSandboxRequest{}, invalidFlag("data-disk", err)
+			return types.CreateSandboxRequest{}, invalidFlag("data-disk", err)
 		}
 		requested = append(requested, disk)
 	}
 	sandboxConfig.DataDisks, err = types.ResolveDataDisks(nil, requested)
 	if err != nil {
-		return core.CreateSandboxRequest{}, invalidFlag("data-disk", err)
+		return types.CreateSandboxRequest{}, invalidFlag("data-disk", err)
 	}
 	if err := sandboxConfig.Validate(); err != nil {
-		return core.CreateSandboxRequest{}, err
+		return types.CreateSandboxRequest{}, err
 	}
-	return core.CreateSandboxRequest{ImageReference: imageReference, Config: sandboxConfig}, nil
+	return types.CreateSandboxRequest{ImageReference: imageReference, Config: sandboxConfig}, nil
 }
 
 // parseDataDisk accepts a compact, explicit disk specification without
@@ -212,7 +212,7 @@ func NewCreateCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
-			service, err := core.OpenSandbox(command.Context(), configuration(), progress)
+			service, err := client.OpenSandbox(command.Context(), configuration(), progress)
 			if err != nil {
 				return err
 			}
@@ -222,7 +222,7 @@ func NewCreateCommand(configuration configProvider) *cobra.Command {
 				returnErr = errors.Join(returnErr, errdefs.WithContext(closeErr, errdefs.ContextInfo{
 					Operation: "create sandbox",
 					Entity:    options.name,
-					Phase:     "close metadata",
+					Phase:     "close client",
 					Action:    "inspect the sandbox before retrying",
 					Committed: committed,
 				}))

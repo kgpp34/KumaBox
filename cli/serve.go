@@ -16,8 +16,8 @@ import (
 
 	"github.com/kumabox/kumabox/api"
 	"github.com/kumabox/kumabox/api/e2b"
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/config"
-	"github.com/kumabox/kumabox/core"
 )
 
 // newServeCommand exposes the local application over a loopback-only HTTP API.
@@ -61,13 +61,24 @@ func newServeCommand(provideConfig func() config.Config) *cobra.Command {
 				return errors.New("API token file is too large")
 			}
 			cfg := provideConfig()
-			application, err := core.OpenApplication(command.Context(), cfg, nil)
+			node := client.New(cfg.SocketPath())
+			defer func() { _ = node.Close() }()
+			nodeInfo, err := node.Info(command.Context())
 			if err != nil {
-				return fmt.Errorf("open KumaBox application: %w", err)
+				return err
 			}
-			defer func() { returnErr = errors.Join(returnErr, application.Close()) }()
-			sandboxes := apiSandboxService{service: application.Sandboxes}
-			snapshots := apiSnapshotService{service: application.Snapshots}
+			sandboxClient, err := client.OpenSandbox(command.Context(), cfg, nil)
+			if err != nil {
+				return err
+			}
+			defer func() { returnErr = errors.Join(returnErr, sandboxClient.Close()) }()
+			snapshotClient, err := client.OpenSnapshots(command.Context(), cfg, nil)
+			if err != nil {
+				return err
+			}
+			defer func() { returnErr = errors.Join(returnErr, snapshotClient.Close()) }()
+			sandboxes := apiSandboxService{service: sandboxClient}
+			snapshots := apiSnapshotService{service: snapshotClient}
 			handler, err := api.NewHandler(api.Services{
 				Sandboxes: sandboxes,
 				Snapshots: snapshots,
@@ -75,7 +86,7 @@ func newServeCommand(provideConfig func() config.Config) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			e2bHandler, err := e2b.NewHandler(sandboxes, snapshots, strings.TrimSpace(string(content)), filepath.Join(cfg.Paths.Data, "e2b"))
+			e2bHandler, err := e2b.NewHandler(sandboxes, snapshots, strings.TrimSpace(string(content)), filepath.Join(nodeInfo.DataRoot, "e2b"))
 			if err != nil {
 				return err
 			}

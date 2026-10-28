@@ -1,0 +1,28 @@
+[Unit]
+Description=KumaBox local sandbox runtime
+After=network.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/default/kumabox
+ExecStart=/usr/local/bin/kumabox daemon
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=kumabox
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+StateDirectory=kumabox
+StateDirectoryMode=0700
+LogsDirectory=kumabox
+LogsDirectoryMode=0700
+UMask=0077
+Delegate=yes
+KillMode=process
+TimeoutStopSec=60
+LimitNOFILE=1048576
+TasksMax=infinity
+
+[Install]
+WantedBy=multi-user.target

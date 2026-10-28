@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/types"
 )
 
@@ -28,7 +28,7 @@ func NewStatusCommand(configuration configProvider) *cobra.Command {
 		Use:   "status [SANDBOX...]",
 		Short: "show sandbox records alongside their live VMM state",
 		RunE: func(command *cobra.Command, references []string) (returnErr error) {
-			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+			service, err := client.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}
@@ -47,7 +47,7 @@ func NewStatusCommand(configuration configProvider) *cobra.Command {
 	return command
 }
 
-func writeStatusJSON(writer io.Writer, statuses []core.SandboxStatus) error {
+func writeStatusJSON(writer io.Writer, statuses []types.SandboxStatus) error {
 	result := make([]statusOutput, 0, len(statuses))
 	for _, status := range statuses {
 		result = append(result, projectStatus(status))
@@ -57,7 +57,7 @@ func writeStatusJSON(writer io.Writer, statuses []core.SandboxStatus) error {
 	return encoder.Encode(result)
 }
 
-func writeStatusDetailJSON(writer io.Writer, status core.SandboxStatus, devices types.AttachedDevices) error {
+func writeStatusDetailJSON(writer io.Writer, status types.SandboxStatus, devices types.AttachedDevices) error {
 	encoder := json.NewEncoder(writer)
 	encoder.SetIndent("", "  ")
 	output := projectStatus(status)
@@ -67,7 +67,7 @@ func writeStatusDetailJSON(writer io.Writer, status core.SandboxStatus, devices 
 	return encoder.Encode(output)
 }
 
-func writeStatusTable(writer io.Writer, statuses []core.SandboxStatus) error {
+func writeStatusTable(writer io.Writer, statuses []types.SandboxStatus) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
 	if _, err := fmt.Fprintln(table, "SANDBOX ID\tNAME\tSTATE\tRUNTIME\tPID"); err != nil {
 		return err
@@ -81,7 +81,7 @@ func writeStatusTable(writer io.Writer, statuses []core.SandboxStatus) error {
 	return table.Flush()
 }
 
-func projectStatus(status core.SandboxStatus) statusOutput {
+func projectStatus(status types.SandboxStatus) statusOutput {
 	output := statusOutput{sandboxOutput: sandboxResult(status.Sandbox), Runtime: string(status.Runtime), PID: status.PID, Stale: status.Stale}
 	if status.Stale {
 		output.State = string(types.SandboxStateStopped)

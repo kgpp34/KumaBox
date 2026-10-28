@@ -23,6 +23,9 @@ const environmentPrefix = "KUMABOX"
 
 // Config is the validated application configuration shared by one command.
 type Config struct {
+	// Client selects the local node endpoint; host policy is owned by the daemon.
+	Client Client `mapstructure:"client"`
+
 	// Paths contains the three non-overlapping host ownership roots.
 	Paths storage.Roots `mapstructure:"paths"`
 	// Images controls image conversion tools, concurrency, and input bounds.
@@ -35,6 +38,20 @@ type Config struct {
 	Network Network `mapstructure:"network"`
 	// VMM selects and configures process backends.
 	VMM VMM `mapstructure:"vmm"`
+}
+
+// Client contains invocation-local connection settings.
+type Client struct {
+	// Socket overrides the Unix socket derived from Paths.Run.
+	Socket string `mapstructure:"socket"`
+}
+
+// SocketPath returns the local node endpoint without accessing runtime state.
+func (c Config) SocketPath() string {
+	if c.Client.Socket != "" {
+		return c.Client.Socket
+	}
+	return filepath.Join(c.Paths.Run, "kumabox.sock")
 }
 
 // Images contains operator-controlled image import limits.
@@ -193,6 +210,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("paths: %w", err)
 	}
 	c.Paths = paths
+	if c.Client.Socket != "" && !filepath.IsAbs(c.Client.Socket) {
+		return errors.New("client socket must be an absolute path")
+	}
 	if strings.TrimSpace(c.Images.EROFSBinary) == "" || c.Images.Parallelism <= 0 ||
 		!validSize(c.Images.LayerSize) || !validSize(c.Images.UnpackedSize) ||
 		!validSize(c.Images.BootSize) || !validSize(c.Images.ArchiveSize) {
@@ -257,7 +277,8 @@ func NewLoader() *Loader {
 	resolver.AutomaticEnv()
 	defaults := Default()
 	for key, value := range map[string]any{
-		"paths.data": defaults.Paths.Data, "paths.run": defaults.Paths.Run, "paths.log": defaults.Paths.Log,
+		"client.socket": "",
+		"paths.data":    defaults.Paths.Data, "paths.run": defaults.Paths.Run, "paths.log": defaults.Paths.Log,
 		"images.erofs_binary": defaults.Images.EROFSBinary, "images.parallelism": defaults.Images.Parallelism,
 		"images.layer_size": defaults.Images.LayerSize, "images.unpacked_size": defaults.Images.UnpackedSize,
 		"images.boot_size": defaults.Images.BootSize, "images.archive_size": defaults.Images.ArchiveSize,

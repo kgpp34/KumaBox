@@ -18,7 +18,7 @@ import (
 )
 
 func TestRemoveCommandClosesCreateAndImageReferenceLifecycle(t *testing.T) {
-	base := t.TempDir()
+	base := shortTempDir(t)
 	roots := storage.Roots{
 		Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log"),
 	}
@@ -44,7 +44,7 @@ func TestRemoveCommandClosesCreateAndImageReferenceLifecycle(t *testing.T) {
 	if err := os.WriteFile(logFile, []byte("persistent VMM output\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	remove := NewRemoveCommand(func() config.Config { return sandboxTestConfig(roots) })
+	remove := NewRemoveCommand(func() config.Config { return sandboxTestConfig(t, roots) })
 	remove.SetArgs([]string{"box", "--json"})
 	var stdout, stderr bytes.Buffer
 	remove.SetOut(&stdout)
@@ -81,7 +81,7 @@ func TestRemoveCommandClosesCreateAndImageReferenceLifecycle(t *testing.T) {
 	if secondID == firstID {
 		t.Fatal("recreated sandbox reused immutable ID")
 	}
-	remove = NewRemoveCommand(func() config.Config { return sandboxTestConfig(roots) })
+	remove = NewRemoveCommand(func() config.Config { return sandboxTestConfig(t, roots) })
 	remove.SetArgs([]string{secondID.String()})
 	stdout.Reset()
 	stderr.Reset()
@@ -94,7 +94,7 @@ func TestRemoveCommandClosesCreateAndImageReferenceLifecycle(t *testing.T) {
 		t.Fatalf("text remove output = %q", stdout.String())
 	}
 
-	state, err := core.OpenImages(t.Context(), sandboxTestConfig(roots))
+	state, err := core.OpenImages(t.Context(), sandboxTestConfig(t, roots))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,13 +109,13 @@ func TestRemoveCommandClosesCreateAndImageReferenceLifecycle(t *testing.T) {
 }
 
 func TestRemoveBatchReportsSuccessesEvenWhenOneReferenceFails(t *testing.T) {
-	base := t.TempDir()
+	base := shortTempDir(t)
 	roots := storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")}
 	seedImage(t, roots)
 	installFakeMKFS(t, base)
 	first := executeCreate(t, roots, "first")
 	second := executeCreate(t, roots, "second")
-	command := NewRemoveCommand(func() config.Config { return sandboxTestConfig(roots) })
+	command := NewRemoveCommand(func() config.Config { return sandboxTestConfig(t, roots) })
 	command.SetArgs([]string{"first", "missing", "second", "--json"})
 	command.SilenceUsage = true
 	command.SilenceErrors = true
@@ -139,7 +139,7 @@ func TestRemoveBatchReportsSuccessesEvenWhenOneReferenceFails(t *testing.T) {
 
 func executeCreate(t *testing.T, roots storage.Roots, name string) types.SandboxID {
 	t.Helper()
-	command := NewCreateCommand(func() config.Config { return sandboxTestConfig(roots) })
+	command := NewCreateCommand(func() config.Config { return sandboxTestConfig(t, roots) })
 	command.SetArgs([]string{"demo", "--name", name, "--cpus", "1", "--nics", "0"})
 	var stdout, stderr bytes.Buffer
 	command.SetOut(&stdout)

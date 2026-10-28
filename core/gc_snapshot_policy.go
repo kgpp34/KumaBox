@@ -16,20 +16,9 @@ import (
 
 // SnapshotEvictionPolicy adds explicit LRU eviction to the ordinary orphan GC.
 // An enabled policy with no limits evicts every ready snapshot.
-type SnapshotEvictionPolicy struct {
-	// Enabled opts into evicting ready snapshots; zero limits select all.
-	Enabled bool
-	// DryRun previews eviction without deleting selected snapshots.
-	DryRun bool
-	// KeepLast retains this many most recently used snapshots.
-	KeepLast int
-	// MaxAge evicts snapshots not used within this duration.
-	MaxAge time.Duration
-	// MaxSize evicts least recently used snapshots until total size fits.
-	MaxSize int64
-}
+type SnapshotEvictionPolicy = types.SnapshotEvictionPolicy
 
-func (p SnapshotEvictionPolicy) validate() error {
+func validateSnapshotEviction(p SnapshotEvictionPolicy) error {
 	if p.KeepLast < 0 || p.MaxAge < 0 || p.MaxSize < 0 {
 		return errors.New("snapshot eviction limits must not be negative")
 	}
@@ -42,7 +31,7 @@ func (p SnapshotEvictionPolicy) validate() error {
 // CollectWithPolicy always runs the ordinary recovery pass first. LRU eviction
 // is opt-in and never used by daemon's periodic orphan sweep.
 func (s *MaintenanceService) CollectWithPolicy(ctx context.Context, policy SnapshotEvictionPolicy) (GCReport, error) {
-	if err := policy.validate(); err != nil {
+	if err := validateSnapshotEviction(policy); err != nil {
 		return GCReport{}, err
 	}
 	report, err := s.Collect(ctx)

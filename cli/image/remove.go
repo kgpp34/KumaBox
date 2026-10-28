@@ -7,9 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/errdefs"
-	"github.com/kumabox/kumabox/images"
 )
 
 // newRemoveCommand removes references in argument order and counts completed removals.
@@ -27,7 +26,7 @@ func newRemoveCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
-			state, err := core.OpenImages(command.Context(), configuration())
+			state, err := client.OpenImages(command.Context(), configuration())
 			if err != nil {
 				return err
 			}
@@ -36,7 +35,7 @@ func newRemoveCommand(configuration configProvider) *cobra.Command {
 				if err := progress.Status("waiting for image locks and removing artifacts"); err != nil {
 					return err
 				}
-				removed, err := images.Remove(command.Context(), state.Paths, state.Catalog, reference)
+				removed, err := state.Remove(command.Context(), reference)
 				if err != nil {
 					return err
 				}

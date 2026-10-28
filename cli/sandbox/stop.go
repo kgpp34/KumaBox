@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
 )
@@ -29,7 +29,7 @@ func NewStopCommand(configuration configProvider) *cobra.Command {
 			options := types.StopOptions{Force: force, Timeout: time.Duration(timeoutSeconds) * time.Second}
 			if len(args) > 1 {
 				return runSandboxBatch(command, configuration, args, "stop sandbox", asJSON, false,
-					func(ctx context.Context, service *core.SandboxService, reference string) (types.Sandbox, error) {
+					func(ctx context.Context, service *client.SandboxService, reference string) (types.Sandbox, error) {
 						return service.StopWithOptions(ctx, reference, options)
 					})
 			}
@@ -39,7 +39,7 @@ func NewStopCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
-			service, err := core.OpenSandbox(command.Context(), configuration(), progress)
+			service, err := client.OpenSandbox(command.Context(), configuration(), progress)
 			if err != nil {
 				return err
 			}
@@ -49,7 +49,7 @@ func NewStopCommand(configuration configProvider) *cobra.Command {
 				returnErr = errors.Join(returnErr, errdefs.WithContext(closeErr, errdefs.ContextInfo{
 					Operation: "stop sandbox",
 					Entity:    reference,
-					Phase:     "close metadata",
+					Phase:     "close client",
 					Action:    "inspect the sandbox before retrying",
 					Committed: committed,
 				}))

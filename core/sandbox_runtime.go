@@ -624,12 +624,7 @@ func (s *SandboxService) Console(ctx context.Context, reference string) (io.Read
 
 // SandboxLogOptions contains application-level log selection without exposing
 // a concrete backend's filesystem layout to the CLI.
-type SandboxLogOptions struct {
-	// Tail starts output at the last N lines. Zero selects the complete log.
-	Tail int
-	// Follow keeps the stream open for appended output until cancellation.
-	Follow bool
-}
+type SandboxLogOptions = types.SandboxLogOptions
 
 // Logs streams persistent VMM output for any retained sandbox state. It does
 // not hold the entity lock while following, so start, stop, and rm can progress.

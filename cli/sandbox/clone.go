@@ -3,14 +3,10 @@ package sandbox
 import (
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
-	"syscall"
 
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/config"
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
 )
@@ -59,7 +55,7 @@ func NewCloneCommand(configuration configProvider) *cobra.Command {
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
 			settings := configuration()
-			service, err := core.OpenSnapshots(command.Context(), settings, progress)
+			service, err := client.OpenSnapshots(command.Context(), settings, progress)
 			if err != nil {
 				return err
 			}
@@ -68,14 +64,14 @@ func NewCloneCommand(configuration configProvider) *cobra.Command {
 				returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
 					Operation: "clone sandbox",
 					Entity:    name,
-					Phase:     "close metadata",
+					Phase:     "close client",
 					Action:    "inspect the clone before retrying",
 					Committed: committed,
 				}))
 			}()
-			options := core.CloneOptions{
+			options := types.CloneOptions{
 				Name: name, Pull: pull, SourceDirectory: fromDir, NetworkName: networkName,
-				DataDisks: requested, WaitForNetwork: waitNetwork, SkipReseed: !waitNetwork,
+				DataDisks: requested, WaitForNetwork: waitNetwork, SkipReseed: false,
 				MemoryMode: types.MemoryRestoreMode(memoryMode),
 				CPUPolicy:  cpuPolicy,
 			}
@@ -87,27 +83,6 @@ func NewCloneCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			committed = true
-			if options.SkipReseed {
-				if err := detachCloneReseed(command, settings, record.ID.String()); err != nil {
-					fallback, openErr := core.OpenSandbox(command.Context(), settings, nil)
-					if openErr != nil {
-						return errdefs.WithContext(errors.Join(err, openErr), errdefs.ContextInfo{
-							Operation: "clone sandbox", Entity: name, Phase: "reseed guest",
-							Action:    "clone is running; run kumabox reseed --machine-id",
-							Committed: true,
-						})
-					}
-					reseedErr := fallback.Reseed(command.Context(), record.ID.String(), true)
-					closeErr := fallback.Close()
-					if joined := errors.Join(reseedErr, closeErr); joined != nil {
-						return errdefs.WithContext(joined, errdefs.ContextInfo{
-							Operation: "clone sandbox", Entity: name, Phase: "reseed guest",
-							Action:    "clone is running; run kumabox reseed --machine-id",
-							Committed: true,
-						})
-					}
-				}
-			}
 			if err := writeSandboxResult(progress.Output(command.OutOrStdout()), record, asJSON); err != nil {
 				return errdefs.WithContext(err, errdefs.ContextInfo{
 					Operation: "clone sandbox",
@@ -134,53 +109,4 @@ func NewCloneCommand(configuration configProvider) *cobra.Command {
 	command.Flags().BoolVar(&waitNetwork, "wait-network", false, "configure the guest identity and network before returning")
 	command.Flags().BoolVar(&asJSON, "json", false, "print the cloned sandbox as indented JSON")
 	return command
-}
-
-// detachCloneReseed keeps entropy renewal outside clone's latency path while
-// retaining an independent process after the parent CLI has returned.
-func detachCloneReseed(command *cobra.Command, settings config.Config, sandboxID string) error {
-	executable, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	configPath, err := command.Root().PersistentFlags().GetString("config")
-	if err != nil {
-		return err
-	}
-	args := make([]string, 0, 12)
-	if configPath != "" {
-		args = append(args, "--config", configPath)
-	}
-	args = append(args,
-		"--root-dir", settings.Paths.Data,
-		"--run-dir", settings.Paths.Run,
-		"--log-dir", settings.Paths.Log,
-		"reseed", sandboxID, "--machine-id",
-	)
-	logRoot, err := os.OpenRoot(settings.Paths.Log)
-	if err != nil {
-		return err
-	}
-	log, err := logRoot.OpenFile("reseed-"+sandboxID+".log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	rootCloseErr := logRoot.Close()
-	if joined := errors.Join(err, rootCloseErr); joined != nil {
-		if log != nil {
-			_ = log.Close()
-		}
-		return joined
-	}
-	defer func() { _ = log.Close() }()
-	input, err := os.Open(os.DevNull)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = input.Close() }()
-	child := exec.Command(executable, args...) //nolint:gosec // the executable is this CLI and arguments come from validated configuration and sandbox ID
-	child.Stdin, child.Stdout, child.Stderr = input, log, log
-	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := child.Start(); err != nil {
-		return err
-	}
-	go func() { _ = child.Wait() }()
-	return nil
 }

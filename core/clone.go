@@ -20,31 +20,7 @@ import (
 )
 
 // CloneOptions selects the capture source and permitted target network overrides.
-type CloneOptions struct {
-	// Name is the required identity assigned to the new sandbox.
-	Name string
-	// CPUPolicy replaces source-host scheduling with the clone request.
-	CPUPolicy types.CPUPolicy
-	// Pull fetches a missing registry image by the snapshot's exact digest.
-	Pull bool
-	// SourceDirectory selects a portable directory instead of a catalog snapshot.
-	SourceDirectory string
-	// MemoryMode overrides automatic native memory restoration for this clone.
-	MemoryMode types.MemoryRestoreMode
-	// NICs overrides the captured interface count, including zero.
-	NICs *int
-	// NetworkName selects another CNI network for the new interfaces.
-	NetworkName string
-	// DataDisks are new disks attached to the clone after snapshot restoration.
-	DataDisks []types.DataDiskSpec
-	// WaitForNetwork applies the clone's new guest identity and NIC settings
-	// before returning. By default, clone returns after VMM resume, matching
-	// the explicit post-clone guest configuration workflow.
-	WaitForNetwork bool
-	// SkipReseed delegates post-resume entropy and machine-ID renewal to the
-	// caller. It is used when a persistent child process performs reseed.
-	SkipReseed bool
-}
+type CloneOptions = types.CloneOptions
 
 // Clone preserves the ordinary local-image workflow for callers without options.
 func (s *SnapshotService) Clone(ctx context.Context, snapshotReference, name string) (types.Sandbox, error) {

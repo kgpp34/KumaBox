@@ -302,6 +302,7 @@ def main():
     parser.add_argument("--image", required=True)
     parser.add_argument("--commit", required=True, help="expected guest agent build identifier")
     parser.add_argument("--nics", nargs="+", type=int, choices=(0, 1), default=[0, 1])
+    parser.add_argument("--socket")
     parser.add_argument("--root-dir")
     parser.add_argument("--run-dir")
     parser.add_argument("--log-dir")

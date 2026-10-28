@@ -195,6 +195,7 @@ def main():
     parser.add_argument("--binary", required=True)
     parser.add_argument("--image", required=True)
     parser.add_argument("--nics", type=int, choices=(0, 1), default=0)
+    parser.add_argument("--socket")
     parser.add_argument("--root-dir", required=True)
     parser.add_argument("--run-dir", required=True)
     parser.add_argument("--log-dir", required=True)

@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/config"
-	"github.com/kumabox/kumabox/core"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
 )
@@ -42,12 +42,12 @@ func newGCCommand(configuration func() config.Config) *cobra.Command {
 					return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, fmt.Errorf("--snapshot-size: %w", err))
 				}
 			}
-			service, err := core.OpenMaintenance(command.Context(), configuration())
+			service, err := client.OpenMaintenance(command.Context(), configuration())
 			if err != nil {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, service.Close()) }()
-			report, collectErr := service.CollectWithPolicy(command.Context(), core.SnapshotEvictionPolicy{
+			report, collectErr := service.CollectWithPolicy(command.Context(), types.SnapshotEvictionPolicy{
 				Enabled: evictSnapshots, DryRun: dryRun, KeepLast: keepLast, MaxAge: maxAge, MaxSize: maxSize,
 			})
 			if asJSON {

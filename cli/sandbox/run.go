@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/errdefs"
 )
 
@@ -28,7 +28,7 @@ func NewRunCommand(configuration configProvider) *cobra.Command {
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
 
-			service, err := core.OpenSandbox(command.Context(), configuration(), progress)
+			service, err := client.OpenSandbox(command.Context(), configuration(), progress)
 			if err != nil {
 				return err
 			}
@@ -38,7 +38,7 @@ func NewRunCommand(configuration configProvider) *cobra.Command {
 				returnErr = errors.Join(returnErr, errdefs.WithContext(closeErr, errdefs.ContextInfo{
 					Operation: "run sandbox",
 					Entity:    options.name,
-					Phase:     "close metadata",
+					Phase:     "close client",
 					Action:    "inspect the sandbox before retrying",
 					Committed: committed,
 				}))

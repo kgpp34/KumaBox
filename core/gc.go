@@ -24,18 +24,11 @@ import (
 )
 
 // GCAction identifies one lifecycle repair or orphan cleanup completed by GC.
-type GCAction struct {
-	Kind   string `json:"kind"`
-	ID     string `json:"id"`
-	Action string `json:"action"`
-}
+type GCAction = types.GCAction
 
 // GCReport keeps completed work visible even when another independent cleanup
 // fails. Busy resources are counted and retried by the next pass.
-type GCReport struct {
-	Actions []GCAction `json:"actions"`
-	Skipped int        `json:"skipped"`
-}
+type GCReport = types.GCReport
 
 // MaintenanceService owns cross-module repair and collection workflows.
 type MaintenanceService struct {

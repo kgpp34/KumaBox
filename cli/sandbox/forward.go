@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
 )
@@ -40,7 +40,7 @@ func NewForwardCommand(configuration configProvider) *cobra.Command {
 			if ip == nil || !ip.IsLoopback() {
 				return invalidFlag("address", errors.New("must be a loopback IP address"))
 			}
-			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+			service, err := client.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}

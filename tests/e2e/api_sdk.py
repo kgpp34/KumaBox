@@ -302,6 +302,11 @@ def main():
             "-f", "oci-images/ubuntu/Dockerfile", "-t", tag, ".")
         archive = work / "ubuntu.tar"
         run(*docker, "save", "-o", archive, tag)
+        stage("Start the persistent local runtime")
+        run("sudo", "install", "-m", "0644", "packaging/systemd/kumabox.service", "/etc/systemd/system/kumabox.service")
+        run("sudo", "systemctl", "daemon-reload")
+        run("sudo", "systemctl", "enable", "--now", "kumabox")
+        run("sudo", "systemctl", "restart", "kumabox")
         run("sudo", "kumabox", "image", "import", image, archive,
             "--format", "docker", "--source-tag", tag)
         run("sudo", "kumabox", "image", "verify", image)

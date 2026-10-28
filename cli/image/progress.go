@@ -10,15 +10,15 @@ import (
 	"github.com/spf13/cobra"
 
 	cliprogress "github.com/kumabox/kumabox/cli/progress"
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/errdefs"
-	"github.com/kumabox/kumabox/images"
 	"github.com/kumabox/kumabox/types"
 )
 
 // imageProgress adapts image-specific counters and commit events to the shared
 // terminal renderer. Counts represent completed work rather than percentage.
 //
-//	images.Reporter callbacks -> image message/counters -> progress.Renderer
+//	client.ImageReporter callbacks -> image message/counters -> progress.Renderer
 type imageProgress struct {
 	// mu protects counters, status, and commit state across worker callbacks.
 	mu sync.Mutex
@@ -37,7 +37,7 @@ type imageProgress struct {
 	committed bool
 }
 
-var _ images.Reporter = (*imageProgress)(nil)
+var _ client.ImageReporter = (*imageProgress)(nil)
 
 // startImageProgress creates the image adapter on the command's stderr stream.
 func startImageProgress(command *cobra.Command, operation, reference string) (*imageProgress, error) {

@@ -19,14 +19,7 @@ import (
 )
 
 // SaveSnapshotRequest contains operator labels for one live sandbox capture.
-type SaveSnapshotRequest struct {
-	// SandboxReference is the source sandbox name or complete ID.
-	SandboxReference string
-	// Name is an optional unique snapshot lookup key.
-	Name string
-	// Description is optional operator context stored with the snapshot.
-	Description string
-}
+type SaveSnapshotRequest = types.SaveSnapshotRequest
 
 // SnapshotReporter receives capture stages without controlling the workflow.
 type SnapshotReporter interface {
@@ -474,16 +467,7 @@ func (s *SnapshotService) Remove(ctx context.Context, reference string) (result 
 
 // RestoreOptions selects an external capture and whether a different source
 // sandbox identity may be restored into the target.
-type RestoreOptions struct {
-	// MemoryMode overrides automatic native memory restoration for this launch.
-	MemoryMode types.MemoryRestoreMode
-	// SourceDirectory selects a portable capture instead of a catalog snapshot.
-	SourceDirectory string
-	// Force accepts a different source sandbox identity if the shape matches.
-	Force bool
-	// Pull fetches a missing registry image by the capture's exact digest.
-	Pull bool
-}
+type RestoreOptions = types.RestoreOptions
 
 // Restore replaces a stopped sandbox's writable disks and launches its native
 // VMM snapshot. A live or retained-error source is cleaned through the normal

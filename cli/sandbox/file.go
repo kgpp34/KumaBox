@@ -7,13 +7,13 @@ import (
 	"io"
 	"os"
 	"strconv"
-	"sync"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/sys/unix"
 
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/cli/stdio"
+
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/types"
 )
 
@@ -40,7 +40,7 @@ func newFileRead(configuration configProvider) *cobra.Command {
 			if err := validateFilePath(args[1], false); err != nil {
 				return err
 			}
-			return withGuestService(command, configuration, func(service *core.SandboxService) error {
+			return withGuestService(command, configuration, func(service *client.SandboxService) error {
 				return service.ReadFile(command.Context(), args[0], args[1], command.OutOrStdout())
 			})
 		},
@@ -54,7 +54,7 @@ func newFileStat(configuration configProvider) *cobra.Command {
 			if err := validateFilePath(args[1], false); err != nil {
 				return err
 			}
-			return withGuestService(command, configuration, func(service *core.SandboxService) error {
+			return withGuestService(command, configuration, func(service *client.SandboxService) error {
 				info, err := service.StatFile(command.Context(), args[0], args[1])
 				if err != nil {
 					return err
@@ -83,7 +83,7 @@ func newFileWrite(configuration configProvider) *cobra.Command {
 				value := uint32(parsed)
 				options.Mode = &value
 			}
-			return withGuestService(command, configuration, func(service *core.SandboxService) error {
+			return withGuestService(command, configuration, func(service *client.SandboxService) error {
 				source := "-"
 				if len(args) > 2 {
 					source = args[2]
@@ -106,58 +106,7 @@ func fileInput(command *cobra.Command, source string) (io.ReadCloser, error) {
 	if source != "-" {
 		return os.Open(source) //nolint:gosec // explicit owner-selected local upload source
 	}
-	if input, ok := command.InOrStdin().(*os.File); ok {
-		return pollableFileInput(input)
-	}
-	if input, ok := command.InOrStdin().(io.ReadCloser); ok {
-		return input, nil
-	}
-	return io.NopCloser(command.InOrStdin()), nil
-}
-
-// uploadInput owns a pollable duplicate of inherited stdin. Unlike an os.File
-// created around a blocking inherited fd, Close can interrupt its pending Read.
-// Descriptor flags are shared with stdin and are restored after the read stops.
-type uploadInput struct {
-	*os.File
-	once     sync.Once
-	restore  func() error
-	closeErr error
-}
-
-func (input *uploadInput) Close() error {
-	input.once.Do(func() {
-		input.closeErr = errors.Join(input.File.Close(), input.restore())
-	})
-	return input.closeErr
-}
-
-func pollableFileInput(source *os.File) (io.ReadCloser, error) {
-	raw, err := source.SyscallConn()
-	if err != nil {
-		return nil, err
-	}
-	descriptor, flags := -1, 0
-	var controlErr error
-	err = raw.Control(func(fd uintptr) {
-		flags, controlErr = unix.FcntlInt(fd, unix.F_GETFL, 0)
-		if controlErr == nil {
-			descriptor, controlErr = unix.FcntlInt(fd, unix.F_DUPFD_CLOEXEC, 0)
-		}
-	})
-	if err := errors.Join(err, controlErr); err != nil {
-		return nil, err
-	}
-	if err := unix.SetNonblock(descriptor, true); err != nil {
-		return nil, errors.Join(err, unix.Close(descriptor))
-	}
-	input := &uploadInput{File: os.NewFile(uintptr(descriptor), source.Name())}
-	input.restore = func() error {
-		var restoreErr error
-		err := raw.Control(func(fd uintptr) { _, restoreErr = unix.FcntlInt(fd, unix.F_SETFL, flags) })
-		return errors.Join(err, restoreErr)
-	}
-	return input, nil
+	return stdio.Input(command.InOrStdin())
 }
 
 func newFileMutation(configuration configProvider, verb string) *cobra.Command {
@@ -173,7 +122,7 @@ func newFileMutation(configuration configProvider, verb string) *cobra.Command {
 					return err
 				}
 			}
-			return withGuestService(command, configuration, func(service *core.SandboxService) error {
+			return withGuestService(command, configuration, func(service *client.SandboxService) error {
 				switch verb {
 				case "mkdir":
 					return service.MakeDirectory(command.Context(), args[0], args[1], parents)
@@ -207,7 +156,7 @@ func newFileList(configuration configProvider) *cobra.Command {
 			if err := validateFilePath(args[1], false); err != nil {
 				return err
 			}
-			return withGuestService(command, configuration, func(service *core.SandboxService) error {
+			return withGuestService(command, configuration, func(service *client.SandboxService) error {
 				return printFileList(command.OutOrStdout(), asJSON, func(visit func(types.FileInfo) error) error {
 					return service.ListFiles(command.Context(), args[0], args[1], visit)
 				})

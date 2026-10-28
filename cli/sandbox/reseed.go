@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/client"
 )
 
 // NewReseedCommand sends fresh host entropy to a running guest.
@@ -17,7 +17,7 @@ func NewReseedCommand(configuration configProvider) *cobra.Command {
 		Short: "refresh a running guest's random state",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) (returnErr error) {
-			service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+			service, err := client.OpenSandbox(command.Context(), configuration(), nil)
 			if err != nil {
 				return err
 			}

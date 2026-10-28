@@ -8,7 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/cli/stdio"
+
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/storage"
 )
@@ -29,7 +31,7 @@ func newExportCommand(configuration configProvider) *cobra.Command {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
-			service, err := core.OpenSnapshots(command.Context(), configuration(), progress)
+			service, err := client.OpenSnapshots(command.Context(), configuration(), progress)
 			if err != nil {
 				return err
 			}
@@ -70,7 +72,7 @@ func newExportCommand(configuration configProvider) *cobra.Command {
 	return command
 }
 
-func exportDirectory(command *cobra.Command, service *core.SnapshotService, reference, destination string) (returnErr error) {
+func exportDirectory(command *cobra.Command, service *client.SnapshotService, reference, destination string) (returnErr error) {
 	stage, err := os.MkdirTemp(filepath.Dir(destination), ".kumabox-snapshot-*")
 	if err != nil {
 		return err
@@ -85,7 +87,7 @@ func exportDirectory(command *cobra.Command, service *core.SnapshotService, refe
 	return nil
 }
 
-func exportFile(command *cobra.Command, service *core.SnapshotService, reference, destination string, compress bool) (returnErr error) {
+func exportFile(command *cobra.Command, service *client.SnapshotService, reference, destination string, compress bool) (returnErr error) {
 	parent := filepath.Dir(destination)
 	file, err := os.CreateTemp(parent, ".kumabox-snapshot-*")
 	if err != nil {
@@ -143,15 +145,22 @@ func newImportCommand(configuration configProvider) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				defer func() { returnErr = errors.Join(returnErr, file.Close()) }()
+				defer func() { _ = file.Close() }() // read-only source; the RPC transport also closes it on cancellation
 				input = file
+			} else {
+				owned, err := stdio.Input(input)
+				if err != nil {
+					return err
+				}
+				defer func() { _ = owned.Close() }()
+				input = owned
 			}
 			progress, err := newOperationProgress(command, "Import", reference)
 			if err != nil {
 				return err
 			}
 			defer func() { returnErr = errors.Join(returnErr, progress.Finish(returnErr)) }()
-			service, err := core.OpenSnapshots(command.Context(), configuration(), progress)
+			service, err := client.OpenSnapshots(command.Context(), configuration(), progress)
 			if err != nil {
 				return err
 			}

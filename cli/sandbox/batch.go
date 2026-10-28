@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kumabox/kumabox/core"
+	"github.com/kumabox/kumabox/client"
 	"github.com/kumabox/kumabox/errdefs"
 	"github.com/kumabox/kumabox/types"
 )
@@ -19,9 +19,9 @@ import (
 // from completing; the caller receives the joined failures and all successes.
 func runSandboxBatch(
 	command *cobra.Command, configuration configProvider, references []string, operation string,
-	asJSON, removed bool, action func(context.Context, *core.SandboxService, string) (types.Sandbox, error),
+	asJSON, removed bool, action func(context.Context, *client.SandboxService, string) (types.Sandbox, error),
 ) (returnErr error) {
-	service, err := core.OpenSandbox(command.Context(), configuration(), nil)
+	service, err := client.OpenSandbox(command.Context(), configuration(), nil)
 	if err != nil {
 		return err
 	}
@@ -29,7 +29,7 @@ func runSandboxBatch(
 		returnErr = errors.Join(returnErr, errdefs.WithContext(service.Close(), errdefs.ContextInfo{
 			Operation: operation,
 			Entity:    "",
-			Phase:     "close metadata",
+			Phase:     "close client",
 			Action:    "inspect completed targets before retrying",
 		}))
 	}()
