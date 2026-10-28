@@ -24,7 +24,7 @@ func (s *SandboxService) Reseed(ctx context.Context, reference string, machineID
 	if err != nil {
 		return err
 	}
-	if err := reseedProcess(ctx, backend, process, machineID); err != nil {
+	if err := reseedProcess(ctx, backend, process, s.reseedOptions(machineID)); err != nil {
 		return errdefs.WithContext(err, errdefs.ContextInfo{
 			Operation: "reseed sandbox",
 			Entity:    reference,
@@ -35,20 +35,27 @@ func (s *SandboxService) Reseed(ctx context.Context, reference string, machineID
 	return nil
 }
 
+// reseedOptions keeps identity durability policy identical across explicit
+// reseed, clone and restore, without moving initialization into the background.
+func (s *SandboxService) reseedOptions(machineID bool) agent.ReseedOptions {
+	return agent.ReseedOptions{RegenerateMachineID: machineID, SkipMachineIDSync: machineID && !s.dependencies.machineIDSync}
+}
+
 // reseedProcess retries only connection failures while a resumed guest agent
 // reopens its vsock listener. A guest rejection is returned immediately.
-func reseedProcess(ctx context.Context, backend vmm.Backend, process vmm.Process, machineID bool) error {
+func reseedProcess(ctx context.Context, backend vmm.Backend, process vmm.Process, options agent.ReseedOptions) error {
 	entropy := make([]byte, 32)
 	if _, err := rand.Read(entropy); err != nil {
 		return fmt.Errorf("generate host entropy: %w", err)
 	}
+	defer clear(entropy)
 	retryCtx, cancel := context.WithTimeout(ctx, reseedTimeout)
 	defer cancel()
 	var dialErr error
 	for {
 		connection, err := backend.DialVsock(retryCtx, process, agent.Port)
 		if err == nil {
-			err = agent.Reseed(retryCtx, connection, entropy, machineID)
+			err = agent.ReseedWithOptions(retryCtx, connection, entropy, options)
 			closeErr := connection.Close()
 			return errors.Join(err, closeErr)
 		}

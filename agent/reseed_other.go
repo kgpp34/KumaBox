@@ -4,6 +4,6 @@ package agent
 
 import "errors"
 
-func reseedGuest([]byte, bool) error {
+func reseedGuest([]byte, ReseedOptions) error {
 	return errors.New("guest reseed requires Linux RNG ioctls")
 }

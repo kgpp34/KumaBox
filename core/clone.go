@@ -222,7 +222,7 @@ func (s *SnapshotService) CloneWithOptions(ctx context.Context, snapshotReferenc
 		if err := s.reporter.Status("reseed cloned guest"); err != nil {
 			return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, process)
 		}
-		reseedErr = reseedProcess(ctx, backend, process, true)
+		reseedErr = reseedProcess(ctx, backend, process, s.lifecycle.reseedOptions(true))
 	}
 	if options.WaitForNetwork {
 		if err := s.reporter.Status("configuring guest identity and network"); err != nil {

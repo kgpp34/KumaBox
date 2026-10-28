@@ -798,7 +798,7 @@ func (s *SnapshotService) RestoreWithOptions(ctx context.Context, sandboxReferen
 	if err := s.reporter.Status("refreshing guest random state"); err != nil {
 		return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, process)
 	}
-	reseedErr := reseedProcess(ctx, backend, process, options.Force && capture.SandboxID != record.ID)
+	reseedErr := reseedProcess(ctx, backend, process, s.lifecycle.reseedOptions(options.Force && capture.SandboxID != record.ID))
 	if options.SourceDirectory != "" {
 		if err := s.reporter.Status("configuring restored guest network"); err != nil {
 			return starting, s.lifecycle.failStart(ctx, backend, starting, "report", err, process)

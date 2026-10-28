@@ -22,7 +22,7 @@ const (
 
 // reseedGuest injects host entropy, forces a guest CRNG reseed, and discards
 // random state persisted by systemd before the snapshot was captured.
-func reseedGuest(entropy []byte, regenerateMachineID bool) error {
+func reseedGuest(entropy []byte, options ReseedOptions) error {
 	if len(entropy) != reseedEntropyBytes {
 		return fmt.Errorf("reseed needs %d entropy bytes", reseedEntropyBytes)
 	}
@@ -34,8 +34,8 @@ func reseedGuest(entropy []byte, regenerateMachineID bool) error {
 	if err := os.Remove(savedRandomSeed); err != nil && !errors.Is(err, os.ErrNotExist) {
 		errs = append(errs, fmt.Errorf("remove saved random seed: %w", err))
 	}
-	if regenerateMachineID {
-		if err := writeMachineIDAt(entropy, guestMachineID); err != nil {
+	if options.RegenerateMachineID {
+		if err := writeMachineIDAt(entropy, guestMachineID, !options.SkipMachineIDSync); err != nil {
 			errs = append(errs, err)
 		}
 		if err := dropStaleDBusMachineID(dbusMachineID); err != nil {

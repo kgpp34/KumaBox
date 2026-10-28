@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kumabox/kumabox/agent"
 	"github.com/kumabox/kumabox/config"
 	"github.com/kumabox/kumabox/errdefs"
 	filelock "github.com/kumabox/kumabox/lock/flock"
@@ -40,7 +41,7 @@ func TestReseedRetriesStartingGuestWithoutFixedDelay(t *testing.T) {
 	runtime := &delayedReseedRuntime{fakeRuntime: &fakeRuntime{}, failures: 2}
 	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer cancel()
-	if err := reseedProcess(ctx, runtime, vmm.Process{}, true); err != nil {
+	if err := reseedProcess(ctx, runtime, vmm.Process{}, agent.ReseedOptions{RegenerateMachineID: true}); err != nil {
 		t.Fatal(err)
 	}
 	if runtime.calls != 3 {
@@ -52,7 +53,7 @@ func TestReseedStopsRetryingWhenCanceled(t *testing.T) {
 	runtime := &delayedReseedRuntime{fakeRuntime: &fakeRuntime{}, failures: 100}
 	ctx, cancel := context.WithTimeout(t.Context(), 80*time.Millisecond)
 	defer cancel()
-	if err := reseedProcess(ctx, runtime, vmm.Process{}, true); !errors.Is(err, context.DeadlineExceeded) {
+	if err := reseedProcess(ctx, runtime, vmm.Process{}, agent.ReseedOptions{RegenerateMachineID: true}); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("reseed error = %v, want deadline exceeded", err)
 	}
 	if runtime.calls < 2 {

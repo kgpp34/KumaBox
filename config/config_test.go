@@ -161,3 +161,22 @@ func TestStopTimeoutConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestMachineIDSyncDefaultsAndOverride(t *testing.T) {
+	if !Default().Sandbox.MachineIDSync {
+		t.Fatal("default no longer waits for identity persistence")
+	}
+	file := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(file, []byte("sandbox:\n  machine_id_sync: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configuration, err := NewLoader().Load(file)
+	if err != nil || configuration.Sandbox.MachineIDSync {
+		t.Fatalf("writeback policy = %v, %v", configuration.Sandbox.MachineIDSync, err)
+	}
+	t.Setenv("KUMABOX_SANDBOX_MACHINE_ID_SYNC", "true")
+	configuration, err = NewLoader().Load(file)
+	if err != nil || !configuration.Sandbox.MachineIDSync {
+		t.Fatalf("environment policy = %v, %v", configuration.Sandbox.MachineIDSync, err)
+	}
+}

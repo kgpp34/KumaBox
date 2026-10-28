@@ -96,6 +96,9 @@ type Sandbox struct {
 	CleanupTimeout time.Duration `mapstructure:"cleanup_timeout"`
 	// StopTimeout is the default guest shutdown window before force termination.
 	StopTimeout time.Duration `mapstructure:"stop_timeout"`
+	// MachineIDSync waits for the cloned guest identity to reach stable storage.
+	// False still waits for the identity write and kernel random-state refresh.
+	MachineIDSync bool `mapstructure:"machine_id_sync"`
 }
 
 // Network contains host networking policy shared by provider implementations.
@@ -194,7 +197,7 @@ func Default() Config {
 		},
 		Metadata:  Metadata{BusyTimeout: 50 * time.Millisecond, RetryLimit: 5 * time.Second},
 		Snapshots: Snapshots{AccessFlushInterval: 250 * time.Millisecond, AccessBufferSize: 4096},
-		Sandbox:   Sandbox{Ext4Binary: "mkfs.ext4", CleanupTimeout: 10 * time.Second, StopTimeout: types.DefaultStopTimeout},
+		Sandbox:   Sandbox{Ext4Binary: "mkfs.ext4", CleanupTimeout: 10 * time.Second, StopTimeout: types.DefaultStopTimeout, MachineIDSync: true},
 		Network: Network{
 			CNI:  CNI{ConfDir: "/etc/cni/net.d", BinDir: "/opt/cni/bin"},
 			EBPF: EBPF{Subnet: "10.89.0.0/16"},
@@ -300,8 +303,9 @@ func NewLoader() *Loader {
 		"snapshots.access_flush_interval": defaults.Snapshots.AccessFlushInterval,
 		"snapshots.access_buffer_size":    defaults.Snapshots.AccessBufferSize,
 		"sandbox.ext4_binary":             defaults.Sandbox.Ext4Binary, "sandbox.cleanup_timeout": defaults.Sandbox.CleanupTimeout,
-		"sandbox.stop_timeout": defaults.Sandbox.StopTimeout,
-		"network.cni.conf_dir": defaults.Network.CNI.ConfDir, "network.cni.bin_dir": defaults.Network.CNI.BinDir,
+		"sandbox.stop_timeout":    defaults.Sandbox.StopTimeout,
+		"sandbox.machine_id_sync": defaults.Sandbox.MachineIDSync,
+		"network.cni.conf_dir":    defaults.Network.CNI.ConfDir, "network.cni.bin_dir": defaults.Network.CNI.BinDir,
 		"network.ebpf.subnet": defaults.Network.EBPF.Subnet, "network.ebpf.pin_dir": defaults.Network.EBPF.PinDir,
 		"network.dns": defaults.Network.DNS, "network.scope": defaults.Network.Scope,
 		"network.cleanup_timeout": defaults.Network.CleanupTimeout, "network.guest_agent_timeout": defaults.Network.GuestAgentTimeout,

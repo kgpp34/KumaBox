@@ -12,15 +12,34 @@ import (
 
 const reseedEntropyBytes = 32
 
+// ReseedOptions separates guest initialization from immediate disk durability.
+// The zero value preserves synchronous machine-ID persistence for older callers.
+type ReseedOptions struct {
+	// RegenerateMachineID assigns a new identity to a cloned guest.
+	RegenerateMachineID bool
+	// SkipMachineIDSync acknowledges the identity write without forcing it to
+	// stable storage. The write and kernel reseed still finish before the reply.
+	SkipMachineIDSync bool
+}
+
 // Reseed sends host-generated entropy to the guest and waits for confirmation.
 // The caller owns and closes the transport after this single operation.
 func Reseed(ctx context.Context, connection io.ReadWriteCloser, entropy []byte, regenerateMachineID bool) error {
+	return ReseedWithOptions(ctx, connection, entropy, ReseedOptions{RegenerateMachineID: regenerateMachineID})
+}
+
+// ReseedWithOptions waits for the requested initialization to finish. Agents
+// predating SkipMachineIDSync safely retain their synchronous persistence policy.
+func ReseedWithOptions(ctx context.Context, connection io.ReadWriteCloser, entropy []byte, options ReseedOptions) error {
 	if len(entropy) != reseedEntropyBytes {
 		return fmt.Errorf("reseed needs %d entropy bytes", reseedEntropyBytes)
 	}
 	stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
 	defer stop()
-	if err := NewEncoder(connection).Encode(Message{Type: MessageReseed, Data: entropy, RegenMachineID: regenerateMachineID}); err != nil {
+	if err := NewEncoder(connection).Encode(Message{
+		Type: MessageReseed, Data: entropy, RegenMachineID: options.RegenerateMachineID,
+		SkipMachineIDSync: options.SkipMachineIDSync,
+	}); err != nil {
 		return err
 	}
 	response, err := NewDecoder(connection).Decode()
@@ -46,7 +65,7 @@ func Reseed(ctx context.Context, connection io.ReadWriteCloser, entropy []byte, 
 // writeMachineIDAt derives a fresh persistent identity directly from host
 // entropy, so it stays unique even if a guest kernel reseed reports an error.
 // Writing in place also supports /etc/machine-id when systemd bind-mounts it.
-func writeMachineIDAt(entropy []byte, path string) error {
+func writeMachineIDAt(entropy []byte, path string, syncIdentity bool) error {
 	if len(entropy) != reseedEntropyBytes {
 		return fmt.Errorf("reseed needs %d entropy bytes", reseedEntropyBytes)
 	}
@@ -63,5 +82,8 @@ func writeMachineIDAt(entropy []byte, path string) error {
 	if _, err := fmt.Fprintln(file, hex.EncodeToString(hash[:16])); err != nil {
 		return errors.Join(err, file.Close())
 	}
-	return errors.Join(file.Sync(), file.Close())
+	if syncIdentity {
+		return errors.Join(file.Sync(), file.Close())
+	}
+	return file.Close()
 }

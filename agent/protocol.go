@@ -117,6 +117,9 @@ type Message struct {
 	Message string `json:"message,omitempty"`
 	// RegenMachineID requests a new persistent machine identity during reseed.
 	RegenMachineID bool `json:"regen_machine_id,omitempty"`
+	// SkipMachineIDSync skips only the identity file's explicit fsync. Omitting
+	// it retains the durable acknowledgement used by earlier protocol versions.
+	SkipMachineIDSync bool `json:"skip_machine_id_sync,omitempty"`
 	// Network carries the complete guest network configuration for one update.
 	Network *NetworkConfig `json:"network,omitempty"`
 }

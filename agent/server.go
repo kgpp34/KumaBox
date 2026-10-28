@@ -130,7 +130,9 @@ func (s *Server) handle(ctx context.Context, connection net.Conn) {
 			fileFailure(encoder, err)
 		}
 	case MessageReseed:
-		if err := reseedGuest(first.Data, first.RegenMachineID); err != nil {
+		if err := reseedGuest(first.Data, ReseedOptions{
+			RegenerateMachineID: first.RegenMachineID, SkipMachineIDSync: first.SkipMachineIDSync,
+		}); err != nil {
 			_ = encoder.sendError("reseed: %v", err)
 			return
 		}

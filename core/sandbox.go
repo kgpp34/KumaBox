@@ -92,6 +92,9 @@ type sandboxDependencies struct {
 	cleanupTimeout time.Duration
 	// stopTimeout is the default graceful guest shutdown window.
 	stopTimeout time.Duration
+	// machineIDSync controls explicit identity fsync, independently of the
+	// mandatory post-resume kernel reseed and identity-write acknowledgement.
+	machineIDSync bool
 	// dnsServers are rendered into static guest boot network parameters.
 	dnsServers []string
 	// reporter emits progress independently of command results.
@@ -236,6 +239,7 @@ func OpenSandbox(ctx context.Context, configuration config.Config, reporter Sand
 		store: store, defaultVMM: defaultVMM, defaultNetwork: types.NetworkBackendCNI,
 		cleanupTimeout: max(configuration.Sandbox.CleanupTimeout, configuration.Network.CleanupTimeout),
 		stopTimeout:    configuration.Sandbox.StopTimeout,
+		machineIDSync:  configuration.Sandbox.MachineIDSync,
 		dnsServers:     dnsServers,
 	})
 	if err != nil {
