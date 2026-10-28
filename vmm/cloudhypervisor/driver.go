@@ -84,6 +84,9 @@ type Driver struct {
 	memorySupportMu    sync.Mutex
 	memorySupportKnown bool
 	memorySupportMode  string
+	// apiCalls bounds the single monitor control queue; idle entries are pruned.
+	apiMu    sync.Mutex
+	apiCalls map[string]*apiGate
 }
 
 var _ vmm.Backend = (*Driver)(nil)
@@ -536,6 +539,13 @@ type vmFSInfo struct {
 
 // queryInfo performs one bounded vm.info request over the private Unix socket.
 func (d *Driver) queryInfo(ctx context.Context, socket string) (vmInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	release, err := d.acquireAPI(ctx, socket)
+	if err != nil {
+		return vmInfo{}, err
+	}
+	defer release()
 	client, closeClient, err := unixAPIClient(socket)
 	if err != nil {
 		return vmInfo{}, err
@@ -597,6 +607,13 @@ func openConsolePTY(path string) (*os.File, error) {
 // requestShutdown asks Cloud Hypervisor to stop its VM before process signals
 // are used. Callers deliberately treat failure as advisory.
 func (d *Driver) requestShutdown(ctx context.Context, socket string) error {
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	release, err := d.acquireAPI(ctx, socket)
+	if err != nil {
+		return err
+	}
+	defer release()
 	client, closeClient, err := unixAPIClient(socket)
 	if err != nil {
 		return err

@@ -166,6 +166,13 @@ func (d *Driver) capturePaused(ctx context.Context, plan vmm.SnapshotPlan) error
 }
 
 func (d *Driver) snapshotAction(ctx context.Context, socket, endpoint string, payload []byte, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	release, err := d.acquireAPI(ctx, socket)
+	if err != nil {
+		return err
+	}
+	defer release()
 	client, closeClient, err := unixAPIClient(socket)
 	if err != nil {
 		return err
