@@ -31,13 +31,27 @@ type lease struct {
 	ReuseAfter time.Time `json:"reuse_after,omitzero"`
 }
 
-func (p *Provider) reserve(ctx context.Context, id types.SandboxID, spec network.AddSpec) (lease, error) {
+func (p *Provider) reserve(ctx context.Context, id types.SandboxID, spec network.AddSpec) (_ lease, returnErr error) {
 	if _, err := types.ParseSandboxID(id.String()); err != nil {
 		return lease{}, err
 	}
 	if spec.DHCP {
 		return lease{}, errors.New("eBPF TAP networking requires fixed guest addressing")
 	}
+	if err := p.RecoverLeases(ctx); err != nil {
+		return lease{}, err
+	}
+	var publishedPath string
+	defer func() {
+		if returnErr != nil && publishedPath != "" {
+			// Link publication may succeed before syncing or indexing fails.
+			// Keep that reservation discoverable by immediate compensation.
+			item, err := p.readLease(publishedPath)
+			if err == nil && item.Sandbox == id && item.Interface.Index == spec.Index && item.ReuseAfter.IsZero() {
+				p.rememberLease(item)
+			}
+		}
+	}()
 	mac, ipv4, err := guestIdentity(spec.Index)
 	if err != nil {
 		return lease{}, err
@@ -103,6 +117,7 @@ func (p *Provider) reserve(ctx context.Context, id types.SandboxID, spec network
 			return lease{}, errors.New("recovery address is outside eBPF subnet")
 		}
 		addressPath := filepath.Join(p.addressDir(), item.Interface.HostAddress+".json")
+		publishedPath = addressPath
 		err = publishLease(addressPath, item)
 		if errors.Is(err, os.ErrExist) {
 			prior, readErr := p.readLease(addressPath)
@@ -189,7 +204,26 @@ func (p *Provider) retireAddress(item lease) (returnErr error) {
 	if err := stage.Close(); err != nil {
 		return err
 	}
-	return storage.Publish(stage.Name(), path)
+	if err := storage.Publish(stage.Name(), path); err != nil {
+		return err
+	}
+	p.forgetLease(item)
+	return nil
+}
+
+// retireLease keeps the address discoverable if retirement fails after index
+// removal. A retry in this same runtime must not need a whole-pool scan.
+func (p *Provider) retireLease(item lease) error {
+	p.rememberLease(item)
+	path := p.indexPath(item.Sandbox, item.Interface.Index)
+	if err := os.Remove(path); err == nil {
+		if err := syncDirectory(filepath.Dir(path)); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return p.retireAddress(item)
 }
 
 func (p *Provider) addressDir() string { return filepath.Join(p.options.StateDir, "addresses") }
@@ -289,13 +323,11 @@ func syncDirectory(path string) error {
 	return errors.Join(directory.Sync(), directory.Close())
 }
 
-// leases includes address reservations whose sandbox index was never published.
-// It is used for removal/GC, not for the clone allocation hot path.
-func (p *Provider) leases(ctx context.Context, id types.SandboxID) ([]lease, error) {
-	if id != "" {
-		if _, err := types.ParseSandboxID(id.String()); err != nil {
-			return nil, err
-		}
+// scanLeases includes reservations whose sandbox index was never published.
+// Global discovery belongs to node startup and GC, not ordinary removal.
+func (p *Provider) scanLeases(ctx context.Context) ([]lease, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	entries, err := os.ReadDir(p.addressDir())
 	if errors.Is(err, os.ErrNotExist) {
@@ -313,15 +345,18 @@ func (p *Provider) leases(ctx context.Context, id types.SandboxID) ([]lease, err
 			continue
 		}
 		item, err := p.readLease(filepath.Join(p.addressDir(), entry.Name()))
+		if errors.Is(err, os.ErrNotExist) {
+			// Reuse replaces an expired quarantine entry under its own lock.
+			// A global discovery pass can overlap that brief unlink window.
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
 		if !item.ReuseAfter.IsZero() {
 			continue
 		}
-		if id == "" || item.Sandbox == id {
-			result = append(result, item)
-		}
+		result = append(result, item)
 	}
 	return result, nil
 }

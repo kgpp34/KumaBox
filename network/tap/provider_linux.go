@@ -322,19 +322,31 @@ func (p *Provider) Remove(ctx context.Context, id types.SandboxID, indices ...in
 	if err != nil || len(items) == 0 {
 		return err
 	}
+	selectedItems := items[:0]
+	for _, item := range items {
+		selected := false
+		for _, index := range indices {
+			selected = selected || item.Interface.Index == index
+		}
+		if selected {
+			selectedItems = append(selectedItems, item)
+		}
+	}
+	return p.removeLeases(ctx, selectedItems)
+}
+
+// removeLeases consumes an ownership-checked inventory exactly once. Delete
+// does not enumerate every historical address again through Allocated/Remove.
+func (p *Provider) removeLeases(ctx context.Context, items []lease) error {
+	if len(items) == 0 {
+		return nil
+	}
 	d, err := p.dataPlane(ctx)
 	if err != nil {
 		return err
 	}
 	defer d.close() //nolint:errcheck // scoped handles
 	for _, item := range items {
-		selected := false
-		for _, index := range indices {
-			selected = selected || item.Interface.Index == index
-		}
-		if !selected {
-			continue
-		}
 		link, err := p.ownedLink(item)
 		var missing netlink.LinkNotFoundError
 		if err != nil && !errors.As(err, &missing) {
@@ -360,15 +372,7 @@ func (p *Provider) Remove(ctx context.Context, id types.SandboxID, indices ...in
 		if _, err := netlink.ConntrackDeleteFilters(netlink.ConntrackTable, netlink.FAMILY_V4, filter, reverse); err != nil {
 			return fmt.Errorf("clear endpoint conntrack before address reuse: %w", err)
 		}
-		path := p.indexPath(id, item.Interface.Index)
-		if err := os.Remove(path); err == nil {
-			if err := syncDirectory(filepath.Dir(path)); err != nil {
-				return err
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		if err := p.retireAddress(item); err != nil {
+		if err := p.retireLease(item); err != nil {
 			return err
 		}
 	}
@@ -377,11 +381,11 @@ func (p *Provider) Remove(ctx context.Context, id types.SandboxID, indices ...in
 
 // Delete is retryable after partial failure and never touches unrelated TAPs.
 func (p *Provider) Delete(ctx context.Context, id types.SandboxID) error {
-	indices, err := p.Allocated(ctx, id)
+	items, err := p.leases(ctx, id)
 	if err != nil {
 		return err
 	}
-	return p.Remove(ctx, id, indices...)
+	return p.removeLeases(ctx, items)
 }
 
 // Allocated includes durable reservations left by interrupted creation.
@@ -409,13 +413,14 @@ func (p *Provider) IndexForTAP(id types.SandboxID, name string) (int, bool) {
 
 // OwnedIDs exposes durable allocations to the existing maintenance service.
 func (p *Provider) OwnedIDs(ctx context.Context) ([]types.SandboxID, error) {
-	items, err := p.leases(ctx, "")
+	items, err := p.scanLeases(ctx)
 	if err != nil {
 		return nil, err
 	}
 	seen := make(map[types.SandboxID]bool)
 	var result []types.SandboxID
 	for _, item := range items {
+		p.rememberLease(item)
 		if !seen[item.Sandbox] {
 			seen[item.Sandbox] = true
 			result = append(result, item.Sandbox)

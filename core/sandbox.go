@@ -221,6 +221,9 @@ func OpenSandbox(ctx context.Context, configuration config.Config, reporter Sand
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
+	if err := tapProvider.RecoverLeases(ctx); err != nil {
+		return nil, errors.Join(err, store.Close())
+	}
 	networks, err := network.NewRegistry(cniProvider, bridgeProvider, tapProvider)
 	if err != nil {
 		return nil, errors.Join(err, store.Close())

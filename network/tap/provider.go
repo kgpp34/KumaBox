@@ -36,13 +36,15 @@ type Options struct {
 	ReuseDelay time.Duration
 }
 
-// Provider owns TAPs and their eBPF mappings. It holds immutable options only;
-// handles are scoped to operations, so CLI and long-lived callers share it safely.
+// Provider owns TAPs and their eBPF mappings under one runtime's state ownership.
+// Kernel handles are scoped to operations. Recovery retains only addresses that
+// may lack a sandbox index; ordinary queries read the durable index directly.
 type Provider struct {
-	options Options
-	pool    netip.Prefix
-	owner   string
-	now     func() time.Time
+	options  Options
+	pool     netip.Prefix
+	owner    string
+	now      func() time.Time
+	recovery leaseRecovery
 }
 
 // New validates configuration without modifying the host or loading eBPF.
@@ -69,7 +71,10 @@ func New(options Options) (*Provider, error) {
 		}
 	}
 	digest := sha256.Sum256([]byte(filepath.Clean(options.StateDir)))
-	return &Provider{options: options, pool: pool, owner: hex.EncodeToString(digest[:8]), now: time.Now}, nil
+	return &Provider{
+		options: options, pool: pool, owner: hex.EncodeToString(digest[:8]), now: time.Now,
+		recovery: leaseRecovery{gate: make(chan struct{}, 1)},
+	}, nil
 }
 
 // Type identifies the host data plane independently of guest address policy.
