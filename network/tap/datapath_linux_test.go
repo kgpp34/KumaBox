@@ -4,11 +4,15 @@ package tap
 
 import (
 	"encoding/binary"
+	"fmt"
 	"net"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/cilium/ebpf"
+	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
 func checksum(data []byte) uint16 {
@@ -46,6 +50,94 @@ func udpPacket(source, destination net.IP, sourceMAC [6]byte) []byte {
 	pseudo = append(pseudo, udp...)
 	binary.BigEndian.PutUint16(udp[6:], checksum(pseudo))
 	return packet
+}
+
+// TestKernelIngressRoutesStaleGatewayMAC exercises actual Ethernet receive
+// classification. BPF_PROG_TEST_RUN alone does not pass the translated frame
+// through IPv4's PACKET_OTHERHOST rejection.
+func TestKernelIngressRoutesStaleGatewayMAC(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires CAP_BPF and CAP_NET_ADMIN")
+	}
+	p := testProvider(t)
+	p.options.PinDir = "/sys/fs/bpf/kb-test-" + p.owner
+	t.Cleanup(func() {
+		if err := os.RemoveAll(p.options.PinDir); err != nil {
+			t.Error(err)
+		}
+	})
+	d, err := p.openDatapath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.close() //nolint:errcheck // temporary kernel handles
+	device := &netlink.Tuntap{
+		LinkAttrs: netlink.LinkAttrs{Name: fmt.Sprintf("kbpkt%d", os.Getpid())},
+		Mode:      netlink.TUNTAP_MODE_TAP, Queues: 1,
+		Flags: netlink.TUNTAP_NO_PI | netlink.TUNTAP_ONE_QUEUE,
+	}
+	if err := netlink.LinkAdd(device); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for _, descriptor := range device.Fds {
+			_ = descriptor.Close()
+		}
+		if err := netlink.LinkDel(device); err != nil {
+			t.Error(err)
+		}
+	})
+	value := endpoint{
+		Guest: [4]byte{169, 254, 240, 2}, Gateway: [4]byte{169, 254, 240, 1},
+		Host: [4]byte{10, 255, 254, 7}, Pool: [4]byte{10, 255, 254, 0}, Mask: [4]byte{255, 255, 255, 0},
+		GuestMAC: [6]byte{2, 0x4b, 0x42, 0, 0, 2}, HostMAC: [6]byte{2, 0x4b, 0x42, 0, 0, 1}, Enabled: 1,
+	}
+	if err := netlink.LinkSetHardwareAddr(device, net.HardwareAddr(value.HostMAC[:])); err != nil {
+		t.Fatal(err)
+	}
+	if err := netlink.LinkSetUp(device); err != nil {
+		t.Fatal(err)
+	}
+	if err := netlink.AddrAdd(device, &netlink.Addr{IPNet: &net.IPNet{IP: net.IP(value.Gateway[:]), Mask: net.CIDRMask(32, 32)}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := netlink.RouteAdd(&netlink.Route{LinkIndex: device.Index, Dst: &net.IPNet{IP: net.IP(value.Host[:]), Mask: net.CIDRMask(32, 32)}, Scope: netlink.SCOPE_LINK}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.endpoints.Update(uint32(device.Index), value, ebpf.UpdateAny); err != nil { //nolint:gosec // kernel interface index
+		t.Fatal(err)
+	}
+	if err := attachFilters(device, d); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IP(value.Gateway[:])})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close() //nolint:errcheck // temporary test listener
+	packet := udpPacket(net.IP(value.Guest[:]), net.IP(value.Gateway[:]), value.GuestMAC)
+	copy(packet[:6], []byte{2, 0xde, 0xad, 0xbe, 0xef, 1})
+	udp := packet[34:]
+	binary.BigEndian.PutUint16(udp[2:], uint16(listener.LocalAddr().(*net.UDPAddr).Port)) //nolint:gosec // kernel-assigned UDP port
+	udp[6], udp[7] = 0, 0
+	pseudo := append([]byte{}, packet[26:34]...)
+	pseudo = append(pseudo, 0, 17, 0, byte(len(udp)))
+	pseudo = append(pseudo, udp...)
+	binary.BigEndian.PutUint16(udp[6:], checksum(pseudo))
+	if _, err := unix.Write(int(device.Fds[0].Fd()), packet); err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var buffer [16]byte
+	n, peer, err := listener.ReadFromUDP(buffer[:])
+	if err != nil {
+		t.Fatalf("translated frame did not reach IPv4: %v", err)
+	}
+	if !peer.IP.Equal(net.IP(value.Host[:])) || string(buffer[:n]) != string([]byte{1, 2, 3, 4}) {
+		t.Fatalf("unexpected translated datagram: %s %v", peer, buffer[:n])
+	}
 }
 
 func TestKernelDataPlaneTranslatesAndRejectsSpoofing(t *testing.T) {

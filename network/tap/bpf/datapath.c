@@ -3,6 +3,7 @@
 // host routing/conntrack on ingress, and after reverse NAT on TAP egress.
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
+#include <linux/if_packet.h>
 #include <linux/ip.h>
 #include <linux/pkt_cls.h>
 #include <linux/in.h>
@@ -100,6 +101,12 @@ static __always_inline int packet(struct __sk_buff *skb, int outgoing)
     if (outgoing) {
         if (ip.saddr != e->guest || (ip.daddr & e->mask) == e->pool) return TC_ACT_SHOT;
         if (translate(skb, ETH_HLEN, 1, e->guest, e->host, 0)) return TC_ACT_SHOT;
+        // This TAP is an L3 endpoint. A restored neighbour cache can still
+        // address the source host's gateway MAC. After validating the guest,
+        // normalize delivery to this host; otherwise IPv4 drops OTHERHOST
+        // frames even though TC has translated their source successfully.
+        if (bpf_skb_store_bytes(skb, 0, e->host_mac, ETH_ALEN, 0)) return TC_ACT_SHOT;
+        if (bpf_skb_change_type(skb, PACKET_HOST)) return TC_ACT_SHOT;
     } else {
         if (ip.daddr != e->host) return TC_ACT_SHOT;
         if (translate(skb, ETH_HLEN, 0, e->host, e->guest, 0)) return TC_ACT_SHOT;
