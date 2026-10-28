@@ -100,6 +100,12 @@ systemd 会等待运行时就绪通知后再完成启动，并通过 `KillMode=p
 `RuntimeDirectoryPreserve=yes` 保留 VM 及其 socket。服务重启时重新接管并监督进程。
 如果变更请求中途断连，操作可能已经提交，应先 inspect 再决定是否重试。
 
+快照访问时间按 ID 合并，默认每 250ms 批量刷新。`snapshots.access_buffer_size`
+限制待刷新的不同快照数量，默认 4096；满载时同步刷新，不会静默丢弃访问记录。
+查询和 GC 都能看到尚未落盘的时间，刷新失败会保留重试，正常退出会在关闭数据库前刷新。
+异常退出可能丢失最后一批访问时间；沙箱状态、快照发布与删除仍同步持久化。
+在 daemon 配置中设置 `snapshots.access_flush_interval: 0s` 可切回同步更新。
+
 ## 快速开始
 
 需要一台 amd64 或 arm64 的 Linux 主机，能访问 `/dev/kvm`，并具备 root 权限。

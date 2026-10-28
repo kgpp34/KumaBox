@@ -32,6 +32,8 @@ type Config struct {
 	Images Images `mapstructure:"images"`
 	// Metadata controls bounded SQLite lock and transaction waits.
 	Metadata Metadata `mapstructure:"metadata"`
+	// Snapshots controls advisory usage persistence independently of VM state.
+	Snapshots Snapshots `mapstructure:"snapshots"`
 	// Sandbox controls writable disk preparation and compensation.
 	Sandbox Sandbox `mapstructure:"sandbox"`
 	// Network controls host CNI discovery and lifecycle recovery.
@@ -76,6 +78,14 @@ type Metadata struct {
 	BusyTimeout time.Duration `mapstructure:"busy_timeout"`
 	// RetryLimit bounds writer acquisition and transaction execution.
 	RetryLimit time.Duration `mapstructure:"retry_limit"`
+}
+
+// Snapshots contains bounded write-behind policy for usage timestamps.
+type Snapshots struct {
+	// AccessFlushInterval controls periodic commits; zero selects synchronous Touch.
+	AccessFlushInterval time.Duration `mapstructure:"access_flush_interval"`
+	// AccessBufferSize bounds distinct dirty snapshot IDs, coalescing repeated uses.
+	AccessBufferSize int `mapstructure:"access_buffer_size"`
 }
 
 // Sandbox contains host disk and compensation policy.
@@ -182,8 +192,9 @@ func Default() Config {
 			EROFSBinary: "mkfs.erofs", Parallelism: min(4, max(1, runtime.NumCPU())),
 			LayerSize: 8 << 30, UnpackedSize: 16 << 30, BootSize: 512 << 20, ArchiveSize: 32 << 30,
 		},
-		Metadata: Metadata{BusyTimeout: 50 * time.Millisecond, RetryLimit: 5 * time.Second},
-		Sandbox:  Sandbox{Ext4Binary: "mkfs.ext4", CleanupTimeout: 10 * time.Second, StopTimeout: types.DefaultStopTimeout},
+		Metadata:  Metadata{BusyTimeout: 50 * time.Millisecond, RetryLimit: 5 * time.Second},
+		Snapshots: Snapshots{AccessFlushInterval: 250 * time.Millisecond, AccessBufferSize: 4096},
+		Sandbox:   Sandbox{Ext4Binary: "mkfs.ext4", CleanupTimeout: 10 * time.Second, StopTimeout: types.DefaultStopTimeout},
 		Network: Network{
 			CNI:  CNI{ConfDir: "/etc/cni/net.d", BinDir: "/opt/cni/bin"},
 			EBPF: EBPF{Subnet: "10.89.0.0/16"},
@@ -220,6 +231,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Metadata.BusyTimeout <= 0 || c.Metadata.RetryLimit <= 0 {
 		return errors.New("metadata timeouts must be positive")
+	}
+	if c.Snapshots.AccessFlushInterval < 0 || c.Snapshots.AccessBufferSize <= 0 {
+		return errors.New("snapshot access interval must be nonnegative and buffer size positive")
 	}
 	if strings.TrimSpace(c.Sandbox.Ext4Binary) == "" || c.Sandbox.CleanupTimeout <= 0 || c.Sandbox.StopTimeout <= 0 {
 		return errors.New("sandbox requires an ext4 binary and positive cleanup and stop timeouts")
@@ -283,7 +297,9 @@ func NewLoader() *Loader {
 		"images.layer_size": defaults.Images.LayerSize, "images.unpacked_size": defaults.Images.UnpackedSize,
 		"images.boot_size": defaults.Images.BootSize, "images.archive_size": defaults.Images.ArchiveSize,
 		"metadata.busy_timeout": defaults.Metadata.BusyTimeout, "metadata.retry_limit": defaults.Metadata.RetryLimit,
-		"sandbox.ext4_binary": defaults.Sandbox.Ext4Binary, "sandbox.cleanup_timeout": defaults.Sandbox.CleanupTimeout,
+		"snapshots.access_flush_interval": defaults.Snapshots.AccessFlushInterval,
+		"snapshots.access_buffer_size":    defaults.Snapshots.AccessBufferSize,
+		"sandbox.ext4_binary":             defaults.Sandbox.Ext4Binary, "sandbox.cleanup_timeout": defaults.Sandbox.CleanupTimeout,
 		"sandbox.stop_timeout": defaults.Sandbox.StopTimeout,
 		"network.cni.conf_dir": defaults.Network.CNI.ConfDir, "network.cni.bin_dir": defaults.Network.CNI.BinDir,
 		"network.ebpf.subnet": defaults.Network.EBPF.Subnet, "network.ebpf.pin_dir": defaults.Network.EBPF.PinDir,

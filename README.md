@@ -460,6 +460,14 @@ its state before retrying a mutation. Snapshot import/export and guest streams
 remain bounded in memory. Image import and external-device paths name files on
 the daemon host; relative paths are resolved at the CLI's working directory.
 
+Snapshot usage times are coalesced by ID and flushed every 250 ms by default.
+`snapshots.access_buffer_size` bounds pending IDs (4096 by default); saturation
+flushes synchronously instead of dropping usage. GC and queries see pending
+times, failed flushes are retried, and graceful shutdown flushes before closing
+SQLite. A crash may lose the latest unflushed usage times. Sandbox states,
+snapshot publication and deletion retain synchronous durability. Set
+`snapshots.access_flush_interval: 0s` on the daemon for synchronous usage updates.
+
 ## Remote API and SDKs
 
 `kumabox serve` forwards requests to the local daemon through an authenticated,

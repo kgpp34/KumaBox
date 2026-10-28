@@ -29,7 +29,11 @@ func Collections() []metadata.Collection {
 }
 
 // Store adapts shared metadata transactions to snapshot persistence.
-type Store struct{ store metadata.Store }
+type Store struct {
+	store metadata.Store
+	// accesses is optional; synchronous catalogs retain their original semantics.
+	accesses *accessBuffer
+}
 
 // New constructs a snapshot catalog without taking ownership of the engine.
 func New(store metadata.Store) *Store { return &Store{store: store} }
@@ -248,6 +252,9 @@ func (s *Store) Touch(ctx context.Context, id types.SnapshotID, accessedAt time.
 	if accessedAt.IsZero() {
 		return types.Snapshot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, errors.New("snapshot access time must be set"))
 	}
+	if s.accesses != nil {
+		return s.bufferAccess(ctx, id, accessedAt.UTC())
+	}
 	var result types.Snapshot
 	err := s.store.Update(ctx, func(writer metadata.Writer) error {
 		record, err := load(ctx, writer, id)
@@ -308,7 +315,7 @@ func (s *Store) Resolve(ctx context.Context, reference string) (types.Snapshot, 
 		return types.Snapshot{}, errors.New("snapshot catalog is not configured")
 	}
 	var result types.Snapshot
-	err := s.store.View(ctx, func(reader metadata.Reader) error {
+	err := s.view(ctx, func(reader metadata.Reader) error {
 		record, err := resolve(ctx, reader, reference)
 		if err != nil {
 			return err
@@ -320,6 +327,7 @@ func (s *Store) Resolve(ctx context.Context, reference string) (types.Snapshot, 
 		if err != nil {
 			return err
 		}
+		result = s.visibleAccess(result)
 		return nil
 	})
 	return result, errdefs.WithContext(err, errdefs.ContextInfo{
@@ -333,7 +341,8 @@ func (s *Store) Resolve(ctx context.Context, reference string) (types.Snapshot, 
 // List returns ready snapshots ordered newest first.
 func (s *Store) List(ctx context.Context) ([]types.Snapshot, error) {
 	var result []types.Snapshot
-	err := s.store.View(ctx, func(reader metadata.Reader) error {
+	err := s.view(ctx, func(reader metadata.Reader) error {
+		result = nil // A flush may require a fresh consistent read.
 		return reader.Scan(ctx, CollectionSnapshots, func(id string, raw []byte) error {
 			record, err := decode(raw)
 			if err != nil {
@@ -347,7 +356,7 @@ func (s *Store) List(ctx context.Context) ([]types.Snapshot, error) {
 				if err != nil {
 					return err
 				}
-				result = append(result, snapshot)
+				result = append(result, s.visibleAccess(snapshot))
 			}
 			return nil
 		})

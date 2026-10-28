@@ -86,3 +86,24 @@ func Supervise(ctx context.Context, service *core.MaintenanceService, reconcileI
 		}
 	}
 }
+
+// flushSnapshotAccess runs independently of potentially slow orphan collection.
+// The node owns this goroutine and joins it before Application.Close performs
+// the final flush with a fresh, bounded context. Failed batches remain pending.
+func flushSnapshotAccess(ctx context.Context, interval time.Duration, flush func(context.Context) error, diagnostics io.Writer) {
+	if interval == 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := flush(ctx); err != nil && ctx.Err() == nil {
+				_, _ = fmt.Fprintf(diagnostics, "daemon: snapshot access flush: %v\n", err)
+			}
+		}
+	}
+}

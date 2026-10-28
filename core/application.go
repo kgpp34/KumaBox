@@ -36,6 +36,8 @@ type applicationState struct {
 	now           func() time.Time
 	closeOnce     sync.Once
 	closeErr      error
+	// flushSnapshotAccess persists advisory usage after all request facades drain.
+	flushSnapshotAccess func(context.Context) error
 }
 
 func (a *applicationState) close() error {
@@ -43,10 +45,15 @@ func (a *applicationState) close() error {
 		return nil
 	}
 	a.closeOnce.Do(func() {
+		if a.flushSnapshotAccess != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), a.configuration.Metadata.RetryLimit)
+			a.closeErr = a.flushSnapshotAccess(ctx)
+			cancel()
+		}
 		if a.lifecycle != nil {
-			a.closeErr = a.lifecycle.Close()
+			a.closeErr = errors.Join(a.closeErr, a.lifecycle.Close())
 		} else if a.store != nil {
-			a.closeErr = a.store.Close()
+			a.closeErr = errors.Join(a.closeErr, a.store.Close())
 		}
 	})
 	return a.closeErr
@@ -78,13 +85,21 @@ func OpenApplication(ctx context.Context, configuration config.Config, reporter 
 	if reporter == nil {
 		reporter = discardSnapshotReporter{}
 	}
+	snapshotStore := snapshotcatalog.New(lifecycle.dependencies.store)
+	if configuration.Snapshots.AccessFlushInterval > 0 {
+		snapshotStore, err = snapshotcatalog.NewBuffered(lifecycle.dependencies.store, configuration.Snapshots.AccessBufferSize)
+		if err != nil {
+			return nil, errors.Join(err, lifecycle.Close())
+		}
+	}
 	state := &applicationState{
 		configuration: configuration, paths: paths,
 		sandboxPaths: lifecycle.dependencies.paths, sandboxes: lifecycle.dependencies.catalog,
-		snapshots: snapshotcatalog.New(lifecycle.dependencies.store), runtimes: lifecycle.dependencies.runtimes,
+		snapshots: snapshotStore, runtimes: lifecycle.dependencies.runtimes,
 		store: lifecycle.dependencies.store, lifecycle: lifecycle, images: lifecycle.dependencies.images,
 		disks: lifecycle.dependencies.disks, networks: lifecycle.dependencies.networks,
 		dnsServers: lifecycle.dependencies.dnsServers, now: time.Now,
+		flushSnapshotAccess: snapshotStore.FlushAccesses,
 	}
 	snapshots := &SnapshotService{applicationState: state, reporter: reporter, newID: types.NewSnapshotID}
 	return &Application{
@@ -102,6 +117,12 @@ func (a *Application) Close() error {
 		return nil
 	}
 	return a.state.close()
+}
+
+// FlushSnapshotAccess persists advisory usage in one batch. It never changes
+// lifecycle durability; daemon owns periodic calls and Close performs a final flush.
+func (a *Application) FlushSnapshotAccess(ctx context.Context) error {
+	return a.state.flushSnapshotAccess(ctx)
 }
 
 // WithReporter returns a request-local view sharing adapters without changing

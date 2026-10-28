@@ -94,6 +94,8 @@ func TestLoaderRejectsInvalidInput(t *testing.T) {
 		{name: "unknown key", path: filepath.Join(base, "unknown.yaml"), content: "unknown: true\n"},
 		{name: "invalid duration", path: filepath.Join(base, "duration.yaml"), content: "metadata:\n  retry_limit: soon\n"},
 		{name: "invalid limit", path: filepath.Join(base, "limit.yaml"), content: "images:\n  parallelism: 0\n"},
+		{name: "negative access interval", path: filepath.Join(base, "access.yaml"), content: "snapshots:\n  access_flush_interval: -1ms\n"},
+		{name: "unbounded access buffer", path: filepath.Join(base, "buffer.yaml"), content: "snapshots:\n  access_buffer_size: 0\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if test.content != "" {

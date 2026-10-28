@@ -176,6 +176,11 @@ func Run(ctx context.Context, cfg config.Config, options Options, diagnostics io
 	go func() {
 		maintenanceDone <- Supervise(nodeCtx, application.Maintenance, options.ReconcileInterval, options.GCInterval, diagnostics)
 	}()
+	accessDone := make(chan struct{})
+	go func() {
+		defer close(accessDone)
+		flushSnapshotAccess(nodeCtx, cfg.Snapshots.AccessFlushInterval, application.FlushSnapshotAccess, diagnostics)
+	}()
 	serving := make(chan error, 1)
 	go func() { serving <- server.Serve(listener) }()
 	ready := func() error {
@@ -192,6 +197,7 @@ func Run(ctx context.Context, cfg config.Config, options Options, diagnostics io
 		_ = server.Close()
 		<-serving
 		requests.Wait()
+		<-accessDone
 		return errors.Join(err, <-maintenanceDone)
 	}
 	select {
@@ -209,6 +215,7 @@ func Run(ctx context.Context, cfg config.Config, options Options, diagnostics io
 	_ = server.Close()
 	requests.Wait()
 	maintenanceErr := <-maintenanceDone
+	<-accessDone
 	if errors.Is(shutdownErr, context.DeadlineExceeded) {
 		shutdownErr = nil
 	}

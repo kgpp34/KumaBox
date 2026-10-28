@@ -10,7 +10,6 @@ import (
 	"time"
 
 	filelock "github.com/kumabox/kumabox/lock/flock"
-	snapshotcatalog "github.com/kumabox/kumabox/snapshot/catalog"
 	"github.com/kumabox/kumabox/types"
 )
 
@@ -38,7 +37,7 @@ func (s *MaintenanceService) CollectWithPolicy(ctx context.Context, policy Snaps
 	if err != nil || !policy.Enabled {
 		return report, err
 	}
-	records, err := snapshotcatalog.New(s.store).List(ctx)
+	records, err := s.snapshots.List(ctx)
 	if err != nil {
 		return report, err
 	}

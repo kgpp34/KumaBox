@@ -97,7 +97,10 @@ func TestEvictSnapshotRechecksAccessAndSupportsDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog := snapshotcatalog.New(store)
+	catalog, err := snapshotcatalog.NewBuffered(store, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
 	digest, err := types.ParseDigest("sha256:" + strings.Repeat("a", 64))
 	if err != nil {
 		t.Fatal(err)
@@ -142,5 +145,38 @@ func TestEvictSnapshotRechecksAccessAndSupportsDryRun(t *testing.T) {
 	}
 	if _, found, err := catalog.State(t.Context(), id); err != nil || found {
 		t.Fatalf("evicted snapshot record remains: found=%t error=%v", found, err)
+	}
+}
+
+func TestSnapshotEvictionOrdersByUnflushedAccess(t *testing.T) {
+	configuration := config.Default()
+	configuration.Paths = gcTestRoots(t)
+	configuration.VMM.CgroupParent = filepath.Join("/sys/fs/cgroup", "kumabox-test-access-"+filepath.Base(t.TempDir()))
+	app, err := OpenApplication(t.Context(), configuration, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = app.Close() }()
+	now := time.Now().UTC()
+	first := applicationSnapshot(t, app, "223e4567-e89b-42d3-a456-426614174000", now.Add(-2*time.Hour))
+	second := applicationSnapshot(t, app, "323e4567-e89b-42d3-a456-426614174000", now.Add(-time.Hour))
+	for _, record := range []types.Snapshot{first, second} {
+		directory, err := app.state.paths.Dir(record.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := app.state.snapshots.Touch(t.Context(), first.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	report, err := app.Maintenance.CollectWithPolicy(t.Context(), SnapshotEvictionPolicy{Enabled: true, KeepLast: 1})
+	if err != nil || len(report.Actions) != 1 || report.Actions[0].ID != second.ID.String() {
+		t.Fatalf("pending usage did not control LRU: %+v %v", report, err)
+	}
+	if _, err := app.Snapshots.Inspect(t.Context(), first.ID.String()); err != nil {
+		t.Fatalf("recent snapshot was evicted: %v", err)
 	}
 }
