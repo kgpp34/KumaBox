@@ -1,15 +1,15 @@
 .PHONY: all build agent install test doctor-check race verify lint vet fmt fmt-check deps clean coverage cloc help
 
-REPO_PATH := github.com/kumabox/kumabox
+VERSION_PATH := github.com/kumabox/kumabox/internal/version
 
 ## Target OSes for vet / lint
 GOOSES ?= linux darwin
 REVISION := $(shell git rev-parse HEAD || echo unknown)
 BUILTAT := $(shell date +%Y-%m-%dT%H:%M:%S)
 VERSION := $(shell git describe --tags --exact-match HEAD 2>/dev/null || echo dev)
-GO_LDFLAGS ?= -X $(REPO_PATH)/version.Commit=$(REVISION) \
-              -X $(REPO_PATH)/version.BuildTime=$(BUILTAT) \
-              -X $(REPO_PATH)/version.Version=$(VERSION)
+GO_LDFLAGS ?= -X $(VERSION_PATH).Commit=$(REVISION) \
+              -X $(VERSION_PATH).BuildTime=$(BUILTAT) \
+              -X $(VERSION_PATH).Version=$(VERSION)
 
 ifneq ($(KEEP_SYMBOL), 1)
 	GO_LDFLAGS += -s

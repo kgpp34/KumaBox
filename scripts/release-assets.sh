@@ -35,7 +35,7 @@ tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
-    -ldflags "-s -w -X github.com/kumabox/kumabox/version.Version=$version -X github.com/kumabox/kumabox/version.Commit=$commit -X github.com/kumabox/kumabox/version.BuildTime=$build_time" \
+    -ldflags "-s -w -X github.com/kumabox/kumabox/internal/version.Version=$version -X github.com/kumabox/kumabox/internal/version.Commit=$commit -X github.com/kumabox/kumabox/internal/version.BuildTime=$build_time" \
     -o "$tmp_dir/kumabox" ./cmd/kumabox
 install -m 0755 scripts/kumabox-check.sh "$tmp_dir/kumabox-check"
 install -m 0644 packaging/systemd/kumabox.service "$tmp_dir/kumabox.service"

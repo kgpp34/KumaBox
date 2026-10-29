@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kumabox/kumabox/config"
-	"github.com/kumabox/kumabox/daemon"
-	"github.com/kumabox/kumabox/storage"
+	"github.com/kumabox/kumabox/internal/config"
+	"github.com/kumabox/kumabox/internal/daemon"
+	"github.com/kumabox/kumabox/internal/storage"
 )
 
 // TestMainBinaryStreamsAndExitCodes builds the real entrypoint so argument

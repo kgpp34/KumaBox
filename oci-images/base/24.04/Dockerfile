@@ -12,16 +12,16 @@ ARG KUMABOX_COMMIT=unknown
 ARG KUMABOX_BUILD_TIME=unknown
 WORKDIR /src
 COPY go.mod go.sum ./
-COPY agent ./agent
-COPY errdefs ./errdefs
-COPY types ./types
-COPY version ./version
+COPY internal/agent ./internal/agent
+COPY internal/errdefs ./internal/errdefs
+COPY internal/types ./internal/types
+COPY internal/version ./internal/version
 COPY cmd/kumabox-agent ./cmd/kumabox-agent
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" GOPROXY="$GOPROXY" \
     go build -mod=readonly -trimpath \
-    -ldflags="-s -w -X github.com/kumabox/kumabox/version.Version=$KUMABOX_VERSION -X github.com/kumabox/kumabox/version.Commit=$KUMABOX_COMMIT -X github.com/kumabox/kumabox/version.BuildTime=$KUMABOX_BUILD_TIME" \
+    -ldflags="-s -w -X github.com/kumabox/kumabox/internal/version.Version=$KUMABOX_VERSION -X github.com/kumabox/kumabox/internal/version.Commit=$KUMABOX_COMMIT -X github.com/kumabox/kumabox/internal/version.BuildTime=$KUMABOX_BUILD_TIME" \
     -o /out/kumabox-agent ./cmd/kumabox-agent
 
 # Minimal glibc userland. Rust PID 1 owns boot and supervises the guest agent.

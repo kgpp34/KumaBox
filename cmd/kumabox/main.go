@@ -11,7 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/kumabox/kumabox/cli"
+	"github.com/kumabox/kumabox/internal/cli"
 )
 
 // main propagates termination signals, prints unhandled diagnostics, and exits

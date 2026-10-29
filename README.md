@@ -493,7 +493,7 @@ shared firewall rules rather than one rule per sandbox. It does not yet implemen
 an eBPF SNAT session table, tenant network policy, TAP pooling or IPv6. Existing
 CNI and bridge modes remain available. The host requires bpffs and TC eBPF support;
 normal builds embed the compiled BPF object and do not require Clang. To regenerate
-it on Linux, install Clang/libbpf headers and run `go generate ./network/tap`.
+it on Linux, install Clang/libbpf headers and run `go generate ./internal/network/tap`.
 
 The default host endpoint subnet is `10.89.0.0/16`; select an unused private range
 with `KUMABOX_NETWORK_EBPF_SUBNET`. When changing the subnet or installation scope,

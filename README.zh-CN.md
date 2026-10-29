@@ -371,7 +371,7 @@ guest 的每张网卡保留固定的模板内 IP/MAC，宿主机给每个 TAP �
 不会随每台沙箱增加。完整 eBPF SNAT 会话表、租户网络策略、TAP 池和 IPv6 尚未实现。
 CNI 和 bridge 模式继续可用。宿主机需要 bpffs 和 TC eBPF 支持；普通构建已嵌入 BPF
 字节码，不需要现场安装 Clang。开发时可在安装 Clang/libbpf 头文件的 Linux 上运行
-`go generate ./network/tap` 重新生成字节码。
+`go generate ./internal/network/tap` 重新生成字节码。
 
 默认宿主地址池为 `10.89.0.0/16`，应选择没有被现有网络使用的私有网段，可通过
 `KUMABOX_NETWORK_EBPF_SUBNET` 修改。修改地址池或安装 scope 后，使用对应的

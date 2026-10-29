@@ -93,4 +93,4 @@ jobs:
           python -m pip install --target /tmp/kumabox-e2b-python e2b==2.52.0
           KUMABOX_E2B_NODE_MODULE=/tmp/kumabox-e2b-node/node_modules/e2b \
             KUMABOX_E2B_PYTHON_PATH=/tmp/kumabox-e2b-python \
-            go test ./api/e2b -run TestPublishedE2B -v
+            go test ./internal/api/e2b -run TestPublishedE2B -v

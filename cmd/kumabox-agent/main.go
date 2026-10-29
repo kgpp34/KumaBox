@@ -9,8 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/kumabox/kumabox/agent"
-	"github.com/kumabox/kumabox/version"
+	"github.com/kumabox/kumabox/internal/agent"
+	"github.com/kumabox/kumabox/internal/version"
 )
 
 func main() {

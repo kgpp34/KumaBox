@@ -1,0 +1,40 @@
+package sandbox
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/kumabox/kumabox/internal/config"
+	"github.com/kumabox/kumabox/internal/errdefs"
+)
+
+func TestRestoreRejectsAmbiguousSourceBeforeOpeningService(t *testing.T) {
+	for _, args := range [][]string{{"box"}, {"box", "capture", "--from-dir", "/tmp/capture"}, {"box", "capture", "--force"}} {
+		command := NewRestoreCommand(func() config.Config {
+			t.Fatal("restore opened service for invalid source flags")
+			return config.Config{}
+		})
+		command.SetArgs(args)
+		command.SilenceUsage = true
+		command.SilenceErrors = true
+		err := command.ExecuteContext(t.Context())
+		if err == nil || (!strings.Contains(err.Error(), "--from-dir") && !strings.Contains(err.Error(), "--force")) {
+			t.Fatalf("restore %v error = %v", args, err)
+		}
+		if code, ok := errdefs.CodeOf(err); !ok || code != errdefs.CodeInvalidArgument {
+			t.Fatalf("restore %v error code = %q, %v", args, code, ok)
+		}
+	}
+}
+
+func TestRestoreRejectsInvalidMemoryModeBeforeOpeningService(t *testing.T) {
+	command := NewRestoreCommand(func() config.Config {
+		t.Fatal("invalid memory mode opened service")
+		return config.Config{}
+	})
+	command.SetArgs([]string{"box", "checkpoint", "--restore-mode", "invalid"})
+	command.SilenceUsage, command.SilenceErrors = true, true
+	if err := command.ExecuteContext(t.Context()); err == nil || !strings.Contains(err.Error(), "--restore-mode") {
+		t.Fatalf("restore memory mode error = %v", err)
+	}
+}
