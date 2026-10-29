@@ -85,6 +85,16 @@ class GuestTests:
         # boot jobs finish. Both exec and uploads must survive boot cleanup.
         self.guest("sh", "-c", "printf early-exec > /tmp/kumabox-early-exec")
         self.file("write", "/tmp/kumabox-early-upload", data=b"early-upload")
+        # Inspect the loaded dependency graph, not just unit-file text: empty
+        # After= drop-ins do not remove vendor dependency edges in systemd.
+        for unit, forbidden in (
+            ("kumabox-guest-prepare.service", {b"local-fs.target"}),
+            ("systemd-sysusers.service", {
+                b"systemd-tmpfiles-setup-dev-early.service", b"systemd-remount-fs.service",
+            }),
+        ):
+            after = set(self.guest("systemctl", "show", unit, "--property=After", "--value").split())
+            assert not after.intersection(forbidden), (unit, after)
         version = self.guest("kumabox-agent", "version").decode().strip()
         if self.args.commit not in version:
             raise RuntimeError(f"wrong guest agent version: {version}")

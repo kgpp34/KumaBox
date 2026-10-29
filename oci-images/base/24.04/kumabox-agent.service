@@ -4,14 +4,14 @@ Documentation=https://github.com/kumabox/kumabox
 # Boot-time tmpfiles cleanup must finish before accepting guest file writes.
 # Otherwise its --remove pass can delete an in-flight upload under /tmp.
 DefaultDependencies=no
-After=systemd-tmpfiles-setup.service
+Requires=kumabox-guest-prepare.service
+After=kumabox-guest-prepare.service
 Before=basic.target
 
 [Service]
 Type=simple
 User=root
 Group=root
-ExecStartPre=-/sbin/modprobe vmw_vsock_virtio_transport
 ExecStart=/usr/local/bin/kumabox-agent serve
 Restart=always
 RestartSec=2s

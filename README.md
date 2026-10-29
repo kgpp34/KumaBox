@@ -388,24 +388,31 @@ wait
 sudo kumabox ps
 ```
 
-The published Ubuntu guest is intentionally minimal. To bake in your own
-toolchain (Python, Node, browsers), extend
-[`oci-images/ubuntu/Dockerfile`](oci-images/ubuntu/Dockerfile),
-which already installs the matching `kumabox-agent`, kernel and initramfs.
+Source-built guests use one boot chain throughout:
 
-For latency-sensitive Linux guests that do not need loadable kernel modules,
-build the optional single-layer fast-boot image from the same source tree:
+```text
+boot: dedicated kernel + static native initramfs
+  -> base: Ubuntu userland + boot artifacts + matching guest agent
+    -> rt: the same filesystem flattened into one OCI layer
+```
+
+The base does not install a distribution kernel or initramfs-tools. Extend
+[`oci-images/base/24.04/Dockerfile`](oci-images/base/24.04/Dockerfile) for your
+toolchain, then flatten the result with
+[`oci-images/rt/24.04/Dockerfile`](oci-images/rt/24.04/Dockerfile).
+The native init uses built-in drivers and virtio serials; the small initramfs
+is uncompressed. Loadable kernel modules are not part of this guest profile.
 
 ```bash
-docker build -f oci-images/ubuntu/Dockerfile -t kumabox/ubuntu:24.04 .
-docker build -f oci-images/fastboot/Dockerfile.boot -t kumabox/boot:fast .
-docker build -f oci-images/fastboot/Dockerfile.image -t kumabox/ubuntu:fast .
-docker save kumabox/ubuntu:fast -o /tmp/kumabox-ubuntu-fast.tar
+sh scripts/build-guest.sh
+docker save kumabox/rt:24.04 -o /tmp/kumabox-ubuntu-fast.tar
 sudo kumabox image import ubuntu-fast /tmp/kumabox-ubuntu-fast.tar --format docker
 ```
 
-The fast profile has its own built-in kernel and initramfs; use the general
-Ubuntu image for workloads that require kernel modules or passthrough drivers.
+The script builds boot, base and rt in order and reuses BuildKit's caches.
+Use `--skip-boot --boot-image <pinned-image>` to consume an existing boot
+artifact; this deliberately does not rebuild native init or the kernel.
+Historical release images keep their original contents and performance.
 
 ## Experimental TAP/eBPF networking
 

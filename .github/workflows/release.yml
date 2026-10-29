@@ -24,6 +24,11 @@ jobs:
         run: |
           [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]
           test -s ".github/release-notes/$GITHUB_REF_NAME.md"
+      - name: Test native init
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal --component rustfmt,clippy
+          rustup override set 1.89.0
+          make boot-test
       - name: Verify Go and shell sources
         run: make verify VERSION="$GITHUB_REF_NAME"
       - name: Lint
@@ -104,21 +109,49 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push matching Linux amd64 guest image
-        id: push
+      - name: Build and push versioned boot artifacts
+        id: boot
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: oci-images/ubuntu/Dockerfile
+          file: oci-images/boot/Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ghcr.io/kgpp34/kumabox/boot:6.18.37-${{ github.ref_name }}
+      - name: Build and push matching Ubuntu base
+        id: base
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: oci-images/base/24.04/Dockerfile
           platforms: linux/amd64
           push: true
           provenance: false
           build-args: |
+            BOOT_IMAGE=ghcr.io/kgpp34/kumabox/boot@${{ steps.boot.outputs.digest }}
             UBUNTU_IMAGE=${{ steps.ubuntu.outputs.ref }}
             KUMABOX_VERSION=${{ github.ref_name }}
             KUMABOX_COMMIT=${{ github.sha }}
             KUMABOX_BUILD_TIME=${{ steps.build-time.outputs.value }}
-          tags: ghcr.io/kgpp34/kumabox/ubuntu:24.04-${{ github.ref_name }}
+          tags: ghcr.io/kgpp34/kumabox/base:24.04-${{ github.ref_name }}
+      - name: Publish single-layer runtime and Ubuntu compatibility tag
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: oci-images/rt/24.04/Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          build-args: |
+            BASE_IMAGE=ghcr.io/kgpp34/kumabox/base@${{ steps.base.outputs.digest }}
+            KUMABOX_VERSION=${{ github.ref_name }}
+            KUMABOX_COMMIT=${{ github.sha }}
+            KUMABOX_BUILD_TIME=${{ steps.build-time.outputs.value }}
+          tags: |
+            ghcr.io/kgpp34/kumabox/rt:24.04-${{ github.ref_name }}
+            ghcr.io/kgpp34/kumabox/ubuntu:24.04-${{ github.ref_name }}
 
   draft-release:
     needs: [host-assets, guest-image]

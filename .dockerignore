@@ -13,10 +13,5 @@
 !cmd/kumabox-agent/
 !cmd/kumabox-agent/**
 !oci-images/
-!oci-images/ubuntu/
-!oci-images/ubuntu/overlay.sh
-!oci-images/ubuntu/network.sh
-!oci-images/ubuntu/kumabox-agent.service
-!oci-images/fastboot/
-!oci-images/fastboot/kernel.config
-!oci-images/fastboot/init
+!oci-images/**
+oci-images/boot/init/target/

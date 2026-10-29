@@ -13,6 +13,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  boot-init:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned native init toolchain
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal --component rustfmt,clippy
+          rustup override set 1.89.0
+      - name: Test native boot contracts
+        run: make boot-test
+
   # verify covers T1/T2 only: pure models, coordinator ordering with fake ports,
   # and real SQLite/filesystem integration. It needs no root and no KVM, so it
   # runs on a plain runner. T3/T4 (real Cloud Hypervisor on Linux/KVM) are

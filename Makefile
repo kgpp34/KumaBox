@@ -89,9 +89,7 @@ doctor-check: ## Check host and guest shell script syntax
 	bash -n scripts/kumabox-check.sh
 	bash -n scripts/kumabox-bridge.sh
 	bash -n scripts/kumabox-ebpf.sh
-	sh -n oci-images/ubuntu/overlay.sh
-	sh -n oci-images/ubuntu/network.sh
-	sh -n oci-images/fastboot/init
+	sh -n scripts/build-guest.sh
 
 race: ## Run all Go tests with race detection
 	go test -race ./...
@@ -144,3 +142,12 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 	@echo ""
+
+.PHONY: boot-test guest
+boot-test: ## Check native init formatting, safety lints, and unprivileged boot contracts
+	cargo fmt --manifest-path oci-images/boot/init/Cargo.toml -- --check
+	cargo clippy --manifest-path oci-images/boot/init/Cargo.toml --locked --all-targets -- -D warnings
+	cargo test --manifest-path oci-images/boot/init/Cargo.toml --locked
+
+guest: ## Build the boot artifact, Ubuntu base, and single-layer runtime image
+	sh scripts/build-guest.sh

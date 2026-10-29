@@ -248,7 +248,7 @@ def main():
     repo = Path.cwd()
     if not (repo / "go.mod").is_file():
         repo = Path.home() / "kumabox/KumaBox"
-    if not (repo / "oci-images/ubuntu/Dockerfile").is_file():
+    if not (repo / "go.mod").is_file() or not (repo / "cmd/kumabox").is_dir():
         raise RuntimeError("Run from KumaBox repository or put it at ~/kumabox/KumaBox")
     os.chdir(repo)
 
@@ -297,9 +297,7 @@ def main():
         if arch is None:
             raise RuntimeError(f"Unsupported architecture: {platform.machine()}")
         stage("Build matching Ubuntu guest image and import Docker archive")
-        run(*docker, "buildx", "build", "--load", "--platform", arch,
-            "--build-arg", f"GOPROXY={os.environ['GOPROXY']}",
-            "-f", "oci-images/ubuntu/Dockerfile", "-t", tag, ".")
+        run("sh", "scripts/build-guest.sh", "--platform", arch, "--tag", tag)
         archive = work / "ubuntu.tar"
         run(*docker, "save", "-o", archive, tag)
         stage("Start the persistent local runtime")

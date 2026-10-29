@@ -321,22 +321,29 @@ wait
 sudo kumabox ps
 ```
 
-官方的 Ubuntu guest 镜像刻意保持精简。如果需要预装自己的工具链（Python、Node、浏览器等），
-可以在 [`oci-images/ubuntu/Dockerfile`](oci-images/ubuntu/Dockerfile) 的基础上扩展。
-这个 Dockerfile 已经内置了配套的 `kumabox-agent`、内核和 initramfs。
+源码构建统一使用以下启动链：
 
-如果 Linux guest 不依赖可加载的内核模块，可以从同一份源码构建单层快速启动镜像：
+```text
+boot：专用内核 + 静态原生 initramfs
+  -> base：Ubuntu 用户空间 + boot 产物 + 配套 agent
+    -> rt：将同一份文件系统展平成一个 OCI 层
+```
+
+base 不安装发行版内核或 initramfs-tools。预装 Python、Node、浏览器等工具时，
+扩展 [`oci-images/base/24.04/Dockerfile`](oci-images/base/24.04/Dockerfile)，
+再通过 [`oci-images/rt/24.04/Dockerfile`](oci-images/rt/24.04/Dockerfile) 展平。
+原生 init 按 virtio 序列号定位磁盘，驱动内建，initramfs 不压缩；这个 guest 配置不支持
+额外加载内核模块。
 
 ```bash
-docker build -f oci-images/ubuntu/Dockerfile -t kumabox/ubuntu:24.04 .
-docker build -f oci-images/fastboot/Dockerfile.boot -t kumabox/boot:fast .
-docker build -f oci-images/fastboot/Dockerfile.image -t kumabox/ubuntu:fast .
-docker save kumabox/ubuntu:fast -o /tmp/kumabox-ubuntu-fast.tar
+sh scripts/build-guest.sh
+docker save kumabox/rt:24.04 -o /tmp/kumabox-ubuntu-fast.tar
 sudo kumabox image import ubuntu-fast /tmp/kumabox-ubuntu-fast.tar --format docker
 ```
 
-快速镜像使用内建驱动的独立内核和 initramfs；需要内核模块或直通驱动的负载仍使用
-通用 Ubuntu 镜像。
+脚本按 boot、base、rt 的顺序构建，并复用 BuildKit 缓存。
+通过 `--skip-boot --boot-image <固定镜像>` 可以复用既有启动产物；此时不会重新构建
+原生 init 或内核。历史 Release 镜像的内容和性能不会因此改变。
 
 ## 实验性的 TAP/eBPF 网络
 

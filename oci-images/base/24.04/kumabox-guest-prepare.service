@@ -3,10 +3,14 @@ Description=Prepare guest files before accepting sandbox work
 # Files are prepared once before the agent accepts exec or file operations.
 # Journald's files need a later pass, after journal-flush creates them:
 #
-#   local-fs + sysusers -> guest files -> agent
+#   native root + sysusers -> guest files -> agent
 #   journald -> journal-flush -> journal file permissions
 DefaultDependencies=no
-After=local-fs.target systemd-sysusers.service
+# The native init has assembled root and mounted /run before systemd starts.
+# File cleanup remains a readiness barrier; unrelated device jobs run in parallel.
+AssertPathExists=/run/kumabox/boot-root-ready
+Requires=systemd-sysusers.service
+After=systemd-sysusers.service
 Before=kumabox-agent.service systemd-tmpfiles-setup.service sysinit.target
 Conflicts=shutdown.target initrd-switch-root.target
 Before=shutdown.target initrd-switch-root.target
