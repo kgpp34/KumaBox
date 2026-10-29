@@ -41,7 +41,9 @@ func (p *Provider) Prepare(ctx context.Context, _ types.SandboxID) (string, erro
 	return "", nil
 }
 
-func (p *Provider) dataPlane(ctx context.Context) (result *datapath, returnErr error) {
+// loadDatapath serializes pin creation across processes only on first use.
+// Steady-state operations borrow the provider's already opened descriptors.
+func (p *Provider) loadDatapath(ctx context.Context) (*datapath, error) {
 	if err := storage.EnsureDir(p.options.StateDir); err != nil {
 		return nil, err
 	}
@@ -49,9 +51,22 @@ func (p *Provider) dataPlane(ctx context.Context) (result *datapath, returnErr e
 	if err := guard.Lock(ctx); err != nil {
 		return nil, err
 	}
-	defer func() { returnErr = errors.Join(returnErr, guard.Unlock(context.WithoutCancel(ctx))) }()
-	return p.openDatapath()
+	d, err := p.openDatapath()
+	err = errors.Join(err, ctx.Err(), guard.Unlock(context.WithoutCancel(ctx)))
+	if err != nil && d != nil {
+		err = errors.Join(err, d.close())
+		d = nil
+	}
+	return d, err
 }
+
+func (p *Provider) dataPlane(ctx context.Context) (*datapath, func(), error) {
+	return p.datapath.acquire(ctx, p.loadDatapath)
+}
+
+// Close drains in-flight network operations and closes userspace descriptors.
+// Pins and attached filters remain live so existing VMs survive daemon exit.
+func (p *Provider) Close() error { return p.datapath.close() }
 
 // Add publishes durable leases first, installs both fail-closed TC filters,
 // then enables packet translation. Interrupted changes remain owned for GC.
@@ -62,11 +77,11 @@ func (p *Provider) Add(ctx context.Context, id types.SandboxID, name string, spe
 	if _, err := p.Prepare(ctx, id); err != nil {
 		return nil, err
 	}
-	d, err := p.dataPlane(ctx)
+	d, release, err := p.dataPlane(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer d.close() //nolint:errcheck // fd release, attached programs remain pinned
+	defer release()
 	result := make([]types.NetworkInterface, 0, len(specs))
 	for _, spec := range specs {
 		item, err := p.reserve(ctx, id, spec)
@@ -216,11 +231,11 @@ func (p *Provider) Verify(ctx context.Context, id types.SandboxID, expected []ty
 	if len(expected) == 0 {
 		return nil
 	}
-	d, err := p.dataPlane(ctx)
+	d, release, err := p.dataPlane(ctx)
 	if err != nil {
 		return err
 	}
-	defer d.close() //nolint:errcheck // read-only verification handles
+	defer release()
 	for _, device := range expected {
 		link, err := p.ownedLink(lease{Sandbox: id, Interface: device})
 		if err != nil {
@@ -293,11 +308,11 @@ func (p *Provider) setEnabled(ctx context.Context, id types.SandboxID, enabled b
 	if err != nil || len(items) == 0 {
 		return err
 	}
-	d, err := p.dataPlane(ctx)
+	d, release, err := p.dataPlane(ctx)
 	if err != nil {
 		return err
 	}
-	defer d.close() //nolint:errcheck // scoped handles
+	defer release()
 	for _, item := range items {
 		link, err := p.ownedLink(item)
 		if err != nil {
@@ -341,11 +356,11 @@ func (p *Provider) removeLeases(ctx context.Context, items []lease) error {
 	if len(items) == 0 {
 		return nil
 	}
-	d, err := p.dataPlane(ctx)
+	d, release, err := p.dataPlane(ctx)
 	if err != nil {
 		return err
 	}
-	defer d.close() //nolint:errcheck // scoped handles
+	defer release()
 	for _, item := range items {
 		link, err := p.ownedLink(item)
 		var missing netlink.LinkNotFoundError

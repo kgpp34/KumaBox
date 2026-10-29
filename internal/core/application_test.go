@@ -9,9 +9,52 @@ import (
 
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/metadata"
+	"github.com/kumabox/kumabox/internal/network"
 	snapshotcatalog "github.com/kumabox/kumabox/internal/snapshot/catalog"
 	"github.com/kumabox/kumabox/internal/types"
 )
+
+type applicationNetwork struct {
+	fakeNetwork
+	closeErr error
+	closed   bool
+}
+
+func (p *applicationNetwork) Close() error {
+	p.closed = true
+	return p.closeErr
+}
+
+func TestSandboxCloseReleasesNetworksEvenWithoutStore(t *testing.T) {
+	for _, withStore := range []bool{false, true} {
+		name := "without-store"
+		if withStore {
+			name = "with-store"
+		}
+		t.Run(name, func(t *testing.T) {
+			failure := errors.New("network close failed")
+			provider := &applicationNetwork{closeErr: failure}
+			registry, err := network.NewRegistry(provider)
+			if err != nil {
+				t.Fatal(err)
+			}
+			service := &SandboxService{dependencies: sandboxDependencies{networks: registry}}
+			if withStore {
+				store, err := metadata.NewMemory(nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				service.dependencies.store = store
+			}
+			if err := service.Close(); !errors.Is(err, failure) || !provider.closed {
+				t.Fatalf("network resources not released: %v", err)
+			}
+			if withStore && service.dependencies.store.View(t.Context(), func(metadata.Reader) error { return nil }) == nil {
+				t.Fatal("network close failure leaked the store")
+			}
+		})
+	}
+}
 
 func TestOpenApplicationSharesOneStoreAndClosesOnce(t *testing.T) {
 	configuration := config.Default()

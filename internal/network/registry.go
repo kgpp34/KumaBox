@@ -3,8 +3,10 @@ package network
 import (
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"slices"
+	"sync"
 
 	"github.com/kumabox/kumabox/internal/errdefs"
 	"github.com/kumabox/kumabox/internal/types"
@@ -15,6 +17,24 @@ import (
 // on package initialization or registration order.
 type Registry struct {
 	providers map[types.NetworkBackend]Provider
+	closeOnce sync.Once
+	closeErr  error
+}
+
+// Close releases provider-owned userspace resources once. Callers first drain
+// lifecycle operations; closing a registry does not tear down sandbox networks.
+func (r *Registry) Close() error {
+	if r == nil {
+		return nil
+	}
+	r.closeOnce.Do(func() {
+		for _, provider := range r.Providers() {
+			if closer, ok := provider.(io.Closer); ok {
+				r.closeErr = errors.Join(r.closeErr, closer.Close())
+			}
+		}
+	})
+	return r.closeErr
 }
 
 // NewRegistry validates and freezes the supplied provider set.

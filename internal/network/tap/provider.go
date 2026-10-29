@@ -37,14 +37,16 @@ type Options struct {
 }
 
 // Provider owns TAPs and their eBPF mappings under one runtime's state ownership.
-// Kernel handles are scoped to operations. Recovery retains only addresses that
-// may lack a sandbox index; ordinary queries read the durable index directly.
+// Kernel handles are shared until Close; operations for independent sandboxes
+// can use them concurrently. Recovery retains only addresses that may lack a
+// sandbox index; ordinary queries read the durable index directly.
 type Provider struct {
 	options  Options
 	pool     netip.Prefix
 	owner    string
 	now      func() time.Time
 	recovery leaseRecovery
+	datapath datapathState
 }
 
 // New validates configuration without modifying the host or loading eBPF.

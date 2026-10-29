@@ -4,6 +4,7 @@ package tap
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	_ "embed"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/cilium/ebpf"
 	"github.com/vishvananda/netlink"
@@ -35,6 +37,85 @@ type endpoint struct {
 type datapath struct {
 	endpoints       *ebpf.Map
 	ingress, egress *ebpf.Program
+}
+
+// datapathState owns one descriptor set per Provider. Borrowers hold a read
+// lock through their final map/program access; Close takes the write lock.
+// Initialization runs outside that lock so waiting requests can cancel and a
+// failed first attempt remains retryable. The opening channel also lets Close
+// wait for an initializer without holding the lock it needs to publish.
+type datapathState struct {
+	mu        sync.RWMutex
+	current   *datapath
+	opening   chan struct{}
+	closed    bool
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func (s *datapathState) acquire(ctx context.Context, open func(context.Context) (*datapath, error)) (*datapath, func(), error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		s.mu.RLock()
+		if s.closed {
+			s.mu.RUnlock()
+			return nil, nil, os.ErrClosed
+		}
+		if s.current != nil {
+			return s.current, s.mu.RUnlock, nil
+		}
+		opening := s.opening
+		s.mu.RUnlock()
+		if opening != nil {
+			select {
+			case <-opening:
+				continue
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			}
+		}
+		s.mu.Lock()
+		if s.closed || s.current != nil || s.opening != nil {
+			s.mu.Unlock()
+			continue
+		}
+		opening = make(chan struct{})
+		s.opening = opening
+		s.mu.Unlock()
+
+		d, err := open(ctx)
+		s.mu.Lock()
+		if err == nil {
+			s.current = d
+		}
+		s.opening = nil
+		close(opening)
+		s.mu.Unlock()
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+}
+
+func (s *datapathState) close() error {
+	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		opening := s.opening
+		s.mu.Unlock()
+		if opening != nil {
+			<-opening
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.current != nil {
+			s.closeErr = s.current.close()
+			s.current = nil
+		}
+	})
+	return s.closeErr
 }
 
 func (d *datapath) close() error {

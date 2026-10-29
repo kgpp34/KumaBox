@@ -13,6 +13,14 @@ import (
 // ErrUnsupported reports that TAP/eBPF networking requires Linux.
 var ErrUnsupported = errors.New("TAP/eBPF networking requires Linux")
 
+// datapathState has no host resources on unsupported platforms.
+type datapathState struct{}
+
+func (*datapathState) close() error { return nil }
+
+// Close is a no-op because unsupported platforms never open kernel handles.
+func (p *Provider) Close() error { return p.datapath.close() }
+
 func (*Provider) Prepare(context.Context, types.SandboxID) (string, error) { return "", ErrUnsupported }
 
 func (*Provider) Add(context.Context, types.SandboxID, string, ...network.AddSpec) ([]types.NetworkInterface, error) {

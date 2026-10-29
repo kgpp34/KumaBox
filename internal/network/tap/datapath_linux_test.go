@@ -3,7 +3,9 @@
 package tap
 
 import (
+	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -14,6 +16,52 @@ import (
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
+
+func TestProviderClosePreservesPinnedDatapath(t *testing.T) {
+	p := testProvider(t)
+	p.options.PinDir = "/sys/fs/bpf/kb-lifetime-" + p.owner
+	t.Cleanup(func() {
+		_ = p.Close()
+		if err := os.RemoveAll(p.options.PinDir); err != nil {
+			t.Error(err)
+		}
+	})
+	d, release, err := p.dataPlane(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := uint32(123)
+	want := endpoint{Enabled: 1}
+	if err := d.endpoints.Update(key, want, ebpf.UpdateAny); err != nil {
+		release()
+		t.Fatal(err)
+	}
+	release()
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.endpoints.Info(); err == nil {
+		t.Fatal("provider retained an open map descriptor after Close")
+	}
+	if _, _, err := p.dataPlane(t.Context()); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("closed provider accepted another borrower: %v", err)
+	}
+	// A new daemon can recover the same kernel objects and live mappings.
+	reopened, err := New(p.options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	d, release, err = reopened.dataPlane(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	var got endpoint
+	if err := d.endpoints.Lookup(key, &got); err != nil || got != want {
+		t.Fatalf("shutdown lost a pinned endpoint: %v, %v", got, err)
+	}
+}
 
 func checksum(data []byte) uint16 {
 	var sum uint32

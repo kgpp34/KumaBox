@@ -243,17 +243,22 @@ func OpenSandbox(ctx context.Context, configuration config.Config, reporter Sand
 		dnsServers:     dnsServers,
 	})
 	if err != nil {
-		return nil, errors.Join(err, store.Close())
+		return nil, errors.Join(err, networks.Close(), store.Close())
 	}
 	return service, nil
 }
 
-// Close releases the shared metadata engine owned by the service.
+// Close releases provider handles and the shared metadata engine after callers
+// drain lifecycle operations. Durable sandbox networks remain intact.
 func (s *SandboxService) Close() error {
-	if s == nil || s.dependencies.store == nil {
+	if s == nil {
 		return nil
 	}
-	return s.dependencies.store.Close()
+	err := s.dependencies.networks.Close()
+	if s.dependencies.store != nil {
+		err = errors.Join(err, s.dependencies.store.Close())
+	}
+	return err
 }
 
 // networkProvider resolves the provider that owns a sandbox's durable network

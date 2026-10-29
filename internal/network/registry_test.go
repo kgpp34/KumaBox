@@ -2,11 +2,49 @@ package network
 
 import (
 	"context"
+	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/kumabox/kumabox/internal/errdefs"
 	"github.com/kumabox/kumabox/internal/types"
 )
+
+type closingProvider struct {
+	registryProvider
+	closes atomic.Int32
+	err    error
+}
+
+func (p *closingProvider) Close() error {
+	p.closes.Add(1)
+	return p.err
+}
+
+func TestRegistryCloseReleasesEveryProviderOnce(t *testing.T) {
+	failure := errors.New("descriptor close failed")
+	first := &closingProvider{registryProvider: registryProvider{backend: types.NetworkBackendEBPF}, err: failure}
+	second := &closingProvider{registryProvider: registryProvider{backend: types.NetworkBackendBridge}}
+	registry, err := NewRegistry(first, second, &registryProvider{backend: types.NetworkBackendCNI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var callers sync.WaitGroup
+	for range 8 {
+		callers.Add(1)
+		go func() {
+			defer callers.Done()
+			if err := registry.Close(); !errors.Is(err, failure) {
+				t.Errorf("close failure = %v", err)
+			}
+		}()
+	}
+	callers.Wait()
+	if first.closes.Load() != 1 || second.closes.Load() != 1 {
+		t.Fatalf("provider closes = %d, %d", first.closes.Load(), second.closes.Load())
+	}
+}
 
 type registryProvider struct{ backend types.NetworkBackend }
 
