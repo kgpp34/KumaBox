@@ -69,7 +69,8 @@ class GuestTests:
         self.created.append(self.name)
         self.call(
             "run", self.args.image, "--name", self.name, "--cpus", "1",
-            "--memory", "512MiB", "--nics", str(nics), "--json", timeout=120,
+            "--memory", "512MiB", "--nics", str(nics),
+            "--network-backend", self.args.network_backend, "--json", timeout=120,
         )
         deadline = time.monotonic() + 60
         while True:
@@ -80,12 +81,27 @@ class GuestTests:
                 if time.monotonic() >= deadline:
                     raise TimeoutError(f"guest agent did not become ready: {self.name}")
                 time.sleep(0.25)
+        # Write immediately after readiness, then verify after the remaining
+        # boot jobs finish. Both exec and uploads must survive boot cleanup.
+        self.guest("sh", "-c", "printf early-exec > /tmp/kumabox-early-exec")
+        self.file("write", "/tmp/kumabox-early-upload", data=b"early-upload")
         version = self.guest("kumabox-agent", "version").decode().strip()
         if self.args.commit not in version:
             raise RuntimeError(f"wrong guest agent version: {version}")
         print(version, flush=True)
-        # A reachable agent must not race later boot-time /tmp removal.
-        assert self.guest("systemctl", "is-active", "systemd-tmpfiles-setup.service").strip() == b"active"
+        deadline = time.monotonic() + 15
+        while True:
+            state = self.guest(
+                "systemctl", "show", "systemd-tmpfiles-setup.service",
+                "--property=ActiveState", "--value",
+            ).strip()
+            if state == b"active":
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"boot file preparation did not finish: {state!r}")
+            time.sleep(0.05)
+        assert self.guest("cat", "/tmp/kumabox-early-exec") == b"early-exec"
+        assert self.file("read", "/tmp/kumabox-early-upload") == b"early-upload"
         if nics:
             # Agent readiness is independent of networkd configuring the NIC.
             # Wait for the actual network state rather than racing first boot.
@@ -331,6 +347,7 @@ def main():
     parser.add_argument("--image", required=True)
     parser.add_argument("--commit", required=True, help="expected guest agent commit")
     parser.add_argument("--nics", nargs="+", type=int, choices=(0, 1), default=[0, 1])
+    parser.add_argument("--network-backend", choices=("cni", "ebpf"), default="cni")
     parser.add_argument("--socket")
     parser.add_argument("--root-dir", help="daemon data root (not a client policy override)")
     parser.add_argument("--run-dir")

@@ -5,11 +5,20 @@ ARG BOOT_IMAGE=kumabox/boot:fast
 FROM ${BOOT_IMAGE} AS boot
 FROM ${BASE_IMAGE} AS root
 
+COPY oci-images/fastboot/kumabox-guest-prepare.service /etc/systemd/system/kumabox-guest-prepare.service
+COPY oci-images/fastboot/systemd-tmpfiles-setup.conf /etc/systemd/system/systemd-tmpfiles-setup.service.d/10-kumabox-journal.conf
+
 # This profile has a built-in kernel. Keep the general image for workloads
 # that need modules or host-specific passthrough drivers.
 RUN set -eu; \
     rm -rf /lib/modules/* /boot/vmlinuz-* /boot/initrd.img-*; \
     sed -i '/^ExecStartPre=-\/sbin\/modprobe /d' \
+      /etc/systemd/system/kumabox-agent.service; \
+    # Prepare user files before accepting commands, while journald starts in
+    # parallel. Its file ACLs are still applied after the normal journal flush.
+    sed -i 's/^After=systemd-tmpfiles-setup.service$/Requires=kumabox-guest-prepare.service\nAfter=kumabox-guest-prepare.service/' \
+      /etc/systemd/system/kumabox-agent.service; \
+    grep -qx 'After=kumabox-guest-prepare.service' \
       /etc/systemd/system/kumabox-agent.service; \
     # Module loading is unnecessary with the built-in kernel. Conditions keep
     # these units available if a modular kernel is selected later.
