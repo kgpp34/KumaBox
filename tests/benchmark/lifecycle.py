@@ -174,9 +174,8 @@ class Benchmark:
             "run", self.args.image, "--name", name,
             "--cpus", str(self.args.cpus), "--memory", self.args.memory,
             "--storage", self.args.storage, "--nics", str(lane), "--json",
+            "--network-backend", self.args.network_backend,
         )
-        if lane:
-            args += ("--network-backend", self.args.network_backend)
         return args
 
     def ready(self, name):
@@ -468,7 +467,7 @@ def parse_args(argv=None):
     parser.add_argument("--modes", default=",".join(MODES), help="comma-separated: " + ",".join(MODES))
     parser.add_argument("--lanes", default="0,1", help="comma-separated NIC counts, normally 0,1")
     parser.add_argument("--network-backend", choices=("cni", "ebpf"), default="cni",
-                        help="provider for networked lanes; zero-NIC lanes remain unnetworked")
+                        help="provider for every lane, including zero-NIC resource preparation")
     parser.add_argument("--cpus", type=int, default=2)
     parser.add_argument("--memory", default="2GiB")
     parser.add_argument("--storage", default="10GiB")
