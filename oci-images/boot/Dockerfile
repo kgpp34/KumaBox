@@ -77,6 +77,7 @@ RUN set -eu; \
     /out/gen_init_cpio initrd.list > /out/boot/initrd.img-kumabox
 
 FROM scratch
+COPY --from=init-builder /src/target/release/kumabox-init /boot/kumabox-init
 COPY --from=kernel-builder /out/boot/vmlinuz-kumabox /boot/vmlinuz-kumabox
 COPY --from=kernel-builder /out/boot/config-kumabox /boot/config-kumabox
 COPY --from=initrd-builder /out/boot/initrd.img-kumabox /boot/initrd.img-kumabox

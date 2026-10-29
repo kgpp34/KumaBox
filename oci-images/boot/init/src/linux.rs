@@ -75,7 +75,7 @@ pub fn hostname(value: &str) -> io::Result<()> {
     }
 }
 
-pub fn handoff() -> io::Result<()> {
+pub fn switch_root() -> io::Result<()> {
     std::env::set_current_dir("/newroot")?;
     mount(".", "/", None, libc::MS_MOVE, None)?;
     // SAFETY: the NUL-terminated literal is static; cwd is the mounted guest root.
@@ -83,15 +83,61 @@ pub fn handoff() -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     std::env::set_current_dir("/")?;
-    let argv = [c"/sbin/init".as_ptr(), ptr::null()];
-    let environment = [
-        c"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".as_ptr(),
-        c"TERM=linux".as_ptr(),
-        ptr::null(),
-    ];
-    // SAFETY: all arrays and strings remain live and end with a null pointer.
-    unsafe { libc::execve(argv[0], argv.as_ptr(), environment.as_ptr()) };
-    Err(io::Error::last_os_error())
+    Ok(())
+}
+
+/// Prepare PTYs, shared memory and inner workload cgroups before agent ready.
+/// Host VM resource limits remain the host runtime's responsibility.
+pub fn runtime_mounts() -> io::Result<()> {
+    use std::fs;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    for (path, kind, flags, options) in [
+        (
+            "/dev/pts",
+            "devpts",
+            libc::MS_NOSUID | libc::MS_NOEXEC,
+            "newinstance,ptmxmode=0666,mode=0620,gid=5",
+        ),
+        (
+            "/dev/shm",
+            "tmpfs",
+            libc::MS_NOSUID | libc::MS_NODEV,
+            "mode=1777,size=50%",
+        ),
+        (
+            "/tmp",
+            "tmpfs",
+            libc::MS_NOSUID | libc::MS_NODEV,
+            "mode=1777,size=25%",
+        ),
+        (
+            "/sys/fs/cgroup",
+            "cgroup2",
+            libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC,
+            "nsdelegate",
+        ),
+    ] {
+        fs::create_dir_all(path)?;
+        mount(kind, path, Some(kind), flags, Some(options))?;
+    }
+    match fs::remove_file("/dev/ptmx") {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    symlink("pts/ptmx", "/dev/ptmx")?;
+    for (target, link) in [
+        ("/proc/self/fd", "/dev/fd"),
+        ("/proc/self/fd/0", "/dev/stdin"),
+        ("/proc/self/fd/1", "/dev/stdout"),
+        ("/proc/self/fd/2", "/dev/stderr"),
+    ] {
+        if !std::path::Path::new(link).exists() {
+            symlink(target, link)?;
+        }
+    }
+    fs::create_dir_all("/var/tmp")?;
+    fs::set_permissions("/var/tmp", fs::Permissions::from_mode(0o1777))?;
+    Ok(())
 }
 
 pub fn fatal(error: &str, debug: bool) -> ! {

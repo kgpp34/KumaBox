@@ -23,6 +23,9 @@ const (
 
 // applyGuestNetwork owns the guest OS mechanism behind the wire protocol.
 func applyGuestNetwork(ctx context.Context, configuration NetworkConfig) error {
+	if profile, err := os.ReadFile("/run/kumabox/profile"); err == nil && string(profile) == "native-v1\n" {
+		return applyNativeNetwork(ctx, configuration)
+	}
 	unchanged := networkFilesMatch("/etc/systemd/network", configuration)
 	if !unchanged {
 		if err := writeNetworkFiles("/etc/systemd/network", configuration); err != nil {

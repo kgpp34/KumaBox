@@ -2,18 +2,26 @@
 //! Initramfs PID 1 for the overlay-v1 boot contract.
 //!
 //! built-in kernel -> discover serials -> EROFS + private ext4 -> overlay
-//!                 -> guest identity/network -> move mounts -> systemd
+//!                 -> guest identity/network -> switch root -> supervise agent
 
 mod config;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "linux")]
+mod network;
 mod rootfs;
+#[cfg(target_os = "linux")]
+mod supervisor;
 
 #[cfg(target_os = "linux")]
 static DEBUG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(target_os = "linux")]
 fn main() {
+    if std::process::id() != 1 {
+        eprintln!("kumabox-init: must run as PID 1");
+        std::process::exit(1);
+    }
     if let Err(error) = boot() {
         linux::fatal(&error, DEBUG.load(std::sync::atomic::Ordering::Relaxed));
     }
@@ -102,14 +110,18 @@ fn boot() -> Result<(), String> {
         &cfg.hostname,
     )
     .map_err(|e| format!("prepare identity: {e}"))?;
-    rootfs::persist_network(Path::new("/newroot"), Path::new("/sys/class/net"), &cfg)?;
+    rootfs::prepare_resolver(Path::new("/newroot"), &cfg)
+        .map_err(|e| format!("prepare DNS: {e}"))?;
+    network::configure(&cfg).map_err(|e| format!("configure guest network: {e}"))?;
+    rootfs::device_aliases(Path::new("/sys/block"), Path::new("/dev"))
+        .map_err(|e| format!("prepare disk aliases: {e}"))?;
     marks.push(("identity-network", started.elapsed().as_micros()));
     for directory in ["dev", "proc", "sys", "run"] {
         fs::create_dir_all(Path::new("/newroot").join(directory))
             .map_err(|e| format!("create handoff directory: {e}"))?;
     }
-    // /run is ready before systemd jobs. Record native root assembly for boot
-    // diagnostics; guest services do not wait on this marker.
+    // Runtime state is volatile; the private ext4 upper holds installed tools
+    // and application files across stop/start.
     linux::mount(
         "tmpfs",
         "/newroot/run",
@@ -121,6 +133,8 @@ fn boot() -> Result<(), String> {
     fs::create_dir_all("/newroot/run/kumabox").map_err(|e| format!("create boot state: {e}"))?;
     fs::write("/newroot/run/kumabox/boot-root-ready", b"overlay-v1\n")
         .map_err(|e| format!("record boot readiness: {e}"))?;
+    fs::write("/newroot/run/kumabox/profile", b"native-v1\n")
+        .map_err(|e| format!("record runtime profile: {e}"))?;
     for directory in ["dev", "proc", "sys"] {
         linux::mount(
             &format!("/{directory}"),
@@ -134,7 +148,9 @@ fn boot() -> Result<(), String> {
     if cfg.trace {
         eprintln!("kumabox-init: cumulative_us {marks:?}");
     }
-    linux::handoff().map_err(|e| format!("start /sbin/init: {e}"))
+    linux::switch_root().map_err(|e| format!("switch root: {e}"))?;
+    linux::runtime_mounts().map_err(|e| format!("mount guest runtime: {e}"))?;
+    supervisor::run().map_err(|e| format!("supervise agent: {e}"))
 }
 
 #[cfg(not(target_os = "linux"))]

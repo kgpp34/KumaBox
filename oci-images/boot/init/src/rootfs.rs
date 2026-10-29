@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -77,7 +77,10 @@ pub fn prepare_identity(root: &Path, upper: &Path, hostname: &str) -> io::Result
         })?;
     if !owned {
         remove_if_present(&root.join("etc/machine-id"))?;
-        fs::write(root.join("etc/machine-id"), "")?;
+        let mut bytes = [0_u8; 16];
+        fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+        let id: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        fs::write(root.join("etc/machine-id"), format!("{id}\n"))?;
     }
     fs::write(root.join("etc/hostname"), format!("{hostname}\n"))
 }
@@ -89,75 +92,45 @@ fn remove_if_present(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Publish plain resolver configuration; no local DNS daemon is required.
 #[cfg(target_os = "linux")]
-pub fn persist_network(root: &Path, sys: &Path, cfg: &Config) -> Result<(), String> {
-    use std::os::unix::fs::symlink;
-    let resolver = root.join("etc/resolv.conf");
-    let info = fs::symlink_metadata(&resolver);
-    if matches!(&info, Ok(m) if m.is_file() && m.len() == 0)
-        || matches!(&info, Err(e) if e.kind() == io::ErrorKind::NotFound)
-    {
-        remove_if_present(&resolver).map_err(|e| format!("replace empty resolver: {e}"))?;
-        symlink("/run/systemd/resolve/stub-resolv.conf", &resolver)
-            .map_err(|e| format!("link resolver: {e}"))?;
-    } else if let Err(err) = info {
-        return Err(format!("inspect resolver: {err}"));
+pub fn prepare_resolver(root: &Path, cfg: &Config) -> io::Result<()> {
+    let dns: Vec<_> = cfg.networks.iter().flat_map(|nic| &nic.dns).collect();
+    if dns.is_empty() {
+        return Ok(());
     }
+    let mut content = String::new();
+    let mut seen = std::collections::HashSet::new();
+    for ip in dns {
+        if seen.insert(ip) {
+            content.push_str(&format!("nameserver {ip}\n"));
+        }
+    }
+    let resolver = root.join("etc/resolv.conf");
+    remove_if_present(&resolver)?;
+    fs::write(resolver, content)
+}
 
-    let mut macs = HashMap::new();
-    let started = Instant::now();
-    while macs.len() != cfg.networks.len() {
-        for nic in &cfg.networks {
-            if macs.contains_key(&nic.interface) {
-                continue;
-            }
-            if let Ok(mac) = fs::read_to_string(sys.join(&nic.interface).join("address")) {
-                let mac = mac.trim();
-                if mac.len() == 17
-                    && mac != "00:00:00:00:00:00"
-                    && mac.bytes().enumerate().all(|(i, b)| {
-                        if i % 3 == 2 {
-                            b == b':'
-                        } else {
-                            b.is_ascii_hexdigit()
-                        }
-                    })
-                {
-                    macs.insert(nic.interface.clone(), mac.to_owned());
+/// Preserve the common virtio serial aliases without a udev daemon.
+#[cfg(target_os = "linux")]
+pub fn device_aliases(sys: &Path, dev: &Path) -> io::Result<()> {
+    use std::os::unix::fs::symlink;
+    let directory = dev.join("disk/by-id");
+    fs::create_dir_all(&directory)?;
+    for entry in fs::read_dir(sys)? {
+        let entry = entry?;
+        if let Ok(serial) = fs::read_to_string(entry.path().join("serial")) {
+            let serial = serial.trim();
+            if !serial.is_empty()
+                && serial
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+            {
+                let link = directory.join(format!("virtio-{serial}"));
+                if fs::symlink_metadata(&link).is_err() {
+                    symlink(std::path::Path::new("../..").join(entry.file_name()), link)?;
                 }
             }
-        }
-        if macs.len() == cfg.networks.len() {
-            break;
-        }
-        if started.elapsed() >= Duration::from_millis(200) {
-            return Err("static network interface is unavailable".into());
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    if !cfg.networks.is_empty() {
-        fs::create_dir_all(root.join("etc/systemd/network"))
-            .map_err(|e| format!("create network configuration directory: {e}"))?;
-    }
-    for nic in &cfg.networks {
-        let mac = macs.get(&nic.interface).ok_or("missing network MAC")?;
-        let file = root
-            .join("etc/systemd/network")
-            .join(format!("10-kumabox-{}.network", mac.replace(':', "")));
-        fs::write(file, nic.unit(mac)).map_err(|e| format!("write network configuration: {e}"))?;
-        if nic.address.is_link_local() && nic.gateway.is_some() && !nic.dns.is_empty() {
-            fs::create_dir_all(root.join("etc/kumabox"))
-                .map_err(|e| format!("create DNS directory: {e}"))?;
-            let content: String = nic
-                .dns
-                .iter()
-                .map(|ip| format!("nameserver {ip}\n"))
-                .collect();
-            fs::write(root.join("etc/kumabox/resolv.conf"), content)
-                .map_err(|e| format!("write DNS configuration: {e}"))?;
-            remove_if_present(&resolver).map_err(|e| format!("replace resolver: {e}"))?;
-            symlink("/etc/kumabox/resolv.conf", &resolver)
-                .map_err(|e| format!("link fixed resolver: {e}"))?;
         }
     }
     Ok(())
@@ -242,17 +215,16 @@ mod tests {
     }
 
     #[test]
-    fn first_boot_clears_baked_identity_and_restart_preserves_private_identity() {
+    fn first_boot_generates_identity_and_restart_preserves_private_identity() {
         let dir = Fixture::new();
         let base = &dir.0;
         fs::create_dir_all(base.join("root/etc")).unwrap();
         fs::create_dir_all(base.join("upper/etc")).unwrap();
         fs::write(base.join("root/etc/machine-id"), "baked").unwrap();
         prepare_identity(&base.join("root"), &base.join("upper"), "guest").unwrap();
-        assert_eq!(
-            fs::read_to_string(base.join("root/etc/machine-id")).unwrap(),
-            ""
-        );
+        let id = fs::read_to_string(base.join("root/etc/machine-id")).unwrap();
+        assert_eq!(id.trim().len(), 32);
+        assert!(id.trim().bytes().all(|b| b.is_ascii_hexdigit()));
         fs::write(base.join("upper/etc/machine-id"), "private").unwrap();
         fs::write(base.join("root/etc/machine-id"), "private").unwrap();
         prepare_identity(&base.join("root"), &base.join("upper"), "guest").unwrap();
@@ -264,7 +236,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn fixed_network_keeps_global_scope_and_publishes_direct_dns() {
+    fn fixed_network_publishes_direct_dns_without_networkd() {
         let dir = Fixture::new();
         let base = &dir.0;
         fs::create_dir_all(base.join("root/etc")).unwrap();
@@ -272,19 +244,10 @@ mod tests {
         fs::write(base.join("root/etc/resolv.conf"), "").unwrap();
         fs::write(base.join("sys/eth0/address"), "02:00:00:00:00:01\n").unwrap();
         let config = Config::parse("kumabox.layers=l0 kumabox.cow=cow kumabox.hostname=guest ip=169.254.240.2::169.254.240.1:255.255.255.252:guest:eth0:off:1.1.1.1:8.8.8.8").unwrap();
-        persist_network(&base.join("root"), &base.join("sys"), &config).unwrap();
-        let unit = fs::read_to_string(
-            base.join("root/etc/systemd/network/10-kumabox-020000000001.network"),
-        )
-        .unwrap();
-        assert!(unit.contains("Scope=global"));
-        assert!(unit.contains("PreferredSource=169.254.240.2"));
+        prepare_resolver(&base.join("root"), &config).unwrap();
+        assert!(!base.join("root/etc/systemd").exists());
         assert_eq!(
-            fs::read_link(base.join("root/etc/resolv.conf")).unwrap(),
-            PathBuf::from("/etc/kumabox/resolv.conf")
-        );
-        assert_eq!(
-            fs::read_to_string(base.join("root/etc/kumabox/resolv.conf")).unwrap(),
+            fs::read_to_string(base.join("root/etc/resolv.conf")).unwrap(),
             "nameserver 1.1.1.1\nnameserver 8.8.8.8\n"
         );
     }
@@ -298,7 +261,7 @@ mod tests {
         fs::write(base.join("root/etc/resolv.conf"), "nameserver 10.0.0.53\n").unwrap();
         let config =
             Config::parse("kumabox.layers=l0 kumabox.cow=cow kumabox.hostname=guest").unwrap();
-        persist_network(&base.join("root"), &base.join("absent-sys"), &config).unwrap();
+        prepare_resolver(&base.join("root"), &config).unwrap();
         assert_eq!(
             fs::read_to_string(base.join("root/etc/resolv.conf")).unwrap(),
             "nameserver 10.0.0.53\n"

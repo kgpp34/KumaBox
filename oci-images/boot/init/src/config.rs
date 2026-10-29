@@ -13,7 +13,7 @@ pub struct Network {
     pub gateway: Option<Ipv4Addr>,
     /// Prefix length validated from a contiguous IPv4 netmask.
     pub prefix: u32,
-    /// Early kernel name; persisted network rules match its MAC instead.
+    /// Early kernel name used to configure the static link before agent start.
     pub interface: String,
     /// Up to two host-selected DNS servers.
     pub dns: Vec<Ipv4Addr>,
@@ -145,40 +145,6 @@ impl Network {
             dns,
         })
     }
-
-    // Fixed link-local identities need explicit global scope and source routes.
-    // Keep this contract identical to the host eBPF provider and guest agent.
-    pub fn unit(&self, mac: &str) -> String {
-        let mut out = format!("[Match]\nMACAddress={mac}\n\n[Network]\n");
-        let fixed = self.address.is_link_local();
-        if fixed {
-            out.push_str("DHCP=no\nLinkLocalAddressing=no\nIPv6AcceptRA=no\n");
-        } else {
-            out.push_str(&format!("Address={}/{}\n", self.address, self.prefix));
-            if let Some(gateway) = self.gateway {
-                out.push_str(&format!("Gateway={gateway}\n"));
-            }
-        }
-        for ip in &self.dns {
-            out.push_str(&format!("DNS={ip}\n"));
-        }
-        if fixed {
-            if self.gateway.is_some() {
-                out.push_str("DNSDefaultRoute=yes\n");
-            }
-            out.push_str(&format!(
-                "\n[Address]\nAddress={}/{}\nScope=global\nDuplicateAddressDetection=none\n",
-                self.address, self.prefix
-            ));
-            if let Some(gateway) = self.gateway {
-                out.push_str(&format!(
-                    "\n[Route]\nDestination=0.0.0.0/0\nGateway={gateway}\nPreferredSource={}\n",
-                    self.address
-                ));
-            }
-        }
-        out
-    }
 }
 
 #[cfg(test)]
@@ -215,11 +181,6 @@ mod tests {
         let cfg = Config::parse(&format!("{BASE} ip=10.88.0.2::10.88.0.1:255.255.0.0:guest:eth0:off:1.1.1.1 ip=169.254.240.2::169.254.240.1:255.255.255.252:guest:eth1:off:8.8.8.8")).unwrap();
         assert_eq!(cfg.networks.len(), 2);
         assert_eq!(cfg.networks[0].prefix, 16);
-        let unit = cfg.networks[1].unit("02:00:00:00:00:01");
-        assert!(unit.contains("Scope=global"));
-        assert!(unit.contains("PreferredSource=169.254.240.2"));
-        assert!(unit.contains("DNSDefaultRoute=yes"));
-        assert!(!unit.contains("\nGateway=10.88"));
         assert!(Network::parse("10.0.0.2::10.0.0.1:255.0.255.0:g:eth0:off").is_err());
         assert!(Network::parse("10.0.0.2::bad:255.255.255.0:g:eth0:off").is_err());
         assert!(Network::parse("10.0.0.2::10.0.0.1:255.255.255.0:g:../eth0:off").is_err());

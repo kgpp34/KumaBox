@@ -137,8 +137,14 @@ func writeFixedResolverAt(root string, configuration NetworkConfig) error {
 	if !applicable || len(configuration.DNSServers) == 0 {
 		return nil
 	}
+	return writeResolverAt(root, configuration.DNSServers)
+}
+
+// writeResolverAt atomically publishes plain DNS configuration for native
+// guests. An empty list clears stale nameservers carried in a snapshot.
+func writeResolverAt(root string, servers []string) error {
 	var content strings.Builder
-	for _, server := range configuration.DNSServers {
+	for _, server := range servers {
 		fmt.Fprintf(&content, "nameserver %s\n", server)
 	}
 	directory := filepath.Join(root, "etc/kumabox")

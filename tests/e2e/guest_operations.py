@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise guest files and background commands through a real Linux/KVM VM.
 
-Run as root with an imported Ubuntu/systemd image containing the current agent.
+Run as root with an imported runtime image containing the current agent.
 Only sandboxes created by this invocation are stopped and removed. Use dedicated
 daemon configuration to isolate metadata; select its socket with --socket.
 """
@@ -64,13 +64,13 @@ class GuestTests:
         })
         print(f"PASS {label}", flush=True)
 
-    def create(self, nics):
+    def create(self, nics, *extra):
         self.name = f"guest-e2e-{os.getpid()}-n{nics}"
         self.created.append(self.name)
         self.call(
             "run", self.args.image, "--name", self.name, "--cpus", "1",
             "--memory", "512MiB", "--nics", str(nics),
-            "--network-backend", self.args.network_backend, "--json", timeout=120,
+            "--network-backend", self.args.network_backend, "--json", *extra, timeout=120,
         )
         deadline = time.monotonic() + 60
         while True:
@@ -85,28 +85,31 @@ class GuestTests:
         # for early writes; /tmp follows the distribution's cleanup policy.
         self.guest("sh", "-c", "printf early-exec > /root/kumabox-early-exec")
         self.file("write", "/root/kumabox-early-upload", data=b"early-upload")
-        after = set(self.guest(
-            "systemctl", "show", "kumabox-agent.service", "--property=After", "--value",
-        ).split())
-        assert not after.intersection({
-            b"kumabox-guest-prepare.service", b"systemd-sysusers.service",
-            b"systemd-tmpfiles-setup.service", b"local-fs.target",
-        }), after
+        self.native = self.guest("sh", "-c", "cat /run/kumabox/profile 2>/dev/null || true").strip() == b"native-v1"
+        if self.native:
+            assert self.guest("cat", "/proc/1/comm").strip() == b"init"
+            self.guest("sh", "-ec", "test ! -x /usr/lib/systemd/systemd; test -c /dev/pts/ptmx")
+        else:
+            after = set(self.guest(
+                "systemctl", "show", "kumabox-agent.service", "--property=After", "--value",
+            ).split())
+            assert not after.intersection({
+                b"kumabox-guest-prepare.service", b"systemd-sysusers.service",
+                b"systemd-tmpfiles-setup.service", b"local-fs.target",
+            }), after
         version = self.guest("kumabox-agent", "version").decode().strip()
         if self.args.commit not in version:
             raise RuntimeError(f"wrong guest agent version: {version}")
         print(version, flush=True)
-        deadline = time.monotonic() + 15
-        while True:
-            state = self.guest(
-                "systemctl", "show", "systemd-tmpfiles-setup.service",
-                "--property=ActiveState", "--value",
-            ).strip()
-            if state == b"active":
-                break
-            if time.monotonic() >= deadline:
-                raise TimeoutError(f"boot file preparation did not finish: {state!r}")
-            time.sleep(0.05)
+        if not self.native:
+            deadline = time.monotonic() + 15
+            while True:
+                state = self.guest("systemctl", "show", "systemd-tmpfiles-setup.service", "--property=ActiveState", "--value").strip()
+                if state == b"active":
+                    break
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"boot file preparation did not finish: {state!r}")
+                time.sleep(0.05)
         assert self.guest("cat", "/root/kumabox-early-exec") == b"early-exec"
         assert self.file("read", "/root/kumabox-early-upload") == b"early-upload"
         if nics:
@@ -285,10 +288,12 @@ class GuestTests:
         # Hold the distribution's boot cleanup across the next start. Exec and
         # uploads outside /tmp must work while this job is still waiting.
         dropin = "/etc/systemd/system/systemd-tmpfiles-setup.service.d/90-e2e-gate.conf"
-        self.file("write", dropin, "--parents", data=(
-            b"[Service]\nExecStartPre=/bin/sh -c 'while [ ! -e /run/kumabox-e2e-release ]; "
-            b"do sleep 0.05; done'\n"
-        ))
+        identity = self.guest("cat", "/etc/machine-id")
+        if not self.native:
+            self.file("write", dropin, "--parents", data=(
+                b"[Service]\nExecStartPre=/bin/sh -c 'while [ ! -e /run/kumabox-e2e-release ]; "
+                b"do sleep 0.05; done'\n"
+            ))
         # Stop may escalate to termination when the guest cannot handle ACPI.
         # File writes promise atomic visibility, not persistence after power loss.
         self.guest("sync")
@@ -306,6 +311,9 @@ class GuestTests:
                     raise
                 time.sleep(0.25)
         assert self.file("read", persistent) == b"persisted"
+        assert self.guest("cat", "/etc/machine-id") == identity
+        if self.native:
+            return
         deadline = time.monotonic() + 10
         while True:
             substate = self.guest(
@@ -376,7 +384,7 @@ def main():
     parser.add_argument("--image", required=True)
     parser.add_argument("--commit", required=True, help="expected guest agent commit")
     parser.add_argument("--nics", nargs="+", type=int, choices=(0, 1), default=[0, 1])
-    parser.add_argument("--network-backend", choices=("cni", "ebpf"), default="cni")
+    parser.add_argument("--network-backend", choices=("cni", "ebpf"), default="ebpf")
     parser.add_argument("--socket")
     parser.add_argument("--root-dir", help="daemon data root (not a client policy override)")
     parser.add_argument("--run-dir")

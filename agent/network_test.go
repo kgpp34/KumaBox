@@ -203,3 +203,17 @@ func TestNetworkConfigAcceptsIPv6DNS(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestNativeResolverClearsCapturedServers(t *testing.T) {
+	root := t.TempDir()
+	if err := writeResolverAt(root, []string{"1.1.1.1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeResolverAt(root, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "etc/kumabox/resolv.conf"))
+	if err != nil || len(data) != 0 {
+		t.Fatalf("stale DNS remained after clearing: %q %v", data, err)
+	}
+}

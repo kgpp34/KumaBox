@@ -346,7 +346,7 @@ Recursive removal requires `--recursive`, does not follow final symlinks, and
 rejects the root directory. These operations run with the guest agent's authority
 and can access mounts shared into the guest. SDK/HTTP file endpoints are unchanged.
 
-On a Linux/KVM host, test an imported Ubuntu/systemd image containing the current agent with:
+On a Linux/KVM host, test an imported runtime image containing the current agent with:
 
 ```bash
 sudo python3 tests/e2e/guest_operations.py \
@@ -396,7 +396,18 @@ boot: dedicated kernel + static native initramfs
     -> rt: the same filesystem flattened into one OCI layer
 ```
 
-The base does not install a distribution kernel or initramfs-tools. Extend
+The default profile is `native-v1`: Rust `kumabox-init` stays PID 1 after
+assembling the overlay root, mounts the runtime filesystems, configures static
+networking/DNS, and starts the Go agent as its child. It reaps adopted orphans,
+handles ACPI shutdown, and restarts a crashed agent at most three times in a
+30-second window. Before restarting, it terminates the old guest tasks because
+the replacement agent cannot recover their in-memory process records. Console
+access opens a root shell and requires host access to the VM.
+
+The base contains minimal Ubuntu/glibc userland, certificates and diagnostic
+commands. It does not install systemd, udev, networkd, resolved, a distribution
+kernel or initramfs-tools. Host VM quotas are unchanged; guest cgroup2 is mounted
+for applications that need their own process resource groups. Extend
 [`oci-images/base/24.04/Dockerfile`](oci-images/base/24.04/Dockerfile) for your
 toolchain, then flatten the result with
 [`oci-images/rt/24.04/Dockerfile`](oci-images/rt/24.04/Dockerfile).
@@ -414,10 +425,47 @@ Use `--skip-boot --boot-image <pinned-image>` to consume an existing boot
 artifact; this deliberately does not rebuild native init or the kernel.
 Historical release images keep their original contents and performance.
 
-Agent readiness means its command listener is available. Distribution boot jobs
-such as tmpfiles run independently; files written to `/tmp` during boot may be
-removed by their normal cleanup. Use a directory on the writable root filesystem
-outside temporary paths for early writes and persistent work.
+Agent readiness means its command listener is available; no service-manager
+boot or tmpfiles cleanup remains. `/run`, `/tmp` and `/dev/shm` are tmpfs mounts.
+Files outside these temporary mounts persist on the private writable disk across
+stop/start. Normal shutdown signals tasks, gives them three seconds to exit,
+then kills remaining tasks and syncs guest filesystems before poweroff.
+
+Build languages separately from the runtime; each final workload is flattened:
+
+```bash
+docker build -f oci-images/python/3.12/Dockerfile -t kumabox/python:3.12 .
+docker build -f oci-images/node/22/Dockerfile -t kumabox/node:22 .
+```
+
+These consume `kumabox/rt:24.04`; override `RUNTIME_IMAGE` to pin a runtime digest.
+Python 3.12 includes pip/venv. Node 22 uses the official Node distribution;
+`NODE_IMAGE` can pin its source digest too. Browser dependencies belong in a
+separate workload image. Create a golden snapshot for each image and resource
+shape only after the agent and required application are ready. Old snapshots
+retain their original image/boot artifacts; rebuilding a tag does not convert
+them to the native profile. Existing image-digest and VMM validation still apply.
+The native profile requires static networking (the eBPF backend supplies it);
+legacy systemd guests retain their existing DHCP support.
+Service units and udev rules are not executed in the native profile. Applications
+run through the agent; diagnostics go directly to the console. Device nodes
+come from devtmpfs and boot-time virtio serial aliases are prepared by init.
+
+Verify PID 1, console, PTYs, orphan reaping, agent restart, normal shutdown and
+snapshot/restore on a Linux/KVM host:
+
+```bash
+sudo python3 tests/e2e/native_boot.py \
+  --image my-updated-image --commit "$(git rev-parse --short HEAD)"
+```
+
+After importing the two workload images, verify their interpreters and that a
+prewarmed HTTP application keeps serving after a golden clone:
+
+```bash
+sudo python3 tests/e2e/workloads.py \
+  --python-image my-python-image --node-image my-node-image
+```
 
 ## Experimental TAP/eBPF networking
 

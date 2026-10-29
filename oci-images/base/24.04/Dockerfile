@@ -24,12 +24,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     -ldflags="-s -w -X github.com/kumabox/kumabox/version.Version=$KUMABOX_VERSION -X github.com/kumabox/kumabox/version.Commit=$KUMABOX_COMMIT -X github.com/kumabox/kumabox/version.BuildTime=$KUMABOX_BUILD_TIME" \
     -o /out/kumabox-agent ./cmd/kumabox-agent
 
-# The base is already a fast-boot guest. rt only flattens its filesystem.
+# Minimal glibc userland. Rust PID 1 owns boot and supervises the guest agent.
 FROM ${UBUNTU_IMAGE}
 ARG KUMABOX_VERSION=dev
 ARG KUMABOX_COMMIT=unknown
 ARG KUMABOX_BUILD_TIME=unknown
 LABEL io.kumabox.boot.profile="overlay-v1" \
+      io.kumabox.runtime.profile="native-v1" \
       org.opencontainers.image.version="$KUMABOX_VERSION" \
       org.opencontainers.image.revision="$KUMABOX_COMMIT" \
       org.opencontainers.image.created="$KUMABOX_BUILD_TIME" \
@@ -37,29 +38,23 @@ LABEL io.kumabox.boot.profile="overlay-v1" \
 ENV DEBIAN_FRONTEND=noninteractive
 COPY --from=boot /boot/ /boot/
 COPY --from=agent-builder /out/kumabox-agent /usr/local/bin/kumabox-agent
-COPY oci-images/base/24.04/kumabox-agent.service /etc/systemd/system/kumabox-agent.service
+COPY --from=boot /boot/kumabox-init /usr/local/sbin/kumabox-init
 RUN set -eu; \
     apt-get -o Acquire::Retries=5 update; \
     apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
-      ca-certificates iproute2 iputils-ping systemd systemd-sysv \
-      systemd-timesyncd systemd-resolved curl udev; \
+      ca-certificates iproute2 iputils-ping curl; \
+    install -d -m 0755 /var/lib/dbus /etc/kumabox /run /dev/pts /dev/shm; \
     truncate -s 0 /etc/fstab; \
-    systemctl mask systemd-fsck-root.service systemd-remount-fs.service \
-      systemd-fsck@.service systemd-networkd-wait-online.service; \
-    systemctl enable systemd-networkd systemd-resolved systemd-timesyncd kumabox-agent.service; \
-    install -d -m 0755 /etc/systemd/network /var/lib/dbus; \
-    printf '%s\n' '[Match]' 'Name=en* eth*' '' '[Network]' 'DHCP=ipv4' '' \
-      '[DHCPv4]' 'ClientIdentifier=mac' > /etc/systemd/network/20-kumabox.network; \
-    systemd-sysusers; \
-    ldconfig; \
-    journalctl --update-catalog; \
-    /usr/lib/systemd/systemd-update-done; \
-    rm -f /etc/machine-id /var/lib/dbus/machine-id /var/lib/systemd/random-seed; \
+    rm -f /etc/machine-id /var/lib/dbus/machine-id; \
     touch /etc/machine-id; \
     ln -s /etc/machine-id /var/lib/dbus/machine-id; \
+    ln -s /usr/local/sbin/kumabox-init /sbin/init; \
+    printf '%s\n' 'hosts: files dns' > /etc/nsswitch.conf; \
+    ldconfig; \
     test -s /boot/vmlinuz-kumabox; test -s /boot/initrd.img-kumabox; \
     test -x /usr/local/bin/kumabox-agent; \
-    test -L /etc/systemd/system/sysinit.target.wants/kumabox-agent.service; \
+    test ! -e /usr/lib/systemd/systemd; \
+    test -x /sbin/init; \
     { test ! -d /lib/modules || test -z "$(ls -A /lib/modules)"; }; \
     rm -rf /var/lib/apt/lists/*
 CMD ["/sbin/init"]

@@ -3,11 +3,28 @@
 package agent
 
 import (
+	"context"
+	"errors"
 	"net"
 	"testing"
 
 	"github.com/vishvananda/netlink"
 )
+
+func TestNativeNetworkRejectsDHCPBeforeChangingGuest(t *testing.T) {
+	configuration := NetworkConfig{Hostname: "guest", Interfaces: []NetworkInterface{{MAC: "02:00:00:00:00:01", DHCP: true}}}
+	if err := applyNativeNetwork(context.Background(), configuration); err == nil {
+		t.Fatal("native profile accepted DHCP without a DHCP client")
+	}
+}
+
+func TestNativeNetworkHonorsCancellationBeforeChangingGuest(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := applyNativeNetwork(ctx, NetworkConfig{Hostname: "guest"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled configuration: %v", err)
+	}
+}
 
 func TestGuestIPv4MatchesRejectsStaleSourceAddress(t *testing.T) {
 	addresses := []net.Addr{

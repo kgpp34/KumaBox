@@ -9,6 +9,7 @@ ARG KUMABOX_VERSION=dev
 ARG KUMABOX_COMMIT=unknown
 ARG KUMABOX_BUILD_TIME=unknown
 LABEL io.kumabox.boot.profile="overlay-v1" \
+      io.kumabox.runtime.profile="native-v1" \
       org.opencontainers.image.version="$KUMABOX_VERSION" \
       org.opencontainers.image.revision="$KUMABOX_COMMIT" \
       org.opencontainers.image.created="$KUMABOX_BUILD_TIME" \

@@ -23,8 +23,8 @@ type NetworkInterface struct {
 	Address string `json:"address,omitempty"`
 	Prefix  int    `json:"prefix,omitempty"`
 	Gateway string `json:"gateway,omitempty"`
-	// DHCP asks networkd to obtain this NIC's address from the segment's DHCP
-	// server. It is mutually exclusive with Address/Prefix/Gateway.
+	// DHCP asks a legacy guest's network manager for a lease. Native guests
+	// require static configuration. Mutually exclusive with Address/Prefix/Gateway.
 	DHCP bool `json:"dhcp,omitempty"`
 }
 
