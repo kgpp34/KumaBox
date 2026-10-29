@@ -1,11 +1,8 @@
 [Unit]
 Description=KumaBox guest agent
 Documentation=https://github.com/kumabox/kumabox
-# Boot-time tmpfiles cleanup must finish before accepting guest file writes.
-# Otherwise its --remove pass can delete an in-flight upload under /tmp.
+# Native init has assembled root and /dev; the listener can start at sysinit.
 DefaultDependencies=no
-Requires=kumabox-guest-prepare.service
-After=kumabox-guest-prepare.service
 Before=basic.target
 
 [Service]

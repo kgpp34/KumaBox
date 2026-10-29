@@ -345,6 +345,10 @@ sudo kumabox image import ubuntu-fast /tmp/kumabox-ubuntu-fast.tar --format dock
 通过 `--skip-boot --boot-image <固定镜像>` 可以复用既有启动产物；此时不会重新构建
 原生 init 或内核。历史 Release 镜像的内容和性能不会因此改变。
 
+agent 就绪表示命令监听已可用，tmpfiles 等系统启动任务独立运行。
+启动期间写入 `/tmp` 的文件可能被系统的正常清理删除；早期写入和需要保留的工作文件
+应放在可写根文件系统的非临时目录中。
+
 ## 实验性的 TAP/eBPF 网络
 
 从当前源码构建、安装后，先配置安装实例共享的 IPv4 转发和 NAT 规则：

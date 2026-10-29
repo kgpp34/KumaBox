@@ -81,20 +81,17 @@ class GuestTests:
                 if time.monotonic() >= deadline:
                     raise TimeoutError(f"guest agent did not become ready: {self.name}")
                 time.sleep(0.25)
-        # Write immediately after readiness, then verify after the remaining
-        # boot jobs finish. Both exec and uploads must survive boot cleanup.
-        self.guest("sh", "-c", "printf early-exec > /tmp/kumabox-early-exec")
-        self.file("write", "/tmp/kumabox-early-upload", data=b"early-upload")
-        # Inspect the loaded dependency graph, not just unit-file text: empty
-        # After= drop-ins do not remove vendor dependency edges in systemd.
-        for unit, forbidden in (
-            ("kumabox-guest-prepare.service", {b"local-fs.target"}),
-            ("systemd-sysusers.service", {
-                b"systemd-tmpfiles-setup-dev-early.service", b"systemd-remount-fs.service",
-            }),
-        ):
-            after = set(self.guest("systemctl", "show", unit, "--property=After", "--value").split())
-            assert not after.intersection(forbidden), (unit, after)
+        # Agent readiness does not wait for boot cleanup. Use persistent paths
+        # for early writes; /tmp follows the distribution's cleanup policy.
+        self.guest("sh", "-c", "printf early-exec > /root/kumabox-early-exec")
+        self.file("write", "/root/kumabox-early-upload", data=b"early-upload")
+        after = set(self.guest(
+            "systemctl", "show", "kumabox-agent.service", "--property=After", "--value",
+        ).split())
+        assert not after.intersection({
+            b"kumabox-guest-prepare.service", b"systemd-sysusers.service",
+            b"systemd-tmpfiles-setup.service", b"local-fs.target",
+        }), after
         version = self.guest("kumabox-agent", "version").decode().strip()
         if self.args.commit not in version:
             raise RuntimeError(f"wrong guest agent version: {version}")
@@ -110,8 +107,8 @@ class GuestTests:
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"boot file preparation did not finish: {state!r}")
             time.sleep(0.05)
-        assert self.guest("cat", "/tmp/kumabox-early-exec") == b"early-exec"
-        assert self.file("read", "/tmp/kumabox-early-upload") == b"early-upload"
+        assert self.guest("cat", "/root/kumabox-early-exec") == b"early-exec"
+        assert self.file("read", "/root/kumabox-early-upload") == b"early-upload"
         if nics:
             # Agent readiness is independent of networkd configuring the NIC.
             # Wait for the actual network state rather than racing first boot.
@@ -285,6 +282,13 @@ class GuestTests:
         # on the sandbox's writable root filesystem outside temporary paths.
         persistent = "/root/kumabox-agent-e2e-persistent"
         self.file("write", persistent, data=b"persisted")
+        # Hold the distribution's boot cleanup across the next start. Exec and
+        # uploads outside /tmp must work while this job is still waiting.
+        dropin = "/etc/systemd/system/systemd-tmpfiles-setup.service.d/90-e2e-gate.conf"
+        self.file("write", dropin, "--parents", data=(
+            b"[Service]\nExecStartPre=/bin/sh -c 'while [ ! -e /run/kumabox-e2e-release ]; "
+            b"do sleep 0.05; done'\n"
+        ))
         # Stop may escalate to termination when the guest cannot handle ACPI.
         # File writes promise atomic visibility, not persistence after power loss.
         self.guest("sync")
@@ -302,6 +306,21 @@ class GuestTests:
                     raise
                 time.sleep(0.25)
         assert self.file("read", persistent) == b"persisted"
+        deadline = time.monotonic() + 10
+        while True:
+            substate = self.guest(
+                "systemctl", "show", "systemd-tmpfiles-setup.service",
+                "--property=SubState", "--value",
+            ).strip()
+            if substate == b"start-pre":
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"boot cleanup did not reach its test gate: {substate!r}")
+            time.sleep(0.05)
+        self.file("write", persistent, data=b"written before boot cleanup")
+        assert self.file("read", persistent) == b"written before boot cleanup"
+        self.guest("touch", "/run/kumabox-e2e-release")
+        self.file("rm", dropin)
 
     def cleanup(self):
         failures = []

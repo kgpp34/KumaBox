@@ -108,8 +108,8 @@ fn boot() -> Result<(), String> {
         fs::create_dir_all(Path::new("/newroot").join(directory))
             .map_err(|e| format!("create handoff directory: {e}"))?;
     }
-    // /run is ready before systemd jobs. The marker authorizes the base image's
-    // early file preparation; a different boot provider fails that assertion.
+    // /run is ready before systemd jobs. Record native root assembly for boot
+    // diagnostics; guest services do not wait on this marker.
     linux::mount(
         "tmpfs",
         "/newroot/run",

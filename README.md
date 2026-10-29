@@ -414,6 +414,11 @@ Use `--skip-boot --boot-image <pinned-image>` to consume an existing boot
 artifact; this deliberately does not rebuild native init or the kernel.
 Historical release images keep their original contents and performance.
 
+Agent readiness means its command listener is available. Distribution boot jobs
+such as tmpfiles run independently; files written to `/tmp` during boot may be
+removed by their normal cleanup. Use a directory on the writable root filesystem
+outside temporary paths for early writes and persistent work.
+
 ## Experimental TAP/eBPF networking
 
 Build and install the current source, then prepare one installation-wide set of

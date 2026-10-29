@@ -38,9 +38,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 COPY --from=boot /boot/ /boot/
 COPY --from=agent-builder /out/kumabox-agent /usr/local/bin/kumabox-agent
 COPY oci-images/base/24.04/kumabox-agent.service /etc/systemd/system/kumabox-agent.service
-COPY oci-images/base/24.04/kumabox-guest-prepare.service /etc/systemd/system/kumabox-guest-prepare.service
-COPY oci-images/base/24.04/systemd-sysusers.service /etc/systemd/system/systemd-sysusers.service
-COPY oci-images/base/24.04/systemd-tmpfiles-setup.conf /etc/systemd/system/systemd-tmpfiles-setup.service.d/10-kumabox-journal.conf
 RUN set -eu; \
     apt-get -o Acquire::Retries=5 update; \
     apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
@@ -48,7 +45,7 @@ RUN set -eu; \
       systemd-timesyncd systemd-resolved curl udev; \
     truncate -s 0 /etc/fstab; \
     systemctl mask systemd-fsck-root.service systemd-remount-fs.service \
-      systemd-fsck@.service systemd-networkd-wait-online.service tmp.mount var-tmp.mount; \
+      systemd-fsck@.service systemd-networkd-wait-online.service; \
     systemctl enable systemd-networkd systemd-resolved systemd-timesyncd kumabox-agent.service; \
     install -d -m 0755 /etc/systemd/network /var/lib/dbus; \
     printf '%s\n' '[Match]' 'Name=en* eth*' '' '[Network]' 'DHCP=ipv4' '' \
