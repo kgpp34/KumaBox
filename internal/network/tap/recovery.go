@@ -70,7 +70,7 @@ func (p *Provider) forgetLease(item lease) {
 	p.recovery.mu.Lock()
 	defer p.recovery.mu.Unlock()
 	items := p.recovery.byID[item.Sandbox]
-	if saved, found := items[item.Interface.HostAddress]; found && saved.Interface.Index == item.Interface.Index {
+	if saved, found := items[item.Interface.HostAddress]; found && saved.Interface.Index == item.Interface.Index && saved.Epoch == item.Epoch {
 		delete(items, item.Interface.HostAddress)
 		if len(items) == 0 {
 			delete(p.recovery.byID, item.Sandbox)
@@ -110,7 +110,7 @@ func (p *Provider) leases(ctx context.Context, id types.SandboxID) ([]lease, err
 		if err != nil {
 			return nil, err
 		}
-		if current.Sandbox != id || current.Interface.Index != item.Interface.Index || !current.ReuseAfter.IsZero() {
+		if current.Sandbox != id || current.Interface.Index != item.Interface.Index || current.Epoch != item.Epoch || current.Interface.TAP != item.Interface.TAP || !current.ReuseAfter.IsZero() {
 			return nil, errors.New("eBPF indexed address ownership mismatch")
 		}
 		seen[current.Interface.HostAddress] = true

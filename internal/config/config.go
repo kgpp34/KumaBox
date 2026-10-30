@@ -126,6 +126,11 @@ type EBPF struct {
 	Subnet string `mapstructure:"subnet"`
 	// PinDir holds kernel objects across CLI invocations; empty derives a root-specific path.
 	PinDir string `mapstructure:"pin_dir"`
+	// TAPPoolSize prebuilds idle devices per primary queue shape. Zero disables
+	// the pool without changing the number of sandboxes the node can run.
+	TAPPoolSize int `mapstructure:"tap_pool_size"`
+	// TAPPoolQueues selects prebuilt total RX/TX queue counts (default 2, 4).
+	TAPPoolQueues []int `mapstructure:"tap_pool_queues"`
 }
 
 // CNI contains host-owned CNI discovery paths.
@@ -250,6 +255,23 @@ func (c *Config) Validate() error {
 	if c.Network.EBPF.PinDir != "" && !filepath.IsAbs(c.Network.EBPF.PinDir) {
 		return errors.New("eBPF pin directory must be absolute")
 	}
+	if c.Network.EBPF.TAPPoolSize < 0 || c.Network.EBPF.TAPPoolSize > 64 {
+		return errors.New("eBPF TAP pool size must be between 0 and 64")
+	}
+	poolQueues := c.Network.EBPF.TAPPoolQueues
+	if len(poolQueues) == 0 {
+		poolQueues = []int{2, 4}
+	}
+	seenQueues := make(map[int]bool, len(poolQueues))
+	for _, queues := range poolQueues {
+		if queues < 2 || queues > 256 || queues%2 != 0 || seenQueues[queues] {
+			return errors.New("eBPF TAP pool queue counts must be distinct even values between 2 and 256")
+		}
+		seenQueues[queues] = true
+	}
+	if c.Network.EBPF.TAPPoolSize*len(poolQueues) > 256 {
+		return errors.New("eBPF TAP pool may retain at most 256 idle devices")
+	}
 	if _, err := c.Network.DNSServers(); err != nil {
 		return fmt.Errorf("network DNS: %w", err)
 	}
@@ -307,7 +329,9 @@ func NewLoader() *Loader {
 		"sandbox.machine_id_sync": defaults.Sandbox.MachineIDSync,
 		"network.cni.conf_dir":    defaults.Network.CNI.ConfDir, "network.cni.bin_dir": defaults.Network.CNI.BinDir,
 		"network.ebpf.subnet": defaults.Network.EBPF.Subnet, "network.ebpf.pin_dir": defaults.Network.EBPF.PinDir,
-		"network.dns": defaults.Network.DNS, "network.scope": defaults.Network.Scope,
+		"network.ebpf.tap_pool_size":   defaults.Network.EBPF.TAPPoolSize,
+		"network.ebpf.tap_pool_queues": []int{2, 4},
+		"network.dns":                  defaults.Network.DNS, "network.scope": defaults.Network.Scope,
 		"network.cleanup_timeout": defaults.Network.CleanupTimeout, "network.guest_agent_timeout": defaults.Network.GuestAgentTimeout,
 		"vmm.default": defaults.VMM.Default, "vmm.cgroup_parent": defaults.VMM.CgroupParent,
 		"vmm.cloud_hypervisor.binary":          defaults.VMM.CloudHypervisor.Binary,

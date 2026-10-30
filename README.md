@@ -490,10 +490,33 @@ the fixed-address boot and DNS configuration.
 
 This first IPv4 data plane uses Linux routing/conntrack for external NAT, with
 shared firewall rules rather than one rule per sandbox. It does not yet implement
-an eBPF SNAT session table, tenant network policy, TAP pooling or IPv6. Existing
+an eBPF SNAT session table, tenant network policy or IPv6. Existing
 CNI and bridge modes remain available. The host requires bpffs and TC eBPF support;
 normal builds embed the compiled BPF object and do not require Clang. To regenerate
 it on Linux, install Clang/libbpf headers and run `go generate ./internal/network/tap`.
+
+The daemon can prebuild and reuse TAPs and their TC filters. Add these settings
+to its configuration, then restart the daemon:
+
+```yaml
+network:
+  ebpf:
+    tap_pool_size: 16
+    tap_pool_queues: [2, 4]
+```
+
+This prebuilds 16 primary TAPs for each listed total RX/TX queue count (one and
+two vCPUs here), with a combined idle limit of 32 devices. Other NIC slots and
+queue shapes are created on demand and may reuse matching returned devices.
+An empty pool falls back to creating a TAP; the pool does not limit active VMs.
+Refill starts at half capacity. Idle devices deny all traffic and hold no queue
+descriptors. Release requires the VMM's queue references to be gone, clears
+routes, neighbors and conntrack, then retires the address before reuse. Failed
+cleanup remains fenced for retry. Ownership epochs reject stale cleanup; they
+do not preserve TCP connections across snapshot restore. Daemon restarts recover
+active leases and idle devices; host reboot discards idle devices and rebuilds
+them. Set `tap_pool_size: 0` (the default) to disable refill/reuse and retire idle
+devices while preserving active sandboxes.
 
 The default host endpoint subnet is `10.89.0.0/16`; select an unused private range
 with `KUMABOX_NETWORK_EBPF_SUBNET`. When changing the subnet or installation scope,

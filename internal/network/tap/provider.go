@@ -34,6 +34,11 @@ type Options struct {
 	// ReuseDelay quarantines released host addresses past the TCP TIME_WAIT
 	// interval. Zero selects 90 seconds; it never delays ordinary allocation.
 	ReuseDelay time.Duration
+	// PoolSize prebuilds this many primary TAPs per PoolQueues shape. Zero
+	// disables prebuilding and reuse; it never limits active sandbox count.
+	PoolSize int
+	// PoolQueues contains total RX/TX queue counts to prebuild (default 2, 4).
+	PoolQueues []int
 }
 
 // Provider owns TAPs and their eBPF mappings under one runtime's state ownership.
@@ -47,10 +52,28 @@ type Provider struct {
 	now      func() time.Time
 	recovery leaseRecovery
 	datapath datapathState
+	taps     tapPool
 }
 
 // New validates configuration without modifying the host or loading eBPF.
 func New(options Options) (*Provider, error) {
+	if options.PoolSize < 0 || options.PoolSize > 64 {
+		return nil, errors.New("TAP pool size must be between 0 and 64")
+	}
+	if len(options.PoolQueues) == 0 {
+		options.PoolQueues = []int{2, 4}
+	}
+	options.PoolQueues = append([]int(nil), options.PoolQueues...)
+	seen := make(map[int]bool)
+	for _, queues := range options.PoolQueues {
+		if queues < 2 || queues > 256 || queues%2 != 0 || seen[queues] {
+			return nil, errors.New("TAP pool queue counts must be distinct even values between 2 and 256")
+		}
+		seen[queues] = true
+	}
+	if options.PoolSize*len(options.PoolQueues) > 256 {
+		return nil, errors.New("TAP pool may retain at most 256 idle devices")
+	}
 	if options.ReuseDelay < 0 {
 		return nil, errors.New("address reuse delay must not be negative")
 	}

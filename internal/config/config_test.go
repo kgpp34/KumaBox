@@ -145,6 +145,30 @@ func TestNetworkConfigParsesDNSAndScope(t *testing.T) {
 	}
 }
 
+func TestTAPPoolConfigurationRejectsUnboundedAndIncompatibleShapes(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		size   int
+		queues []int
+	}{
+		{"negative", -1, nil},
+		{"too large", 65, nil},
+		{"odd queues", 4, []int{3}},
+		{"duplicate queues", 4, []int{2, 2}},
+		{"zero queues", 4, []int{0}},
+		{"too many queues", 4, []int{258}},
+		{"idle device budget", 64, []int{2, 4, 6, 8, 10}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Network.EBPF.TAPPoolSize, cfg.Network.EBPF.TAPPoolQueues = tc.size, tc.queues
+			if err := cfg.Validate(); err == nil {
+				t.Fatal("accepted invalid TAP pool configuration")
+			}
+		})
+	}
+}
+
 func TestStopTimeoutConfiguration(t *testing.T) {
 	if got := Default().Sandbox.StopTimeout; got != 30*time.Second {
 		t.Fatalf("default stop timeout = %s", got)

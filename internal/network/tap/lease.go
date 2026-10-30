@@ -26,12 +26,27 @@ import (
 type lease struct {
 	Sandbox   types.SandboxID        `json:"sandbox"`
 	Interface types.NetworkInterface `json:"interface"`
+	// Epoch fences pooled TAP ownership. It is stored in the durable lease and
+	// kernel alias, not in packets. Conntrack cleanup and address cooling remain
+	// mandatory; this is independent of sandbox metadata generation.
+	Epoch uint64 `json:"tap_epoch,omitempty"`
 	// ReuseAfter is zero for active allocations. A retired reservation retains
 	// no TAP or sandbox index, but prevents stale TCP tuples reaching a new VM.
 	ReuseAfter time.Time `json:"reuse_after,omitzero"`
 }
 
+type tapBinding struct {
+	name  string
+	epoch uint64
+}
+
 func (p *Provider) reserve(ctx context.Context, id types.SandboxID, spec network.AddSpec) (_ lease, returnErr error) {
+	return p.reserveWith(ctx, id, spec, nil)
+}
+
+// reserveWith acquires a new device only after looking for an existing durable
+// reservation. Tests and legacy paths omit bind and keep deterministic names.
+func (p *Provider) reserveWith(ctx context.Context, id types.SandboxID, spec network.AddSpec, bind func() (tapBinding, error)) (_ lease, returnErr error) {
 	if _, err := types.ParseSandboxID(id.String()); err != nil {
 		return lease{}, err
 	}
@@ -59,11 +74,14 @@ func (p *Provider) reserve(ctx context.Context, id types.SandboxID, spec network
 	name := p.tapName(id, spec.Index)
 	if spec.Existing != nil {
 		existing := spec.Existing
-		if existing.Index != spec.Index || existing.TAP != name || existing.MAC != mac || existing.IPv4 == nil || *existing.IPv4 != *ipv4 || existing.AddressMode != types.AddressModeFixed || existing.Network != "ebpf" {
+		if existing.Index != spec.Index || existing.MAC != mac || existing.IPv4 == nil || *existing.IPv4 != *ipv4 || existing.AddressMode != types.AddressModeFixed || existing.Network != "ebpf" {
 			return lease{}, errors.New("eBPF recovery must preserve the fixed network contract")
 		}
 	}
 	queues := network.ResolveQueues(spec.Queues, 1)
+	if queues < 2 || queues%2 != 0 {
+		return lease{}, errors.New("TAP queue count must be even and at least two")
+	}
 	item := lease{Sandbox: id, Interface: types.NetworkInterface{
 		Index: spec.Index, Name: "eth" + strconv.Itoa(spec.Index), TAP: name, MAC: mac,
 		Queues: queues, QueueSize: network.DefaultQueueSize, Network: "ebpf",
@@ -74,14 +92,14 @@ func (p *Provider) reserve(ctx context.Context, id types.SandboxID, spec network
 		if prior.Sandbox != id || prior.Interface.Index != spec.Index {
 			return lease{}, errors.New("eBPF lease index ownership mismatch")
 		}
-		if spec.Existing != nil && prior.Interface.HostAddress != spec.Existing.HostAddress {
+		if spec.Existing != nil && (prior.Interface.HostAddress != spec.Existing.HostAddress || prior.Interface.TAP != spec.Existing.TAP) {
 			return lease{}, errors.New("persisted eBPF host address differs from lease")
 		}
 		address, checkErr := p.readLease(filepath.Join(p.addressDir(), prior.Interface.HostAddress+".json"))
 		if checkErr != nil {
 			return lease{}, checkErr
 		}
-		if address.Sandbox != id || address.Interface.Index != spec.Index {
+		if address.Sandbox != id || address.Interface.Index != spec.Index || address.Epoch != prior.Epoch || address.Interface.TAP != prior.Interface.TAP {
 			return lease{}, errors.New("eBPF address ownership differs from sandbox index")
 		}
 		if !address.ReuseAfter.IsZero() {
@@ -90,6 +108,36 @@ func (p *Provider) reserve(ctx context.Context, id types.SandboxID, spec network
 		return prior, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return lease{}, err
+	}
+	// Address-first publications may have no sandbox index yet. Preserve their
+	// device/epoch instead of borrowing a second TAP after cancellation/restart.
+	var existing *lease
+	for _, candidate := range p.recoveryLeases(id) {
+		if candidate.Interface.Index != spec.Index {
+			continue
+		}
+		current, err := p.readLease(filepath.Join(p.addressDir(), candidate.Interface.HostAddress+".json"))
+		if err != nil {
+			return lease{}, err
+		}
+		if current.Sandbox == id && current.Interface.Index == spec.Index && current.ReuseAfter.IsZero() {
+			existing = &current
+			break
+		}
+	}
+	switch {
+	case existing != nil:
+		item = *existing
+	case spec.Existing != nil:
+		if spec.Existing.TAP != name {
+			return lease{}, errors.New("pooled TAP recovery requires its durable address reservation")
+		}
+	case bind != nil:
+		binding, err := bind()
+		if err != nil {
+			return lease{}, err
+		}
+		item.Interface.TAP, item.Epoch = binding.name, binding.epoch
 	}
 	if err := errors.Join(storage.EnsureDir(filepath.Dir(indexPath)), storage.EnsureDir(p.addressDir())); err != nil {
 		return lease{}, err
@@ -106,6 +154,9 @@ func (p *Provider) reserve(ctx context.Context, id types.SandboxID, spec network
 		var raw [4]byte
 		binary.BigEndian.PutUint32(raw[:], address)
 		item.Interface.HostAddress = netip.AddrFrom4(raw).String()
+		if existing != nil {
+			item = *existing
+		}
 		if spec.Existing != nil {
 			item.Interface = *spec.Existing
 		}
@@ -185,7 +236,7 @@ func (p *Provider) retireAddress(item lease) (returnErr error) {
 	if err != nil {
 		return err
 	}
-	if prior.Sandbox != item.Sandbox || prior.Interface.Index != item.Interface.Index {
+	if prior.Sandbox != item.Sandbox || prior.Interface.Index != item.Interface.Index || prior.Epoch != item.Epoch || prior.Interface.TAP != item.Interface.TAP {
 		return errors.New("refuse to retire another endpoint owner's address")
 	}
 	item.ReuseAfter = p.now().UTC().Add(p.options.ReuseDelay)

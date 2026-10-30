@@ -66,7 +66,10 @@ func (p *Provider) dataPlane(ctx context.Context) (*datapath, func(), error) {
 
 // Close drains in-flight network operations and closes userspace descriptors.
 // Pins and attached filters remain live so existing VMs survive daemon exit.
-func (p *Provider) Close() error { return p.datapath.close() }
+func (p *Provider) Close() error {
+	p.taps.close()
+	return p.datapath.close()
+}
 
 // Add publishes durable leases first, installs both fail-closed TC filters,
 // then enables packet translation. Interrupted changes remain owned for GC.
@@ -84,7 +87,7 @@ func (p *Provider) Add(ctx context.Context, id types.SandboxID, name string, spe
 	defer release()
 	result := make([]types.NetworkInterface, 0, len(specs))
 	for _, spec := range specs {
-		item, err := p.reserve(ctx, id, spec)
+		item, err := p.allocateLease(ctx, id, spec, d)
 		if err != nil {
 			return nil, err
 		}
@@ -101,56 +104,40 @@ func (p *Provider) alias(item lease) string {
 }
 
 func (p *Provider) ownedLink(item lease) (netlink.Link, error) {
+	if item.Epoch == 0 && item.Interface.TAP != p.tapName(item.Sandbox, item.Interface.Index) {
+		saved, err := p.readLease(p.indexPath(item.Sandbox, item.Interface.Index))
+		if err != nil {
+			return nil, err
+		}
+		if saved.Sandbox != item.Sandbox || saved.Interface.TAP != item.Interface.TAP || saved.Interface.HostAddress != item.Interface.HostAddress || saved.Epoch == 0 {
+			return nil, errors.New("pooled TAP differs from durable ownership")
+		}
+		item = saved
+	}
 	link, err := netlink.LinkByName(item.Interface.TAP)
 	if err != nil {
 		return nil, err
 	}
-	if link.Type() != "tuntap" || link.Attrs().Alias != p.alias(item) {
+	alias := p.alias(item)
+	if item.Epoch != 0 {
+		alias = p.poolAlias(tapShape{item.Interface.Index, item.Interface.Queues}, item.Epoch)
+	}
+	if link.Type() != "tuntap" || link.Attrs().Alias != alias {
 		return nil, fmt.Errorf("refuse unrelated interface %s: ownership differs", item.Interface.TAP)
 	}
 	return link, nil
 }
 
 func (p *Provider) ensureTAP(item lease, d *datapath) error {
+	if item.Epoch != 0 {
+		return p.ensurePooledTAP(item, d)
+	}
 	link, err := p.ownedLink(item)
 	var missing netlink.LinkNotFoundError
 	if errors.As(err, &missing) {
-		attrs := netlink.NewLinkAttrs()
-		attrs.Name, attrs.Alias, attrs.MTU, attrs.TxQLen = item.Interface.TAP, p.alias(item), 1500, 1000
-		tap := &netlink.Tuntap{
-			LinkAttrs: attrs, Mode: netlink.TUNTAP_MODE_TAP,
-			NonPersist: true,
-			Flags:      tapQueueFlags(item.Interface.Queues),
-			Queues:     max(1, item.Interface.Queues/2),
-		}
-		if err := netlink.LinkAdd(tap); err != nil {
-			return fmt.Errorf("create fixed TAP: %w", err)
-		}
-		defer func() {
-			for _, fd := range tap.Fds {
-				_ = fd.Close()
-			}
-		}()
-		// TUN creation uses ioctl and does not apply LinkAttrs.Alias. Keep the
-		// TAP nonpersistent until ownership is installed: a crash before this
-		// point closes the descriptors and removes the unowned interface.
-		if err := netlink.LinkSetAlias(tap, p.alias(item)); err != nil {
-			return err
-		}
-		if err := netlink.LinkSetMTU(tap, 1500); err != nil {
-			return err
-		}
-		if err := netlink.LinkSetTxQLen(tap, 1000); err != nil {
-			return err
-		}
-		if len(tap.Fds) == 0 {
-			return errors.New("TAP creation returned no queue descriptors")
-		}
-		if err := unix.IoctlSetInt(int(tap.Fds[0].Fd()), unix.TUNSETPERSIST, 1); err != nil {
-			return err
-		}
-		link, err = p.ownedLink(item)
+		link, err = createTAP(item.Interface.TAP, p.alias(item), item.Interface.Queues)
 	}
+
 	if err != nil {
 		return err
 	}
@@ -179,6 +166,69 @@ func (p *Provider) ensureTAP(item lease, d *datapath) error {
 	if err := netlink.AddrReplace(link, address); err != nil {
 		return fmt.Errorf("install TAP gateway: %w", err)
 	}
+	return p.publishEndpoint(item, link, d)
+}
+
+// createTAP installs ownership before making the device persistent. Setup FDs
+// close before return so both single- and multi-queue monitors can open it.
+func createTAP(name, alias string, queues int) (netlink.Link, error) {
+	attrs := netlink.NewLinkAttrs()
+	attrs.Name, attrs.Alias, attrs.MTU, attrs.TxQLen = name, alias, 1500, 1000
+	tap := &netlink.Tuntap{
+		LinkAttrs: attrs, Mode: netlink.TUNTAP_MODE_TAP,
+		NonPersist: true,
+		Flags:      tapQueueFlags(queues),
+		Queues:     max(1, queues/2),
+	}
+	if err := netlink.LinkAdd(tap); err != nil {
+		return nil, fmt.Errorf("create fixed TAP: %w", err)
+	}
+	defer func() {
+		for _, fd := range tap.Fds {
+			_ = fd.Close()
+		}
+	}()
+	// TUN creation uses ioctl and does not apply LinkAttrs.Alias. Keep the
+	// TAP nonpersistent until ownership is installed: a crash before this
+	// point closes the descriptors and removes the unowned interface.
+	if err := netlink.LinkSetAlias(tap, alias); err != nil {
+		return nil, err
+	}
+	if err := netlink.LinkSetMTU(tap, 1500); err != nil {
+		return nil, err
+	}
+	if err := netlink.LinkSetTxQLen(tap, 1000); err != nil {
+		return nil, err
+	}
+	if len(tap.Fds) == 0 {
+		return nil, errors.New("TAP creation returned no queue descriptors")
+	}
+	if err := unix.IoctlSetInt(int(tap.Fds[0].Fd()), unix.TUNSETPERSIST, 1); err != nil {
+		return nil, err
+	}
+	// Query queue counts only after setup descriptors have gone away. A link
+	// snapshot taken before Close would incorrectly report a busy idle TAP.
+	var closeErr error
+	for _, fd := range tap.Fds {
+		closeErr = errors.Join(closeErr, fd.Close())
+	}
+	tap.Fds = nil
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	return netlink.LinkByName(name)
+}
+
+func (p *Provider) publishEndpoint(item lease, link netlink.Link, d *datapath) error {
+	value, err := p.endpoint(item.Interface, false)
+	if err != nil {
+		return err
+	}
+	key := uint32(link.Attrs().Index) //nolint:gosec // kernel interface index
+	if err := d.endpoints.Update(key, value, ebpf.UpdateAny); err != nil {
+		return err
+	}
+
 	if err := netlink.NeighSet(&netlink.Neigh{
 		LinkIndex: link.Attrs().Index, Family: netlink.FAMILY_V4,
 		State: netlink.NUD_PERMANENT, IP: net.ParseIP(item.Interface.HostAddress), HardwareAddr: net.HardwareAddr(value.GuestMAC[:]),
@@ -362,6 +412,12 @@ func (p *Provider) removeLeases(ctx context.Context, items []lease) error {
 	}
 	defer release()
 	for _, item := range items {
+		if item.Epoch != 0 {
+			if err := p.releasePooledTAP(ctx, item, d); err != nil {
+				return err
+			}
+			continue
+		}
 		link, err := p.ownedLink(item)
 		var missing netlink.LinkNotFoundError
 		if err != nil && !errors.As(err, &missing) {
@@ -376,16 +432,8 @@ func (p *Provider) removeLeases(ctx context.Context, items []lease) error {
 				return err
 			}
 		}
-		filter := &netlink.ConntrackFilter{}
-		if err := filter.AddIP(netlink.ConntrackOrigSrcIP, net.ParseIP(item.Interface.HostAddress)); err != nil {
+		if err := clearConntrack(item.Interface.HostAddress); err != nil {
 			return err
-		}
-		reverse := &netlink.ConntrackFilter{}
-		if err := reverse.AddIP(netlink.ConntrackOrigDstIP, net.ParseIP(item.Interface.HostAddress)); err != nil {
-			return err
-		}
-		if _, err := netlink.ConntrackDeleteFilters(netlink.ConntrackTable, netlink.FAMILY_V4, filter, reverse); err != nil {
-			return fmt.Errorf("clear endpoint conntrack before address reuse: %w", err)
 		}
 		if err := p.retireLease(item); err != nil {
 			return err
@@ -416,9 +464,13 @@ func (p *Provider) Allocated(ctx context.Context, id types.SandboxID) ([]int, er
 	return result, nil
 }
 
-// IndexForTAP only accepts deterministic names from this installation.
+// IndexForTAP resolves pooled names through durable ownership and also accepts
+// legacy deterministic names from this installation.
 func (p *Provider) IndexForTAP(id types.SandboxID, name string) (int, bool) {
 	for index := range types.MaxSandboxNICs {
+		if saved, err := p.readLease(p.indexPath(id, index)); err == nil && saved.Sandbox == id && saved.Interface.TAP == name {
+			return index, true
+		}
 		if p.tapName(id, index) == name {
 			return index, true
 		}
@@ -442,4 +494,21 @@ func (p *Provider) OwnedIDs(ctx context.Context) ([]types.SandboxID, error) {
 		}
 	}
 	return result, nil
+}
+
+// clearConntrack removes both outbound and inbound tuple directions before
+// retiring a unique host endpoint. Device pooling does not weaken this barrier.
+func clearConntrack(host string) error {
+	filter := &netlink.ConntrackFilter{}
+	if err := filter.AddIP(netlink.ConntrackOrigSrcIP, net.ParseIP(host)); err != nil {
+		return err
+	}
+	reverse := &netlink.ConntrackFilter{}
+	if err := reverse.AddIP(netlink.ConntrackOrigDstIP, net.ParseIP(host)); err != nil {
+		return err
+	}
+	if _, err := netlink.ConntrackDeleteFilters(netlink.ConntrackTable, netlink.FAMILY_V4, filter, reverse); err != nil {
+		return fmt.Errorf("clear endpoint conntrack before address reuse: %w", err)
+	}
+	return nil
 }

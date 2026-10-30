@@ -220,6 +220,7 @@ func OpenSandbox(ctx context.Context, configuration config.Config, reporter Sand
 	tapProvider, err := tap.New(tap.Options{
 		StateDir: tapState, PinDir: pinDir,
 		Subnet: configuration.Network.EBPF.Subnet, TAPPrefix: "kt" + configuration.Network.Scope,
+		PoolSize: configuration.Network.EBPF.TAPPoolSize, PoolQueues: configuration.Network.EBPF.TAPPoolQueues,
 	})
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
@@ -227,9 +228,12 @@ func OpenSandbox(ctx context.Context, configuration config.Config, reporter Sand
 	if err := tapProvider.RecoverLeases(ctx); err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
+	if err := tapProvider.StartPool(ctx); err != nil {
+		return nil, errors.Join(err, tapProvider.Close(), store.Close())
+	}
 	networks, err := network.NewRegistry(cniProvider, bridgeProvider, tapProvider)
 	if err != nil {
-		return nil, errors.Join(err, store.Close())
+		return nil, errors.Join(err, tapProvider.Close(), store.Close())
 	}
 	imageCatalog := imagecatalog.New(store, imagecatalog.WithImageUsage(imageUsage{}))
 	sandboxCatalog := sandboxcatalog.New(store, imagecatalog.Reader{})

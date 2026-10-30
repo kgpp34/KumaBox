@@ -14,12 +14,27 @@ import (
 var ErrUnsupported = errors.New("TAP/eBPF networking requires Linux")
 
 // datapathState has no host resources on unsupported platforms.
-type datapathState struct{}
+type (
+	datapathState struct{}
+	tapPool       struct{}
+)
 
 func (*datapathState) close() error { return nil }
+func (*tapPool) close()             {}
+
+// StartPool leaves unsupported hosts unchanged when pooling is disabled.
+func (p *Provider) StartPool(ctx context.Context) error {
+	if p.options.PoolSize != 0 {
+		return ErrUnsupported
+	}
+	return ctx.Err()
+}
 
 // Close is a no-op because unsupported platforms never open kernel handles.
-func (p *Provider) Close() error { return p.datapath.close() }
+func (p *Provider) Close() error {
+	p.taps.close()
+	return p.datapath.close()
+}
 
 func (*Provider) Prepare(context.Context, types.SandboxID) (string, error) { return "", ErrUnsupported }
 
