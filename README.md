@@ -25,6 +25,39 @@ snapshots on a single host, through a CLI and HTTP API.
 | Storage and devices | Persistent writable root disks, data disks, virtio-fs directory sharing and VFIO PCI passthrough. |
 | Resources | cgroup controls, hugepages, KSM and memory ballooning. |
 
+## Benchmarks
+
+Archived native-guest measurements from October 29–30, 2026, on a **Xeon
+E3-1245 v2** (4 cores / 8 threads, 32 GiB RAM, SATA SSD RAID1, XFS), using
+Cloud Hypervisor v54 with mmap restore.
+
+Each VM has 2 vCPUs, 512 MiB RAM and a 10 GiB buffered writable disk. The guest
+uses the native Rust PID 1 profile; NIC tests use TAP/eBPF. Clone tests use
+`machine_id_sync: false`.
+
+Latency runs from CLI invocation to the first successful guest `/bin/true`.
+All values are in milliseconds; concurrent rows report per-request latency.
+
+| Operation | NICs | p50 | p95 | Samples |
+| --- | ---: | ---: | ---: | ---: |
+| Cold boot | 0 | 239.4 | 260.6 | 30 |
+| Cold boot | 1 | 253.5 | 280.6 | 30 |
+| Golden snapshot clone | 0 | 64.1–66.4 | 69.6–70.4 | 2 × 24 |
+| Golden snapshot clone | 1 | 61.9–65.2 | 67.8–70.5 | 2 × 24 |
+| In-place restore | 0 | 58.8 | 68.2 | 30 |
+| In-place restore | 1 | 60.5 | 66.5 | 30 |
+| 16 concurrent golden clones | 0 | 260.5–268.1 | 311.8–319.8 | 2 × 96 |
+| 16 concurrent golden clones | 1 | 399.0–415.6 | 485.9–1105.9 | 2 × 96 |
+
+Cold boot and restore results are from October 29; TAP-pool clone results are
+from October 30. Ranges show the separate percentiles from two runs, not pooled
+percentiles. Each concurrent run contains six batches of 16 requests; the second
+run retained a roughly 1.1-second NIC tail.
+
+Images and golden snapshots were prepared beforehand. Host page cache was kept
+warm; DNS/Internet readiness is outside the timing endpoint. No VM warm pool was
+used. These measurements describe the stated builds and configuration.
+
 ## Architecture
 
 CLI commands submit operations to a resident `kumabox daemon` over a local Unix
