@@ -27,6 +27,8 @@ KumaBox 基于 KVM 和 Cloud Hypervisor，在独立的 microVM 中运行 Agent �
 
 ## 性能基准
 
+### 运行时生命周期
+
 以下为 2026 年 10 月 29–30 日归档的原生 guest 实测。宿主机为 **Xeon E3-1245 v2**，
 4 核 8 线程、32 GiB 内存、SATA SSD RAID1、XFS，使用支持 mmap 恢复的 Cloud Hypervisor v54。
 
@@ -52,6 +54,25 @@ KumaBox 基于 KVM 和 Cloud Hypervisor，在独立的 microVM 中运行 Agent �
 
 镜像和 golden 快照均提前准备，保留宿主机 page cache；DNS 和公网就绪不在计时终点内。
 本组未使用 VM 预热池，结果对应上述构建和配置。
+
+### 预热池领取（KumaBoxd）
+
+2026 年 11 月 1 日，在同一台 Xeon 上测试 [KumaBoxd](https://github.com/kgpp34/KumaBoxd)。
+池中有 16 台已就绪 VM，每台配置 2 vCPU、512 MiB 内存、10 GiB 可写盘和一张 eBPF 网卡。
+
+| 持久化模式 | 领取负载 | p50（毫秒） | p95（毫秒） | 样本数 |
+| --- | --- | ---: | ---: | ---: |
+| `sync`（默认） | 串行 | 0.891 | 1.745 | 480 |
+| `sync`（默认） | 16 路并发 | 3.609 | 6.484 | 480 |
+| `buffered` | 串行 | 0.230 | 0.543 | 480 |
+| `buffered` | 16 路并发 | 1.714 | 3.526 | 480 |
+
+每行合并三轮交错实验的请求样本，每轮为 10 批 × 16 次领取。
+计时包含请求编码、loopback HTTP/1.1 往返及响应解码，不包含 VM 准备、补池或后续 guest 命令。
+领取计时结束后，再对 VM 执行 `/bin/true` 验证可用性。
+
+`sync` 等待 bbolt 同步提交后应答。`buffered` 在日志追加到操作系统缓存后应答，后台执行
+checkpoint；宿主机故障可能丢失近期已应答的变更。
 
 ## 架构
 

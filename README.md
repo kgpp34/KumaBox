@@ -27,6 +27,8 @@ snapshots on a single host, through a CLI and HTTP API.
 
 ## Benchmarks
 
+### Runtime lifecycle
+
 Archived native-guest measurements from October 29–30, 2026, on a **Xeon
 E3-1245 v2** (4 cores / 8 threads, 32 GiB RAM, SATA SSD RAID1, XFS), using
 Cloud Hypervisor v54 with mmap restore.
@@ -57,6 +59,28 @@ run retained a roughly 1.1-second NIC tail.
 Images and golden snapshots were prepared beforehand. Host page cache was kept
 warm; DNS/Internet readiness is outside the timing endpoint. No VM warm pool was
 used. These measurements describe the stated builds and configuration.
+
+### Warm-pool claims (KumaBoxd)
+
+On November 1, 2026, [KumaBoxd](https://github.com/kgpp34/KumaBoxd) was measured
+on the same Xeon host, with 16 ready VMs, each with 2 vCPUs, 512 MiB RAM, a
+10 GiB writable disk and one eBPF NIC.
+
+| Durability | Claim load | p50 (ms) | p95 (ms) | Samples |
+| --- | --- | ---: | ---: | ---: |
+| `sync` (default) | Serial | 0.891 | 1.745 | 480 |
+| `sync` (default) | 16 concurrent | 3.609 | 6.484 | 480 |
+| `buffered` | Serial | 0.230 | 0.543 | 480 |
+| `buffered` | 16 concurrent | 1.714 | 3.526 | 480 |
+
+Each row pools requests from three interleaved rounds of 10 batches × 16 claims.
+Timing includes request encoding, loopback HTTP/1.1 and response decoding.
+VM preparation, refill and subsequent guest commands are outside this endpoint;
+claimed VMs were checked with `/bin/true` after claim timing stopped.
+
+`sync` acknowledges a synchronous bbolt commit. `buffered` acknowledges a journal
+append to the OS cache and checkpoints asynchronously; host failure can lose
+recently acknowledged changes.
 
 ## Architecture
 
