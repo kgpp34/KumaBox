@@ -2,7 +2,6 @@
   <img src="assets/logo.png" alt="KumaBox logo" width="144">
 </p>
 
-<h1 align="center">KumaBox</h1>
 <p align="center">A Linux microVM runtime for AI agents.</p>
 <p align="center"><b>English</b> · <a href="README.zh-CN.md">简体中文</a></p>
 <p align="center">
