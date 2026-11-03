@@ -53,8 +53,7 @@ All values are in milliseconds; concurrent rows report per-request latency.
 
 Cold boot and restore results are from October 29; TAP-pool clone results are
 from October 30. Ranges show the separate percentiles from two runs, not pooled
-percentiles. Each concurrent run contains six batches of 16 requests; the second
-run retained a roughly 1.1-second NIC tail.
+percentiles. Each concurrent run contains six batches of 16 requests.
 
 Images and golden snapshots were prepared beforehand. Host page cache was kept
 warm; DNS/Internet readiness is outside the timing endpoint. No VM warm pool was
