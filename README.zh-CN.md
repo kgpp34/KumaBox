@@ -1,533 +1,75 @@
 <p align="center">
-  <img src="assets/logo.png" alt="KumaBox logo" width="180">
+  <img src="assets/logo.png" alt="KumaBox logo" width="144">
 </p>
 
-<p align="center">
-  <a href="README.md">English</a> · <b>简体中文</b>
-</p>
-
+<h1 align="center">KumaBox</h1>
+<p align="center">面向 AI Agent 的 Linux microVM 运行时。</p>
+<p align="center"><a href="README.md">English</a> · <b>简体中文</b></p>
 <p align="center">
   <a href="https://github.com/kgpp34/KumaBox/actions/workflows/ci.yml"><img src="https://github.com/kgpp34/KumaBox/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/Go-1.24.4%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.24.4+">
-  <img src="https://img.shields.io/badge/platform-Linux%20amd64%20%7C%20arm64-FCC624?logo=linux&logoColor=black" alt="Linux amd64 | arm64">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
-  <a href="https://github.com/kgpp34/KumaBox/stargazers"><img src="https://img.shields.io/github/stars/kgpp34/KumaBox?style=flat-square&logo=github" alt="Stars"></a>
-  <a href="https://github.com/kgpp34/KumaBox/network/members"><img src="https://img.shields.io/github/forks/kgpp34/KumaBox?style=flat-square&logo=github" alt="Forks"></a>
 </p>
 
-<p align="center">
-  <a href="#快速开始">快速开始</a> ·
-  <a href="#架构">架构</a> ·
-  <a href="#与同类项目的对比">对比</a> ·
-  <a href="#路线图">路线图</a>
-</p>
+KumaBox 基于 KVM 和 Cloud Hypervisor，在独立的 microVM 中运行 Agent 工作负载。
+它通过 CLI 和 HTTP API 管理单机上的镜像、沙箱生命周期、guest 操作、网络、存储和快照。
 
-AI Agent 会写代码、装依赖、发起网络连接，还会读写没人审过的文件。把这些放在共享内核上跑，
-本质上是在赌运气。KumaBox 为每个任务分配一台独立的 **KVM microVM**：独立的内核、独立的磁盘、
-独立的网络命名空间。从 OCI 镜像到一个可用的沙箱，只需要一条命令。
+## 核心能力
 
-> [!NOTE]
-> v0.1.0 是单机运行时的首个正式发布版本。项目仍处于 0.x 阶段，升级前请阅读
-> Release Notes 和快照兼容性说明。E2B 协议适配仍为实验性能力。
-
-## KumaBox 是什么
-
-<p align="center"><img src="assets/readme/product.svg" alt="谁来驱动 KumaBox、如何驱动、每个沙箱能得到什么" width="100%"></p>
-
-KumaBox 是一个**面向 AI Agent 和不可信工作负载的 microVM 沙箱运行时**。镜像、虚拟机生命周期、
-网络、快照、设备和 guest 内命令执行，都由它一站式管理。你面对的是"沙箱"，而不是裸的 VMM。
-
-任何能执行命令的程序现在都能驱动它，例如：
-编程 Agent、Agent 框架里的工具调用、一次拉起成千上万次尝试的 RL / 评测框架、CI 任务，
-或者坐在终端前的你。
-
-每个沙箱都是一台真正的机器：
-
-- **硬件级隔离。** 每个沙箱运行在 KVM 之上的独立 guest 内核里，每台 VM 对应一个独立的 Cloud Hypervisor 进程。
-- **OCI 进，microVM 出。** 按 digest 固定的 OCI 镜像被转换成共享、只读的 EROFS 层，再为每台 VM 叠加一块私有的写时复制磁盘。
-- **真实的网络。** 支持 CNI 独立网络命名空间、直接连接 Linux bridge，以及实验性的独立 TAP/eBPF 网络。支持多网卡和在线调整网卡。
-- **无需 SSH 即可执行命令。** `exec` 走 vsock 通道，支持流式 stdout / stderr、stdin、环境变量、工作目录和用户选择，并返回真实的退出码。交互式终端通过 `console` 使用。
-- **快照是一等公民。** 支持运行态快照、导出、导入、原地恢复、休眠，以及以全新身份克隆。
-- **按需使用真实设备。** 运行中的 Cloud Hypervisor 沙箱可热插拔外部数据盘、virtio-fs 共享目录和 VFIO PCI 设备。
-- **为脚本化而生。** 生命周期命令提供 `--json` 输出，`inspect` 返回带缩进的 JSON。
+| 范围 | 已支持的操作 |
+| --- | --- |
+| 镜像 | 从仓库拉取，导入 Docker 归档及 OCI 目录或归档，校验、查看和删除镜像。 |
+| 沙箱 | 创建、运行、启动、停止和删除，配置 CPU、内存和磁盘，查询状态与日志。 |
+| Guest 操作 | 执行命令，管理后台进程，传输文件，连接控制台，转发端口。 |
+| 快照 | 保存、恢复、克隆和休眠，导出和导入快照，在兼容主机之间传输。 |
+| 网络 | 固定 guest 身份的 TAP/eBPF 网络与 TAP 复用，以及 CNI 和 Linux bridge 后端。 |
+| 存储与设备 | 持久化可写根盘、数据盘、virtio-fs 目录共享和 VFIO PCI 设备直通。 |
+| 资源控制 | cgroup、大页、KSM 和内存 balloon。 |
 
 ## 架构
 
-<p align="center"><img src="assets/readme/architecture.svg" alt="KumaBox 架构" width="100%"></p>
+CLI 通过本地 Unix socket 将操作提交给常驻的 `kumabox daemon`。常驻进程持有元数据存储，
+协调资源操作并监督 VMM 进程；`kumabox serve` 提供带认证的 HTTP API。
+元数据保存在本机 SQLite 中。
 
-**常驻的节点运行时。** CLI 通过 Unix socket 把操作提交给 `kumabox daemon`。
-常驻进程统一持有数据库和运行时资源，并行执行不同沙箱的操作，监督 VMM 退出并恢复中断的状态。
-`kumabox serve` 通过这个节点服务提供对外的 HTTP API。
-每台运行中的 VM 由各自独立的 Cloud Hypervisor 进程承载，一个沙箱出问题不会拖垮其他沙箱。
+每个沙箱拥有独立的 guest 内核和 VMM 进程。只读 EROFS 镜像层可以共享，每个沙箱使用私有的
+ext4 可写磁盘。Rust guest init 负责组装根文件系统并监督 Go agent，agent 通过 vsock
+处理 guest 内的命令执行和文件操作。
 
-**持久化生命周期。** SQLite 保存沙箱与快照状态。多步骤操作先在私有位置准备产物，
-完成后再发布；清理失败时保留资源归属，以便后续重试。
+[KumaBoxd](https://github.com/kgpp34/KumaBoxd) 基于此运行时管理节点本地模板、预热池和沙箱租约。
 
-| 路径 | 用途 |
-| --- | --- |
-| `/var/lib/kumabox` | 镜像、VM 记录、快照、网络租约和内容存储 |
-| `/run/kumabox` | PID 文件、API socket、操作锁 |
-| `/var/log/kumabox` | VM 与运行时日志 |
+## 开始使用
 
-## 一次预热，无限分叉
+运行沙箱需要 Linux、KVM（`/dev/kvm`）和 root 权限。
+从 [Releases](https://github.com/kgpp34/KumaBox/releases) 下载主机工具与配套 guest 镜像。
+Guest 镜像须包含兼容的启动制品和 KumaBox agent。
 
-<p align="center"><img src="assets/readme/lifecycle.svg" alt="沙箱生命周期：构建、运行、预热、快照、克隆" width="100%"></p>
-
-Agent 天生就会重试、分支和探索。准备环境的成本只需要付一次：启动、安装依赖、预热缓存。
-然后对内存和磁盘打一个**运行态快照**，每次尝试都从它 `clone` 出一台新沙箱。
-每个克隆都会获得自己的可写磁盘、网络身份和主机名。Cloud Hypervisor v53 可显式选择按需内存恢复；
-更新的兼容版本可以使用写时复制内存恢复。
-
-## 常驻服务
-
-运行时命令统一交给 `kumabox daemon` 执行，包括镜像、快照、文件、设备和
-`doctor`。默认 socket 为 `/run/kumabox/kumabox.sock`，权限 0600。
-服务未启动时 CLI 明确报错；`help` 和客户端 `version` 可离线使用。
-首次安装时可以直接运行独立的 `kumabox-check` 准备宿主机。
+从源码构建需要 Go 1.24.4 或更新版本：
 
 ```bash
-sudo kumabox --config /etc/kumabox/config.yaml daemon
-# 在另一个终端提交请求
-sudo kumabox --socket /run/kumabox/kumabox.sock ps --all
-```
-
-数据目录、CNI、DNS 和 VMM 参数由 daemon 的配置决定。
-客户端通过 `--socket` 或 `KUMABOX_CLIENT_SOCKET` 选择节点；`--run-dir` 可用于
-选择默认 socket 所在目录。`--root-dir`、`--log-dir`、CNI 和 DNS 参数只用于启动 daemon。
-镜像导入、外部磁盘和共享目录路径指向 daemon 所在主机，CLI 将相对路径转换为绝对路径。
-
-systemd 会等待运行时就绪通知后再完成启动，并通过 `KillMode=process` 和
-`RuntimeDirectoryPreserve=yes` 保留 VM 及其 socket。服务重启时重新接管并监督进程。
-如果变更请求中途断连，操作可能已经提交，应先 inspect 再决定是否重试。
-
-快照访问时间按 ID 合并，默认每 250ms 批量刷新。`snapshots.access_buffer_size`
-限制待刷新的不同快照数量，默认 4096；满载时同步刷新，不会静默丢弃访问记录。
-查询和 GC 都能看到尚未落盘的时间，刷新失败会保留重试，正常退出会在关闭数据库前刷新。
-异常退出可能丢失最后一批访问时间；沙箱状态、快照发布与删除仍同步持久化。
-在 daemon 配置中设置 `snapshots.access_flush_interval: 0s` 可切回同步更新。
-
-## 快速开始
-
-需要一台 amd64 或 arm64 的 Linux 主机，能访问 `/dev/kvm`，并具备 root 权限。
-
-Release 提供包含 `kumabox` 和 `kumabox-check` 的 Linux amd64 压缩包，以及
-与其版本对应的 Ubuntu guest 镜像。从 [GitHub Release](https://github.com/kgpp34/KumaBox/releases)
-下载压缩包和 `SHA256SUMS`，先运行 `sha256sum -c SHA256SUMS`，再解压并安装。
-请使用该 Release 指定的 guest 镜像版本；宿主机程序和 guest 镜像应来自同一版本。
-下面仍保留源码构建步骤。
-
-```bash
-# 1. 构建并安装
-git clone https://github.com/kgpp34/KumaBox.git && cd KumaBox
 make build
-sudo install -m 0755 bin/kumabox /usr/local/bin/kumabox
-sudo install -m 0755 bin/kumabox-check /usr/local/bin/kumabox-check
-
-# 2. 一次性准备主机：Cloud Hypervisor、固件、CNI 插件、EROFS 工具
-sudo kumabox-check --upgrade
-sudo install -m 0644 packaging/systemd/kumabox.service /etc/systemd/system/kumabox.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now kumabox
-sudo kumabox doctor
-
-# 3. 拉取已发布的 guest 镜像
-sudo kumabox image pull ghcr.io/kgpp34/kumabox/ubuntu:24.04
-
-# 4. 启动一个沙箱并与之交互
-sudo kumabox run ghcr.io/kgpp34/kumabox/ubuntu:24.04 \
-  --name my-vm --cpus 2 --memory 1GiB --storage 10GiB
-sudo kumabox exec my-vm -- uname -a
-
-# 5. 一次预热，无限分叉
-sudo kumabox snapshot save my-vm --name base
-sudo kumabox clone base --name fresh
-sudo kumabox net fresh --configure
-sudo kumabox exec fresh -- hostname
-
-# 6. 清理
-sudo kumabox stop fresh
-sudo kumabox stop my-vm
-sudo kumabox rm fresh
-sudo kumabox rm my-vm
-sudo kumabox snapshot rm base
-sudo kumabox image remove ghcr.io/kgpp34/kumabox/ubuntu:24.04
+sudo ./bin/kumabox-check --upgrade
+sudo ./bin/kumabox daemon
 ```
 
-`stop` 默认请求 ACPI 正常关机，最多等待 30 秒。`stop my-vm --timeout 10`
-指定等待秒数，`stop my-vm --force` 跳过正常关机窗口。`--timeout 0` 使用
-`sandbox.stop_timeout` 配置，也可以通过 `KUMABOX_SANDBOX_STOP_TIMEOUT=10s` 设置。
-guest 不处理 ACPI 或等待超时后，运行时会对确认身份的 VMM 发 TERM，再按
-`vmm.cloud_hypervisor.stop_grace` 升级到 KILL。正常关机需要 guest 的电源事件
-处理服务已就绪，agent 可执行命令并不代表该服务已经就绪。取消 stop 会保留可重试状态，
-不会因取消而继续升级 KILL；需要时可用 `stop --force` 重试。
-可写根盘和托管数据盘在 stop/start 之间保留，不需要制作快照；强停仍可能丢失 guest
-尚未写入磁盘的数据。恢复、休眠、HTTP 删除及 E2B kill/过期清理显式跳过正常关机窗口，
-不会因此增加 30 秒等待。
-
-`clone` 和 `restore` 都支持 `--restore-mode auto|copy|ondemand|mmap`。
-默认在已安装的 VMM 和快照内存类型都支持时使用 mmap，否则使用完整复制。
-ondemand 按需加载需要显式选择，避免首次访问内存时在运行期配额下出现长尾。
-显式选择延迟加载或 mmap 需要兼容的 VMM。大页或共享内存请求 mmap 时降级为完整复制，
-ondemand 则要求普通私有内存；恢复前会先检查，
-避免因模式不支持而停止原沙箱。恢复时的内存加载暂不受 guest CPU 配额限制，
-在恢复 guest 执行前再施加正常配额。
-
-`--from-dir` 的源目录必须保持不可变，使用期间不要覆盖里面的文件。
-同一文件系统内通过硬链接共享不可变内存文件，可写磁盘和配置仍然独立；
-跨文件系统时会复制内存文件。
-
-`clone` 在虚拟机恢复运行后返回。随后执行 `net SANDBOX --configure`，把新主机名和
-已分配的网卡配置应用到 guest；也可以使用 `clone --wait-network`，在返回前完成此步骤。
-默认路径会等待 guest 熵和 machine ID 更新完成。
-daemon 配置 `sandbox.machine_id_sync` 默认为 `true`，返回前会显式同步 machine ID 文件。
-设为 `false` 时仍等待初始化完成，但身份文件由 guest 正常回写；在回写前崩溃或强停，
-可能丢失这次身份更新。旧版 guest agent 会忽略该选项，继续使用同步落盘策略。
-新版 initramfs 只在首次启动清除镜像自带身份，后续 stop/start 保留私有 machine ID；
-已有镜像需要重新构建才能使用这项行为。
-
-`create`、`run`、`clone` 支持 `--cow-io auto|direct|buffered`，auto 保留原有 direct I/O。
-克隆默认继承快照的模式，也可以显式覆盖；选择会在 stop/start 和后续快照中保留。
-buffered 使用宿主机页缓存，仍保留 guest flush 和 ext4 写入屏障，可能减少 XFS reflink
-写入竞争，具体收益需要按实际负载验证。
-
-主机端和 guest 端的产物需要配套使用。对可复现性有要求时，请固定带版本号的 guest 标签
-（例如 `24.04-v0.1.0`）或 OCI digest。单独执行 `sudo kumabox-check` 会做一次只读的主机检查。
-
-### CPU 调度与 guest 内存
-
-`create`、`run` 可以单独指定宿主机 CPU 策略，`--cpus` 仍表示 guest 看见的虚拟 CPU 数量：
+保持 daemon 运行，在另一个终端导入兼容的 guest 镜像归档并创建沙箱：
 
 ```bash
-sudo kumabox create ghcr.io/kgpp34/kumabox/ubuntu:24.04 --name limited \
-  --cpus 2 --cpu-weight 100 --cpu-quota-us 150000 --cpu-period-us 100000 \
-  --cpu-burst-us -1 --cpuset-cpus 2-3
+sudo ./bin/kumabox image import demo-image /path/to/guest-image.tar
+sudo ./bin/kumabox run demo-image --name demo --cpus 2 --memory 512MiB --nics 0
+sudo ./bin/kumabox exec demo -- uname -a
+sudo ./bin/kumabox snapshot save demo --name golden
+sudo ./bin/kumabox clone golden --name demo-copy
 ```
 
-这个例子把进程限制在宿主机 CPU 2、3 上，每 100ms 可合计使用 150ms CPU 时间，不积攒突发额度。
-CPU 编号必须属于宿主机实际允许的集合；目前支持显式指定，不自动绑核。
-默认权重等于 vCPU 数量，周期为 100000us，配额等于 vCPU 数量乘周期，突发额度等于配额。
-这与之前没有突发额度的默认值不同；需要严格限额时使用 `--cpu-burst-us -1`。
-旧内核缺少 burst 支持时，只有默认推导的突发额度允许降级，显式请求正值会报错（禁用 burst 不需要此内核功能）。
-`clone` 支持相同的 CPU 参数，未指定时重新计算默认值，不继承源机器的 CPU 编号。
-`restore` 保留目标沙箱的 CPU 策略：加载内存时保留权重和 CPU 位置限制，恢复 guest 执行前施加配额和突发限制。
+示例使用无网卡配置。通过 `kumabox --help` 和 `kumabox COMMAND --help` 查看命令参数。
+仓库提供用于服务部署的 [systemd unit](packaging/systemd/kumabox.service)；
+`make guest` 可通过 Docker 构建原生 guest 镜像。
 
-以下内存选项在创建时确定，快照和克隆会保留：
+## API 与 SDK
 
-| 参数 | 行为 |
-| --- | --- |
-| `--hugepages` | 从宿主机 hugetlb 大页池分配 RAM，需要管理员预留足够大页；不足时启动失败。快照内存使用完整复制恢复，显式请求 mmap 也会降级。 |
-| `--mergeable` | 将私有 guest RAM 标记为可供 KSM 合并。不能与大页、共享内存同时使用；宿主机 KSM 扫描器由管理员开启和调节，运行时不会自动修改。 |
-| `--no-balloon` | 不创建 balloon 设备。默认创建，初始目标回收配置内存的 25%，并开启内存不足时自动放气和空闲页上报。 |
-
-保存快照前，会先让仍在运行的 guest 完成 balloon 回收。连续 2 秒没有进展，或总共超过 1 分钟，
-会记录警告并按当前内存继续保存，不会无限等待。这些选项在 CPU 开销、内存密度、恢复速度之间做取舍，
-并非打开后一定更快。HTTP 创建接口也支持 `cpu_policy`、`hugepages`、`mergeable`、`no_balloon` 字段。
-
-### 通过 virtio-fs 共享宿主机目录
-
-创建沙箱时必须指定 `--shared-memory`，运行后无法再开启此设置。Ubuntu 24.04 可安装
-`virtiofsd`，让它通过 Unix socket 提供共享目录：
-
-```bash
-sudo apt-get install virtiofsd
-sudo install -d /tmp/kumabox-share
-sudo /usr/libexec/virtiofsd --socket-path=/tmp/kumabox-share.sock \
-  --shared-dir=/tmp/kumabox-share --cache=never &
-
-sudo kumabox run ghcr.io/kgpp34/kumabox/ubuntu:24.04 \
-  --name share-vm --shared-memory
-sudo kumabox fs attach share-vm --socket /tmp/kumabox-share.sock --tag data
-sudo kumabox fs list share-vm --json
-sudo kumabox exec share-vm -- sh -c \
-  'mkdir -p /mnt/data && mount -t virtiofs data /mnt/data && echo hello >/mnt/data/hello'
-sudo cat /tmp/kumabox-share/hello
-
-sudo kumabox exec share-vm -- umount /mnt/data
-sudo kumabox fs detach share-vm --tag data
-sudo kumabox stop share-vm
-sudo kumabox rm share-vm
-```
-
-`fs list` 和 `inspect` 展示当前 VMM 的挂载信息。共享设备只在这次 VM 运行期间有效；
-停止或重启后，需要重新启动 `virtiofsd` 并再次 attach。执行 `snapshot save` 或
-`hibernate` 前，要先在 guest 内卸载并 detach。
-
-### 操作 guest 文件
-
-以下命令需要运行中的沙箱和更新后的 guest agent；只更新宿主机二进制不会更新已有
-guest。文件操作走 vsock，无网卡沙箱也可以使用。`fs attach/detach/list` 仍用于管理
-virtio-fs 共享，`file` 管理 guest 文件内容。
-
-```bash
-sudo kumabox file mkdir my-vm /tmp/workspace --parents
-printf 'hello\n' > /tmp/hello.txt
-sudo kumabox file write my-vm /tmp/workspace/hello.txt /tmp/hello.txt --mode 0644
-sudo kumabox file ls my-vm /tmp/workspace --json
-sudo kumabox file stat my-vm /tmp/workspace/hello.txt
-sudo kumabox file read my-vm /tmp/workspace/hello.txt
-printf 'updated\n' | sudo kumabox file write my-vm /tmp/workspace/result.txt
-sudo kumabox file mv my-vm /tmp/workspace/result.txt /tmp/workspace/final.txt
-sudo kumabox file rm my-vm /tmp/workspace --recursive
-```
-
-路径必须是规范的 guest 绝对路径。读取只接受普通文件，可以跟随指向普通文件的符号链接；
-`stat` 返回链接本身的信息。写入拒绝符号链接目标，先写同目录临时文件，传输完整后再原子替换，
-传输未完成时中断会保留原文件。默认保留已有文件的权限，新文件使用 0600，也可用 `--mode` 指定权限；
-新目录使用 0700。替换会生成新 inode，不保留旧文件的属主、扩展属性和硬链接关系，
-也不保证 guest 崩溃后的 fsync 持久性。
-
-文件分块传输，目录分批返回，不在内存中缓存全部内容。目录按文件系统顺序输出，失败时可能
-已经输出部分内容，应检查退出码。上传完成响应丢失时，文件可能已经提交，重试前应检查目标。
-递归删除需要显式传入 `--recursive`，不跟随最终符号链接，禁止以根目录为删除目标。
-操作使用 guest agent 的权限，也能访问共享进 guest 的挂载点。本批未修改 SDK 和 HTTP API。
-
-在 Linux/KVM 主机上，可针对已导入、使用 systemd 且包含最新 agent 的 Ubuntu 镜像运行端到端测试：
-
-```bash
-sudo python3 tests/e2e/guest_operations.py \
-  --image my-updated-image --commit "$(git rev-parse --short HEAD)"
-```
-
-脚本会创建并清理自己的无网卡、单网卡测试沙箱，检查文件传输、上传取消、权限、目录分批返回、
-符号链接、后台进程及 guest `sync` 后强制停止并重启的文件保留。`--commit` 应与镜像内 agent 的构建版本对应。
-可用 `--root-dir`、`--run-dir`、`--log-dir` 隔离测试状态，此时须先将镜像导入对应的 root。
-报告默认保存到 `/tmp/kumabox-guest-e2e.json`。
-
-### 在 Agent 中调用
-
-`exec` 直接输出 guest 命令的 stdout 和 stderr，并保留 guest 命令的退出码。
-
-```python
-import subprocess
-
-def run_in_sandbox(vm: str, script: str) -> subprocess.CompletedProcess[str]:
-    proc = subprocess.run(
-        ["sudo", "kumabox", "exec", vm, "--", "sh", "-c", script],
-        capture_output=True, text=True,
-    )
-    return proc
-
-result = run_in_sandbox("fresh", "hostname")
-print(result.returncode, result.stdout, result.stderr)
-```
-
-从同一个预热好的快照并行分叉出多个尝试：
-
-```bash
-for i in $(seq 1 8); do
-  sudo kumabox clone base --name try-$i &
-done
-wait
-sudo kumabox ps
-```
-
-源码构建统一使用以下启动链：
-
-```text
-boot：专用内核 + 静态原生 initramfs
-  -> base：Ubuntu 用户空间 + boot 产物 + 配套 agent
-    -> rt：将同一份文件系统展平成一个 OCI 层
-```
-
-base 不安装发行版内核或 initramfs-tools。预装 Python、Node、浏览器等工具时，
-扩展 [`oci-images/base/24.04/Dockerfile`](oci-images/base/24.04/Dockerfile)，
-再通过 [`oci-images/rt/24.04/Dockerfile`](oci-images/rt/24.04/Dockerfile) 展平。
-原生 init 按 virtio 序列号定位磁盘，驱动内建，initramfs 不压缩；这个 guest 配置不支持
-额外加载内核模块。
-
-```bash
-sh scripts/build-guest.sh
-docker save kumabox/rt:24.04 -o /tmp/kumabox-ubuntu-fast.tar
-sudo kumabox image import ubuntu-fast /tmp/kumabox-ubuntu-fast.tar --format docker
-```
-
-脚本按 boot、base、rt 的顺序构建，并复用 BuildKit 缓存。
-通过 `--skip-boot --boot-image <固定镜像>` 可以复用既有启动产物；此时不会重新构建
-原生 init 或内核。历史 Release 镜像的内容和性能不会因此改变。
-
-agent 就绪表示命令监听已可用，tmpfiles 等系统启动任务独立运行。
-启动期间写入 `/tmp` 的文件可能被系统的正常清理删除；早期写入和需要保留的工作文件
-应放在可写根文件系统的非临时目录中。
-
-## 实验性的 TAP/eBPF 网络
-
-从当前源码构建、安装后，先配置安装实例共享的 IPv4 转发和 NAT 规则：
-
-```bash
-sudo kumabox-ebpf setup
-sudo kumabox run ubuntu-fast --name fixed-net --network-backend ebpf
-sudo kumabox snapshot save fixed-net --name fixed-base
-sudo kumabox clone fixed-base --name fixed-clone --wait-network
-sudo kumabox inspect fixed-clone
-```
-
-guest 的每张网卡保留固定的模板内 IP/MAC，宿主机给每个 TAP 分配不同的
-`host_address`，由 TC eBPF 做双向地址转换，无共享 bridge，也不需要 DHCP。
-网卡布局一致的快照克隆会保留 virtio 网卡身份。配套的最新 guest agent 在网络配置
-和实际地址、路由均未变化时跳过 networkd 重配，同时更新主机名。
-该模式需要从本次源码重建 guest 镜像；旧发布镜像不包含对应的固定地址引导与 DNS 配置。
-
-第一版支持 IPv4，出网 NAT 使用 Linux 路由和 conntrack，防火墙规则按安装实例共享，
-不会随每台沙箱增加。完整 eBPF SNAT 会话表、租户网络策略、TAP 池和 IPv6 尚未实现。
-CNI 和 bridge 模式继续可用。宿主机需要 bpffs 和 TC eBPF 支持；普通构建已嵌入 BPF
-字节码，不需要现场安装 Clang。开发时可在安装 Clang/libbpf 头文件的 Linux 上运行
-`go generate ./internal/network/tap` 重新生成字节码。
-
-默认宿主地址池为 `10.89.0.0/16`，应选择没有被现有网络使用的私有网段，可通过
-`KUMABOX_NETWORK_EBPF_SUBNET` 修改。修改地址池或安装 scope 后，使用对应的
-`kumabox-ebpf setup SUBNET PREFIX`，其中 PREFIX 为 `kt` 加上
-`KUMABOX_NETWORK_SCOPE`。宿主重启后需要通过防火墙持久化机制或启动服务重新应用规则。
-释放的宿主地址会保留 90 秒冷却时间，避免旧 TCP 状态影响另一台 VM。新沙箱立即使用其他
-空闲地址，不会等待 90 秒；规划地址池时应同时考虑活跃端点和近期回收的地址。
-
-## 访问沙箱里的服务
-
-`forward` 通过 vsock 将宿主机回环 TCP 端口转发到沙箱内部的 `127.0.0.1`。
-0 网卡沙箱也可以使用。以安装了 Python 的 guest 为例：
-
-```bash
-sudo kumabox exec --detach my-vm -- python3 -m http.server 8000 --bind 127.0.0.1
-sudo kumabox forward my-vm 8080:8000
-# 在宿主机另一个终端执行：
-curl http://127.0.0.1:8080/
-```
-
-支持 HTTP、WebSocket 和其他 TCP 协议，保留双向半关闭语义。单次 TCP 写入阻塞超过
-30 秒会断开连接；没有数据传输的空闲连接不受此超时限制。Ctrl-C 会关闭本地监听及
-活动连接，guest 服务继续运行。沙箱停止会断开活动连接，本地监听保留，可在同一沙箱重启后
-接受新连接；同名沙箱删除重建后，不会接管原来的转发。
-
-`0:8000 --json` 会分配空闲的本地端口并输出监听地址；`--address ::1` 可监听 IPv6
-回环地址。仅允许回环 IP，每条命令最多同时转发 64 个连接。首次输出表示本地监听已建立，
-不代表 guest 服务已就绪；单个连接失败会写入 stderr。需要包含新版 agent 的镜像，
-只替换宿主机二进制不会升级已有 guest。
-
-包含 Python 3 和对应 agent 的镜像可在 Linux/KVM 测试机运行完整转发测试：
-
-```bash
-sudo python3 tests/e2e/port_forward.py --image my-updated-image --commit AGENT_BUILD_ID
-```
-
-## 远程 API 与 SDK
-
-`kumabox serve` 将现有服务开放为带令牌认证的 HTTP API，默认只监听
-`127.0.0.1:8765`。远程访问请通过 SSH 隧道或 TLS 反向代理：
-
-```bash
-sudo sh -c 'umask 077; openssl rand -hex 32 > /etc/kumabox-api.token'
-sudo kumabox serve --token-file /etc/kumabox-api.token
-# 客户端机器：ssh -L 8765:127.0.0.1:8765 user@kumabox-host
-```
-
-`sdk/python` 和 `sdk/typescript` 提供 KumaBox SDK，支持创建、连接、执行命令、
-生命周期操作和快照。使用前需先在宿主机导入或拉取镜像。
-guest 命令非零退出时会抛出包含输出的 `CommandExitError`；Python 可传
-`check=False`、TypeScript 可传 `{ check: false }` 直接读取退出码。
-Python 包可用 `python -m pip install ./sdk/python` 安装；TypeScript 包先执行
-`npm ci --prefix sdk/typescript && npm run build --prefix sdk/typescript`，
-再从 `./sdk/typescript` 安装到应用中。
-
-```python
-from kumabox import Client
-
-client = Client(token="YOUR_API_TOKEN")
-sandbox = client.create("my-image")
-print(sandbox.commands.run("uname -a").stdout)
-sandbox.stop()
-sandbox.kill()
-```
-
-另外提供**实验性的 E2B 协议适配**，支持创建、连接、查询、列表、删除、快照、
-前台命令、普通文件读写、metadata、环境变量默认值、TTL 及暂停恢复。
-将 `E2B_API_URL` 与 `E2B_SANDBOX_URL` 指向同一个 API 地址，`E2B_API_KEY`
-设为服务端令牌。`templateID` 对应本地镜像或已有快照；默认 `Sandbox.create()`
-需要先把镜像导入为 `base`。这仍然**不是完整 E2B SDK 兼容**，本地 CLI 的进程管理
-和端口转发尚未接入该适配层。已验证的协议版本、具体支持范围和限制见
-[E2B 适配说明](api/e2b/README.md)。
-
-## 常用命令
-
-| 领域 | 命令 |
-| --- | --- |
-| VM 生命周期 | `run`、`create`、`start`、`stop`、`rm`、`ps`、`inspect` |
-| Guest 访问 | `exec`、`console`、`logs`、`forward`、`reseed`、`process ls/kill/logs/attach` |
-| Guest 文件 | `file ls/stat/read/write/mkdir/rm/mv` |
-| 镜像 | `image pull`、`image import`、`image inspect`、`image ls`、`image verify`、`image remove` |
-| 快照 | `snapshot save`、`snapshot ls`、`snapshot inspect`、`snapshot export`、`snapshot import`、`snapshot rm`、`restore`、`clone`、`hibernate` |
-| 网络与设备 | `net`、`disk attach/detach`、`fs attach/detach/list`、`device attach/detach` |
-| 运维 | `status`、`gc`、`daemon`、`doctor`、`version` |
-
-完整参数以 `kumabox <command> --help` 为准。
-
-## 与同类项目的对比
-
-<p align="center"><img src="assets/readme/comparison.svg" alt="KumaBox、CubeSandbox 与 E2B 的设计选择" width="100%"></p>
-
-[E2B](https://github.com/e2b-dev/infra) 和
-[CubeSandbox](https://github.com/TencentCloud/CubeSandbox) 都是非常优秀的项目。
-它们和 KumaBox 目标一致：为每个 Agent 任务提供独立的内核。KumaBox 在以下几个方面走了不同的路线：
-
-- **VM 原生，而不是"套了 VM 的容器"。** 沙箱是真正的虚拟机，完整继承 Cloud Hypervisor 的设备模型：热插拔磁盘、virtio-fs 共享目录、在线调整网卡，以及面向 GPU 等加速卡的 VFIO PCI 直通。
-- **快照可以带走。** 运行态快照是一个可校验、可移植的包：导出、拷贝到另一台主机、导入，再从它克隆。
-- **分层镜像，磁盘共享。** OCI 层被转换成只读 EROFS 镜像，由同一主机上的所有 VM 共享。每台 VM 只为自己的写时复制数据付出存储成本。
-- **安装极简。** 只需一个 Go 二进制，加上 Cloud Hypervisor 和 CNI 插件。元数据存放在内嵌的 SQLite 中，不需要额外运维数据库。
-- **正确性可审计。** 明确的状态迁移、操作锁和分阶段发布，覆盖生命周期、网络、快照与克隆等路径。
-- **MIT 许可**，同时支持 amd64 和 arm64。
-
-相关项目：[Kata Containers](https://katacontainers.io/)、
-[gVisor](https://gvisor.dev/)、
-[Firecracker](https://firecracker-microvm.github.io/)、
-[Cloud Hypervisor](https://www.cloudhypervisor.org/)、
-[Cocoon](https://github.com/cocoonstack/cocoon)。
-
-## 愿景
-
-每一次 Agent 行动都应该拥有一台用完即弃的计算机：像 git 分支一样便宜地分叉，像独立机器一样安全。
-KumaBox 自底向上构建这一目标。先在每台主机上做好一个正确、崩溃一致的运行时，
-再基于常驻节点服务，往上构建多节点控制面。
-这样，同一个沙箱在单台服务器上和整个集群中的行为是一致的。
-
-## 路线图
-
-> 规划方向，欢迎在 Issue 中参与讨论。
-
-- [x] OCI 转 EROFS 镜像、CNI 网络、基于 vsock 的 guest 命令执行
-- [x] 运行态快照、克隆、恢复、休眠、导出与导入
-- [x] 热插拔磁盘、virtio-fs 和 VFIO PCI 设备
-- [x] 带认证的 HTTP API 与运行状态回收
-- [ ] 多节点控制面与调度
-- [x] 仓库内 Python、TypeScript SDK
-- [ ] 独立版本的 Python、TypeScript SDK 包发布
-- [x] 实验性 E2B 协议适配，明确已支持的兼容范围
-- [ ] 补齐其余 E2B 协议兼容能力
-- [ ] MCP server，让 Agent 以工具的形式创建和操作沙箱
-- [ ] 预热池，以及公开的克隆延迟基准测试
-- [ ] 按沙箱粒度的出网策略
-
-## 构建与测试
-
-```bash
-git clone https://github.com/kgpp34/KumaBox.git && cd KumaBox
-make build
-make test
-go vet ./...
-./bin/kumabox version --json
-```
-
-VM 启动、guest 网络以及快照克隆的端到端验证需要 Linux/KVM 主机。
-
-README 中的配图由代码生成。修改 `assets/readme/src/` 下的脚本后，
-运行 `python3 assets/readme/src/build.py` 即可重新生成。
-
-## 安全模型
-
-- KumaBox 在工作负载外增加了一层虚拟机边界，但 VMM、KVM、guest 内核、固件、镜像和 agent 仍然属于可信计算基。
-- 主机初始化会修改特权网络和系统配置。运行 `--fix` 或 `--upgrade` 之前，请先审阅 `scripts/kumabox-check.sh`。
-- VFIO 会把物理设备直接交给 guest，需要正确的 IOMMU 分组；使用不当可能影响主机的稳定性和隔离性。
-- 快照的兼容性取决于主机架构、Cloud Hypervisor 版本、VM 配置和快照类型。
-
-可复现的 Bug 和安全问题请通过 Issue 反馈。请不要在公开报告中附带密钥、私有镜像或生产环境快照。
+[Python 和 TypeScript SDK](sdk/README.md) 使用版本化 HTTP API。
+[E2B 适配器](internal/api/e2b/README.md) 为实验性能力，仅实现部分协议。
 
 ## 许可证
 
-KumaBox 基于 [MIT 许可证](LICENSE) 开源。
+[MIT](LICENSE)
