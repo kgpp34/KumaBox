@@ -426,11 +426,25 @@ func (s *SandboxService) StopWithOptions(ctx context.Context, reference string, 
 			})
 		}
 	}()
+	result, returnErr = s.stopLocked(ctx, record, reference, options)
+	committed = result.Generation != record.Generation
+	return result, returnErr
+}
+
+// stopLocked stops the resolved immutable identity under its existing operation
+// lock. Callers retain that lock through any subsequent resource cleanup.
+func (s *SandboxService) stopLocked(
+	ctx context.Context,
+	record types.Sandbox,
+	reference string,
+	options types.StopOptions,
+) (types.Sandbox, error) {
 	backend, err := s.dependencies.runtimes.Backend(record.VMM)
 	if err != nil {
 		return record, err
 	}
-	result = record
+	result := record
+	committed := false
 	if record.State == types.SandboxStateCreating || record.State == types.SandboxStateDeleting {
 		return record, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, fmt.Errorf("sandbox %s in state %s cannot stop", record.ID, record.State))
 	}
