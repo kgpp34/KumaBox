@@ -231,15 +231,17 @@ const (
 	ProcessAbsent ProcessState = "absent"
 	// ProcessStarting means the owned process exists but its API is not Running.
 	ProcessStarting ProcessState = "starting"
+	// ProcessPaused means the owned guest is paused and requires an explicit recovery decision.
+	ProcessPaused ProcessState = "paused"
 	// ProcessRunning means both identity and vm.info report a running VM.
 	ProcessRunning ProcessState = "running"
 )
 
 // Observation is one fail-closed runtime snapshot.
 type Observation struct {
-	// State is absent, starting, or running.
+	// State is absent, starting, paused, or running.
 	State ProcessState
-	// Process is populated for starting and running observations.
+	// Process is populated for every live observation.
 	Process Process
 }
 

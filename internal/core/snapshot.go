@@ -150,6 +150,9 @@ func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotReque
 			return types.Snapshot{}, errdefs.New(errdefs.ClassInvalid, errdefs.CodeHostIncompatible, fmt.Errorf("VMM backend %q does not support snapshots", record.VMM))
 		}
 	}
+	if _, err := recoverRuntimeCapture(ctx, backend, record.ID, record.Generation-1); err != nil {
+		return types.Snapshot{}, err
+	}
 	observation, err := backend.Observe(ctx, record.ID, record.Generation-1)
 	if err != nil {
 		return types.Snapshot{}, err
@@ -209,7 +212,7 @@ func (s *SnapshotService) capture(ctx context.Context, request SaveSnapshotReque
 	}
 	reserved, published := true, false
 	defer func() {
-		if returnErr == nil || !reserved || result.ID != "" {
+		if returnErr == nil || !reserved || result.ID != "" || errors.Is(returnErr, vmm.ErrCaptureRecoveryPending) {
 			return
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)

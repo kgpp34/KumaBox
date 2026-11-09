@@ -41,6 +41,20 @@ func TestAPIQueueIsPerMonitorAndCancelable(t *testing.T) {
 	}
 }
 
+func TestCaptureActionHonorsCancellationWhileQueued(t *testing.T) {
+	driver := &Driver{}
+	release, err := driver.acquireAPI(t.Context(), "monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := driver.captureAction(ctx, "monitor", "vm.snapshot", nil, time.Second); !errors.Is(err, context.Canceled) {
+		t.Fatalf("queued capture = %v", err)
+	}
+}
+
 func TestConcurrentQueriesDoNotOverflowMonitorAPI(t *testing.T) {
 	directory, err := os.MkdirTemp("/tmp", "kb-ch-api-")
 	if err != nil {

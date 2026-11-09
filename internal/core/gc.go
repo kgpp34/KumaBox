@@ -432,6 +432,15 @@ func (s *MaintenanceService) collectSnapshot(ctx context.Context, id types.Snaps
 		remove = true
 		return "finished-delete", false, nil
 	}
+	if found {
+		release, busy, err := s.settlePendingCapture(ctx, state)
+		if err != nil || busy {
+			return "", busy, err
+		}
+		if release != nil {
+			defer func() { returnErr = errors.Join(returnErr, release()) }()
+		}
+	}
 	if err := snapshot.IgnoreAbsence(s.paths.RemoveStage(id)); err != nil {
 		return "", false, err
 	}
@@ -445,6 +454,53 @@ func (s *MaintenanceService) collectSnapshot(ctx context.Context, id types.Snaps
 		return "removed-stale-pending", false, nil
 	}
 	return "removed-orphan", false, nil
+}
+
+// settlePendingCapture protects only the directory named by a live capture
+// journal. Imported reservations can belong to another host or VMM backend.
+func (s *MaintenanceService) settlePendingCapture(ctx context.Context, state snapshotcatalog.State) (func() error, bool, error) {
+	paths, err := vmm.NewPaths(s.configuration.Paths)
+	if err != nil {
+		return nil, false, err
+	}
+	intent, err := paths.ReadCapture(state.SandboxID)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	stage, err := s.paths.Stage(state.ID)
+	if err != nil {
+		return nil, false, err
+	}
+	if intent.Destination != stage {
+		return nil, false, nil
+	}
+	lockPath, err := s.sandboxPaths.Lock(state.SandboxID)
+	if err != nil {
+		return nil, false, err
+	}
+	// Capture takes sandbox then snapshot. A nonblocking second lock lets a
+	// writer holding the sandbox finish without reversing the lock order.
+	lock := filelock.New(lockPath)
+	acquired, err := lock.TryLock(ctx)
+	if err != nil || !acquired {
+		return nil, !acquired, err
+	}
+	release := func() error { return lock.Unlock(context.WithoutCancel(ctx)) }
+	backend, err := s.runtimes.Backend(state.VMM)
+	if err == nil {
+		var recovered bool
+		recovered, err = recoverRuntimeCapture(ctx, backend, state.SandboxID, intent.Process.Generation)
+		if err == nil && !recovered {
+			err = vmm.ErrCaptureRecoveryPending
+		}
+	}
+	if err != nil {
+		return nil, false, errors.Join(err, release())
+	}
+	return release, false, nil
 }
 
 func (s *MaintenanceService) removeRestoreStages(id types.SnapshotID, names []string) (bool, error) {

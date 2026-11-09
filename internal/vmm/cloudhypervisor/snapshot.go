@@ -29,19 +29,17 @@ var (
 	_ vmm.Hibernator  = (*Driver)(nil)
 )
 
-// Snapshot pauses the exact owned process, captures native VMM state and every
-// writable disk, then resumes the guest even when capture fails.
+// Snapshot captures native state and writable disks under a journaled pause.
+// An uncertain resume retains the intent and artifacts for later recovery.
 //
-//	verify -> settle balloon -> pause -> native state -> writable disks -> resume
-//	                             \----------- any error -----------/
+//	verify -> settle balloon -> intent -> pause -> state/disks -> resume -> clear
+//	                                       \---- recovery on failure ----/
 func (d *Driver) Snapshot(ctx context.Context, plan vmm.SnapshotPlan) (returnErr error) {
 	if err := d.pauseForCapture(ctx, plan); err != nil {
 		return err
 	}
 	defer func() {
-		resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), d.startupTimeout)
-		defer cancel()
-		returnErr = errors.Join(returnErr, d.snapshotAction(resumeCtx, plan.Process.APISocket, "vm.resume", nil, d.startupTimeout))
+		returnErr = errors.Join(returnErr, d.finishCapture(ctx, plan.Process))
 	}()
 	return d.capturePaused(ctx, plan)
 }
@@ -63,14 +61,15 @@ func (d *Driver) Hibernate(ctx context.Context, plan vmm.SnapshotPlan, persist f
 		if !shouldResume {
 			return
 		}
-		resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), d.startupTimeout)
-		defer cancel()
-		returnErr = errors.Join(returnErr, d.snapshotAction(resumeCtx, plan.Process.APISocket, "vm.resume", nil, d.startupTimeout))
+		returnErr = errors.Join(returnErr, d.finishCapture(ctx, plan.Process))
 	}()
 	if err := d.capturePaused(ctx, plan); err != nil {
 		return err
 	}
 	if err := persist(); err != nil {
+		return err
+	}
+	if err := d.paths.WriteCapture(vmm.CaptureIntent{Process: plan.Process, Destination: plan.Destination, Action: vmm.CaptureStop}); err != nil {
 		return err
 	}
 	shouldResume = false
@@ -80,6 +79,9 @@ func (d *Driver) Hibernate(ctx context.Context, plan vmm.SnapshotPlan, persist f
 func (d *Driver) pauseForCapture(ctx context.Context, plan vmm.SnapshotPlan) error {
 	if err := plan.Validate(); err != nil {
 		return errdefs.New(errdefs.ClassInvalid, errdefs.CodeInvalidArgument, err)
+	}
+	if _, err := d.RecoverCapture(ctx, plan.Process.SandboxID, plan.Process.Generation); err != nil {
+		return err
 	}
 	observation, err := d.Observe(ctx, plan.Process.SandboxID, plan.Process.Generation)
 	if err != nil {
@@ -98,8 +100,14 @@ func (d *Driver) pauseForCapture(ctx context.Context, plan vmm.SnapshotPlan) err
 	if err := d.waitBalloonSettled(ctx, plan.Process, info); err != nil {
 		return err
 	}
-	if err := d.snapshotAction(ctx, plan.Process.APISocket, "vm.pause", nil, probeTimeout); err != nil {
-		return fmt.Errorf("pause cloud-hypervisor: %w", err)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := d.paths.WriteCapture(vmm.CaptureIntent{Process: plan.Process, Destination: plan.Destination, Action: vmm.CaptureResume}); err != nil {
+		return err
+	}
+	if err := d.captureAction(ctx, plan.Process.APISocket, "vm.pause", nil, probeTimeout); err != nil {
+		return errors.Join(fmt.Errorf("pause cloud-hypervisor: %w", err), d.finishCapture(ctx, plan.Process))
 	}
 	return nil
 }
@@ -154,8 +162,15 @@ func (d *Driver) capturePaused(ctx context.Context, plan vmm.SnapshotPlan) error
 	if err != nil {
 		return err
 	}
-	if err := d.snapshotAction(ctx, plan.Process.APISocket, "vm.snapshot", payload, snapshotTimeout); err != nil {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Once submitted, the monitor dump must finish before artifacts can be reclaimed.
+	if err := d.captureAction(ctx, plan.Process.APISocket, "vm.snapshot", payload, snapshotTimeout); err != nil {
 		return fmt.Errorf("capture cloud-hypervisor state: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	for _, file := range plan.WritableFiles {
 		if err := storage.CloneFile(file.Destination, file.Source); err != nil {
@@ -173,6 +188,29 @@ func (d *Driver) snapshotAction(ctx context.Context, socket, endpoint string, pa
 		return err
 	}
 	defer release()
+	return sendAction(ctx, socket, endpoint, payload, timeout)
+}
+
+// captureAction honors cancellation while queued, then waits for the submitted
+// operation before releasing the API gate or recovering the paused guest.
+func (d *Driver) captureAction(ctx context.Context, socket, endpoint string, payload []byte, timeout time.Duration) error {
+	waitingCtx, cancelWait := context.WithTimeout(ctx, timeout)
+	defer cancelWait()
+	release, err := d.acquireAPI(waitingCtx, socket)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	operationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer cancel()
+	return errors.Join(sendAction(operationCtx, socket, endpoint, payload, timeout), ctx.Err())
+}
+
+// sendAction performs one already serialized control operation.
+func sendAction(ctx context.Context, socket, endpoint string, payload []byte, timeout time.Duration) error {
 	client, closeClient, err := unixAPIClient(socket)
 	if err != nil {
 		return err

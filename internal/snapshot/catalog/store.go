@@ -41,7 +41,11 @@ func New(store metadata.Store) *Store { return &Store{store: store} }
 // State exposes only the publication facts needed by crash recovery. Snapshot
 // payloads remain private to this persistence adapter.
 type State struct {
-	ID       types.SnapshotID
+	ID types.SnapshotID
+	// SandboxID identifies the capture writer that GC must settle before reclamation.
+	SandboxID types.SandboxID
+	// VMM selects the adapter that can settle an interrupted capture.
+	VMM      types.VMMType
 	Ready    bool
 	Deleting bool
 }
@@ -66,7 +70,7 @@ func (s *Store) States(ctx context.Context) ([]State, error) {
 			if err != nil {
 				return corrupt(err)
 			}
-			states = append(states, State{ID: id, Ready: record.Ready, Deleting: record.Deleting})
+			states = append(states, State{ID: id, SandboxID: types.SandboxID(record.SandboxID), VMM: types.VMMType(record.VMM), Ready: record.Ready, Deleting: record.Deleting})
 			return nil
 		})
 	})
@@ -95,7 +99,7 @@ func (s *Store) State(ctx context.Context, id types.SnapshotID) (State, bool, er
 		if record.ID != id.String() {
 			return corrupt(errors.New("snapshot record key differs from ID"))
 		}
-		state, found = State{ID: id, Ready: record.Ready, Deleting: record.Deleting}, true
+		state, found = State{ID: id, SandboxID: types.SandboxID(record.SandboxID), VMM: types.VMMType(record.VMM), Ready: record.Ready, Deleting: record.Deleting}, true
 		return nil
 	})
 	return state, found, err

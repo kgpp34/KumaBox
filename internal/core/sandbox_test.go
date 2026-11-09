@@ -556,7 +556,7 @@ func newTestSandboxService(t *testing.T, diskError error) (*SandboxService, *[]s
 		t.Fatal(err)
 	}
 	service, err := newSandboxService(sandboxDependencies{
-		paths: paths, imagePaths: imagePaths, images: fakeGuard{image: image, steps: &steps},
+		roots: roots, paths: paths, imagePaths: imagePaths, images: fakeGuard{image: image, steps: &steps},
 		catalog: catalog, disks: fakeDisk{steps: &steps, prepare: diskError},
 		networks: networks, runtimes: runtimes,
 		defaultVMM: types.VMMCloudHypervisor, cleanupTimeout: 10 * time.Second, stopTimeout: types.DefaultStopTimeout,

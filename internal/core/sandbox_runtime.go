@@ -205,6 +205,9 @@ func (s *SandboxService) recoverStart(ctx context.Context, backend vmm.Backend, 
 	if err := s.dependencies.reporter.Status("checking existing runtime"); err != nil {
 		return record, false, err
 	}
+	if _, err := recoverRuntimeCapture(ctx, backend, record.ID, expected); err != nil {
+		return record, false, err
+	}
 	observation, err := backend.Observe(ctx, record.ID, expected)
 	if err != nil {
 		return record, false, err
@@ -214,6 +217,8 @@ func (s *SandboxService) recoverStart(ctx context.Context, backend vmm.Backend, 
 		switch observation.State {
 		case vmm.ProcessRunning:
 			return record, true, nil
+		case vmm.ProcessPaused:
+			return record, false, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("guest is paused without a recoverable capture intent"))
 		case vmm.ProcessStarting:
 			if err := backend.WaitReady(ctx, observation.Process); err != nil {
 				return record, false, err
@@ -234,6 +239,8 @@ func (s *SandboxService) recoverStart(ctx context.Context, backend vmm.Backend, 
 		case vmm.ProcessRunning:
 			running, err := s.dependencies.catalog.MarkRunning(ctx, record.ID, record.Generation, s.dependencies.now().UTC())
 			return running, err == nil, err
+		case vmm.ProcessPaused:
+			return record, false, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("guest is paused without a recoverable capture intent"))
 		case vmm.ProcessStarting:
 			if err := backend.WaitReady(ctx, observation.Process); err != nil {
 				return record, false, s.failStart(ctx, backend, record, "recover VMM", err, observation.Process)

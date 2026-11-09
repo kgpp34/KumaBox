@@ -92,6 +92,13 @@ func (s *SandboxService) reconcileSandbox(ctx context.Context, observed types.Sa
 		if err != nil {
 			return "", false, err
 		}
+		recoveredCapture := false
+		if record.State != types.SandboxStateStopping {
+			recoveredCapture, err = recoverRuntimeCapture(ctx, backend, record.ID, generation)
+			if err != nil {
+				return "", false, err
+			}
+		}
 		observation, err := backend.Observe(ctx, record.ID, generation)
 		if err != nil {
 			return "", false, err
@@ -100,7 +107,13 @@ func (s *SandboxService) reconcileSandbox(ctx context.Context, observed types.Sa
 			_, err := s.dependencies.catalog.MarkRunning(ctx, record.ID, record.Generation, s.dependencies.now().UTC())
 			return "recovered-running", false, err
 		}
+		if record.State != types.SandboxStateStopping && observation.State == vmm.ProcessPaused {
+			return "", false, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("guest is paused without a recoverable capture intent"))
+		}
 		if record.State != types.SandboxStateStopping && observation.State != vmm.ProcessAbsent {
+			if recoveredCapture {
+				return "recovered-capture", false, nil
+			}
 			return "", false, nil
 		}
 		if record.State == types.SandboxStateStopping && observation.State != vmm.ProcessAbsent {
@@ -123,4 +136,12 @@ func (s *SandboxService) reconcileSandbox(ctx context.Context, observed types.Sa
 	default:
 		return "", false, errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, fmt.Errorf("unknown sandbox state %q", record.State))
 	}
+}
+
+// recoverRuntimeCapture is called only while the sandbox operation lock is held.
+func recoverRuntimeCapture(ctx context.Context, backend vmm.Backend, id types.SandboxID, generation uint64) (bool, error) {
+	if recovery, ok := backend.(vmm.CaptureRecoverer); ok {
+		return recovery.RecoverCapture(ctx, id, generation)
+	}
+	return false, nil
 }

@@ -293,6 +293,9 @@ func (d *Driver) observeProcess(ctx context.Context, process vmm.Process) (vmm.O
 		}
 		return vmm.Observation{}, err
 	}
+	if state == "Paused" {
+		return vmm.Observation{State: vmm.ProcessPaused, Process: process}, nil
+	}
 	if state == "Running" {
 		return vmm.Observation{State: vmm.ProcessRunning, Process: process}, nil
 	}
@@ -538,7 +541,12 @@ type vmFSInfo struct {
 
 // queryInfo performs one bounded vm.info request over the private Unix socket.
 func (d *Driver) queryInfo(ctx context.Context, socket string) (vmInfo, error) {
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	return d.queryInfoTimeout(ctx, socket, probeTimeout)
+}
+
+// queryInfoTimeout allows recovery to drain an earlier monitor operation.
+func (d *Driver) queryInfoTimeout(ctx context.Context, socket string, timeout time.Duration) (vmInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	release, err := d.acquireAPI(ctx, socket)
 	if err != nil {
@@ -550,6 +558,7 @@ func (d *Driver) queryInfo(ctx context.Context, socket string) (vmInfo, error) {
 		return vmInfo{}, err
 	}
 	defer closeClient()
+	client.Timeout = timeout
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/api/v1/vm.info", nil)
 	if err != nil {
 		return vmInfo{}, err
