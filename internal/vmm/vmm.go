@@ -243,6 +243,8 @@ type Observation struct {
 	State ProcessState
 	// Process is populated for every live observation.
 	Process Process
+	// Balloon contains live memory reclamation when the device is enabled.
+	Balloon *types.BalloonStatus
 }
 
 // Validate rejects capture plans that could write outside their prepared

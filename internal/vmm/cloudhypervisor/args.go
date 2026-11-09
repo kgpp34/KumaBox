@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/kumabox/kumabox/internal/types"
 	"github.com/kumabox/kumabox/internal/vmm"
 )
 
@@ -71,7 +72,7 @@ func buildArgs(plan vmm.LaunchPlan, apiSocket, vsock string) []string {
 		"--watchdog",
 	)
 	if !plan.NoBalloon {
-		args = append(args, "--balloon", fmt.Sprintf("size=%d,deflate_on_oom=on,free_page_reporting=on", plan.Memory/4))
+		args = append(args, "--balloon", fmt.Sprintf("size=%d,deflate_on_oom=on,free_page_reporting=on", types.DefaultBalloonSize(plan.Memory)))
 	}
 	args = append(args,
 		"--vsock", fmt.Sprintf("cid=%d,socket=%s", vmm.VsockGuestCID, vsock),

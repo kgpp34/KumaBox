@@ -16,6 +16,7 @@ func TestPatchCloneConfigRebindsOnlyPrivateDevices(t *testing.T) {
 	path := filepath.Join(directory, "config.json")
 	original := `{
 		"platform":{"firmware":"preserved"},
+		"memory":{"size":1073741824},"balloon":{"size":536870912},
 		"payload":{"kernel":"/source/kernel","initramfs":"/source/initrd","cmdline":"preserved"},
 		"disks":[{"serial":"kumabox-layer0","path":"/images/base.raw","readonly":true},{"serial":"kumabox-cow","path":"/source/cow.raw","direct":true}],
 		"vsock":{"cid":3,"socket":"/source/vsock.uds"},
@@ -41,15 +42,19 @@ func TestPatchCloneConfigRebindsOnlyPrivateDevices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(old) != 1 || old[0].ID != "old-nic" {
+	if len(old.nets) != 1 || old.nets[0].ID != "old-nic" {
 		t.Fatalf("old NICs = %+v", old)
+	}
+	if old.balloonTarget == nil || *old.balloonTarget != 256<<20 {
+		t.Fatalf("clone did not schedule a reset after native restore: %+v", old)
 	}
 	patched, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var config struct {
-		Platform json.RawMessage `json:"platform"`
+		Platform json.RawMessage      `json:"platform"`
+		Balloon  struct{ Size int64 } `json:"balloon"`
 		Payload  struct {
 			Kernel  string `json:"kernel"`
 			Initrd  string `json:"initramfs"`
@@ -69,6 +74,9 @@ func TestPatchCloneConfigRebindsOnlyPrivateDevices(t *testing.T) {
 	}
 	if err := json.Unmarshal(patched, &config); err != nil {
 		t.Fatal(err)
+	}
+	if config.Balloon.Size != 512<<20 {
+		t.Fatal("config was changed before loading the captured device state")
 	}
 	if config.Disks[0].Path != "/target/images/base.raw" || config.Disks[1].Path != "/clone/cow.raw" ||
 		config.Vsock.Socket != "/clone/vsock.uds" || config.Nets[0].TAP == "source-tap" ||
@@ -91,7 +99,7 @@ func TestPatchCloneConfigPreservesFixedGuestNIC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if old != nil {
+	if old.nets != nil {
 		t.Fatalf("fixed NIC requires no remove/add: %+v", old)
 	}
 	data, err := os.ReadFile(path)
@@ -244,7 +252,7 @@ func TestPatchCloneConfigAllowsNICCountChange(t *testing.T) {
 			Network:   types.NetworkSetup{Interfaces: interfaces},
 		}, WritableDisk: "/new/cow.raw", ImageDisks: []vmm.Disk{{Path: "/new/layer", Serial: vmm.LayerSerialPrefix + "0", ReadOnly: true}}, Kernel: "/new/kernel", Initrd: "/new/initrd"}
 		old, err := patchCloneConfig(path, plan, "/new/vsock.uds")
-		if err != nil || len(old) != 1 || old[0].ID != "old-nic" {
+		if err != nil || len(old.nets) != 1 || old.nets[0].ID != "old-nic" {
 			t.Fatalf("target NICs %d: old = %+v, %v", targetCount, old, err)
 		}
 	}

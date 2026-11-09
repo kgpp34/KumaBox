@@ -50,6 +50,17 @@ func (s *SandboxService) StopWithOptions(ctx context.Context, ref string, option
 	return result, err
 }
 
+// ResizeBalloon submits a live memory reclaim target to the node service.
+func (s *SandboxService) ResizeBalloon(
+	ctx context.Context,
+	ref string,
+	target types.BalloonTarget,
+) (types.BalloonStatus, error) {
+	var result types.BalloonStatus
+	err := s.call(ctx, "balloon", rpc.Target[types.BalloonTarget]{Reference: ref, Options: target}, &result, rpc.Streams{})
+	return result, err
+}
+
 // Remove submits the sandbox remove operation.
 func (s *SandboxService) Remove(ctx context.Context, ref string) (types.Sandbox, error) {
 	var result types.Sandbox

@@ -76,6 +76,8 @@ type SandboxStatus struct {
 	PID int
 	// Stale reports a Running record whose VMM no longer exists.
 	Stale bool
+	// Balloon reports target and current reclaimed bytes for an enabled device.
+	Balloon *BalloonStatus
 }
 
 // SandboxLogOptions selects the retained VMM output to stream.

@@ -18,6 +18,7 @@ type statusOutput struct {
 	Runtime         string                 `json:"runtime_state,omitempty"`
 	PID             int                    `json:"pid,omitempty"`
 	Stale           bool                   `json:"stale,omitempty"`
+	Balloon         *types.BalloonStatus   `json:"balloon,omitempty"`
 	AttachedDevices *types.AttachedDevices `json:"attached_devices,omitempty"`
 }
 
@@ -82,7 +83,11 @@ func writeStatusTable(writer io.Writer, statuses []types.SandboxStatus) error {
 }
 
 func projectStatus(status types.SandboxStatus) statusOutput {
-	output := statusOutput{sandboxOutput: sandboxResult(status.Sandbox), Runtime: string(status.Runtime), PID: status.PID, Stale: status.Stale}
+	output := statusOutput{
+		sandboxOutput: sandboxResult(status.Sandbox),
+		Runtime:       string(status.Runtime), PID: status.PID,
+		Stale: status.Stale, Balloon: status.Balloon,
+	}
 	if status.Stale {
 		output.State = string(types.SandboxStateStopped)
 	}

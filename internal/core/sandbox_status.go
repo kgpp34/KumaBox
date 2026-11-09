@@ -83,6 +83,7 @@ func (s *SandboxService) observeStatus(ctx context.Context, record types.Sandbox
 		return status, err
 	}
 	status.Runtime = observation.State
+	status.Balloon = observation.Balloon
 	if observation.State != vmm.ProcessAbsent {
 		status.PID = observation.Process.PID
 	}

@@ -286,20 +286,25 @@ func (d *Driver) Observe(ctx context.Context, id types.SandboxID, generation uin
 // observeProcess maps a live VMM's API response to lifecycle state. A 404 is a
 // normal pre-create state, while other API failures remain actionable errors.
 func (d *Driver) observeProcess(ctx context.Context, process vmm.Process) (vmm.Observation, error) {
-	state, err := d.queryState(ctx, process.APISocket)
+	info, err := d.queryInfo(ctx, process.APISocket)
 	if err != nil {
 		if socketUnavailable(err) || errors.Is(err, errVMNotCreated) {
 			return vmm.Observation{State: vmm.ProcessStarting, Process: process}, nil
 		}
 		return vmm.Observation{}, err
 	}
-	if state == "Paused" {
-		return vmm.Observation{State: vmm.ProcessPaused, Process: process}, nil
+	balloon, err := balloonStatus(info)
+	if err != nil {
+		return vmm.Observation{}, err
 	}
-	if state == "Running" {
-		return vmm.Observation{State: vmm.ProcessRunning, Process: process}, nil
+	observation := vmm.Observation{State: vmm.ProcessStarting, Process: process, Balloon: balloon}
+	switch info.State {
+	case "Paused":
+		observation.State = vmm.ProcessPaused
+	case "Running":
+		observation.State = vmm.ProcessRunning
 	}
-	return vmm.Observation{State: vmm.ProcessStarting, Process: process}, nil
+	return observation, nil
 }
 
 // WaitReady waits for the exact process identity to expose a Running VM.

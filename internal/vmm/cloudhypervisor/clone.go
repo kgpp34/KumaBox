@@ -54,15 +54,20 @@ func (d *Driver) Clone(ctx context.Context, plan vmm.ClonePlan) (vmm.Process, er
 	if err != nil {
 		return vmm.Process{}, err
 	}
-	oldNets, err := patchCloneConfig(filepath.Join(privateDir, "config.json"), plan, vsockSocket)
+	devices, err := patchCloneConfig(filepath.Join(privateDir, "config.json"), plan, vsockSocket)
 	if err != nil {
 		return vmm.Process{}, err
 	}
 	plan.SnapshotDir = privateDir
 	return d.restore(ctx, plan.RestorePlan, func(ctx context.Context, _ string) error {
-		if oldNets != nil {
-			if err := d.swapCloneNets(ctx, apiSocket, plan.SandboxID, oldNets, plan.Network.Interfaces); err != nil {
+		if devices.nets != nil {
+			if err := d.swapCloneNets(ctx, apiSocket, plan.SandboxID, devices.nets, plan.Network.Interfaces); err != nil {
 				return err
+			}
+		}
+		if devices.balloonTarget != nil {
+			if err := d.resizeBalloon(ctx, apiSocket, *devices.balloonTarget); err != nil {
+				return fmt.Errorf("reset clone balloon: %w", err)
 			}
 		}
 		return d.addCloneDataDisks(ctx, apiSocket, plan.NewDataDisks, plan.CPUs)
@@ -153,10 +158,16 @@ type cloneNet struct {
 	ID string `json:"id"`
 }
 
+// cloneDevices describes device changes applied after native state is restored.
+type cloneDevices struct {
+	nets          []cloneNet
+	balloonTarget *int64
+}
+
 // patchCloneConfig preserves unknown Cloud Hypervisor fields while replacing
 // only source-owned paths. NICs first attach to clone-unique temporary TAPs;
 // after vm.restore they are replaced with the newly allocated real NICs.
-func patchCloneConfig(path string, plan vmm.ClonePlan, vsockSocket string) ([]cloneNet, error) {
+func patchCloneConfig(path string, plan vmm.ClonePlan, vsockSocket string) (*cloneDevices, error) {
 	raw, err := os.ReadFile(path) //nolint:gosec // private managed clone state
 	if err != nil {
 		return nil, err
@@ -283,6 +294,10 @@ func patchCloneConfig(path string, plan vmm.ClonePlan, vsockSocket string) ([]cl
 			return nil, err
 		}
 	}
+	balloonTarget, err := cloneBalloonTarget(config)
+	if err != nil {
+		return nil, err
+	}
 	patched, err := json.Marshal(config)
 	if err != nil {
 		return nil, err
@@ -290,7 +305,7 @@ func patchCloneConfig(path string, plan vmm.ClonePlan, vsockSocket string) ([]cl
 	if err := os.WriteFile(path, patched, 0o600); err != nil { //nolint:gosec // private managed clone state
 		return nil, err
 	}
-	return oldNets, nil
+	return &cloneDevices{nets: oldNets, balloonTarget: balloonTarget}, nil
 }
 
 // preserveCloneNICs keeps captured virtio device identity when only the host

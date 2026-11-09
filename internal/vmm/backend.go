@@ -32,6 +32,12 @@ type Backend interface {
 	RemoveLogs(context.Context, types.SandboxID) error
 }
 
+// BalloonResizer changes reclaimed guest memory without changing the VM shape.
+// A successful request acknowledges the target before asynchronous guest reclaim.
+type BalloonResizer interface {
+	ResizeBalloon(context.Context, Process, types.BalloonTarget) (types.BalloonStatus, error)
+}
+
 // NetworkDevice is a NIC currently reported by a running VMM. TAP identity
 // lets the service reconcile interrupted hotplug against the CNI journal.
 type NetworkDevice struct {

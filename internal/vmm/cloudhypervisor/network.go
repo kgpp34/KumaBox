@@ -26,7 +26,7 @@ func (d *Driver) liveInfo(ctx context.Context, process vmm.Process) (vmInfo, err
 		return vmInfo{}, err
 	}
 	if observed.State != vmm.ProcessRunning || observed.Process != process {
-		return vmInfo{}, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("VMM process changed during NIC operation"))
+		return vmInfo{}, errdefs.New(errdefs.ClassConflict, errdefs.CodeStateConflict, errors.New("VMM process changed during runtime operation"))
 	}
 	info, err := d.queryInfo(ctx, process.APISocket)
 	if err != nil {

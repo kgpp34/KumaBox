@@ -89,13 +89,15 @@ func TestObserveProcessWaitsForVMCreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	var status atomic.Int32
+	var probes atomic.Int32
 	status.Store(http.StatusNotFound)
 	server := &http.Server{Handler: http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		probes.Add(1)
 		if code := int(status.Load()); code != http.StatusOK {
 			writer.WriteHeader(code)
 			return
 		}
-		_, _ = writer.Write([]byte(`{"state":"Running"}`))
+		_, _ = writer.Write([]byte(`{"state":"Running","memory_actual_size":805306368,"config":{"memory":{"size":1073741824},"balloon":{"size":268435456}}}`))
 	})}
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() {
@@ -118,6 +120,9 @@ func TestObserveProcessWaitsForVMCreation(t *testing.T) {
 	observation, err = driver.observeProcess(t.Context(), process)
 	if err != nil || observation.State != vmm.ProcessRunning {
 		t.Fatalf("Running observation = %+v, %v", observation, err)
+	}
+	if observation.Balloon == nil || observation.Balloon.Actual == nil || *observation.Balloon.Actual != 256<<20 || probes.Load() != 3 {
+		t.Fatalf("balloon observation = %+v, API requests = %d", observation.Balloon, probes.Load())
 	}
 }
 

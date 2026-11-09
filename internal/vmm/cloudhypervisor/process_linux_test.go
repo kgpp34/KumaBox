@@ -301,9 +301,10 @@ func TestSnapshotWaitsForBalloonBeforePausingGuest(t *testing.T) {
 		case "/api/v1/vm.info":
 			actual := 512 << 20
 			if probes.Add(1) >= 7 {
-				actual = 384 << 20
+				actual = 256 << 20
 			}
-			_, _ = fmt.Fprintf(w, `{"state":"Running","memory_actual_size":%d,"config":{"memory":{"size":536870912},"balloon":{"size":134217728}}}`, actual)
+			// The live target was resized to 50 percent before capture.
+			_, _ = fmt.Fprintf(w, `{"state":"Running","memory_actual_size":%d,"config":{"memory":{"size":536870912},"balloon":{"size":268435456}}}`, actual)
 		case "/api/v1/vm.pause":
 			if probes.Load() < 7 {
 				t.Error("guest paused before reclaim completed")
