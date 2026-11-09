@@ -68,6 +68,17 @@ func (s *SandboxService) Remove(ctx context.Context, ref string) (types.Sandbox,
 	return result, err
 }
 
+// RemoveWithOptions can request controlled force termination before cleanup.
+func (s *SandboxService) RemoveWithOptions(
+	ctx context.Context,
+	ref string,
+	options types.RemoveOptions,
+) (types.Sandbox, error) {
+	var result types.Sandbox
+	err := s.call(ctx, "remove", rpc.Target[types.RemoveOptions]{Reference: ref, Options: options}, &result, rpc.Streams{})
+	return result, err
+}
+
 // Status submits the sandbox status operation.
 func (s *SandboxService) Status(ctx context.Context, refs ...string) ([]types.SandboxStatus, error) {
 	var result []types.SandboxStatus

@@ -257,6 +257,20 @@ func (s *SandboxService) create(ctx context.Context, request CreateSandboxReques
 //	                              |                                |
 //	                              +-------- retry resumes ---------+
 func (s *SandboxService) Remove(ctx context.Context, reference string) (result types.Sandbox, returnErr error) {
+	return s.RemoveWithOptions(ctx, reference, types.RemoveOptions{})
+}
+
+// RemoveWithOptions holds the same identity lock from force termination through
+// deletion. A failed stop retains ownership and cannot delete writable disks.
+//
+//	Force -> stopLocked -> Deleting -> disk/network/logs -> finalize
+//	             |              |
+//	             +--- retry ----+
+func (s *SandboxService) RemoveWithOptions(
+	ctx context.Context,
+	reference string,
+	options types.RemoveOptions,
+) (result types.Sandbox, returnErr error) {
 	if s == nil || s.dependencies.catalog == nil || s.dependencies.disks == nil || s.dependencies.networks == nil || s.dependencies.runtimes.Len() == 0 || s.dependencies.reporter == nil || s.dependencies.now == nil {
 		return types.Sandbox{}, errors.New("sandbox service is not configured")
 	}
@@ -289,16 +303,48 @@ func (s *SandboxService) Remove(ctx context.Context, reference string) (result t
 	if err != nil {
 		return record, err
 	}
+	if options.Force {
+		switch record.State {
+		case types.SandboxStateDeleting:
+			// A tombstone can predate forced removal. Prove process absence
+			// before retrying its destructive cleanup.
+			committed = true
+			if err := backend.Cleanup(ctx, record.ID); err != nil {
+				return record, errdefs.WithContext(err, errdefs.ContextInfo{
+					Operation: "remove sandbox", Entity: reference,
+					Phase: "cleanup runtime", Action: "retry removal after the runtime exits", Committed: committed,
+				})
+			}
+		case types.SandboxStateRunning, types.SandboxStateStarting, types.SandboxStateStopping, types.SandboxStateError:
+			stopped, stopErr := s.stopLocked(ctx, record, reference, types.StopOptions{
+				Force: true, Timeout: s.dependencies.stopTimeout,
+			})
+			committed = stopped.Generation != record.Generation
+			result, record = stopped, stopped
+			if stopErr != nil {
+				return stopped, errdefs.WithContext(stopErr, errdefs.ContextInfo{
+					Operation: "remove sandbox", Entity: reference,
+					Phase: "stop before removal", Action: "retry forced removal to finish stopping the VMM", Committed: committed,
+				})
+			}
+		}
+	}
 	networkProvider, hasNetwork, err := s.networkProvider(record)
 	if err != nil {
 		return record, err
 	}
 	if err := s.dependencies.reporter.Status("marking sandbox for deletion"); err != nil {
-		return types.Sandbox{}, err
+		return result, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "remove sandbox", Entity: reference,
+			Phase: "report", Action: "retry removal to finish cleanup", Committed: committed,
+		})
 	}
 	deleting, err := s.dependencies.catalog.BeginDelete(ctx, record.ID, record.Generation, s.dependencies.now().UTC())
 	if err != nil {
-		return types.Sandbox{}, err
+		return result, errdefs.WithContext(err, errdefs.ContextInfo{
+			Operation: "remove sandbox", Entity: reference,
+			Phase: "mark deleting", Action: "inspect the sandbox before retrying", Committed: committed,
+		})
 	}
 	committed = true
 	result = deleting

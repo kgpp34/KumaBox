@@ -14,6 +14,7 @@ import (
 // NewRemoveCommand builds the top-level sandbox removal command.
 func NewRemoveCommand(configuration configProvider) *cobra.Command {
 	asJSON := false
+	var options types.RemoveOptions
 	command := &cobra.Command{
 		Use:   "rm SANDBOX...",
 		Short: "remove a sandbox and its persistent resources",
@@ -22,7 +23,7 @@ func NewRemoveCommand(configuration configProvider) *cobra.Command {
 			if len(args) > 1 {
 				return runSandboxBatch(command, configuration, args, "remove sandbox", asJSON, true,
 					func(ctx context.Context, service *client.SandboxService, reference string) (types.Sandbox, error) {
-						return service.Remove(ctx, reference)
+						return service.RemoveWithOptions(ctx, reference, options)
 					})
 			}
 			reference := args[0]
@@ -46,7 +47,7 @@ func NewRemoveCommand(configuration configProvider) *cobra.Command {
 					Committed: committed,
 				}))
 			}()
-			removed, err := service.Remove(command.Context(), reference)
+			removed, err := service.RemoveWithOptions(command.Context(), reference, options)
 			if err != nil {
 				return err
 			}
@@ -64,5 +65,6 @@ func NewRemoveCommand(configuration configProvider) *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&asJSON, "json", false, "print the removed sandbox as indented JSON")
+	command.Flags().BoolVarP(&options.Force, "force", "f", false, "force-stop the owned VMM before removing sandbox resources")
 	return command
 }

@@ -3,12 +3,17 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/kumabox/kumabox/internal/disk"
 	"github.com/kumabox/kumabox/internal/errdefs"
+	filelock "github.com/kumabox/kumabox/internal/lock/flock"
 	"github.com/kumabox/kumabox/internal/types"
+	"github.com/kumabox/kumabox/internal/vmm"
 )
 
 type fakeCloneDisk struct {
@@ -16,6 +21,50 @@ type fakeCloneDisk struct {
 	source       string
 	clonedData   []types.DataDiskSpec
 	preparedData []types.DataDiskSpec
+}
+
+type forceRemovalRuntime struct {
+	*fakeRuntime
+	beforeStop func(vmm.Process)
+	cleanupErr error
+}
+
+func (r *forceRemovalRuntime) Stop(ctx context.Context, process vmm.Process, options types.StopOptions) error {
+	if r.beforeStop != nil {
+		r.beforeStop(process)
+	}
+	if err := r.fakeRuntime.Stop(ctx, process, options); err != nil {
+		return err
+	}
+	r.observation = vmm.Observation{State: vmm.ProcessAbsent}
+	return nil
+}
+
+func (r *forceRemovalRuntime) Cleanup(ctx context.Context, id types.SandboxID) error {
+	if r.observation.State != vmm.ProcessAbsent {
+		return errors.New("owned VMM is still present")
+	}
+	return errors.Join(r.fakeRuntime.Cleanup(ctx, id), r.cleanupErr)
+}
+
+type forceRemovalDisk struct {
+	disk.Backend
+	check func(types.SandboxID)
+}
+
+func (d *forceRemovalDisk) Remove(ctx context.Context, id types.SandboxID) error {
+	d.check(id)
+	return d.Backend.Remove(ctx, id)
+}
+
+type removalCatalog struct {
+	sandboxCatalog
+	references []string
+}
+
+func (c *removalCatalog) Resolve(ctx context.Context, reference string) (types.Sandbox, error) {
+	c.references = append(c.references, reference)
+	return c.sandboxCatalog.Resolve(ctx, reference)
 }
 
 func (d *fakeCloneDisk) Clone(_ context.Context, _ types.SandboxID, _ int64, source string) error {
@@ -271,6 +320,185 @@ func TestRemoveMarksDeletingBeforeDiskAndFinalizesAfterCleanup(t *testing.T) {
 	}
 	if !reflect.DeepEqual(*steps, want) {
 		t.Fatalf("steps = %v, want %v", *steps, want)
+	}
+}
+
+func TestForceRemovalKeepsIdentityLockedThroughStopAndCleanup(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	base := service.dependencies.catalog.(*fakeCatalog)
+	base.record = types.Sandbox{
+		ID: fixedID, VMM: types.VMMCloudHypervisor,
+		Config: types.SandboxConfig{Name: "box"}, State: types.SandboxStateRunning, Generation: 4,
+	}
+	catalog := &removalCatalog{sandboxCatalog: base}
+	service.dependencies.catalog = catalog
+	runtime := &forceRemovalRuntime{fakeRuntime: testRuntime(t, service)}
+	process := vmm.Process{SandboxID: fixedID, Generation: 3, PID: 42}
+	runtime.observation = vmm.Observation{State: vmm.ProcessRunning, Process: process}
+	assertLocked := func() {
+		t.Helper()
+		path, err := service.dependencies.paths.Lock(fixedID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		probe := filelock.New(path)
+		locked, err := probe.TryLock(t.Context())
+		if locked {
+			_ = probe.Unlock(t.Context())
+		}
+		if err != nil || locked {
+			t.Fatalf("removal released the identity lock: acquired=%t, error=%v", locked, err)
+		}
+	}
+	runtime.beforeStop = func(got vmm.Process) {
+		assertLocked()
+		if got != process || base.record.State != types.SandboxStateStopping {
+			t.Fatalf("termination ownership = %+v, %+v", got, base.record)
+		}
+	}
+	var err error
+	service.dependencies.runtimes, err = vmm.NewRegistry(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.dependencies.disks = &forceRemovalDisk{Backend: service.dependencies.disks, check: func(id types.SandboxID) {
+		assertLocked()
+		if id != fixedID || runtime.observation.State != vmm.ProcessAbsent {
+			t.Fatal("disk removal began before the owned VMM exited")
+		}
+	}}
+	removed, err := service.RemoveWithOptions(t.Context(), "box", types.RemoveOptions{Force: true})
+	if err != nil || removed.ID != fixedID || !base.deleted || !runtime.stopOptions.Force {
+		t.Fatalf("forced removal = %+v, %v", removed, err)
+	}
+	if !slices.Equal(catalog.references, []string{"box", fixedID.String()}) {
+		t.Fatalf("removal re-resolved a reusable name: %v", catalog.references)
+	}
+	if stop, remove := slices.Index(*steps, "stop"), slices.Index(*steps, "remove"); stop < 0 || remove <= stop {
+		t.Fatalf("stop/delete ordering = %v", *steps)
+	}
+}
+
+func TestForceRemovalHandlesEveryStoppableState(t *testing.T) {
+	for _, test := range []struct {
+		state      types.SandboxState
+		generation uint64
+		live       bool
+	}{
+		{state: types.SandboxStateRunning, generation: 4, live: true},
+		{state: types.SandboxStateStarting, generation: 3, live: true},
+		{state: types.SandboxStateStopping, generation: 5, live: true},
+		{state: types.SandboxStateError, generation: 4, live: true},
+		{state: types.SandboxStateRunning, generation: 4},
+		{state: types.SandboxStateCreating, generation: 1},
+		{state: types.SandboxStateCreated, generation: 2},
+		{state: types.SandboxStateStopped, generation: 6},
+		{state: types.SandboxStateDeleting, generation: 7},
+	} {
+		t.Run(string(test.state)+"/live="+fmt.Sprint(test.live), func(t *testing.T) {
+			service, steps := newTestSandboxService(t, nil)
+			catalog := service.dependencies.catalog.(*fakeCatalog)
+			catalog.record = types.Sandbox{
+				ID: fixedID, VMM: types.VMMCloudHypervisor,
+				Config: types.SandboxConfig{Name: "box"}, State: test.state, Generation: test.generation,
+			}
+			runtime := &forceRemovalRuntime{fakeRuntime: testRuntime(t, service)}
+			if test.live {
+				generation, err := stopProcessGeneration(catalog.record)
+				if err != nil {
+					t.Fatal(err)
+				}
+				runtime.observation = vmm.Observation{
+					State:   vmm.ProcessRunning,
+					Process: vmm.Process{SandboxID: fixedID, Generation: generation, PID: 42},
+				}
+			}
+			var err error
+			service.dependencies.runtimes, err = vmm.NewRegistry(runtime)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := service.RemoveWithOptions(t.Context(), "box", types.RemoveOptions{Force: true}); err != nil {
+				t.Fatal(err)
+			}
+			if !catalog.deleted || slices.Contains(*steps, "stop") != test.live || test.live && !runtime.stopOptions.Force {
+				t.Fatalf("removal = %+v, steps = %v", catalog.record, *steps)
+			}
+		})
+	}
+}
+
+func TestForceRemovalRetriesCanceledStopBeforeTouchingDisks(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	catalog := service.dependencies.catalog.(*fakeCatalog)
+	catalog.record = types.Sandbox{
+		ID: fixedID, VMM: types.VMMCloudHypervisor,
+		Config: types.SandboxConfig{Name: "box"}, State: types.SandboxStateRunning, Generation: 4,
+	}
+	runtime := &forceRemovalRuntime{fakeRuntime: testRuntime(t, service)}
+	runtime.observation = vmm.Observation{
+		State:   vmm.ProcessRunning,
+		Process: vmm.Process{SandboxID: fixedID, Generation: 3, PID: 42},
+	}
+	runtime.stopErr = context.Canceled
+	var err error
+	service.dependencies.runtimes, err = vmm.NewRegistry(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained, err := service.RemoveWithOptions(t.Context(), "box", types.RemoveOptions{Force: true})
+	var classified *errdefs.Error
+	if !errors.Is(err, context.Canceled) || !errors.As(err, &classified) || !classified.Committed ||
+		retained.State != types.SandboxStateStopping || catalog.deleted || slices.Contains(*steps, "remove") {
+		t.Fatalf("canceled removal = %+v, %v, steps = %v", retained, err, *steps)
+	}
+	runtime.stopErr = nil
+	if _, err := service.RemoveWithOptions(t.Context(), "box", types.RemoveOptions{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !catalog.deleted {
+		t.Fatal("retry retained the sandbox after successful termination")
+	}
+}
+
+func TestForceRemovalRetainsDeletingAndChecksRuntimeOnRetry(t *testing.T) {
+	service, steps := newTestSandboxService(t, nil)
+	catalog := service.dependencies.catalog.(*fakeCatalog)
+	catalog.record = types.Sandbox{
+		ID: fixedID, VMM: types.VMMCloudHypervisor,
+		Config: types.SandboxConfig{Name: "box"}, State: types.SandboxStateStopped, Generation: 6,
+	}
+	runtime := &forceRemovalRuntime{fakeRuntime: testRuntime(t, service)}
+	var err error
+	service.dependencies.runtimes, err = vmm.NewRegistry(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disks := service.dependencies.disks.(fakeDisk)
+	failure := errors.New("disk removal failed")
+	disks.remove = failure
+	service.dependencies.disks = disks
+	if _, err := service.RemoveWithOptions(t.Context(), "box", types.RemoveOptions{Force: true}); !errors.Is(err, failure) {
+		t.Fatalf("first removal = %v", err)
+	}
+	if catalog.deleted || catalog.record.State != types.SandboxStateDeleting {
+		t.Fatalf("failed deletion lost ownership: %+v", catalog.record)
+	}
+	*steps = nil
+	runtime.cleanupErr = errors.New("runtime cleanup still busy")
+	if _, err := service.RemoveWithOptions(t.Context(), "box", types.RemoveOptions{Force: true}); !errors.Is(err, runtime.cleanupErr) {
+		t.Fatalf("unsafe retry = %v", err)
+	}
+	if slices.Contains(*steps, "remove") || catalog.deleted {
+		t.Fatal("retry deleted disks without proving process absence")
+	}
+	runtime.cleanupErr, disks.remove = nil, nil
+	service.dependencies.disks = disks
+	if _, err := service.RemoveWithOptions(t.Context(), "box", types.RemoveOptions{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !catalog.deleted {
+		t.Fatal("retry did not finish deletion")
 	}
 }
 

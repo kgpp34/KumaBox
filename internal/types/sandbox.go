@@ -39,6 +39,12 @@ const (
 	MaxDataDisks = 32
 )
 
+// RemoveOptions controls cleanup of a sandbox and its private host resources.
+type RemoveOptions struct {
+	// Force terminates the owned VMM before removing disks, network and metadata.
+	Force bool
+}
+
 // StopOptions separates guest shutdown policy from host process termination.
 // Zero Timeout uses configured policy; Force skips the guest shutdown window.
 type StopOptions struct {

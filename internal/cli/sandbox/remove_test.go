@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kumabox/kumabox/internal/client"
 	"github.com/kumabox/kumabox/internal/config"
 	"github.com/kumabox/kumabox/internal/core"
 	"github.com/kumabox/kumabox/internal/images"
@@ -109,31 +110,79 @@ func TestRemoveCommandClosesCreateAndImageReferenceLifecycle(t *testing.T) {
 }
 
 func TestRemoveBatchReportsSuccessesEvenWhenOneReferenceFails(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		force bool
+	}{
+		{name: "normal"},
+		{name: "forced", force: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			base := shortTempDir(t)
+			roots := storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")}
+			seedImage(t, roots)
+			installFakeMKFS(t, base)
+			first := executeCreate(t, roots, "first")
+			second := executeCreate(t, roots, "second")
+			command := NewRemoveCommand(func() config.Config { return sandboxTestConfig(t, roots) })
+			args := []string{"first", "missing", "second", "--json"}
+			if test.force {
+				args = append(args, "--force")
+			}
+			command.SetArgs(args)
+			command.SilenceUsage = true
+			command.SilenceErrors = true
+			var stdout bytes.Buffer
+			command.SetOut(&stdout)
+			command.SetErr(&bytes.Buffer{})
+			if err := command.ExecuteContext(t.Context()); err == nil {
+				t.Fatal("batch removal hid the missing reference")
+			}
+			var removed []removeOutput
+			if err := json.Unmarshal(stdout.Bytes(), &removed); err != nil {
+				t.Fatalf("batch output %q: %v", stdout.String(), err)
+			}
+			if len(removed) != 2 || removed[0].ID != first.String() || removed[1].ID != second.String() {
+				t.Fatalf("batch output = %+v", removed)
+			}
+			if output := executeList(t, roots, "--all", "--json"); output != "[]\n" {
+				t.Fatalf("batch left sandboxes: %q", output)
+			}
+		})
+	}
+}
+
+func TestRemovePreservesLegacyClientAndSupportsForceShorthand(t *testing.T) {
 	base := shortTempDir(t)
 	roots := storage.Roots{Data: filepath.Join(base, "data"), Run: filepath.Join(base, "run"), Log: filepath.Join(base, "log")}
 	seedImage(t, roots)
 	installFakeMKFS(t, base)
-	first := executeCreate(t, roots, "first")
-	second := executeCreate(t, roots, "second")
-	command := NewRemoveCommand(func() config.Config { return sandboxTestConfig(t, roots) })
-	command.SetArgs([]string{"first", "missing", "second", "--json"})
-	command.SilenceUsage = true
-	command.SilenceErrors = true
-	var stdout bytes.Buffer
-	command.SetOut(&stdout)
+	first := executeCreate(t, roots, "legacy")
+	cfg := sandboxTestConfig(t, roots)
+	service, err := client.OpenSandbox(t.Context(), cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+	removed, err := service.Remove(t.Context(), "legacy")
+	if err != nil || removed.ID != first {
+		t.Fatalf("legacy remove request = %+v, %v", removed, err)
+	}
+	second := executeCreate(t, roots, "forced")
+	command := NewRemoveCommand(func() config.Config { return cfg })
+	command.SetArgs([]string{"-f", "forced", "--json"})
+	var output bytes.Buffer
+	command.SetOut(&output)
 	command.SetErr(&bytes.Buffer{})
-	if err := command.ExecuteContext(t.Context()); err == nil {
-		t.Fatal("batch removal hid the missing reference")
+	if err := command.ExecuteContext(t.Context()); err != nil {
+		t.Fatal(err)
 	}
-	var removed []removeOutput
-	if err := json.Unmarshal(stdout.Bytes(), &removed); err != nil {
-		t.Fatalf("batch output %q: %v", stdout.String(), err)
+	var result removeOutput
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
 	}
-	if len(removed) != 2 || removed[0].ID != first.String() || removed[1].ID != second.String() {
-		t.Fatalf("batch output = %+v", removed)
-	}
-	if output := executeList(t, roots, "--all", "--json"); output != "[]\n" {
-		t.Fatalf("batch left sandboxes: %q", output)
+	if result.ID != second.String() || result.Name != "forced" {
+		t.Fatalf("forced removal = %+v", result)
 	}
 }
 

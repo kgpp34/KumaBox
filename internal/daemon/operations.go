@@ -34,9 +34,9 @@ func registerOperations(mux *http.ServeMux, app *core.Application) {
 		service := app.Sandboxes.WithReporter(sandboxReporter{session})
 		return service.StopWithOptions(ctx, p.Reference, p.Options)
 	})
-	rpc.Register(mux, "sandbox.remove", func(ctx context.Context, session *rpc.Session, p rpc.Ref) (any, error) {
+	rpc.Register(mux, "sandbox.remove", func(ctx context.Context, session *rpc.Session, p rpc.Target[types.RemoveOptions]) (any, error) {
 		service := app.Sandboxes.WithReporter(sandboxReporter{session})
-		return service.Remove(ctx, p.Reference)
+		return service.RemoveWithOptions(ctx, p.Reference, p.Options)
 	})
 	rpc.Register(mux, "sandbox.balloon", func(ctx context.Context, session *rpc.Session, p rpc.Target[types.BalloonTarget]) (any, error) {
 		service := app.Sandboxes.WithReporter(sandboxReporter{session})
