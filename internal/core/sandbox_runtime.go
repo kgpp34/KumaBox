@@ -504,7 +504,7 @@ func (s *SandboxService) stopLocked(
 				Action:    "inspect the sandbox before retrying",
 			})
 		}
-		result, committed = record, true
+		committed = true
 	}
 
 	if exists {
@@ -588,7 +588,6 @@ func (s *SandboxService) stopLocked(
 			Committed: committed,
 		})
 	}
-	result, committed = stopped, true
 	if err := s.dependencies.reporter.Committed(stopped); err != nil {
 		return stopped, errdefs.WithContext(err, errdefs.ContextInfo{
 			Operation: "stop sandbox",
