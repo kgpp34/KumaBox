@@ -212,7 +212,7 @@ func Default() Config {
 			Default: types.VMMCloudHypervisor, CgroupParent: "/sys/fs/cgroup/kumabox.slice",
 			CloudHypervisor: CloudHypervisor{
 				Binary: "cloud-hypervisor", StartupTimeout: 10 * time.Second,
-				StopGrace: 5 * time.Second, AbortGrace: 3 * time.Second,
+				StopGrace: 35 * time.Second, AbortGrace: 3 * time.Second,
 			},
 		},
 	}

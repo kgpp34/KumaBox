@@ -75,7 +75,7 @@ type Driver struct {
 	binary string
 	// startupTimeout bounds API readiness for new and recovered starts.
 	startupTimeout time.Duration
-	// stopGrace bounds normal stop escalation after the advisory API request.
+	// stopGrace bounds VMM teardown before signal escalation.
 	stopGrace time.Duration
 	// abortGrace bounds cleanup of a launch that never committed Running.
 	abortGrace time.Duration
@@ -103,7 +103,7 @@ func New(paths vmm.Paths, scopes *cgroup.Manager, options Options) (*Driver, err
 		options.StartupTimeout = defaultStartupTimeout
 	}
 	if options.StopGrace == 0 {
-		options.StopGrace = 5 * time.Second
+		options.StopGrace = 35 * time.Second
 	}
 	if options.AbortGrace == 0 {
 		options.AbortGrace = 3 * time.Second
@@ -390,7 +390,6 @@ func (d *Driver) Stop(ctx context.Context, process vmm.Process, options types.St
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	_ = d.requestShutdown(ctx, process.APISocket)
 	return terminateProcess(ctx, process, d.stopGrace)
 }
 
@@ -602,37 +601,6 @@ func openConsolePTY(path string) (*os.File, error) {
 		return nil, errors.Join(errdefs.New(errdefs.ClassCorrupt, errdefs.CodeArtifactCorrupt, errors.New("opened console is not a character device")), file.Close())
 	}
 	return file, nil
-}
-
-// requestShutdown asks Cloud Hypervisor to stop its VM before process signals
-// are used. Callers deliberately treat failure as advisory.
-func (d *Driver) requestShutdown(ctx context.Context, socket string) error {
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-	release, err := d.acquireAPI(ctx, socket)
-	if err != nil {
-		return err
-	}
-	defer release()
-	client, closeClient, err := unixAPIClient(socket)
-	if err != nil {
-		return err
-	}
-	defer closeClient()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://localhost/api/v1/vm.shutdown", nil)
-	if err != nil {
-		return err
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close() //nolint:errcheck // status is authoritative
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxAPIResponse))
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("cloud hypervisor vm.shutdown returned HTTP %d", response.StatusCode)
-	}
-	return nil
 }
 
 // unixAPIClient validates the private socket before constructing a bounded

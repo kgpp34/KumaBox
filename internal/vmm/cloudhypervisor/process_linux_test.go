@@ -196,9 +196,9 @@ func TestStopShutdownPolicyAndCancellation(t *testing.T) {
 		want       []string
 	}{
 		{name: "normal guest exit", powerExit: true, want: []string{"vm.power-button"}},
-		{name: "guest timeout escalates", want: []string{"vm.power-button", "vm.shutdown"}},
-		{name: "force skips ACPI", force: true, want: []string{"vm.shutdown"}},
-		{name: "ACPI unavailable escalates", powerError: true, want: []string{"vm.power-button", "vm.shutdown"}},
+		{name: "guest timeout escalates", want: []string{"vm.power-button"}},
+		{name: "force skips ACPI", force: true},
+		{name: "ACPI unavailable escalates", powerError: true, want: []string{"vm.power-button"}},
 		{name: "caller cancellation preserves process", cancel: true, want: []string{"vm.power-button"}},
 		{name: "foreign generation is never signalled", mismatch: true},
 	} {

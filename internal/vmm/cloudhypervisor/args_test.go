@@ -32,14 +32,10 @@ func TestQueryStateRequiresUnixSocketAndDecodesRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var shutdown atomic.Bool
 	server := &http.Server{Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch {
 		case request.Method == http.MethodGet && request.URL.Path == "/api/v1/vm.info":
 			_, _ = writer.Write([]byte(`{"state":"Running","config":{"console":{"mode":"Pty","file":"/dev/pts/7"}}}`))
-		case request.Method == http.MethodPut && request.URL.Path == "/api/v1/vm.shutdown":
-			shutdown.Store(true)
-			writer.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -64,12 +60,6 @@ func TestQueryStateRequiresUnixSocketAndDecodesRunning(t *testing.T) {
 	}
 	if info.Config.Console.Mode != "Pty" || info.Config.Console.File != "/dev/pts/7" {
 		t.Fatalf("console info = %+v", info.Config.Console)
-	}
-	if err := driver.requestShutdown(t.Context(), socket); err != nil {
-		t.Fatal(err)
-	}
-	if !shutdown.Load() {
-		t.Fatal("vm.shutdown request was not received")
 	}
 
 	regular := filepath.Join(t.TempDir(), "not-a-socket")

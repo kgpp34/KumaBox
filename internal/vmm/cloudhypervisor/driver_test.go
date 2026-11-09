@@ -40,6 +40,13 @@ func TestNewUsesConfiguredLifecyclePolicy(t *testing.T) {
 		driver.stopGrace != options.StopGrace || driver.abortGrace != options.AbortGrace {
 		t.Fatalf("driver policy = %+v", driver)
 	}
+	defaults, err := New(paths, scopes, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaults.stopGrace != 35*time.Second {
+		t.Fatalf("default VMM teardown grace = %s", defaults.stopGrace)
+	}
 }
 
 func TestNewRejectsInvalidLifecyclePolicy(t *testing.T) {
